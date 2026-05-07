@@ -7,7 +7,7 @@ import { detectChainType } from '../../helpers/chain.js'
 import { ActionableError, createUnsupportedChainError } from '../../helpers/errors.js'
 import { formatTokenValue, getKnownTokenDecimals } from '../../helpers/conversions.js'
 import { getCoinGeckoTokenList } from '../../helpers/external-apis.js'
-import { portalFetch, portalFetchRecentRecords } from '../../helpers/fetch.js'
+import { portalFetch, portalFetchRecentRecords, portalFetchStreamRange } from '../../helpers/fetch.js'
 import { buildEvmLogFields } from '../../helpers/fields.js'
 import { formatResult } from '../../helpers/format.js'
 import { formatTimestamp } from '../../helpers/formatting.js'
@@ -34,6 +34,7 @@ export function registerGetErc20TransfersTool(server: McpServer) {
     token_addresses?: string[]
     from_addresses?: string[]
     to_addresses?: string[]
+    scan_order?: 'earliest' | 'latest'
     include_token_info: boolean
   }
 
@@ -67,6 +68,56 @@ export function registerGetErc20TransfersTool(server: McpServer) {
       return String(left.transaction_hash ?? '').localeCompare(String(right.transaction_hash ?? ''))
     })
 
+  const fetchTransferBlocksByScanOrder = async ({
+    url,
+    query,
+    fromBlock,
+    toBlock,
+    limit,
+    chunkSize,
+    scanOrder,
+  }: {
+    url: string
+    query: Record<string, unknown>
+    fromBlock: number
+    toBlock: number
+    limit: number
+    chunkSize: number
+    scanOrder: 'earliest' | 'latest'
+  }) => {
+    const records: unknown[] = []
+    const targetCount = limit + 1
+    let matchedLogs = 0
+    let scannedFromBlock = scanOrder === 'earliest' ? fromBlock : toBlock
+    let scannedToBlock = scanOrder === 'earliest' ? fromBlock : toBlock
+
+    if (scanOrder === 'earliest') {
+      for (let chunkFrom = fromBlock; chunkFrom <= toBlock && matchedLogs < targetCount; chunkFrom += chunkSize) {
+        const chunkTo = Math.min(toBlock, chunkFrom + chunkSize - 1)
+        scannedToBlock = chunkTo
+        const chunk = await portalFetchStreamRange(url, { ...query, fromBlock: chunkFrom, toBlock: chunkTo })
+        records.push(...chunk)
+        matchedLogs += chunk.reduce<number>((sum, block: unknown) => {
+          const logs = (block as { logs?: unknown[] })?.logs
+          return sum + (Array.isArray(logs) ? logs.length : 0)
+        }, 0)
+      }
+    } else {
+      for (let chunkTo = toBlock; chunkTo >= fromBlock && matchedLogs < targetCount; chunkTo -= chunkSize) {
+        const chunkFrom = Math.max(fromBlock, chunkTo - chunkSize + 1)
+        scannedFromBlock = chunkFrom
+        const chunk = await portalFetchStreamRange(url, { ...query, fromBlock: chunkFrom, toBlock: chunkTo })
+        records.unshift(...chunk)
+        matchedLogs += chunk.reduce<number>((sum, block: unknown) => {
+          const logs = (block as { logs?: unknown[] })?.logs
+          return sum + (Array.isArray(logs) ? logs.length : 0)
+        }, 0)
+      }
+    }
+
+    return { records, hasMore: matchedLogs > limit, scannedFromBlock, scannedToBlock }
+  }
+
   server.tool(
     'portal_evm_query_token_transfers',
     buildToolDescription('portal_evm_query_token_transfers'),
@@ -86,6 +137,11 @@ export function registerGetErc20TransfersTool(server: McpServer) {
       token_addresses: z.array(z.string()).optional().describe('Token contract addresses'),
       from_addresses: z.array(z.string()).optional().describe('Sender addresses'),
       to_addresses: z.array(z.string()).optional().describe('Recipient addresses'),
+      scan_order: z
+        .enum(['latest', 'earliest'])
+        .optional()
+        .default('latest')
+        .describe('Which side of the block window to scan first. Use earliest for first-transfer questions.'),
       limit: z.number().optional().default(50).describe('Max transfers'),
       include_token_info: z
         .boolean()
@@ -104,6 +160,7 @@ export function registerGetErc20TransfersTool(server: McpServer) {
       token_addresses,
       from_addresses,
       to_addresses,
+      scan_order,
       limit,
       include_token_info,
       cursor,
@@ -141,6 +198,7 @@ export function registerGetErc20TransfersTool(server: McpServer) {
         token_addresses = paginationCursor.request.token_addresses
         from_addresses = paginationCursor.request.from_addresses
         to_addresses = paginationCursor.request.to_addresses
+        scan_order = paginationCursor.request.scan_order ?? 'latest'
         include_token_info = paginationCursor.request.include_token_info
       }
       if (!paginationCursor && from_block === undefined && timeframe === undefined && from_timestamp === undefined) {
@@ -210,11 +268,25 @@ export function registerGetErc20TransfersTool(server: McpServer) {
       const hasAddressFilters = !!(normalizedTokens || normalizedFrom || normalizedTo)
       const cursorSkip = paginationCursor?.skip_inclusive_block ?? 0
       const fetchLimit = limit + cursorSkip + 1
-      const results = await portalFetchRecentRecords(`${PORTAL_URL}/datasets/${dataset}/stream`, query, {
-        itemKeys: ['logs'],
-        limit: fetchLimit,
-        chunkSize: hasAddressFilters ? 500 : 100,
-      })
+      const portalUrl = `${PORTAL_URL}/datasets/${dataset}/stream`
+      const scanResult = scan_order === 'earliest'
+        ? await fetchTransferBlocksByScanOrder({
+            url: portalUrl,
+            query,
+            fromBlock: resolvedFromBlock,
+            toBlock: pageToBlock,
+            limit: fetchLimit,
+            chunkSize: hasAddressFilters ? 500 : 100,
+            scanOrder: scan_order,
+          })
+        : undefined
+      const results = scanResult
+        ? scanResult.records
+        : await portalFetchRecentRecords(portalUrl, query, {
+            itemKeys: ['logs'],
+            limit: fetchLimit,
+            chunkSize: hasAddressFilters ? 500 : 100,
+          })
 
       const allTransfers = sortTransfers(results.flatMap((block: unknown) => {
         const b = block as {
@@ -258,7 +330,7 @@ export function registerGetErc20TransfersTool(server: McpServer) {
             }
           : undefined,
       )
-      const nextCursor = page.hasMore && page.nextBoundary
+      const nextCursor = !scanResult && page.hasMore && page.nextBoundary
         ? encodeRecentPageCursor<Erc20Request>({
             tool: 'portal_evm_query_token_transfers',
             dataset,
@@ -272,6 +344,7 @@ export function registerGetErc20TransfersTool(server: McpServer) {
               ...(token_addresses ? { token_addresses } : {}),
               ...(from_addresses ? { from_addresses } : {}),
               ...(to_addresses ? { to_addresses } : {}),
+              scan_order,
               include_token_info,
             },
             window_from_block: resolvedFromBlock,
@@ -319,6 +392,7 @@ export function registerGetErc20TransfersTool(server: McpServer) {
       }
       const notices = getTimestampWindowNotices(resolvedBlocks)
       if (nextCursor) notices.push('Older results are available via _pagination.next_cursor.')
+      if (scanResult && page.hasMore) notices.push(`More matching transfers may exist outside the scanned ${scanResult.scannedFromBlock}-${scanResult.scannedToBlock} block slice.`)
       const freshness = buildQueryFreshness({
         finality: 'latest',
         headBlockNumber: head.number,
@@ -328,7 +402,7 @@ export function registerGetErc20TransfersTool(server: McpServer) {
       const coverage = buildQueryCoverage({
         windowFromBlock: resolvedFromBlock,
         windowToBlock: endBlock,
-        pageToBlock,
+        pageToBlock: scanResult && scan_order === 'earliest' ? scanResult.scannedToBlock : pageToBlock,
         items: enrichedTransfers,
         getBlockNumber,
         hasMore: page.hasMore,
@@ -336,7 +410,9 @@ export function registerGetErc20TransfersTool(server: McpServer) {
 
       return formatResult(
         enrichedTransfers,
-        `Retrieved ${page.pageItems.length} ERC20 transfers${page.hasMore ? ` from the most recent matching blocks (preview page limited to ${limit})` : ''}`,
+        scanResult
+          ? `Retrieved ${page.pageItems.length} ERC20 transfers by scanning forward from the start of the window`
+          : `Retrieved ${page.pageItems.length} ERC20 transfers${page.hasMore ? ` from the most recent matching blocks (preview page limited to ${limit})` : ''}`,
         {
           toolName: 'portal_evm_query_token_transfers',
           notices,
@@ -352,6 +428,7 @@ export function registerGetErc20TransfersTool(server: McpServer) {
             from_block: resolvedFromBlock,
             to_block: endBlock,
             page_to_block: pageToBlock,
+            scan_order,
             range_kind: resolvedBlocks.range_kind,
             normalized_output: true,
             notes: [

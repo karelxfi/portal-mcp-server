@@ -5,6 +5,7 @@ import { assert, callToolWithRetry, extractJson, getText, sleep } from './test-h
 const POLKADOT_SAMPLE_FROM_BLOCK = 30_736_840
 const POLKADOT_SAMPLE_TO_BLOCK = 30_736_842
 const BASE_RPC_URL = 'https://mainnet.base.org'
+const PORTAL_API_URL = 'https://portal.sqd.dev'
 const BASE_USDC = '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913'
 const BASE_UNISWAP_V4_POOL_MANAGER = '0x498581ff718922c3f8e6a244956af099b2652b2b'
 const AERODROME_SLIPSTREAM_FACTORY = '0xf8f2eb4940cfe7d13603dddd87f123820fc061ef'
@@ -32,6 +33,9 @@ export interface ToolTestContext {
   baseUniswapV3Pool: string
   baseUniswapV4PoolId: string
   aerodromeSlipstreamPool: string
+  recentDeploymentContract: string
+  recentDeploymentFromBlock: number
+  recentDeploymentToBlock: number
   evmWallet: string
   solWallet: string
   btcAddress: string
@@ -154,6 +158,91 @@ function isZeroAddress(value: string) {
   return /^0x0{40}$/.test(value)
 }
 
+async function portalStream(dataset: string, body: Record<string, unknown>) {
+  const response = await fetch(`${PORTAL_API_URL}/datasets/${dataset}/stream`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+
+  if (response.status === 204) return []
+  if (!response.ok) {
+    throw new Error(`Portal stream fixture query failed with HTTP ${response.status}: ${await response.text()}`)
+  }
+  const text = await response.text()
+  return text
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as Record<string, unknown>)
+}
+
+function pickCreateTrace(records: Array<Record<string, unknown>>) {
+  for (const block of [...records].reverse()) {
+    const blockNumber = typeof block.number === 'number'
+      ? block.number
+      : typeof (block.header as Record<string, unknown> | undefined)?.number === 'number'
+        ? (block.header as Record<string, unknown>).number as number
+        : undefined
+    const traces = Array.isArray(block.traces) ? block.traces as Array<Record<string, unknown>> : []
+    for (const trace of [...traces].reverse()) {
+      const contractAddress = typeof trace.createResultAddress === 'string'
+        ? trace.createResultAddress.toLowerCase()
+        : typeof (trace.result as Record<string, unknown> | undefined)?.address === 'string'
+          ? ((trace.result as Record<string, unknown>).address as string).toLowerCase()
+        : undefined
+      if (blockNumber !== undefined && contractAddress && !isZeroAddress(contractAddress)) {
+        return { blockNumber, contractAddress }
+      }
+    }
+  }
+  return undefined
+}
+
+async function pickRecentBaseDeployment(baseHead: number) {
+  const searchFrom = Math.max(0, baseHead - 20_000)
+  const chunkSize = 1_000
+
+  for (let chunkTo = baseHead; chunkTo >= searchFrom; chunkTo -= chunkSize) {
+    const chunkFrom = Math.max(searchFrom, chunkTo - chunkSize + 1)
+    const records = await portalStream('base-mainnet', {
+      type: 'evm',
+      fromBlock: chunkFrom,
+      toBlock: chunkTo,
+      fields: {
+        block: { number: true, timestamp: true },
+        transaction: {
+          hash: true,
+          transactionIndex: true,
+          from: true,
+          to: true,
+          status: true,
+        },
+        trace: {
+          type: true,
+          transactionIndex: true,
+          createFrom: true,
+          createResultAddress: true,
+          createResultGasUsed: true,
+          error: true,
+        },
+      },
+      traces: [{ type: ['create'], transaction: true }],
+    })
+
+    const deployment = pickCreateTrace(records)
+    if (deployment) {
+      return {
+        recentDeploymentContract: deployment.contractAddress,
+        recentDeploymentFromBlock: Math.max(0, deployment.blockNumber - 3),
+        recentDeploymentToBlock: deployment.blockNumber + 3,
+      }
+    }
+  }
+
+  throw new Error('Expected at least one recent Base create trace for deployment lookup tests')
+}
+
 async function pickRecentPoolFromCandidates(client: Client, candidates: readonly string[]): Promise<string> {
   const result = await callToolWithRetry(client, 'portal_evm_query_logs', {
     network: 'base-mainnet',
@@ -222,7 +311,8 @@ export async function loadToolTestContext(client: Client): Promise<ToolTestConte
     getHeadNumber(client, 'hyperliquid-replica-cmds'),
   ])
 
-  const [recentV2SwapResult, recentSwapResult, recentV4SwapResult, evmTxResult, solTxResult, btcTxResult, hlFillResult] = await Promise.all([
+  const [recentDeployment, recentV2SwapResult, recentSwapResult, recentV4SwapResult, evmTxResult, solTxResult, btcTxResult, hlFillResult] = await Promise.all([
+    pickRecentBaseDeployment(baseHead),
     callToolWithRetry(client, 'portal_evm_query_logs', {
         network: 'base-mainnet',
         from_timestamp: '6h ago',
@@ -327,6 +417,7 @@ export async function loadToolTestContext(client: Client): Promise<ToolTestConte
     baseUniswapV3Pool,
     baseUniswapV4PoolId,
     aerodromeSlipstreamPool,
+    ...recentDeployment,
     evmWallet,
     solWallet,
     btcAddress,
@@ -514,7 +605,7 @@ export const TOOL_SPECS: ToolSpec[] = [
       expectWindowMetadata(data, 'portal_evm_query_transactions')
       expectOrdering(data, 'portal_evm_query_transactions')
     },
-    validateFollowUp: async (_text, client) => {
+    validateFollowUp: async (_text, client, context) => {
       const result = await callToolWithRetry(client, 'portal_evm_query_transactions', {
         network: 'ethereum-mainnet',
         from_block: 12_244_000,
@@ -535,6 +626,29 @@ export const TOOL_SPECS: ToolSpec[] = [
       )
       assert(items[0].type === 1, 'Expected normalized transaction type 1')
       assert(data._execution?.scan_order === 'earliest', 'Expected earliest scan execution metadata')
+
+      const methodAliasResult = await callToolWithRetry(client, 'portal_evm_query_transactions', {
+        network: 'base',
+        from_block: context.baseHead - 5_000,
+        to_block: context.baseHead,
+        to_addresses: [context.usdcBase],
+        method: 'transfer',
+        order_by: 'gas_used_desc',
+        scan_order: 'latest',
+        max_scan_blocks: 5_000,
+        limit: 3,
+        field_preset: 'standard',
+      })
+      const methodAliasData = methodAliasResult.data
+      const methodAliasItems = getItems(methodAliasData)
+      assert(methodAliasItems.length > 0, 'Expected recent Base USDC transfer transactions via method alias')
+      assert(methodAliasItems.every((item: any) => String(item.to || '').toLowerCase() === context.usdcBase), 'Expected method alias results to target USDC')
+      assert(methodAliasData._execution?.order_by === 'gas_used_desc', 'Expected order_by execution metadata')
+      for (let index = 1; index < methodAliasItems.length; index += 1) {
+        const previousGasUsed = BigInt(methodAliasItems[index - 1].gasUsed ?? 0)
+        const currentGasUsed = BigInt(methodAliasItems[index].gasUsed ?? 0)
+        assert(previousGasUsed >= currentGasUsed, 'Expected gas_used_desc ranking to be descending')
+      }
     },
   },
   {
@@ -563,6 +677,22 @@ export const TOOL_SPECS: ToolSpec[] = [
       assert(items[0].decoded_log !== undefined, 'Expected decoded_log on EVM log results')
       expectCompactDefault(data, 'portal_evm_query_logs decode')
       expectWindowMetadata(data, 'portal_evm_query_logs decode')
+
+      const eventAliasResult = await callToolWithRetry(client, 'portal_evm_query_logs', {
+        network: 'base',
+        from_block: context.baseHead - 2_000,
+        to_block: context.baseHead,
+        addresses: [context.usdcBase],
+        event: 'transfer',
+        scan_order: 'earliest',
+        limit: 1,
+        field_preset: 'minimal',
+      })
+      const eventAliasData = eventAliasResult.data
+      const eventAliasItems = getItems(eventAliasData)
+      assert(eventAliasItems.length === 1, 'Expected first recent USDC Transfer log via event alias')
+      assert(eventAliasItems[0].topics?.[0] === EVENT_SIGNATURES.TRANSFER_ERC20, 'Expected Transfer topic from event alias')
+      assert(eventAliasData._execution?.scan_order === 'earliest', 'Expected earliest log scan metadata')
     },
   },
   {
@@ -575,6 +705,42 @@ export const TOOL_SPECS: ToolSpec[] = [
       assert(items[0].token_address?.toLowerCase() === context.usdcBase, 'Expected USDC transfers')
       expectWindowMetadata(data, 'portal_evm_query_token_transfers')
       expectOrdering(data, 'portal_evm_query_token_transfers')
+    },
+    validateFollowUp: async (_text, client, context) => {
+      const result = await callToolWithRetry(client, 'portal_evm_query_token_transfers', {
+        network: 'base',
+        from_block: context.baseHead - 2_000,
+        to_block: context.baseHead,
+        token_addresses: [context.usdcBase],
+        scan_order: 'earliest',
+        limit: 1,
+      })
+      const data = result.data
+      const items = getItems(data)
+      assert(items.length === 1, 'Expected earliest recent USDC token transfer')
+      assert(items[0].token_address?.toLowerCase() === context.usdcBase, 'Expected earliest transfer to preserve token address')
+      assert(data._execution?.scan_order === 'earliest', 'Expected token transfer scan metadata')
+    },
+  },
+  {
+    name: 'portal_evm_get_contract_deployment',
+    prompt: 'who deployed this recent Base contract and in which tx',
+    args: (context) => ({
+      network: 'base',
+      contract_address: context.recentDeploymentContract,
+      from_block: context.recentDeploymentFromBlock,
+      to_block: context.recentDeploymentToBlock,
+      scan_order: 'earliest',
+    }),
+    validate: (text, context) => {
+      const data = extractJson(text)
+      const items = getItems(data)
+      assert(items.length === 1, 'Expected one deployment lookup result')
+      assert(items[0].deployed_contract_address?.toLowerCase() === context.recentDeploymentContract, 'Expected deployment contract address match')
+      assert(typeof items[0].transaction_hash === 'string' && items[0].transaction_hash.startsWith('0x'), 'Expected parent deployment transaction hash')
+      assert(typeof items[0].deployer === 'string' && items[0].deployer.startsWith('0x'), 'Expected deployer address')
+      assert(data._execution?.scan_order === 'earliest', 'Expected deployment scan metadata')
+      expectWindowMetadata(data, 'portal_evm_get_contract_deployment')
     },
   },
   {

@@ -49,6 +49,7 @@ export type ToolExecutionMetadataInput = {
   mode?: string
   response_format?: string
   scan_order?: string
+  order_by?: string
   range_kind?: string
   from_block?: number
   to_block?: number
@@ -307,12 +308,15 @@ const TOOL_DEFINITIONS: Record<string, ToolDefinition> = {
       'You need raw transaction records on an EVM network.',
       'You want chain-specific transaction fields or include flags that convenience tools do not expose.',
       'You need to find the first transaction matching a raw field condition such as transaction type 0x1 from a known block.',
+      'You need top-N raw transactions ranked by value, gas used, or effective gas price.',
+      'You want common method names such as transfer, approve, deposit, or withdraw instead of remembering sighashes.',
     ],
     avoid_when: ['You only need a quick recent feed or wallet-level summary.'],
     examples: [
       { label: 'Recent Base transactions', input: { network: 'base-mainnet', timeframe: '1h', limit: 20 } },
       { label: 'Filter by sender', input: { network: 'ethereum-mainnet', timeframe: '6h', from_addresses: ['0xabc...'], limit: 20 } },
       { label: 'First EIP-2930 transaction from Berlin fork', input: { network: 'ethereum-mainnet', from_block: 12244000, transaction_type: '0x1', scan_order: 'earliest', limit: 1, field_preset: 'minimal' } },
+      { label: 'Largest recent transfers to USDC', input: { network: 'base-mainnet', timeframe: '1h', to_addresses: ['0x833589fcd6edb6e08f4c7c32d4f71b54bda02913'], method: 'transfer', order_by: 'gas_used_desc', limit: 5 } },
     ],
     supports: {
       pagination: true,
@@ -328,14 +332,17 @@ const TOOL_DEFINITIONS: Record<string, ToolDefinition> = {
     vm: ['evm'],
     result_kind: 'list',
     normalized_output: true,
-    summary: 'Query raw EVM logs with address/topic filters and optional inline decoding.',
+    summary: 'Query raw EVM logs with address/topic filters, common event aliases, earliest/latest scanning, and optional inline decoding.',
     when_to_use: [
       'You need event logs filtered by contract or topic signature.',
       'You want decoded log hints while still keeping the raw log shape available.',
+      'You want the first or last matching event in a bounded block/time window.',
+      'You want common event names such as transfer, approval, swap, mint, or burn instead of remembering topic0 hashes.',
     ],
     avoid_when: ['You only want token transfers, which are easier with the token-transfer tool.'],
     examples: [
       { label: 'Recent USDC Transfer logs', input: { network: 'base-mainnet', timeframe: '1h', addresses: ['0x833589fcd6edb6e08f4c7c32d4f71b54bda02913'], limit: 20 } },
+      { label: 'First recent USDC Transfer log', input: { network: 'base-mainnet', timeframe: '1h', addresses: ['0x833589fcd6edb6e08f4c7c32d4f71b54bda02913'], event: 'transfer', scan_order: 'earliest', limit: 1 } },
       { label: 'Decode logs inline', input: { network: 'ethereum-mainnet', timeframe: '1h', topic0: ['0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef'], decode: true, limit: 10 } },
     ],
     supports: {
@@ -358,13 +365,46 @@ const TOOL_DEFINITIONS: Record<string, ToolDefinition> = {
       'You want ERC-20 style transfer activity filtered by token, sender, or recipient.',
       'You want the fastest answer to a token movement question like "did USDC move?".',
       'You want the easiest raw transfer query on an EVM network.',
+      'You need the first matching transfer in a bounded window without typing the Transfer topic hash.',
     ],
     avoid_when: ['You need arbitrary event logs beyond token transfers.'],
     examples: [
       { label: 'Recent USDC transfers', input: { network: 'base-mainnet', timeframe: '1h', token_addresses: ['0x833589fcd6edb6e08f4c7c32d4f71b54bda02913'], limit: 20 } },
+      { label: 'First recent USDC transfer', input: { network: 'base-mainnet', timeframe: '1h', token_addresses: ['0x833589fcd6edb6e08f4c7c32d4f71b54bda02913'], scan_order: 'earliest', limit: 1 } },
     ],
     supports: {
       pagination: true,
+      time_inputs: ['blocks', 'timeframe', 'timestamps'],
+    },
+  },
+  portal_evm_get_contract_deployment: {
+    name: 'portal_evm_get_contract_deployment',
+    audience: 'public',
+    category: 'evm',
+    intent: 'lookup',
+    vm: ['evm'],
+    result_kind: 'lookup',
+    normalized_output: true,
+    first_choice_for: [
+      'who deployed this EVM contract',
+      'when was this contract deployed',
+      'what deployment transaction created this contract',
+    ],
+    summary: 'Locate the create trace and parent transaction that deployed a specific EVM contract address within a bounded window.',
+    when_to_use: [
+      'You need the deployer, deployment block, deployment timestamp, or deployment transaction for an EVM contract.',
+      'You can provide a starting block/time window, or you want a recent-depth deployment search.',
+      'You want a deployment lookup instead of general contract activity.',
+    ],
+    avoid_when: [
+      'You need all activity for a contract after deployment.',
+      'The contract is old and no block/time hint is available; provide from_block or from_timestamp first.',
+    ],
+    examples: [
+      { label: 'Find recent deployment', input: { network: 'base-mainnet', contract_address: '0xabc...', search_depth_blocks: 100000 } },
+      { label: 'Find deployment from known range', input: { network: 'ethereum-mainnet', contract_address: '0xabc...', from_block: 17000000, to_block: 17100000, scan_order: 'earliest' } },
+    ],
+    supports: {
       time_inputs: ['blocks', 'timeframe', 'timestamps'],
     },
   },
@@ -755,6 +795,7 @@ export function buildExecutionMetadata(input: ToolExecutionMetadataInput): Recor
   if (input.mode) metadata.mode = input.mode
   if (input.response_format) metadata.response_format = input.response_format
   if (input.scan_order) metadata.scan_order = input.scan_order
+  if (input.order_by) metadata.order_by = input.order_by
   if (input.metric) metadata.metric = input.metric
   if (input.interval) metadata.interval = input.interval
   if (input.duration) metadata.duration = input.duration

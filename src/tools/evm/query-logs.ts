@@ -5,7 +5,8 @@ import { resolveDataset, validateBlockRange } from '../../cache/datasets.js'
 import { PORTAL_URL } from '../../constants/index.js'
 import { detectChainType, isL2Chain } from '../../helpers/chain.js'
 import { createUnsupportedChainError } from '../../helpers/errors.js'
-import { portalFetchRecentRecords } from '../../helpers/fetch.js'
+import { resolveEventTopic0 } from '../../helpers/evm-aliases.js'
+import { portalFetchRecentRecords, portalFetchStreamRange } from '../../helpers/fetch.js'
 import { getLogFields } from '../../helpers/field-presets.js'
 import { normalizeEvmLogResult } from '../../helpers/normalized-results.js'
 import { buildPaginationInfo, decodeRecentPageCursor, encodeRecentPageCursor, paginateAscendingItems } from '../../helpers/pagination.js'
@@ -65,10 +66,12 @@ type QueryLogsRequest = {
   limit: number
   finalized_only: boolean
   addresses?: string[]
+  event?: string | string[]
   topic0?: string[]
   topic1?: string[]
   topic2?: string[]
   topic3?: string[]
+  scan_order?: 'earliest' | 'latest'
   field_preset: 'minimal' | 'standard' | 'full'
   response_format: ResponseFormat
   include_transaction: boolean
@@ -117,6 +120,52 @@ function sortLogs(items: EvmLogItem[]) {
   })
 }
 
+async function fetchLogsByScanOrder({
+  url,
+  query,
+  fromBlock,
+  toBlock,
+  limit,
+  chunkSize,
+  scanOrder,
+}: {
+  url: string
+  query: Record<string, unknown>
+  fromBlock: number
+  toBlock: number
+  limit: number
+  chunkSize: number
+  scanOrder: 'earliest' | 'latest'
+}) {
+  const collected: EvmLogItem[] = []
+  const targetCount = limit + 1
+  let scannedFromBlock = scanOrder === 'earliest' ? fromBlock : toBlock
+  let scannedToBlock = scanOrder === 'earliest' ? fromBlock : toBlock
+
+  if (scanOrder === 'earliest') {
+    for (let chunkFrom = fromBlock; chunkFrom <= toBlock && collected.length < targetCount; chunkFrom += chunkSize) {
+      const chunkTo = Math.min(toBlock, chunkFrom + chunkSize - 1)
+      scannedToBlock = chunkTo
+      const records = await portalFetchStreamRange(url, { ...query, fromBlock: chunkFrom, toBlock: chunkTo })
+      collected.push(...sortLogs(flattenLogsWithBlockContext(records) as EvmLogItem[]))
+    }
+  } else {
+    for (let chunkTo = toBlock; chunkTo >= fromBlock && collected.length < targetCount; chunkTo -= chunkSize) {
+      const chunkFrom = Math.max(fromBlock, chunkTo - chunkSize + 1)
+      scannedFromBlock = chunkFrom
+      const records = await portalFetchStreamRange(url, { ...query, fromBlock: chunkFrom, toBlock: chunkTo })
+      collected.push(...sortLogs(flattenLogsWithBlockContext(records) as EvmLogItem[]).reverse())
+    }
+  }
+
+  return {
+    items: sortLogs(collected.slice(0, limit)),
+    hasMore: collected.length > limit,
+    scannedFromBlock,
+    scannedToBlock,
+  }
+}
+
 export function registerQueryLogsTool(server: McpServer) {
   server.tool(
     'portal_evm_query_logs',
@@ -151,6 +200,10 @@ export function registerQueryLogsTool(server: McpServer) {
         .describe(
           "Contract addresses to filter (e.g., ['0xUSDC...', '0xDAI...']). IMPORTANT: Always include this or topics for fast queries.",
         ),
+      event: z
+        .union([z.string(), z.array(z.string())])
+        .optional()
+        .describe('Common event alias or topic0 hash. Examples: "transfer", "approval", "swap", "sync", "deposit", "withdrawal". Merges with topic0.'),
       topic0: z
         .array(z.string())
         .optional()
@@ -166,6 +219,11 @@ export function registerQueryLogsTool(server: McpServer) {
         .optional()
         .describe('Topic2 filter (often: to address in Transfer, indexed parameter 2)'),
       topic3: z.array(z.string()).optional().describe('Topic3 filter (indexed parameter 3, chain-specific)'),
+      scan_order: z
+        .enum(['latest', 'earliest'])
+        .optional()
+        .default('latest')
+        .describe('Which side of the block window to scan first. Use earliest for first-event questions.'),
       limit: z
         .number()
         .max(200)
@@ -208,10 +266,12 @@ export function registerQueryLogsTool(server: McpServer) {
       to_timestamp,
       finalized_only,
       addresses,
+      event,
       topic0,
       topic1,
       topic2,
       topic3,
+      scan_order,
       limit,
       field_preset,
       response_format,
@@ -252,10 +312,12 @@ export function registerQueryLogsTool(server: McpServer) {
         limit = paginationCursor.request.limit
         finalized_only = paginationCursor.request.finalized_only
         addresses = paginationCursor.request.addresses
+        event = paginationCursor.request.event
         topic0 = paginationCursor.request.topic0
         topic1 = paginationCursor.request.topic1
         topic2 = paginationCursor.request.topic2
         topic3 = paginationCursor.request.topic3
+        scan_order = paginationCursor.request.scan_order ?? 'latest'
         field_preset = paginationCursor.request.field_preset
         response_format = paginationCursor.request.response_format
         include_transaction = paginationCursor.request.include_transaction
@@ -291,6 +353,7 @@ export function registerQueryLogsTool(server: McpServer) {
       const resolvedToBlock = resolvedBlocks.to_block
 
       const normalizedAddresses = normalizeAddresses(addresses, chainType)
+      const normalizedTopic0 = Array.from(new Set([...(topic0 ?? []), ...resolveEventTopic0(event)].map((value) => value.toLowerCase())))
       const { validatedToBlock: endBlock, head } = await validateBlockRange(
         dataset,
         resolvedFromBlock,
@@ -302,7 +365,7 @@ export function registerQueryLogsTool(server: McpServer) {
 
       // Validate query size to prevent crashes
       const blockRange = pageToBlock - resolvedFromBlock
-      const hasFilters = !!(normalizedAddresses || topic0 || topic1 || topic2 || topic3)
+      const hasFilters = !!(normalizedAddresses || normalizedTopic0.length > 0 || topic1 || topic2 || topic3)
 
       const validation = validateQuerySize({
         blockRange,
@@ -319,7 +382,7 @@ export function registerQueryLogsTool(server: McpServer) {
 
       const logFilter: Record<string, unknown> = {}
       if (normalizedAddresses) logFilter.address = normalizedAddresses
-      if (topic0) logFilter.topic0 = topic0
+      if (normalizedTopic0.length > 0) logFilter.topic0 = normalizedTopic0
       if (topic1) logFilter.topic1 = topic1
       if (topic2) logFilter.topic2 = topic2
       if (topic3) logFilter.topic3 = topic3
@@ -362,25 +425,45 @@ export function registerQueryLogsTool(server: McpServer) {
 
       const cursorSkip = paginationCursor?.skip_inclusive_block ?? 0
       const fetchLimit = limit + cursorSkip + 1
-      const results = await portalFetchRecentRecords(`${PORTAL_URL}/datasets/${dataset}/stream`, query, {
-        itemKeys: ['logs'],
-        limit: fetchLimit,
-        chunkSize: hasFilters ? 500 : 100,
-      })
+      const portalUrl = `${PORTAL_URL}/datasets/${dataset}/stream`
+      const scanResult = scan_order === 'earliest'
+        ? await fetchLogsByScanOrder({
+            url: portalUrl,
+            query,
+            fromBlock: resolvedFromBlock,
+            toBlock: pageToBlock,
+            limit,
+            chunkSize: hasFilters ? 500 : 100,
+            scanOrder: scan_order,
+          })
+        : undefined
+      const results = scanResult
+        ? []
+        : await portalFetchRecentRecords(portalUrl, query, {
+            itemKeys: ['logs'],
+            limit: fetchLimit,
+            chunkSize: hasFilters ? 500 : 100,
+          })
 
-      const allLogs = sortLogs(flattenLogsWithBlockContext(results) as EvmLogItem[])
-      const page = paginateAscendingItems(
-        allLogs,
-        limit,
-        getBlockNumber,
-        paginationCursor
-          ? {
-              page_to_block: paginationCursor.page_to_block,
-              skip_inclusive_block: paginationCursor.skip_inclusive_block,
-            }
-          : undefined,
-      )
-      const nextCursor = page.hasMore && page.nextBoundary
+      const allLogs = scanResult ? scanResult.items : sortLogs(flattenLogsWithBlockContext(results) as EvmLogItem[])
+      const page = scanResult
+        ? {
+            pageItems: scanResult.items,
+            hasMore: scanResult.hasMore,
+            nextBoundary: undefined,
+          }
+        : paginateAscendingItems(
+            allLogs,
+            limit,
+            getBlockNumber,
+            paginationCursor
+              ? {
+                  page_to_block: paginationCursor.page_to_block,
+                  skip_inclusive_block: paginationCursor.skip_inclusive_block,
+                }
+              : undefined,
+          )
+      const nextCursor = !scanResult && page.hasMore && page.nextBoundary
         ? encodeRecentPageCursor<QueryLogsRequest>({
             tool: 'portal_evm_query_logs',
             dataset,
@@ -391,10 +474,12 @@ export function registerQueryLogsTool(server: McpServer) {
               limit,
               finalized_only,
               ...(normalizedAddresses ? { addresses: normalizedAddresses } : {}),
-              ...(topic0 ? { topic0 } : {}),
+              ...(event ? { event } : {}),
+              ...(normalizedTopic0.length > 0 ? { topic0: normalizedTopic0 } : {}),
               ...(topic1 ? { topic1 } : {}),
               ...(topic2 ? { topic2 } : {}),
               ...(topic3 ? { topic3 } : {}),
+              scan_order,
               field_preset,
               response_format: effectiveResponseFormat,
               include_transaction,
@@ -429,6 +514,7 @@ export function registerQueryLogsTool(server: McpServer) {
       const formattedData = applyResponseFormat(decodedItems, effectiveResponseFormat, 'logs')
       const notices = [...getTimestampWindowNotices(resolvedBlocks), ...getValidationNotices(validation)]
       if (nextCursor) notices.push('Older results are available via _pagination.next_cursor.')
+      if (scanResult && page.hasMore) notices.push(`More matching logs may exist outside the scanned ${scanResult.scannedFromBlock}-${scanResult.scannedToBlock} block slice.`)
       const freshness = buildQueryFreshness({
         finality: finalized_only ? 'finalized' : 'latest',
         headBlockNumber: head.number,
@@ -438,7 +524,7 @@ export function registerQueryLogsTool(server: McpServer) {
       const coverage = buildQueryCoverage({
         windowFromBlock: resolvedFromBlock,
         windowToBlock: endBlock,
-        pageToBlock,
+        pageToBlock: scanResult && scan_order === 'earliest' ? scanResult.scannedToBlock : pageToBlock,
         items: page.pageItems,
         getBlockNumber,
         hasMore: page.hasMore,
@@ -447,7 +533,9 @@ export function registerQueryLogsTool(server: McpServer) {
       const message =
         effectiveResponseFormat === 'summary'
           ? `Log summary for ${page.pageItems.length} logs${page.hasMore ? ' (latest preview page)' : ''}`
-          : `Retrieved ${page.pageItems.length} logs${page.hasMore ? ` from the most recent matching blocks (preview page limited to ${limit})` : ''}`
+          : scanResult
+            ? `Retrieved ${page.pageItems.length} logs by scanning forward from the start of the window`
+            : `Retrieved ${page.pageItems.length} logs${page.hasMore ? ` from the most recent matching blocks (preview page limited to ${limit})` : ''}`
 
       return formatResult(formattedData, message, {
         toolName: 'portal_evm_query_logs',
@@ -466,6 +554,7 @@ export function registerQueryLogsTool(server: McpServer) {
           from_block: resolvedFromBlock,
           to_block: endBlock,
           page_to_block: pageToBlock,
+          scan_order,
           range_kind: resolvedBlocks.range_kind,
           decode,
           notes: [

@@ -13,6 +13,7 @@ import { registerQueryBlocksTool } from './evm/query-blocks.js'
 import { registerQueryLogsTool } from './evm/query-logs.js'
 import { registerQueryTransactionsTool } from './evm/query-transactions.js'
 import { registerGetErc20TransfersTool } from './evm/erc20-transfers.js'
+import { registerContractDeploymentTool } from './evm/contract-deployment.js'
 import { registerEvmOhlcTool } from './evm/ohlc.js'
 
 import {
@@ -58,10 +59,11 @@ export function registerAllTools(server: McpServer) {
   registerGetWalletSummaryTool(server)
   registerGetTimeSeriesDataTool(server)
 
-  // Public EVM (6)
+  // Public EVM (7)
   registerQueryLogsTool(server)
   registerQueryTransactionsTool(server)
   registerGetErc20TransfersTool(server)
+  registerContractDeploymentTool(server)
   registerGetContractActivityTool(server)
   registerGetTopContractsTool(server)
   registerEvmOhlcTool(server)

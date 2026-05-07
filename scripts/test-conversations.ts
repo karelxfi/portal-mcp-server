@@ -128,6 +128,82 @@ const SCENARIOS: ConversationScenario[] = [
     ],
   },
   {
+    name: 'EVM Investigator',
+    steps: [
+      {
+        user: 'which tx was the first one on ethereum mainnet with tx type 0x1? start searching from 12,244,000',
+        tool: 'portal_evm_query_transactions',
+        args: () => ({
+          network: 'ethereum-mainnet',
+          from_block: 12_244_000,
+          to_block: 12_244_200,
+          transaction_type: '0x1',
+          scan_order: 'earliest',
+          limit: 1,
+          field_preset: 'minimal',
+        }),
+        validate: (data) => {
+          assert(data.items?.[0]?.hash === '0x851bad0415758075a1eb86776749c829b866d43179c57c3e4a4b9359a0358231', 'EIP-2930 lookup should return the known first type 0x1 tx')
+          assert(data._execution?.scan_order === 'earliest', 'EIP-2930 lookup should scan earliest first')
+        },
+      },
+      {
+        user: 'show me the first recent USDC Transfer event on Base',
+        tool: 'portal_evm_query_logs',
+        args: (context) => ({
+          network: 'base',
+          from_block: context.baseHead - 2_000,
+          to_block: context.baseHead,
+          addresses: [context.usdcBase],
+          event: 'transfer',
+          scan_order: 'earliest',
+          limit: 1,
+          field_preset: 'minimal',
+        }),
+        validate: (data) => {
+          assert(Array.isArray(data.items) && data.items.length === 1, 'Event alias query should return one Transfer log')
+          assert(data._execution?.scan_order === 'earliest', 'Event alias query should preserve earliest scan metadata')
+        },
+      },
+      {
+        user: 'who deployed this recent Base contract and what was the deployment tx',
+        tool: 'portal_evm_get_contract_deployment',
+        args: (context) => ({
+          network: 'base',
+          contract_address: context.recentDeploymentContract,
+          from_block: context.recentDeploymentFromBlock,
+          to_block: context.recentDeploymentToBlock,
+          scan_order: 'earliest',
+        }),
+        validate: (data) => {
+          assert(data.items?.[0]?.deployed_contract_address, 'Deployment lookup should return deployed contract address')
+          assert(data.items?.[0]?.transaction_hash, 'Deployment lookup should return parent transaction hash')
+          assert(data.items?.[0]?.deployer, 'Deployment lookup should return deployer')
+        },
+      },
+      {
+        user: 'show me the top gas-used USDC transfer calls on Base recently',
+        tool: 'portal_evm_query_transactions',
+        args: (context) => ({
+          network: 'base',
+          from_block: context.baseHead - 5_000,
+          to_block: context.baseHead,
+          to_addresses: [context.usdcBase],
+          method: 'transfer',
+          order_by: 'gas_used_desc',
+          scan_order: 'latest',
+          max_scan_blocks: 5_000,
+          limit: 3,
+          field_preset: 'standard',
+        }),
+        validate: (data) => {
+          assert(Array.isArray(data.items) && data.items.length > 0, 'Ranked transaction query should return rows')
+          assert(data._execution?.order_by === 'gas_used_desc', 'Ranked transaction query should expose order_by metadata')
+        },
+      },
+    ],
+  },
+  {
     name: 'Hyperliquid User',
     steps: [
       {

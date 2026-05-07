@@ -375,6 +375,25 @@ function scoreTool(
   const traderPrompt = promptTokens.some((token) => ['most', 'top', 'trader', 'traders', 'volume'].includes(token))
   const namingPrompt = promptTokens.some((token) => ['alias', 'call', 'chain', 'name', 'network'].includes(token))
   const hyperliquidPrompt = promptTokens.includes('hyperliquid')
+  const gasRankedTransactionPrompt =
+    promptTokens.includes('gas')
+    && promptTokens.some((token) => ['biggest', 'largest', 'rank', 'ranked', 'top', 'used'].includes(token))
+    && promptTokens.some((token) => ['call', 'calls', 'transaction', 'transactions', 'transfer', 'transfers', 'tx', 'txs'].includes(token))
+  const firstEvmEventPrompt =
+    promptTokens.includes('first')
+    && promptTokens.some((token) => ['event', 'events', 'log', 'logs', 'transfer', 'transfers'].includes(token))
+    && (
+      vmHints.has('evm')
+      || promptTokens.includes('contract')
+      || /\bemitted by\b/.test(promptLower)
+    )
+  const tokenTransferOnlyPrompt =
+    vmHints.has('evm')
+    && (
+      /\btoken transfers?\b/.test(promptLower)
+      || /\busdc transfers?\b/.test(promptLower)
+      || /\bnot all logs?\b/.test(promptLower)
+    )
 
   if (profile.audience === 'advanced') {
     score += debugPrompt ? 5 : -7
@@ -387,7 +406,7 @@ function scoreTool(
     if (vmMatch) {
       score += profile.vm.includes('cross-chain') ? 1.5 : 3.5
     } else {
-      score -= 40
+      score -= 90
     }
   }
 
@@ -427,6 +446,23 @@ function scoreTool(
     score += profile.name === 'portal_hyperliquid_query_fills' ? -3 : 0
   }
 
+  if (gasRankedTransactionPrompt) {
+    score += profile.name === 'portal_evm_query_transactions' ? 42 : 0
+    score += profile.name === 'portal_evm_query_token_transfers' ? -20 : 0
+    score += profile.name.startsWith('portal_substrate_') ? -18 : 0
+  }
+
+  if (firstEvmEventPrompt) {
+    score += profile.name === 'portal_evm_query_logs' ? 20 : 0
+    score += profile.name === 'portal_evm_query_token_transfers' ? 6 : 0
+    score += profile.name.startsWith('portal_substrate_') ? -14 : 0
+  }
+
+  if (tokenTransferOnlyPrompt) {
+    score += profile.name === 'portal_evm_query_token_transfers' ? 24 : 0
+    score += profile.name === 'portal_evm_query_logs' ? -8 : 0
+  }
+
   if (namingPrompt) {
     score += profile.name === 'portal_list_networks' ? 14 : 0
   }
@@ -459,7 +495,7 @@ function rankTools(prompt: string, profiles: ToolProfile[], tokenIdf: Map<string
 }
 
 async function main() {
-  console.log(`Routing-eval: ranking ${ROUTING_EVAL_CASES.length} naive prompts against the live 26-tool catalog...\n`)
+  console.log(`Routing-eval: ranking ${ROUTING_EVAL_CASES.length} naive prompts against the live 27-tool catalog...\n`)
 
   const transport = new StdioClientTransport({ command: 'node', args: ['dist/index.js'] })
   const client = new Client({ name: 'routing-eval', version: '1.0.0' })
@@ -468,7 +504,7 @@ async function main() {
   const { tools } = await client.listTools()
   const actualNames = new Set(tools.map((tool) => tool.name))
   const legacyStillExposed = LEGACY_TOOL_NAMES.filter((name) => actualNames.has(name))
-  assert(tools.length === 26, `Expected exactly 26 tools, got ${tools.length}`)
+  assert(tools.length === 27, `Expected exactly 27 tools, got ${tools.length}`)
   assert(legacyStillExposed.length === 0, `Legacy tool names are still exposed: ${legacyStillExposed.join(', ')}`)
 
   const listedTools = tools.map((tool) => ({ name: tool.name, description: tool.description ?? '' }))

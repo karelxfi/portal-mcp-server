@@ -6,7 +6,7 @@ This server does not index chains itself. It validates user input, maps it onto 
 
 ## Current public surface
 
-- `23` public tools
+- `24` public tools
 - `3` advanced/debug tools
 - public params use `network`
 - discovery filters use `vm`
@@ -30,6 +30,7 @@ EVM:
 - `portal_evm_query_transactions`
 - `portal_evm_query_logs`
 - `portal_evm_query_token_transfers`
+- `portal_evm_get_contract_deployment`
 - `portal_evm_get_contract_activity`
 - `portal_evm_get_analytics`
 - `portal_evm_get_ohlc`
