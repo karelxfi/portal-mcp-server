@@ -1,8 +1,10 @@
+import { registerAppTool } from '@modelcontextprotocol/ext-apps/server'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { z } from 'zod'
 
 import { getBlockHead, resolveDataset } from '../../cache/datasets.js'
 import { createQueryCache, stableCacheKey } from '../../cache/query-cache.js'
+import { PORTAL_APP_RESOURCE_URI } from '../../constants/apps.js'
 import { EVENT_SIGNATURES, PORTAL_URL } from '../../constants/index.js'
 import { detectChainType, isL2Chain } from '../../helpers/chain.js'
 import { buildTableDescriptor } from '../../helpers/chart-metadata.js'
@@ -510,34 +512,43 @@ function buildWalletLlmOverrides(vm: 'evm' | 'solana' | 'bitcoin' | 'hyperliquid
 export function registerGetWalletSummaryTool(server: McpServer) {
   const FAST_MODE_BLOCK_CAP = 3000
 
-  server.tool(
+  registerAppTool(
+    server,
     'portal_get_wallet_summary',
-    buildToolDescription('portal_get_wallet_summary'),
     {
-      network: z.string().optional().describe('Network name or alias. Optional when continuing with cursor.'),
-      address: z.string().optional().describe('Wallet address to analyze. Optional when continuing with cursor.'),
-      timeframe: z
-        .string()
-        .optional()
-        .default('1000')
-        .describe("Look-back period as timeframe or block count. Examples: '1h', '24h', '7d', '3d', '1000'."),
-      from_timestamp: z
-        .union([z.string(), z.number()])
-        .optional()
-        .describe('Natural start time like "1h ago", ISO datetime, or Unix timestamp'),
-      to_timestamp: z
-        .union([z.string(), z.number()])
-        .optional()
-        .describe('Natural end time like "now", ISO datetime, or Unix timestamp'),
-      include_tokens: z.boolean().optional().default(true).describe('Include ERC20 token transfers'),
-      include_nfts: z.boolean().optional().default(false).describe('Include NFT transfers (ERC721/1155)'),
-      limit_per_type: z.number().optional().default(10).describe('Max items per category (txs, tokens, nfts)'),
-      mode: z
-        .enum(['fast', 'deep'])
-        .optional()
-        .default('fast')
-        .describe('fast = cap the scanned window for responsiveness, deep = use the full requested wallet window'),
-      cursor: z.string().optional().describe('Continuation cursor from a previous response'),
+      title: 'Portal Wallet Summary',
+      description: buildToolDescription('portal_get_wallet_summary'),
+      inputSchema: {
+        network: z.string().optional().describe('Network name or alias. Optional when continuing with cursor.'),
+        address: z.string().optional().describe('Wallet address to analyze. Optional when continuing with cursor.'),
+        timeframe: z
+          .string()
+          .optional()
+          .default('1000')
+          .describe("Look-back period as timeframe or block count. Examples: '1h', '24h', '7d', '3d', '1000'."),
+        from_timestamp: z
+          .union([z.string(), z.number()])
+          .optional()
+          .describe('Natural start time like "1h ago", ISO datetime, or Unix timestamp'),
+        to_timestamp: z
+          .union([z.string(), z.number()])
+          .optional()
+          .describe('Natural end time like "now", ISO datetime, or Unix timestamp'),
+        include_tokens: z.boolean().optional().default(true).describe('Include ERC20 token transfers'),
+        include_nfts: z.boolean().optional().default(false).describe('Include NFT transfers (ERC721/1155)'),
+        limit_per_type: z.number().optional().default(10).describe('Max items per category (txs, tokens, nfts)'),
+        mode: z
+          .enum(['fast', 'deep'])
+          .optional()
+          .default('fast')
+          .describe('fast = cap the scanned window for responsiveness, deep = use the full requested wallet window'),
+        cursor: z.string().optional().describe('Continuation cursor from a previous response'),
+      },
+      _meta: {
+        ui: {
+          resourceUri: PORTAL_APP_RESOURCE_URI,
+        },
+      },
     },
     async ({ network, address, timeframe, from_timestamp, to_timestamp, include_tokens, include_nfts, limit_per_type, mode, cursor }) => {
       const queryStartTime = Date.now()

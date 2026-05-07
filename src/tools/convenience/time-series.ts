@@ -1,8 +1,10 @@
+import { registerAppTool } from '@modelcontextprotocol/ext-apps/server'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { z } from 'zod'
 
 import { getBlockHead, resolveDataset, validateBlockRange } from '../../cache/datasets.js'
 import { createQueryCache, stableCacheKey } from '../../cache/query-cache.js'
+import { PORTAL_APP_RESOURCE_URI } from '../../constants/apps.js'
 import { PORTAL_URL } from '../../constants/index.js'
 import {
   buildTableDescriptor,
@@ -568,52 +570,61 @@ function buildGroupedContractUi(): ReturnType<typeof buildPortalUi> {
 }
 
 export function registerGetTimeSeriesDataTool(server: McpServer) {
-  server.tool(
+  registerAppTool(
+    server,
     'portal_get_time_series',
-    buildToolDescription('portal_get_time_series'),
     {
-      network: z.string().describe("Network name (supports short names: 'ethereum', 'polygon', 'base', etc.)"),
-      metric: z
-        .enum([
-          'transaction_count',
-          'transactions_per_block',
-          'avg_gas_price',
-          'gas_used',
-          'block_utilization',
-          'unique_addresses',
-          'tps',
-          'avg_fee',
-          'success_rate',
-          'slots_per_hour',
-          'fees_btc',
-          'block_size_bytes',
-          'volume',
-          'fill_count',
-          'unique_traders',
-        ])
-        .describe('Metric to aggregate over time'),
-      interval: z.enum(['5m', '15m', '1h', '6h', '1d']).describe('Time bucket interval (5m, 15m, 1h, 6h, 1d)'),
-      duration: z.enum(['1h', '6h', '24h', '7d', '30d']).describe('Total time period to analyze'),
-      address: z
-        .string()
-        .optional()
-        .describe('Optional: Filter to specific contract address for contract-specific trends'),
-      from_timestamp: z
-        .union([z.number(), z.string()])
-        .optional()
-        .describe('Optional natural start time like "24h ago", ISO datetime, or Unix timestamp'),
-      to_timestamp: z
-        .union([z.number(), z.string()])
-        .optional()
-        .describe('Optional natural end time like "now", ISO datetime, or Unix timestamp'),
-      compare_previous: z.boolean().optional().default(false).describe('Compare the selected window against the immediately previous window'),
-      group_by: z.enum(['none', 'contract']).optional().default('none').describe('Optional grouping mode. contract is currently supported only for EVM transaction_count'),
-      group_limit: z.number().optional().default(5).describe('Maximum number of contract groups when group_by=contract'),
-      mode: z
-        .enum(['fast', 'deep'])
-        .optional()
-        .default('deep')
-        .describe('Optional execution depth. The default prioritizes a complete requested window; use fast only for an explicit quick preview.'),
+      title: 'Portal Time Series',
+      description: buildToolDescription('portal_get_time_series'),
+      inputSchema: {
+        network: z.string().describe("Network name (supports short names: 'ethereum', 'polygon', 'base', etc.)"),
+        metric: z
+          .enum([
+            'transaction_count',
+            'transactions_per_block',
+            'avg_gas_price',
+            'gas_used',
+            'block_utilization',
+            'unique_addresses',
+            'tps',
+            'avg_fee',
+            'success_rate',
+            'slots_per_hour',
+            'fees_btc',
+            'block_size_bytes',
+            'volume',
+            'fill_count',
+            'unique_traders',
+          ])
+          .describe('Metric to aggregate over time'),
+        interval: z.enum(['5m', '15m', '1h', '6h', '1d']).describe('Time bucket interval (5m, 15m, 1h, 6h, 1d)'),
+        duration: z.enum(['1h', '6h', '24h', '7d', '30d']).describe('Total time period to analyze'),
+        address: z
+          .string()
+          .optional()
+          .describe('Optional: Filter to specific contract address for contract-specific trends'),
+        from_timestamp: z
+          .union([z.number(), z.string()])
+          .optional()
+          .describe('Optional natural start time like "24h ago", ISO datetime, or Unix timestamp'),
+        to_timestamp: z
+          .union([z.number(), z.string()])
+          .optional()
+          .describe('Optional natural end time like "now", ISO datetime, or Unix timestamp'),
+        compare_previous: z.boolean().optional().default(false).describe('Compare the selected window against the immediately previous window'),
+        group_by: z.enum(['none', 'contract']).optional().default('none').describe('Optional grouping mode. contract is currently supported only for EVM transaction_count'),
+        group_limit: z.number().optional().default(5).describe('Maximum number of contract groups when group_by=contract'),
+        mode: z
+          .enum(['fast', 'deep'])
+          .optional()
+          .default('deep')
+          .describe('Optional execution depth. The default prioritizes a complete requested window; use fast only for an explicit quick preview.'),
+      },
+      _meta: {
+        ui: {
+          resourceUri: PORTAL_APP_RESOURCE_URI,
+        },
+      },
     },
     async ({ network, metric, interval, duration, address, from_timestamp, to_timestamp, compare_previous, group_by, group_limit, mode }) => {
       const queryStartTime = Date.now()

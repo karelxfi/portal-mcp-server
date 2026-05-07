@@ -59,6 +59,9 @@ const SCENARIOS: ConversationScenario[] = [
         validate: (data) => {
           assert(Array.isArray(data.time_series) && data.time_series.length >= 12, 'Time series should return chart buckets')
           assert(typeof data.answer === 'string' && data.answer.includes('Base'), 'Time series should include a concise natural-language answer')
+          assert(data._ui?.layout, 'Time series should include app layout metadata')
+          assert(Array.isArray(data._ui?.panels) && data._ui.panels.length > 0, 'Time series should include app panels')
+          assert(data._ui.panels.every((panel: any) => panel.kind !== 'table_panel'), 'Simple time series UI should not render bucket tables by default')
         },
       },
     ],
@@ -115,6 +118,7 @@ const SCENARIOS: ConversationScenario[] = [
         validate: (data) => {
           assert(data.overview?.vm === 'evm', 'Wallet summary should resolve EVM wallet')
           assert(data.next_steps?.actions?.length > 0, 'Wallet summary should expose next steps')
+          assert(Array.isArray(data._ui?.panels) && data._ui.panels.length > 0, 'Wallet summary should include app panels')
         },
       },
       {

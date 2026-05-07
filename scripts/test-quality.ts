@@ -102,6 +102,11 @@ async function main() {
           expectNextSteps: Array.isArray(data?._ui?.follow_up_actions) && data._ui.follow_up_actions.length > 0,
         })
 
+        if (spec.name === 'portal_get_time_series' || spec.name === 'portal_get_wallet_summary' || spec.name === 'portal_evm_get_analytics') {
+          assert(Array.isArray(data?._ui?.panels) && data._ui.panels.length > 0, `${spec.name} should include app panels`)
+          assert(data?._ui?.headline?.title, `${spec.name} should include app headline`)
+        }
+
         const responseSizeBudget = getResponseSizeBudget(data)
         if (result.text.length > responseSizeBudget) {
           failures.push({ tool: spec.name, message: `response exceeded size budget (${result.text.length} chars > ${responseSizeBudget})` })

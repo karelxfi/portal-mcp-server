@@ -4,6 +4,9 @@ node_modules/
 # Build output
 dist/
 build/
+.preview/
+.preview-dist/
+storybook-static/
 
 .idea/
 
@@ -84,6 +87,7 @@ pnpm-lock.yaml
 # Coverage reports
 coverage/
 .nyc_output/
+output/playwright/
 
 # Backup files
 *.backup

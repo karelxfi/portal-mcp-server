@@ -1,8 +1,10 @@
+import { registerAppTool } from '@modelcontextprotocol/ext-apps/server'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { keccak_256 } from '@noble/hashes/sha3'
 import { z } from 'zod'
 
 import { resolveDataset, validateBlockRange } from '../../cache/datasets.js'
+import { PORTAL_APP_RESOURCE_URI } from '../../constants/apps.js'
 import { EVENT_SIGNATURES, PORTAL_URL } from '../../constants/index.js'
 import {
   buildTableDescriptor,
@@ -833,10 +835,18 @@ function isTimeoutLikeMessage(message: string) {
 }
 
 export function registerEvmOhlcTool(server: McpServer) {
-  server.tool(
+  registerAppTool(
+    server,
     'portal_evm_get_ohlc',
-    buildToolDescription('portal_evm_get_ohlc'),
     {
+      title: 'Portal EVM OHLC',
+      description: buildToolDescription('portal_evm_get_ohlc'),
+      _meta: {
+        ui: {
+          resourceUri: PORTAL_APP_RESOURCE_URI,
+        },
+      },
+      inputSchema: {
       network: z.string().optional().default('base-mainnet').describe('EVM network name (default: base-mainnet)'),
       pool_address: z.string().optional().describe('Pool/pair contract address for address-keyed sources like Uniswap v3, Slipstream, or Sync-derived CPMM pools.'),
       pool_id: z.string().optional().describe('Uniswap v4 pool id (bytes32). Optional when you provide the full v4 pool key instead.'),
@@ -876,6 +886,7 @@ export function registerEvmOhlcTool(server: McpServer) {
       token0_address: z.string().optional().describe('Optional token0 address to infer known decimals'),
       token1_address: z.string().optional().describe('Optional token1 address to infer known decimals'),
       cursor: z.string().optional().describe('Continuation cursor from a previous candle page'),
+      },
     },
     async ({
       network,
