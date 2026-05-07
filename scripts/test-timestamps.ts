@@ -1,12 +1,62 @@
 #!/usr/bin/env tsx
 
 import { getBlockHead } from '../dist/cache/datasets.js'
+import { getDatasets } from '../dist/cache/datasets.js'
 import { getHeadTimestamp, resolveBlockAtTimestamp, resolveTimeframeOrBlocks, timestampToBlock } from '../dist/helpers/timeframe.js'
+
+const REALTIME_MATRIX_CONCURRENCY = 5
 
 function assert(condition: boolean, message: string) {
   if (!condition) {
     throw new Error(`Assertion failed: ${message}`)
   }
+}
+
+async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const results = new Array<R>(items.length)
+  let next = 0
+
+  async function worker() {
+    while (next < items.length) {
+      const index = next
+      next += 1
+      results[index] = await fn(items[index])
+    }
+  }
+
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker))
+  return results
+}
+
+async function assertRealtimeTimestampMatrix() {
+  const datasets = await getDatasets()
+  const realtimeDatasets = datasets.filter((dataset) => dataset.real_time)
+
+  const rows = await mapLimit(realtimeDatasets, REALTIME_MATRIX_CONCURRENCY, async (dataset) => {
+    const head = await getBlockHead(dataset.dataset)
+    const headTimestamp = await getHeadTimestamp(dataset.dataset, head.number)
+    const window = await resolveTimeframeOrBlocks({ dataset: dataset.dataset, timeframe: '1h' })
+
+    assert(Number.isFinite(headTimestamp) && headTimestamp > 1_000_000_000, `${dataset.dataset} should expose a latest block timestamp`)
+    assert(window.to_block === head.number, `${dataset.dataset} 1h window should anchor to the latest indexed head`)
+    assert(window.from_block <= window.to_block, `${dataset.dataset} 1h window should be ordered`)
+
+    return {
+      dataset: dataset.dataset,
+      kind: dataset.metadata?.kind ?? 'unknown',
+      head: head.number,
+      headTimestamp,
+      fromBlock: window.from_block,
+      toBlock: window.to_block,
+    }
+  })
+
+  const byKind = rows.reduce<Record<string, number>>((acc, row) => {
+    acc[row.kind] = (acc[row.kind] ?? 0) + 1
+    return acc
+  }, {})
+
+  console.log(`PASS  real-time timestamp matrix -> ${rows.length} datasets (${Object.entries(byKind).map(([kind, count]) => `${kind}:${count}`).join(', ')})`)
 }
 
 async function main() {
@@ -33,6 +83,8 @@ async function main() {
     assert(nowLookup.head_timestamp === headTimestamp, 'Solana "now" estimate should use the resolved head timestamp')
   }
   console.log(`PASS  Solana now lookup -> ${nowLookup.block_number} (${nowLookup.resolution})`)
+
+  await assertRealtimeTimestampMatrix()
 
   console.log('\nTimestamp resolver QA passed')
 }

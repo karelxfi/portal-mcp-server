@@ -50,6 +50,7 @@ Runs focused timestamp resolver QA. It:
 - verifies Solana head timestamp lookup uses Portal's real `block.timestamp` field
 - checks recent `1h` Solana windows are anchored to the latest indexed slot timestamp and resolved through Portal's timestamp lookup
 - confirms `"now"` timestamp requests gracefully estimate from the indexed head when hotblocks reject wall-clock now
+- checks every `real_time: true` dataset from Portal's live dataset catalog can read the latest block timestamp and produce a `1h` window
 
 ### `npm run test:observability`
 Runs focused HTTP observability QA. It:
