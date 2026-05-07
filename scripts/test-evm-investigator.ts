@@ -32,7 +32,10 @@ function readBigInt(value: unknown): bigint {
 
 function expectDescending(items: any[], field: string, label: string) {
   for (let index = 1; index < items.length; index += 1) {
-    assert(readBigInt(items[index - 1]?.[field]) >= readBigInt(items[index]?.[field]), `${label} should be sorted descending by ${field}`)
+    assert(
+      readBigInt(items[index - 1]?.[field]) >= readBigInt(items[index]?.[field]),
+      `${label} should be sorted descending by ${field}`,
+    )
   }
 }
 
@@ -49,7 +52,8 @@ async function main() {
 
   try {
     const context = await loadToolTestContext(client)
-    const ethereumHead = (await callToolWithRetry(client, 'portal_get_head', { network: 'ethereum-mainnet' })).data.number as number
+    const ethereumHead = (await callToolWithRetry(client, 'portal_get_head', { network: 'ethereum-mainnet' })).data
+      .number as number
     const baseWindowFrom = context.baseHead - 5_000
     const wideBaseWindowFrom = context.baseHead - 50_000
 
@@ -79,7 +83,10 @@ async function main() {
       response_format: 'full',
     })
     const creationTx = getItems(creationFixture.data)[0]
-    assert(creationTx?.from && typeof creationTx.block_number === 'number', 'Expected a recent Base contract creation fixture')
+    assert(
+      creationTx?.from && typeof creationTx.block_number === 'number',
+      'Expected a recent Base contract creation fixture',
+    )
 
     const approvalFixture = await callToolWithRetry(client, 'portal_evm_query_logs', {
       network: 'base',
@@ -92,7 +99,10 @@ async function main() {
       field_preset: 'minimal',
     })
     const approvalLog = getItems(approvalFixture.data)[0]
-    assert(approvalLog?.topics?.[0] === EVENT_SIGNATURES.APPROVAL_ERC20 && approvalLog?.topics?.[1], 'Expected a recent USDC Approval fixture')
+    assert(
+      approvalLog?.topics?.[0] === EVENT_SIGNATURES.APPROVAL_ERC20 && approvalLog?.topics?.[1],
+      'Expected a recent USDC Approval fixture',
+    )
     const approvalOwnerTopic = approvalLog.topics[1]
     const approvalOwner = topicAddress(approvalOwnerTopic)
 
@@ -143,7 +153,10 @@ async function main() {
           const lastTx = getItems(last.data)[0]
           assert(firstTx?.sighash === ERC20_TRANSFER_SIGHASH, 'Expected first tx to use transfer sighash')
           assert(lastTx?.sighash === ERC20_TRANSFER_SIGHASH, 'Expected last tx to use transfer sighash')
-          assert(firstTx.block_number <= lastTx.block_number, 'Expected first transfer call block <= latest transfer call block')
+          assert(
+            firstTx.block_number <= lastTx.block_number,
+            'Expected first transfer call block <= latest transfer call block',
+          )
         },
       },
       {
@@ -181,7 +194,10 @@ async function main() {
             field_preset: 'standard',
           })
           const item = getItems(result.data)[0]
-          assert(String(item?.from).toLowerCase() === String(creationTx.from).toLowerCase(), 'Expected contract creation sender match')
+          assert(
+            String(item?.from).toLowerCase() === String(creationTx.from).toLowerCase(),
+            'Expected contract creation sender match',
+          )
           assert(item?.to === null || item?.contractAddress, 'Expected contract creation shape')
         },
       },
@@ -202,7 +218,10 @@ async function main() {
           })
           const valueItems = getItems(valueResult.data)
           assert(valueItems.length > 0, 'Expected native-value txs on Ethereum')
-          assert(valueItems.every((item) => readBigInt(item.value_wei) >= 1n), 'Expected value threshold to hold')
+          assert(
+            valueItems.every((item) => readBigInt(item.value_wei) >= 1n),
+            'Expected value threshold to hold',
+          )
           expectDescending(valueItems, 'value_wei', 'Native transfer ranking')
 
           const gasResult = await callToolWithRetry(client, 'portal_evm_query_transactions', {
@@ -215,7 +234,10 @@ async function main() {
             field_preset: 'standard',
             response_format: 'full',
           })
-          assert(getItems(gasResult.data).every((item) => readBigInt(item.gasUsed) >= 21_000n), 'Expected gas threshold to hold')
+          assert(
+            getItems(gasResult.data).every((item) => readBigInt(item.gasUsed) >= 21_000n),
+            'Expected gas threshold to hold',
+          )
         },
       },
       {
@@ -249,7 +271,14 @@ async function main() {
           })
           const item = getItems(result.data)[0]
           assert(item?.address?.toLowerCase() === context.baseUniswapV3Pool, 'Expected swap event from selected pool')
-          assert([EVENT_SIGNATURES.UNISWAP_V2_SWAP, EVENT_SIGNATURES.UNISWAP_V3_SWAP, EVENT_SIGNATURES.UNISWAP_V4_SWAP].includes(item?.topics?.[0]), 'Expected swap alias topic')
+          assert(
+            [
+              EVENT_SIGNATURES.UNISWAP_V2_SWAP,
+              EVENT_SIGNATURES.UNISWAP_V3_SWAP,
+              EVENT_SIGNATURES.UNISWAP_V4_SWAP,
+            ].includes(item?.topics?.[0]),
+            'Expected swap alias topic',
+          )
         },
       },
       {
@@ -302,9 +331,53 @@ async function main() {
             scan_order: 'earliest',
           })
           const item = getItems(result.data)[0]
-          assert(item?.deployed_contract_address?.toLowerCase() === context.recentDeploymentContract, 'Expected deployment contract match')
+          assert(
+            item?.deployed_contract_address?.toLowerCase() === context.recentDeploymentContract,
+            'Expected deployment contract match',
+          )
           assert(item?.transaction_hash?.startsWith('0x'), 'Expected deployment tx hash')
           assert(item?.deployer?.startsWith('0x'), 'Expected deployer address')
+        },
+      },
+      {
+        name: 'BAYC alias deployment lookup across a broad historical window',
+        run: async () => {
+          const result = await callToolWithRetry(client, 'portal_evm_get_contract_deployment', {
+            network: 'ethereum-mainnet',
+            contract: 'bored apes',
+            from_block: 12_000_000,
+            to_block: 13_000_000,
+            scan_order: 'earliest',
+            max_scan_blocks: 1_000_000,
+          })
+          const item = getItems(result.data)[0]
+          assert(
+            item?.deployed_contract_address?.toLowerCase() === '0xbc4ca0eda7647a8ab7c2061c2e118a18a936f13d',
+            'Expected BAYC alias to resolve to the BAYC contract',
+          )
+          assert(item?.block_number === 12_287_507, 'Expected BAYC deployment block')
+          assert(
+            item?.transaction_hash === '0x22199329b0aa1aa68902a78e3b32ca327c872fab166c7a2838273de6ad383eba',
+            'Expected BAYC deployment tx',
+          )
+          assert(JSON.stringify(result.data).includes('Resolved contract alias'), 'Expected alias resolution notice')
+        },
+      },
+      {
+        name: 'contract deployment empty window guidance',
+        run: async () => {
+          const result = await callToolWithRetry(client, 'portal_evm_get_contract_deployment', {
+            network: 'ethereum-mainnet',
+            contract_address: '0xbc4ca0eda7647a8ab7c2061c2e118a18a936f13d',
+            from_block: 12_290_000,
+            to_block: 12_300_000,
+            scan_order: 'earliest',
+          })
+          assert(getItems(result.data).length === 0, 'Expected empty result after BAYC deployment block')
+          assert(
+            JSON.stringify(result.data).includes('Move from_block earlier'),
+            'Expected guidance to expand the search backward',
+          )
         },
       },
       {
@@ -349,7 +422,10 @@ async function main() {
             field_preset: 'standard',
             response_format: 'full',
           })
-          assert(getItems(failedResult.data).every((item) => item.status === 0), 'Expected failed tx ranking/filter results')
+          assert(
+            getItems(failedResult.data).every((item) => item.status === 0),
+            'Expected failed tx ranking/filter results',
+          )
         },
       },
       {

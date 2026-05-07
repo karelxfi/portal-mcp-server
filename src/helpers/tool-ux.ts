@@ -1,13 +1,5 @@
 type ToolAudience = 'public' | 'advanced'
-type ToolCategory =
-  | 'discovery'
-  | 'convenience'
-  | 'evm'
-  | 'solana'
-  | 'bitcoin'
-  | 'substrate'
-  | 'hyperliquid'
-  | 'debug'
+type ToolCategory = 'discovery' | 'convenience' | 'evm' | 'solana' | 'bitcoin' | 'substrate' | 'hyperliquid' | 'debug'
 type ToolIntent = 'discover' | 'lookup' | 'query' | 'summary' | 'analytics' | 'chart' | 'debug'
 type ToolVm = 'cross-chain' | 'evm' | 'solana' | 'bitcoin' | 'substrate' | 'hyperliquid'
 type ToolResultKind = 'list' | 'summary' | 'chart' | 'lookup'
@@ -142,14 +134,20 @@ const TOOL_DEFINITIONS: Record<string, ToolDefinition> = {
     vm: ['cross-chain'],
     result_kind: 'list',
     normalized_output: true,
-    first_choice_for: ['recent activity on any supported network without manual block math', 'questions like "what has been happening on Base lately?"'],
+    first_choice_for: [
+      'recent activity on any supported network without manual block math',
+      'questions like "what has been happening on Base lately?"',
+    ],
     summary: 'Get a simple recent-activity feed across EVM, Solana, Bitcoin, or Hyperliquid with chronological paging.',
     when_to_use: [
       'You want a quick recent-activity feed for a network.',
       'You want to ask what has been happening lately on a network and see the newest activity first.',
       'You want the simplest starting point before reaching for raw VM-specific query tools.',
     ],
-    avoid_when: ['You need raw logs, instructions, or chain-specific fields that only raw query tools return.', 'You want a chart over time rather than a recent feed.'],
+    avoid_when: [
+      'You need raw logs, instructions, or chain-specific fields that only raw query tools return.',
+      'You want a chart over time rather than a recent feed.',
+    ],
     examples: [
       { label: 'Recent activity on Base', input: { network: 'base-mainnet', timeframe: '1h', limit: 10 } },
       { label: 'Recent Hyperliquid fills', input: { network: 'hyperliquid-fills', timeframe: '1h', limit: 10 } },
@@ -176,7 +174,10 @@ const TOOL_DEFINITIONS: Record<string, ToolDefinition> = {
     avoid_when: ['You need every raw record with full chain-specific fields and no summarization.'],
     examples: [
       { label: 'Fast EVM wallet summary', input: { network: 'base-mainnet', address: '0xabc...', timeframe: '24h' } },
-      { label: 'Deep Solana wallet summary', input: { network: 'solana-mainnet', address: 'Vote111...', timeframe: '6h', mode: 'deep' } },
+      {
+        label: 'Deep Solana wallet summary',
+        input: { network: 'solana-mainnet', address: 'Vote111...', timeframe: '6h', mode: 'deep' },
+      },
     ],
     supports: {
       pagination: true,
@@ -193,16 +194,32 @@ const TOOL_DEFINITIONS: Record<string, ToolDefinition> = {
     result_kind: 'chart',
     normalized_output: false,
     first_choice_for: ['activity over time, compare-current-vs-previous, grouped trends, and simple activity charts'],
-    summary: 'Build simple activity charts and other time-series views across supported VMs, including compare-previous windows and grouped EVM contract trends.',
+    summary:
+      'Build simple activity charts and other time-series views across supported VMs, including compare-previous windows and grouped EVM contract trends.',
     when_to_use: [
       'You want chart-ready metric buckets over time.',
       'You want a simple activity chart for a network over the last hour, day, or week.',
       'You want to compare the current period to the previous period.',
     ],
-    avoid_when: ['You need raw record lists instead of aggregated buckets.', 'You need DEX pool candles or OHLC output.'],
+    avoid_when: [
+      'You need raw record lists instead of aggregated buckets.',
+      'You need DEX pool candles or OHLC output.',
+    ],
     examples: [
-      { label: 'Base transactions per 5m bucket', input: { network: 'base-mainnet', metric: 'transaction_count', duration: '1h', interval: '5m' } },
-      { label: 'Compare two periods', input: { network: 'solana-mainnet', metric: 'transaction_count', duration: '1h', interval: '5m', compare_previous: true } },
+      {
+        label: 'Base transactions per 5m bucket',
+        input: { network: 'base-mainnet', metric: 'transaction_count', duration: '1h', interval: '5m' },
+      },
+      {
+        label: 'Compare two periods',
+        input: {
+          network: 'solana-mainnet',
+          metric: 'transaction_count',
+          duration: '1h',
+          interval: '5m',
+          compare_previous: true,
+        },
+      },
     ],
     supports: {
       modes: ['fast', 'deep'],
@@ -220,7 +237,8 @@ const TOOL_DEFINITIONS: Record<string, ToolDefinition> = {
     result_kind: 'list',
     normalized_output: true,
     first_choice_for: ['raw Substrate or Polkadot event rows with optional parent call or extrinsic context'],
-    summary: 'Query raw Substrate or Polkadot event rows with pallet/event-name filters and optional parent call or extrinsic context.',
+    summary:
+      'Query raw Substrate or Polkadot event rows with pallet/event-name filters and optional parent call or extrinsic context.',
     when_to_use: [
       'You need raw event records on a Substrate network.',
       'You want pallet-level event activity like Balances.Transfer or Contracts.ContractEmitted.',
@@ -228,7 +246,10 @@ const TOOL_DEFINITIONS: Record<string, ToolDefinition> = {
     ],
     avoid_when: ['You want calls or aggregate analytics rather than event rows.'],
     examples: [
-      { label: 'Balances.Transfer events on Polkadot', input: { network: 'polkadot', timeframe: '1h', event_names: ['Balances.Transfer'], limit: 20 } },
+      {
+        label: 'Balances.Transfer events on Polkadot',
+        input: { network: 'polkadot', timeframe: '1h', event_names: ['Balances.Transfer'], limit: 20 },
+      },
     ],
     supports: {
       pagination: true,
@@ -244,8 +265,11 @@ const TOOL_DEFINITIONS: Record<string, ToolDefinition> = {
     vm: ['substrate'],
     result_kind: 'list',
     normalized_output: true,
-    first_choice_for: ['raw Substrate or Polkadot call rows, especially when you want the events emitted by those calls'],
-    summary: 'Query raw Substrate or Polkadot calls with pallet/call-name filters and optional child-call, emitted-event, or extrinsic context.',
+    first_choice_for: [
+      'raw Substrate or Polkadot call rows, especially when you want the events emitted by those calls',
+    ],
+    summary:
+      'Query raw Substrate or Polkadot calls with pallet/call-name filters and optional child-call, emitted-event, or extrinsic context.',
     when_to_use: [
       'You need raw call records on a Substrate network.',
       'You want pallet call activity like Balances.transfer_keep_alive or Ethereum.transact.',
@@ -253,8 +277,20 @@ const TOOL_DEFINITIONS: Record<string, ToolDefinition> = {
     ],
     avoid_when: ['You want events or aggregate analytics rather than call rows.'],
     examples: [
-      { label: 'Recent Balances calls', input: { network: 'polkadot', timeframe: '1h', call_names: ['Balances.transfer_keep_alive'], limit: 20 } },
-      { label: 'Polkadot calls with emitted events', input: { network: 'polkadot', timeframe: '1h', call_names: ['ParaInherent.enter'], include_events: true, limit: 20 } },
+      {
+        label: 'Recent Balances calls',
+        input: { network: 'polkadot', timeframe: '1h', call_names: ['Balances.transfer_keep_alive'], limit: 20 },
+      },
+      {
+        label: 'Polkadot calls with emitted events',
+        input: {
+          network: 'polkadot',
+          timeframe: '1h',
+          call_names: ['ParaInherent.enter'],
+          include_events: true,
+          limit: 20,
+        },
+      },
     ],
     supports: {
       pagination: true,
@@ -275,7 +311,8 @@ const TOOL_DEFINITIONS: Record<string, ToolDefinition> = {
       'how Polkadot is doing in an indexed window',
       'analytics snapshot for Polkadot or another Substrate network in an indexed window',
     ],
-    summary: 'Analytics snapshot for Substrate or Polkadot activity in an indexed window, with event, call, and extrinsic counts plus top event and call names.',
+    summary:
+      'Analytics snapshot for Substrate or Polkadot activity in an indexed window, with event, call, and extrinsic counts plus top event and call names.',
     when_to_use: [
       'You want Polkadot activity analytics in a selected indexed window.',
       'You want to ask "how is Polkadot doing in this indexed window?" and get an analytics answer rather than just network freshness metadata.',
@@ -315,10 +352,42 @@ const TOOL_DEFINITIONS: Record<string, ToolDefinition> = {
     avoid_when: ['You only need a quick recent feed or wallet-level summary.'],
     examples: [
       { label: 'Recent Base transactions', input: { network: 'base-mainnet', timeframe: '1h', limit: 20 } },
-      { label: 'Filter by sender', input: { network: 'ethereum-mainnet', timeframe: '6h', from_addresses: ['0xabc...'], limit: 20 } },
-      { label: 'First EIP-2930 transaction from Berlin fork', input: { network: 'ethereum-mainnet', from_block: 12244000, transaction_type: '0x1', scan_order: 'earliest', limit: 1, field_preset: 'minimal' } },
-      { label: 'Largest recent transfers to USDC', input: { network: 'base-mainnet', timeframe: '1h', to_addresses: ['0x833589fcd6edb6e08f4c7c32d4f71b54bda02913'], method: 'transfer', order_by: 'gas_used_desc', limit: 5 } },
-      { label: 'Top senders by transaction count', input: { network: 'base-mainnet', timeframe: '1h', aggregate_by: 'sender', aggregate_metric: 'count', limit: 10 } },
+      {
+        label: 'Filter by sender',
+        input: { network: 'ethereum-mainnet', timeframe: '6h', from_addresses: ['0xabc...'], limit: 20 },
+      },
+      {
+        label: 'First EIP-2930 transaction from Berlin fork',
+        input: {
+          network: 'ethereum-mainnet',
+          from_block: 12244000,
+          transaction_type: '0x1',
+          scan_order: 'earliest',
+          limit: 1,
+          field_preset: 'minimal',
+        },
+      },
+      {
+        label: 'Largest recent transfers to USDC',
+        input: {
+          network: 'base-mainnet',
+          timeframe: '1h',
+          to_addresses: ['0x833589fcd6edb6e08f4c7c32d4f71b54bda02913'],
+          method: 'transfer',
+          order_by: 'gas_used_desc',
+          limit: 5,
+        },
+      },
+      {
+        label: 'Top senders by transaction count',
+        input: {
+          network: 'base-mainnet',
+          timeframe: '1h',
+          aggregate_by: 'sender',
+          aggregate_metric: 'count',
+          limit: 10,
+        },
+      },
     ],
     supports: {
       pagination: true,
@@ -334,7 +403,8 @@ const TOOL_DEFINITIONS: Record<string, ToolDefinition> = {
     vm: ['evm'],
     result_kind: 'list',
     normalized_output: true,
-    summary: 'Query raw EVM logs with address/topic filters, common event aliases, earliest/latest scanning, and optional inline decoding.',
+    summary:
+      'Query raw EVM logs with address/topic filters, common event aliases, earliest/latest scanning, and optional inline decoding.',
     when_to_use: [
       'You need event logs filtered by contract or topic signature.',
       'You want decoded log hints while still keeping the raw log shape available.',
@@ -343,9 +413,36 @@ const TOOL_DEFINITIONS: Record<string, ToolDefinition> = {
     ],
     avoid_when: ['You only want token transfers, which are easier with the token-transfer tool.'],
     examples: [
-      { label: 'Recent USDC Transfer logs', input: { network: 'base-mainnet', timeframe: '1h', addresses: ['0x833589fcd6edb6e08f4c7c32d4f71b54bda02913'], limit: 20 } },
-      { label: 'First recent USDC Transfer log', input: { network: 'base-mainnet', timeframe: '1h', addresses: ['0x833589fcd6edb6e08f4c7c32d4f71b54bda02913'], event: 'transfer', scan_order: 'earliest', limit: 1 } },
-      { label: 'Decode logs inline', input: { network: 'ethereum-mainnet', timeframe: '1h', topic0: ['0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef'], decode: true, limit: 10 } },
+      {
+        label: 'Recent USDC Transfer logs',
+        input: {
+          network: 'base-mainnet',
+          timeframe: '1h',
+          addresses: ['0x833589fcd6edb6e08f4c7c32d4f71b54bda02913'],
+          limit: 20,
+        },
+      },
+      {
+        label: 'First recent USDC Transfer log',
+        input: {
+          network: 'base-mainnet',
+          timeframe: '1h',
+          addresses: ['0x833589fcd6edb6e08f4c7c32d4f71b54bda02913'],
+          event: 'transfer',
+          scan_order: 'earliest',
+          limit: 1,
+        },
+      },
+      {
+        label: 'Decode logs inline',
+        input: {
+          network: 'ethereum-mainnet',
+          timeframe: '1h',
+          topic0: ['0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef'],
+          decode: true,
+          limit: 10,
+        },
+      },
     ],
     supports: {
       pagination: true,
@@ -362,7 +459,8 @@ const TOOL_DEFINITIONS: Record<string, ToolDefinition> = {
     vm: ['evm'],
     result_kind: 'list',
     normalized_output: true,
-    summary: 'Query token-transfer activity on EVM without needing to remember Transfer event signatures. Best for "did token X move?" questions.',
+    summary:
+      'Query token-transfer activity on EVM without needing to remember Transfer event signatures. Best for "did token X move?" questions.',
     when_to_use: [
       'You want ERC-20 style transfer activity filtered by token, sender, or recipient.',
       'You want the fastest answer to a token movement question like "did USDC move?".',
@@ -371,8 +469,25 @@ const TOOL_DEFINITIONS: Record<string, ToolDefinition> = {
     ],
     avoid_when: ['You need arbitrary event logs beyond token transfers.'],
     examples: [
-      { label: 'Recent USDC transfers', input: { network: 'base-mainnet', timeframe: '1h', token_addresses: ['0x833589fcd6edb6e08f4c7c32d4f71b54bda02913'], limit: 20 } },
-      { label: 'First recent USDC transfer', input: { network: 'base-mainnet', timeframe: '1h', token_addresses: ['0x833589fcd6edb6e08f4c7c32d4f71b54bda02913'], scan_order: 'earliest', limit: 1 } },
+      {
+        label: 'Recent USDC transfers',
+        input: {
+          network: 'base-mainnet',
+          timeframe: '1h',
+          token_addresses: ['0x833589fcd6edb6e08f4c7c32d4f71b54bda02913'],
+          limit: 20,
+        },
+      },
+      {
+        label: 'First recent USDC transfer',
+        input: {
+          network: 'base-mainnet',
+          timeframe: '1h',
+          token_addresses: ['0x833589fcd6edb6e08f4c7c32d4f71b54bda02913'],
+          scan_order: 'earliest',
+          limit: 1,
+        },
+      },
     ],
     supports: {
       pagination: true,
@@ -392,10 +507,11 @@ const TOOL_DEFINITIONS: Record<string, ToolDefinition> = {
       'when was this contract deployed',
       'what deployment transaction created this contract',
     ],
-    summary: 'Locate the create trace and parent transaction that deployed a specific EVM contract address within a bounded window.',
+    summary:
+      'Locate the create trace and parent transaction that deployed a specific EVM contract address within a bounded window.',
     when_to_use: [
       'You need the deployer, deployment block, deployment timestamp, or deployment transaction for an EVM contract.',
-      'You can provide a starting block/time window, or you want a recent-depth deployment search.',
+      'You can provide a starting block/time window, a contract address, or a supported well-known contract alias such as BAYC/Bored Apes.',
       'You want a deployment lookup instead of general contract activity.',
     ],
     avoid_when: [
@@ -403,8 +519,30 @@ const TOOL_DEFINITIONS: Record<string, ToolDefinition> = {
       'The contract is old and no block/time hint is available; provide from_block or from_timestamp first.',
     ],
     examples: [
-      { label: 'Find recent deployment', input: { network: 'base-mainnet', contract_address: '0xabc...', search_depth_blocks: 100000 } },
-      { label: 'Find deployment from known range', input: { network: 'ethereum-mainnet', contract_address: '0xabc...', from_block: 17000000, to_block: 17100000, scan_order: 'earliest' } },
+      {
+        label: 'Find BAYC deployment',
+        input: {
+          network: 'ethereum-mainnet',
+          contract: 'bored apes',
+          from_block: 12000000,
+          to_block: 13000000,
+          scan_order: 'earliest',
+        },
+      },
+      {
+        label: 'Find recent deployment',
+        input: { network: 'base-mainnet', contract_address: '0xabc...', search_depth_blocks: 100000 },
+      },
+      {
+        label: 'Find deployment from known range',
+        input: {
+          network: 'ethereum-mainnet',
+          contract_address: '0xabc...',
+          from_block: 17000000,
+          to_block: 17100000,
+          scan_order: 'earliest',
+        },
+      },
     ],
     supports: {
       time_inputs: ['blocks', 'timeframe', 'timestamps'],
@@ -419,15 +557,22 @@ const TOOL_DEFINITIONS: Record<string, ToolDefinition> = {
     result_kind: 'summary',
     normalized_output: false,
     first_choice_for: ['what one specific contract has been doing lately on an EVM network'],
-    summary: 'Summarize what one specific contract has been doing lately, including recent interactions, unique callers, and optional event activity.',
+    summary:
+      'Summarize what one specific contract has been doing lately, including recent interactions, unique callers, and optional event activity.',
     when_to_use: [
       'You want to ask "what has this contract been doing?" and get a contract-level answer.',
       'You want a contract-centric activity summary instead of raw records.',
       'You need top callers and interaction volume for one contract.',
     ],
-    avoid_when: ['You need the underlying raw logs or transactions.', 'You want general recent network activity without naming one contract.'],
+    avoid_when: [
+      'You need the underlying raw logs or transactions.',
+      'You want general recent network activity without naming one contract.',
+    ],
     examples: [
-      { label: 'Fast contract snapshot', input: { network: 'base-mainnet', contract_address: '0xabc...', timeframe: '24h' } },
+      {
+        label: 'Fast contract snapshot',
+        input: { network: 'base-mainnet', contract_address: '0xabc...', timeframe: '24h' },
+      },
     ],
     supports: {
       modes: ['fast', 'deep'],
@@ -450,9 +595,7 @@ const TOOL_DEFINITIONS: Record<string, ToolDefinition> = {
       'You want an analytics-style network overview instead of a raw record list.',
     ],
     avoid_when: ['You need chart buckets over time rather than ranked entities.'],
-    examples: [
-      { label: 'Top contracts on Base', input: { network: 'base-mainnet', timeframe: '1h', limit: 10 } },
-    ],
+    examples: [{ label: 'Top contracts on Base', input: { network: 'base-mainnet', timeframe: '1h', limit: 10 } }],
     supports: {
       pagination: true,
       time_inputs: ['blocks', 'timeframe', 'timestamps'],
@@ -466,7 +609,8 @@ const TOOL_DEFINITIONS: Record<string, ToolDefinition> = {
     vm: ['evm'],
     result_kind: 'chart',
     normalized_output: false,
-    summary: 'Build chart-ready EVM OHLC candles plus a recent trade tape from supported DEX event sources, including Uniswap v2-style swaps, Uniswap v3/v4, and Aerodrome Slipstream.',
+    summary:
+      'Build chart-ready EVM OHLC candles plus a recent trade tape from supported DEX event sources, including Uniswap v2-style swaps, Uniswap v3/v4, and Aerodrome Slipstream.',
     when_to_use: [
       'You need OHLC candles for supported EVM event-derived price sources.',
       'You want a candle chart and recent trades instead of scalar time-series buckets.',
@@ -477,10 +621,56 @@ const TOOL_DEFINITIONS: Record<string, ToolDefinition> = {
       'You want a simple activity chart for a network rather than pool candles.',
     ],
     examples: [
-      { label: 'Base Uniswap v2-style swap candles', input: { network: 'base-mainnet', source: 'uniswap_v2_swap', pool_address: '0x<pool-address>', duration: '1h', interval: '5m', mode: 'fast', price_in: 'auto', include_recent_trades: true } },
-      { label: 'Base Uniswap candles', input: { network: 'base-mainnet', source: 'uniswap_v3_swap', pool_address: '0x<pool-address>', duration: '1h', interval: '5m', mode: 'deep', price_in: 'auto' } },
-      { label: 'Base Uniswap v4 candles', input: { network: 'base-mainnet', source: 'uniswap_v4_swap', pool_id: '0x<pool-id>', duration: '1h', interval: '5m', mode: 'deep', price_in: 'auto', include_recent_trades: true } },
-      { label: 'Base Aerodrome Slipstream candles', input: { network: 'base-mainnet', source: 'aerodrome_slipstream_swap', pool_address: '0x<pool-address>', duration: '1h', interval: '5m', mode: 'fast', price_in: 'token1' } },
+      {
+        label: 'Base Uniswap v2-style swap candles',
+        input: {
+          network: 'base-mainnet',
+          source: 'uniswap_v2_swap',
+          pool_address: '0x<pool-address>',
+          duration: '1h',
+          interval: '5m',
+          mode: 'fast',
+          price_in: 'auto',
+          include_recent_trades: true,
+        },
+      },
+      {
+        label: 'Base Uniswap candles',
+        input: {
+          network: 'base-mainnet',
+          source: 'uniswap_v3_swap',
+          pool_address: '0x<pool-address>',
+          duration: '1h',
+          interval: '5m',
+          mode: 'deep',
+          price_in: 'auto',
+        },
+      },
+      {
+        label: 'Base Uniswap v4 candles',
+        input: {
+          network: 'base-mainnet',
+          source: 'uniswap_v4_swap',
+          pool_id: '0x<pool-id>',
+          duration: '1h',
+          interval: '5m',
+          mode: 'deep',
+          price_in: 'auto',
+          include_recent_trades: true,
+        },
+      },
+      {
+        label: 'Base Aerodrome Slipstream candles',
+        input: {
+          network: 'base-mainnet',
+          source: 'aerodrome_slipstream_swap',
+          pool_address: '0x<pool-address>',
+          duration: '1h',
+          interval: '5m',
+          mode: 'fast',
+          price_in: 'token1',
+        },
+      },
     ],
     supports: {
       pagination: true,
@@ -504,7 +694,15 @@ const TOOL_DEFINITIONS: Record<string, ToolDefinition> = {
     avoid_when: ['You only want recent activity or a compact network summary.'],
     examples: [
       { label: 'Recent Solana transactions', input: { network: 'solana-mainnet', timeframe: '1h', limit: 20 } },
-      { label: 'Filter by program', input: { network: 'solana-mainnet', timeframe: '1h', program_id: ['TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA'], limit: 20 } },
+      {
+        label: 'Filter by program',
+        input: {
+          network: 'solana-mainnet',
+          timeframe: '1h',
+          program_id: ['TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA'],
+          limit: 20,
+        },
+      },
     ],
     supports: {
       pagination: true,
@@ -527,7 +725,15 @@ const TOOL_DEFINITIONS: Record<string, ToolDefinition> = {
     ],
     avoid_when: ['You only need transaction-level activity and not individual instructions.'],
     examples: [
-      { label: 'Token Program instructions', input: { network: 'solana-mainnet', timeframe: '1h', program_id: ['TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA'], limit: 20 } },
+      {
+        label: 'Token Program instructions',
+        input: {
+          network: 'solana-mainnet',
+          timeframe: '1h',
+          program_id: ['TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA'],
+          limit: 20,
+        },
+      },
     ],
     supports: {
       pagination: true,
@@ -577,7 +783,10 @@ const TOOL_DEFINITIONS: Record<string, ToolDefinition> = {
     avoid_when: ['You only need a quick wallet or network summary.'],
     examples: [
       { label: 'Recent Bitcoin transactions', input: { network: 'bitcoin-mainnet', timeframe: '1h', limit: 20 } },
-      { label: 'Attach inputs and outputs', input: { network: 'bitcoin-mainnet', timeframe: '1h', include_inputs: true, include_outputs: true, limit: 10 } },
+      {
+        label: 'Attach inputs and outputs',
+        input: { network: 'bitcoin-mainnet', timeframe: '1h', include_inputs: true, include_outputs: true, limit: 10 },
+      },
     ],
     supports: {
       pagination: true,
@@ -601,9 +810,7 @@ const TOOL_DEFINITIONS: Record<string, ToolDefinition> = {
       'You care about block cadence, fees, SegWit/Taproot adoption, or activity metrics.',
     ],
     avoid_when: ['You need raw transactions rather than network analytics.'],
-    examples: [
-      { label: 'Fast Bitcoin snapshot', input: { network: 'bitcoin-mainnet', timeframe: '1h' } },
-    ],
+    examples: [{ label: 'Fast Bitcoin snapshot', input: { network: 'bitcoin-mainnet', timeframe: '1h' } }],
     supports: {
       modes: ['fast', 'deep'],
       response_formats: ['full', 'compact', 'summary'],
@@ -694,7 +901,9 @@ const TOOL_DEFINITIONS: Record<string, ToolDefinition> = {
       'You are debugging Portal coverage or block-level fields.',
       'You need raw block records instead of transactions, logs, or summaries.',
     ],
-    avoid_when: ['You are answering a normal end-user question; prefer recent activity, time series, or raw transaction tools first.'],
+    avoid_when: [
+      'You are answering a normal end-user question; prefer recent activity, time series, or raw transaction tools first.',
+    ],
     examples: [{ label: 'Recent Base blocks', input: { network: 'base-mainnet', timeframe: '1h', limit: 5 } }],
     supports: {
       pagination: true,
@@ -737,7 +946,9 @@ const TOOL_DEFINITIONS: Record<string, ToolDefinition> = {
       'You need raw order-action events instead of fills or analytics.',
     ],
     avoid_when: ['You only need public trading activity; fills and analytics are usually the better fit.'],
-    examples: [{ label: 'Recent order actions', input: { network: 'hyperliquid-replica-cmds', timeframe: '1h', limit: 20 } }],
+    examples: [
+      { label: 'Recent order actions', input: { network: 'hyperliquid-replica-cmds', timeframe: '1h', limit: 20 } },
+    ],
     supports: {
       pagination: true,
       time_inputs: ['blocks', 'timeframe', 'timestamps'],
@@ -787,7 +998,13 @@ export function getToolContract(toolName: string): RuntimeToolContract | undefin
     return undefined
   }
 
-  const { summary: _summary, when_to_use: _when, avoid_when: _avoid, examples: _examples, ...runtimeContract } = definition
+  const {
+    summary: _summary,
+    when_to_use: _when,
+    avoid_when: _avoid,
+    examples: _examples,
+    ...runtimeContract
+  } = definition
   return runtimeContract
 }
 

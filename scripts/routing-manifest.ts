@@ -43,6 +43,7 @@ const EXTRA_ROUTING_CASES: RoutingEvalCase[] = [
   },
   { prompt: 'just show me token transfers for usdc on base, not all logs', expected: 'portal_evm_query_token_transfers', max_rank: 1, source: 'extra' },
   { prompt: 'who deployed this evm contract and what was the deployment tx', expected: 'portal_evm_get_contract_deployment', max_rank: 1, source: 'extra' },
+  { prompt: 'find the deployment of bored apes', expected: 'portal_evm_get_contract_deployment', max_rank: 1, source: 'extra' },
   { prompt: 'is this base contract busy lately', expected: 'portal_evm_get_contract_activity', max_rank: 1, source: 'extra' },
   { prompt: 'what are the hottest contracts on base right now', expected: 'portal_evm_get_analytics', max_rank: 1, source: 'extra' },
   { prompt: 'make me 5 minute candles for this pool on base', expected: 'portal_evm_get_ohlc', max_rank: 1, source: 'extra' },
@@ -64,7 +65,4 @@ const EXTRA_ROUTING_CASES: RoutingEvalCase[] = [
   { prompt: 'i need raw hyperliquid order and cancel commands, not fills', expected: 'portal_debug_hyperliquid_query_replica_commands', max_rank: 1, source: 'extra' },
 ]
 
-export const ROUTING_EVAL_CASES: RoutingEvalCase[] = [
-  ...MANIFEST_ROUTING_CASES,
-  ...EXTRA_ROUTING_CASES,
-]
+export const ROUTING_EVAL_CASES: RoutingEvalCase[] = [...MANIFEST_ROUTING_CASES, ...EXTRA_ROUTING_CASES]

@@ -4,15 +4,34 @@ import { z } from 'zod'
 import { getBlockHead, resolveDataset, validateBlockRange } from '../../cache/datasets.js'
 import { PORTAL_URL } from '../../constants/index.js'
 import { detectChainType } from '../../helpers/chain.js'
-import { createUnsupportedChainError } from '../../helpers/errors.js'
+import { ActionableError, createUnsupportedChainError } from '../../helpers/errors.js'
 import { portalFetchStreamRange } from '../../helpers/fetch.js'
-import { buildEvmTraceFields, buildEvmTransactionFields } from '../../helpers/fields.js'
+import { buildEvmTransactionFields } from '../../helpers/fields.js'
 import { formatResult } from '../../helpers/format.js'
 import { formatTimestamp } from '../../helpers/formatting.js'
 import { buildQueryCoverage, buildQueryFreshness } from '../../helpers/result-metadata.js'
 import { getTimestampWindowNotices, resolveTimeframeOrBlocks } from '../../helpers/timeframe.js'
 import { buildExecutionMetadata, buildToolDescription } from '../../helpers/tool-ux.js'
-import { normalizeEvmAddress } from '../../helpers/validation.js'
+import { isValidEvmAddress, normalizeEvmAddress } from '../../helpers/validation.js'
+
+const DEFAULT_RECENT_SEARCH_DEPTH_BLOCKS = 100_000
+const DEFAULT_MAX_SCAN_BLOCKS = 1_000_000
+const MAX_SCAN_BLOCKS = 1_000_000
+const FILTERED_CREATE_TRACE_CHUNK_SIZE = 50_000
+
+const KNOWN_CONTRACT_ALIASES: Record<string, Record<string, string>> = {
+  'ethereum-mainnet': {
+    bayc: '0xbc4ca0eda7647a8ab7c2061c2e118a18a936f13d',
+    bored_apes: '0xbc4ca0eda7647a8ab7c2061c2e118a18a936f13d',
+    bored_ape_yacht_club: '0xbc4ca0eda7647a8ab7c2061c2e118a18a936f13d',
+    boredapes: '0xbc4ca0eda7647a8ab7c2061c2e118a18a936f13d',
+    cryptopunks: '0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb',
+    crypto_punks: '0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb',
+    punks: '0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb',
+    mayc: '0x60e4d786628fea6478f785a6d7e704777c86a7c6',
+    mutant_ape_yacht_club: '0x60e4d786628fea6478f785a6d7e704777c86a7c6',
+  },
+}
 
 type DeploymentTrace = Record<string, unknown> & {
   block_number?: number
@@ -27,6 +46,41 @@ type DeploymentTrace = Record<string, unknown> & {
   deployed_contract_address?: string
   gas_used?: string | number
   error?: string | null
+}
+
+function normalizeAlias(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+}
+
+function resolveContractReference(dataset: string, input: string): { address: string; alias?: string } {
+  const trimmed = input.trim()
+  const normalizedCandidate = normalizeEvmAddress(trimmed)
+  if (isValidEvmAddress(normalizedCandidate)) {
+    return { address: normalizedCandidate }
+  }
+
+  const alias = normalizeAlias(trimmed)
+  const resolved = KNOWN_CONTRACT_ALIASES[dataset]?.[alias]
+  if (resolved) {
+    return { address: resolved, alias: trimmed }
+  }
+
+  throw new ActionableError(
+    `Unknown EVM contract reference: ${input}`,
+    [
+      'Pass a 20-byte EVM contract address when the contract is not in the small built-in alias list.',
+      'For Ethereum BAYC/Bored Apes, use contract: "bored apes" or contract_address: "0xbc4ca0eda7647a8ab7c2061c2e118a18a936f13d".',
+      'If you only know a project name, resolve it to a contract address first, then retry this deployment lookup.',
+    ],
+    {
+      dataset,
+      contract_reference: input,
+    },
+  )
 }
 
 function readNestedString(value: unknown, ...path: string[]): string | undefined {
@@ -84,13 +138,10 @@ function flattenCreateTraces(records: unknown[], targetAddress: string): Deploym
         ...(timestamp !== undefined ? { timestamp_human: formatTimestamp(timestamp) } : {}),
         transaction_hash: typeof tx?.hash === 'string' ? tx.hash : undefined,
         transaction_from: typeof tx?.from === 'string' ? tx.from : undefined,
-        transaction_to: typeof tx?.to === 'string' || tx?.to === null ? tx.to as string | null : undefined,
+        transaction_to: typeof tx?.to === 'string' || tx?.to === null ? (tx.to as string | null) : undefined,
         transaction_index: transactionIndex,
         transaction_status: typeof tx?.status === 'number' ? tx.status : undefined,
-        deployer:
-          typeof trace.createFrom === 'string'
-            ? trace.createFrom
-            : readNestedString(trace, 'action', 'from'),
+        deployer: typeof trace.createFrom === 'string' ? trace.createFrom : readNestedString(trace, 'action', 'from'),
         deployed_contract_address: resultAddress.toLowerCase(),
         gas_used:
           typeof trace.createResultGasUsed === 'string' || typeof trace.createResultGasUsed === 'number'
@@ -113,31 +164,66 @@ export function registerContractDeploymentTool(server: McpServer) {
     buildToolDescription('portal_evm_get_contract_deployment'),
     {
       network: z.string().describe('EVM network name or alias, e.g. base, ethereum, arbitrum.'),
-      contract_address: z.string().describe('Contract address whose deployment transaction should be located.'),
+      contract_address: z
+        .string()
+        .optional()
+        .describe('Contract address whose deployment transaction should be located.'),
+      contract: z
+        .string()
+        .optional()
+        .describe('Contract address or a supported well-known alias/name, e.g. "bayc" or "bored apes" on Ethereum.'),
       timeframe: z.string().optional().describe('Optional recent time window to search, e.g. "24h" or "7d".'),
-      from_block: z.number().optional().describe('Optional starting block. Provide this for older contracts when the deployment is not recent.'),
+      from_block: z
+        .number()
+        .optional()
+        .describe('Optional starting block. Provide this for older contracts when the deployment is not recent.'),
       to_block: z.number().optional().describe('Optional ending block. Defaults to the indexed head.'),
       from_timestamp: z
         .union([z.number(), z.string()])
         .optional()
-        .describe('Optional start timestamp. Accepts Unix seconds, milliseconds, ISO datetime, or relative input like "7d ago".'),
+        .describe(
+          'Optional start timestamp. Accepts Unix seconds, milliseconds, ISO datetime, or relative input like "7d ago".',
+        ),
       to_timestamp: z
         .union([z.number(), z.string()])
         .optional()
-        .describe('Optional end timestamp. Accepts Unix seconds, milliseconds, ISO datetime, or relative input like "now".'),
+        .describe(
+          'Optional end timestamp. Accepts Unix seconds, milliseconds, ISO datetime, or relative input like "now".',
+        ),
       search_depth_blocks: z
         .number()
         .max(250000)
         .optional()
-        .default(100000)
+        .default(DEFAULT_RECENT_SEARCH_DEPTH_BLOCKS)
         .describe('When no explicit range is given, search this many recent blocks backward from the indexed head.'),
+      max_scan_blocks: z
+        .number()
+        .max(MAX_SCAN_BLOCKS)
+        .optional()
+        .describe(
+          'Safety cap for historical deployment scans. Default: scan the requested window up to 1,000,000 blocks.',
+        ),
       scan_order: z
         .enum(['latest', 'earliest'])
         .optional()
         .default('latest')
-        .describe('Scan latest first for recent deployments, or earliest first when you provide a historical from_block.'),
+        .describe(
+          'Scan latest first for recent deployments, or earliest first when you provide a historical from_block.',
+        ),
     },
-    async ({ network, contract_address, timeframe, from_block, to_block, from_timestamp, to_timestamp, search_depth_blocks, scan_order }) => {
+    async ({
+      network,
+      contract_address,
+      contract,
+      timeframe,
+      from_block,
+      to_block,
+      from_timestamp,
+      to_timestamp,
+      search_depth_blocks,
+      max_scan_blocks,
+      scan_order,
+    }) => {
       const queryStartTime = Date.now()
       const dataset = await resolveDataset(network)
       const chainType = detectChainType(dataset)
@@ -151,8 +237,36 @@ export function registerContractDeploymentTool(server: McpServer) {
         })
       }
 
-      const normalizedContract = normalizeEvmAddress(contract_address)
-      const hasExplicitWindow = timeframe !== undefined || from_block !== undefined || from_timestamp !== undefined || to_timestamp !== undefined
+      if (
+        (contract_address === undefined || contract_address.trim() === '') &&
+        (contract === undefined || contract.trim() === '')
+      ) {
+        throw new ActionableError(
+          'portal_evm_get_contract_deployment requires contract_address or contract.',
+          [
+            'Pass contract_address when you have a hex contract address.',
+            'Pass contract for supported well-known aliases such as "bored apes" on Ethereum.',
+          ],
+          { network: dataset },
+        )
+      }
+
+      if (contract_address !== undefined && contract !== undefined) {
+        throw new ActionableError(
+          'Use either contract_address or contract, not both.',
+          ['Prefer contract_address for exact hex addresses; use contract only for supported aliases.'],
+          { contract_address, contract },
+        )
+      }
+
+      const contractReference = contract_address ?? contract ?? ''
+      const resolvedContract = resolveContractReference(dataset, contractReference)
+      const normalizedContract = resolvedContract.address
+      const hasExplicitWindow =
+        timeframe !== undefined ||
+        from_block !== undefined ||
+        from_timestamp !== undefined ||
+        to_timestamp !== undefined
       const head = await getBlockHead(dataset, false)
       const resolvedBlocks = hasExplicitWindow
         ? await resolveTimeframeOrBlocks({
@@ -186,39 +300,82 @@ export function registerContractDeploymentTool(server: McpServer) {
         fields: {
           block: { number: true, timestamp: true },
           transaction: transactionFields,
-          trace: buildEvmTraceFields(),
+          trace: {
+            transactionIndex: true,
+            type: true,
+            error: true,
+            createFrom: true,
+            createResultGasUsed: true,
+            createResultAddress: true,
+          },
         },
-        traces: [{ type: ['create'], transaction: true }],
+        traces: [{ type: ['create'], createResultAddress: [normalizedContract], transaction: true }],
       }
 
-      const chunkSize = 1000
+      const chunkSize = FILTERED_CREATE_TRACE_CHUNK_SIZE
+      const requestedBlocks = endBlock - resolvedBlocks.from_block + 1
+      const maxScanBlocks = Math.max(
+        1,
+        Math.min(max_scan_blocks ?? DEFAULT_MAX_SCAN_BLOCKS, MAX_SCAN_BLOCKS, requestedBlocks),
+      )
       let scannedFromBlock = scan_order === 'earliest' ? resolvedBlocks.from_block : endBlock
       let scannedToBlock = scan_order === 'earliest' ? resolvedBlocks.from_block : endBlock
+      let scannedBlocks = 0
       let deployment: DeploymentTrace | undefined
 
       if (scan_order === 'earliest') {
-        for (let chunkFrom = resolvedBlocks.from_block; chunkFrom <= endBlock && !deployment; chunkFrom += chunkSize) {
-          const chunkTo = Math.min(endBlock, chunkFrom + chunkSize - 1)
+        for (
+          let chunkFrom = resolvedBlocks.from_block;
+          chunkFrom <= endBlock && !deployment && scannedBlocks < maxScanBlocks;
+          chunkFrom += chunkSize
+        ) {
+          const chunkTo = Math.min(endBlock, chunkFrom + chunkSize - 1, resolvedBlocks.from_block + maxScanBlocks - 1)
           scannedToBlock = chunkTo
           const records = await portalFetchStreamRange(portalUrl, { ...query, fromBlock: chunkFrom, toBlock: chunkTo })
           deployment = flattenCreateTraces(records, normalizedContract)[0]
+          scannedBlocks += chunkTo - chunkFrom + 1
         }
       } else {
-        for (let chunkTo = endBlock; chunkTo >= resolvedBlocks.from_block && !deployment; chunkTo -= chunkSize) {
-          const chunkFrom = Math.max(resolvedBlocks.from_block, chunkTo - chunkSize + 1)
+        for (
+          let chunkTo = endBlock;
+          chunkTo >= resolvedBlocks.from_block && !deployment && scannedBlocks < maxScanBlocks;
+          chunkTo -= chunkSize
+        ) {
+          const chunkFrom = Math.max(resolvedBlocks.from_block, chunkTo - chunkSize + 1, endBlock - maxScanBlocks + 1)
           scannedFromBlock = chunkFrom
           const records = await portalFetchStreamRange(portalUrl, { ...query, fromBlock: chunkFrom, toBlock: chunkTo })
           deployment = flattenCreateTraces(records, normalizedContract).at(-1)
+          scannedBlocks += chunkTo - chunkFrom + 1
         }
       }
 
       const items = deployment ? [deployment] : []
       const notices = [...getTimestampWindowNotices(resolvedBlocks)]
+      if (resolvedContract.alias) {
+        notices.push(`Resolved contract alias "${resolvedContract.alias}" to ${normalizedContract} on ${dataset}.`)
+      }
       if (!hasExplicitWindow) {
-        notices.push(`Searched the most recent ${search_depth_blocks.toLocaleString()} blocks. For older contracts, pass from_block or from_timestamp.`)
+        notices.push(
+          `Searched the most recent ${search_depth_blocks.toLocaleString()} blocks. For older contracts, pass from_block or from_timestamp.`,
+        )
+      }
+      const scanHasMore =
+        !deployment &&
+        scannedBlocks >= maxScanBlocks &&
+        (scan_order === 'earliest' ? scannedToBlock < endBlock : scannedFromBlock > resolvedBlocks.from_block)
+      if (scanHasMore) {
+        notices.push(
+          `Deployment search was capped at ${maxScanBlocks.toLocaleString()} scanned blocks (${scannedFromBlock}-${scannedToBlock}) to keep the MCP connection responsive.`,
+        )
       }
       if (!deployment) {
-        notices.push(`No deployment create trace for ${normalizedContract} was found in scanned blocks ${scannedFromBlock}-${scannedToBlock}.`)
+        const directionHint =
+          scan_order === 'earliest'
+            ? 'Move from_block earlier if the deployment may predate this range, or expand to_block later if you intentionally started before deployment.'
+            : 'Try expanding the window backward with an earlier from_block/from_timestamp if this is an old contract.'
+        notices.push(
+          `No deployment create trace for ${normalizedContract} was found in scanned blocks ${scannedFromBlock}-${scannedToBlock}. ${directionHint}`,
+        )
       }
 
       const freshness = buildQueryFreshness({
@@ -232,9 +389,30 @@ export function registerContractDeploymentTool(server: McpServer) {
         windowToBlock: endBlock,
         pageToBlock: scan_order === 'earliest' ? scannedToBlock : endBlock,
         items,
+        hasMore: scanHasMore,
         getBlockNumber,
-        hasMore: false,
       })
+
+      const execution = {
+        ...buildExecutionMetadata({
+          limit: 1,
+          from_block: resolvedBlocks.from_block,
+          to_block: endBlock,
+          page_to_block: scan_order === 'earliest' ? scannedToBlock : scannedFromBlock,
+          scan_order,
+          range_kind: resolvedBlocks.range_kind,
+          normalized_output: true,
+          notes: [
+            'Uses Portal create traces filtered by deployed contract address plus parent transaction context; no custom chain indexing is performed.',
+            `Scanned ${scannedBlocks.toLocaleString()} blocks in ${FILTERED_CREATE_TRACE_CHUNK_SIZE.toLocaleString()}-block chunks.`,
+          ],
+        }),
+        contract_reference: contractReference,
+        scanned_from_block: scannedFromBlock,
+        scanned_to_block: scannedToBlock,
+        scanned_blocks: scannedBlocks,
+        max_scan_blocks: maxScanBlocks,
+      }
 
       return formatResult(
         items,
@@ -246,16 +424,7 @@ export function registerContractDeploymentTool(server: McpServer) {
           notices,
           freshness,
           coverage,
-          execution: buildExecutionMetadata({
-            limit: 1,
-            from_block: resolvedBlocks.from_block,
-            to_block: endBlock,
-            page_to_block: scan_order === 'earliest' ? scannedToBlock : scannedFromBlock,
-            scan_order,
-            range_kind: resolvedBlocks.range_kind,
-            normalized_output: true,
-            notes: ['Uses Portal create traces and parent transaction context; no custom chain indexing is performed.'],
-          }),
+          execution,
           metadata: {
             network: dataset,
             dataset,

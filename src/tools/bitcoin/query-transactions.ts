@@ -5,12 +5,25 @@ import { resolveDataset, validateBlockRange } from '../../cache/datasets.js'
 import { PORTAL_URL } from '../../constants/index.js'
 import { detectChainType } from '../../helpers/chain.js'
 import { createUnsupportedChainError } from '../../helpers/errors.js'
-import { portalFetchRecentRecords } from '../../helpers/fetch.js'
-import { buildBitcoinBlockFields, buildBitcoinInputFields, buildBitcoinOutputFields, buildBitcoinTransactionFields } from '../../helpers/fields.js'
+import { portalFetchRecentRecords, portalFetchStreamRange } from '../../helpers/fetch.js'
+import { buildBitcoinBlockFields, buildBitcoinTransactionFields } from '../../helpers/fields.js'
 import { formatResult } from '../../helpers/format.js'
-import { normalizeBitcoinInputResult, normalizeBitcoinOutputResult, normalizeBitcoinTransactionResult } from '../../helpers/normalized-results.js'
-import { buildPaginationInfo, decodeRecentPageCursor, encodeRecentPageCursor, paginateAscendingItems } from '../../helpers/pagination.js'
-import { buildChronologicalPageOrdering, buildQueryCoverage, buildQueryFreshness } from '../../helpers/result-metadata.js'
+import {
+  normalizeBitcoinInputResult,
+  normalizeBitcoinOutputResult,
+  normalizeBitcoinTransactionResult,
+} from '../../helpers/normalized-results.js'
+import {
+  buildPaginationInfo,
+  decodeRecentPageCursor,
+  encodeRecentPageCursor,
+  paginateAscendingItems,
+} from '../../helpers/pagination.js'
+import {
+  buildChronologicalPageOrdering,
+  buildQueryCoverage,
+  buildQueryFreshness,
+} from '../../helpers/result-metadata.js'
 import { applyResponseFormat, resolveDefaultResponseFormat, type ResponseFormat } from '../../helpers/response-modes.js'
 import { getTimestampWindowNotices, type TimestampInput, resolveTimeframeOrBlocks } from '../../helpers/timeframe.js'
 import { buildExecutionMetadata, buildToolDescription } from '../../helpers/tool-ux.js'
@@ -44,7 +57,8 @@ export function registerQueryBitcoinTransactionsTool(server: McpServer) {
     tx_hash?: string
   }
 
-  const getBlockNumber = (item: BitcoinTransactionItem) => typeof item.block_number === 'number' ? item.block_number : undefined
+  const getBlockNumber = (item: BitcoinTransactionItem) =>
+    typeof item.block_number === 'number' ? item.block_number : undefined
   const getTransactionIndex = (item: BitcoinTransactionItem) => {
     if (typeof item.transactionIndex === 'number') return item.transactionIndex
     if (typeof item.transactionIndex === 'string') {
@@ -66,33 +80,72 @@ export function registerQueryBitcoinTransactionsTool(server: McpServer) {
       return String(left.txid ?? left.tx_hash ?? '').localeCompare(String(right.txid ?? right.tx_hash ?? ''))
     })
 
+  const inlineInputFields = {
+    transactionIndex: true,
+    inputIndex: true,
+    type: true,
+    prevoutValue: true,
+    prevoutScriptPubKeyType: true,
+    prevoutScriptPubKeyAddress: true,
+  }
+
+  const inlineOutputFields = {
+    transactionIndex: true,
+    outputIndex: true,
+    value: true,
+    scriptPubKeyType: true,
+    scriptPubKeyAddress: true,
+  }
+
   server.tool(
     'portal_bitcoin_query_transactions',
     buildToolDescription('portal_bitcoin_query_transactions'),
     {
-      network: z.string().optional().describe('Network name (default: bitcoin-mainnet). Optional when continuing with cursor.'),
-      from_block: z.number().optional().describe('Starting block number'),
-      to_block: z.number().optional().describe('Ending block number'),
-      timeframe: z
+      network: z
         .string()
         .optional()
-        .describe("Time range (e.g., '1h', '24h'). Alternative to from_block/to_block."),
+        .describe('Network name (default: bitcoin-mainnet). Optional when continuing with cursor.'),
+      from_block: z.number().optional().describe('Starting block number'),
+      to_block: z.number().optional().describe('Ending block number'),
+      timeframe: z.string().optional().describe("Time range (e.g., '1h', '24h'). Alternative to from_block/to_block."),
       from_timestamp: z
         .union([z.number(), z.string()])
         .optional()
-        .describe('Starting timestamp. Accepts Unix seconds, Unix milliseconds, ISO datetime, or relative input like "1h ago".'),
+        .describe(
+          'Starting timestamp. Accepts Unix seconds, Unix milliseconds, ISO datetime, or relative input like "1h ago".',
+        ),
       to_timestamp: z
         .union([z.number(), z.string()])
         .optional()
-        .describe('Ending timestamp. Accepts Unix seconds, Unix milliseconds, ISO datetime, or relative input like "now".'),
+        .describe(
+          'Ending timestamp. Accepts Unix seconds, Unix milliseconds, ISO datetime, or relative input like "now".',
+        ),
       finalized_only: z.boolean().optional().default(false).describe('Only query finalized blocks'),
       include_inputs: z.boolean().optional().default(false).describe('Attach transaction inputs inline'),
       include_outputs: z.boolean().optional().default(false).describe('Attach transaction outputs inline'),
-      response_format: z.enum(['full', 'compact', 'summary']).optional().describe("Response format: defaults to 'compact' for chat-friendly output. Compact mode keeps inline inputs and outputs in a smaller shape when requested."),
+      response_format: z
+        .enum(['full', 'compact', 'summary'])
+        .optional()
+        .describe(
+          "Response format: defaults to 'compact' for chat-friendly output. Compact mode keeps inline inputs and outputs in a smaller shape when requested.",
+        ),
       limit: z.number().optional().default(50).describe('Max transactions to return (default: 50)'),
       cursor: z.string().optional().describe('Continuation cursor from a previous response'),
     },
-    async ({ network, from_block, to_block, timeframe, from_timestamp, to_timestamp, finalized_only, include_inputs, include_outputs, response_format, limit, cursor }) => {
+    async ({
+      network,
+      from_block,
+      to_block,
+      timeframe,
+      from_timestamp,
+      to_timestamp,
+      finalized_only,
+      include_inputs,
+      include_outputs,
+      response_format,
+      limit,
+      cursor,
+    }) => {
       const queryStartTime = Date.now()
       const paginationCursor = cursor
         ? decodeRecentPageCursor<BitcoinTransactionsRequest>(cursor, 'portal_bitcoin_query_transactions')
@@ -130,7 +183,8 @@ export function registerQueryBitcoinTransactionsTool(server: McpServer) {
             from_block: paginationCursor.window_from_block,
             to_block: paginationCursor.window_to_block,
             range_kind:
-              paginationCursor.request.from_timestamp !== undefined || paginationCursor.request.to_timestamp !== undefined
+              paginationCursor.request.from_timestamp !== undefined ||
+              paginationCursor.request.to_timestamp !== undefined
                 ? 'timestamp_range'
                 : paginationCursor.request.timeframe
                   ? 'timeframe'
@@ -174,24 +228,27 @@ export function registerQueryBitcoinTransactionsTool(server: McpServer) {
         chunkSize: 20,
       })
 
-      const allTxs = sortTransactions(results.flatMap((block: unknown) => {
-        const typedBlock = block as {
-          number?: number
-          timestamp?: number
-          header?: { number?: number; timestamp?: number }
-          transactions?: Array<Record<string, unknown>>
-        }
-        const blockNumber = typedBlock.number ?? typedBlock.header?.number
-        const timestamp = typedBlock.timestamp ?? typedBlock.header?.timestamp
+      const allTxs = sortTransactions(
+        results.flatMap((block: unknown) => {
+          const typedBlock = block as {
+            number?: number
+            timestamp?: number
+            header?: { number?: number; timestamp?: number }
+            transactions?: Array<Record<string, unknown>>
+          }
+          const blockNumber = typedBlock.number ?? typedBlock.header?.number
+          const timestamp = typedBlock.timestamp ?? typedBlock.header?.timestamp
 
-        return (typedBlock.transactions || []).map((tx) =>
-          normalizeBitcoinTransactionResult({
-            ...tx,
-            ...(blockNumber !== undefined ? { block_number: blockNumber } : {}),
-            ...(timestamp !== undefined ? { timestamp } : {}),
-          }) as BitcoinTransactionItem,
-        )
-      }))
+          return (typedBlock.transactions || []).map(
+            (tx) =>
+              normalizeBitcoinTransactionResult({
+                ...tx,
+                ...(blockNumber !== undefined ? { block_number: blockNumber } : {}),
+                ...(timestamp !== undefined ? { timestamp } : {}),
+              }) as BitcoinTransactionItem,
+          )
+        }),
+      )
       const page = paginateAscendingItems(
         allTxs,
         limit,
@@ -203,123 +260,138 @@ export function registerQueryBitcoinTransactionsTool(server: McpServer) {
             }
           : undefined,
       )
-      const nextCursor = page.hasMore && page.nextBoundary
-        ? encodeRecentPageCursor<BitcoinTransactionsRequest>({
-            tool: 'portal_bitcoin_query_transactions',
-            dataset,
-            request: {
-              ...(timeframe ? { timeframe } : {}),
-              ...(from_timestamp !== undefined ? { from_timestamp } : {}),
-              ...(to_timestamp !== undefined ? { to_timestamp } : {}),
-              limit,
-              finalized_only,
-              include_inputs,
-              include_outputs,
-              response_format: effectiveResponseFormat,
-            },
-            window_from_block: resolvedFromBlock,
-            window_to_block: endBlock,
-            page_to_block: page.nextBoundary.page_to_block,
-            skip_inclusive_block: page.nextBoundary.skip_inclusive_block,
-          })
-        : undefined
+      const nextCursor =
+        page.hasMore && page.nextBoundary
+          ? encodeRecentPageCursor<BitcoinTransactionsRequest>({
+              tool: 'portal_bitcoin_query_transactions',
+              dataset,
+              request: {
+                ...(timeframe ? { timeframe } : {}),
+                ...(from_timestamp !== undefined ? { from_timestamp } : {}),
+                ...(to_timestamp !== undefined ? { to_timestamp } : {}),
+                limit,
+                finalized_only,
+                include_inputs,
+                include_outputs,
+                response_format: effectiveResponseFormat,
+              },
+              window_from_block: resolvedFromBlock,
+              window_to_block: endBlock,
+              page_to_block: page.nextBoundary.page_to_block,
+              skip_inclusive_block: page.nextBoundary.skip_inclusive_block,
+            })
+          : undefined
       let pageItems = page.pageItems
+      let inlineHydratedBlockCount = 0
       if ((include_inputs || include_outputs) && pageItems.length > 0) {
         const txKeys = new Set(
           pageItems
             .map((item) => {
               const blockNumber = typeof item.block_number === 'number' ? item.block_number : undefined
-              const transactionIndex = typeof item.transactionIndex === 'number'
-                ? item.transactionIndex
-                : typeof item.transactionIndex === 'string'
-                  ? Number(item.transactionIndex)
-                  : undefined
-              return blockNumber !== undefined && Number.isFinite(transactionIndex) ? `${blockNumber}:${transactionIndex}` : undefined
+              const transactionIndex =
+                typeof item.transactionIndex === 'number'
+                  ? item.transactionIndex
+                  : typeof item.transactionIndex === 'string'
+                    ? Number(item.transactionIndex)
+                    : undefined
+              return blockNumber !== undefined && Number.isFinite(transactionIndex)
+                ? `${blockNumber}:${transactionIndex}`
+                : undefined
             })
             .filter((value): value is string => Boolean(value)),
         )
-        const [inputBlocks, outputBlocks] = await Promise.all([
-          include_inputs
-            ? portalFetchRecentRecords(`${PORTAL_URL}/datasets/${dataset}/stream`, {
+        const selectedBlockNumbers = Array.from(
+          new Set(
+            pageItems
+              .map((item) => (typeof item.block_number === 'number' ? item.block_number : undefined))
+              .filter((value): value is number => value !== undefined),
+          ),
+        )
+        inlineHydratedBlockCount = selectedBlockNumbers.length
+        const inlineBlocks = (
+          await Promise.all(
+            selectedBlockNumbers.map((blockNumber) =>
+              portalFetchStreamRange(`${PORTAL_URL}/datasets/${dataset}/stream`, {
                 type: 'bitcoin',
-                fromBlock: resolvedFromBlock,
-                toBlock: pageToBlock,
+                fromBlock: blockNumber,
+                toBlock: blockNumber,
                 fields: {
-                  block: buildBitcoinBlockFields(),
-                  input: buildBitcoinInputFields(),
+                  block: { number: true },
+                  ...(include_inputs ? { input: inlineInputFields } : {}),
+                  ...(include_outputs ? { output: inlineOutputFields } : {}),
                 },
-                inputs: [{}],
-              }, {
-                itemKeys: ['inputs'],
-                limit: 5000,
-                chunkSize: 20,
-              })
-            : Promise.resolve([]),
-          include_outputs
-            ? portalFetchRecentRecords(`${PORTAL_URL}/datasets/${dataset}/stream`, {
-                type: 'bitcoin',
-                fromBlock: resolvedFromBlock,
-                toBlock: pageToBlock,
-                fields: {
-                  block: buildBitcoinBlockFields(),
-                  output: buildBitcoinOutputFields(),
-                },
-                outputs: [{}],
-              }, {
-                itemKeys: ['outputs'],
-                limit: 5000,
-                chunkSize: 20,
-              })
-            : Promise.resolve([]),
-        ])
+                ...(include_inputs ? { inputs: [{}] } : {}),
+                ...(include_outputs ? { outputs: [{}] } : {}),
+              }),
+            ),
+          )
+        ).flat()
 
         const inputsByTx = new Map<string, Record<string, unknown>[]>()
-        for (const block of inputBlocks as Array<any>) {
-          const blockNumber = typeof block.number === 'number' ? block.number : typeof block.header?.number === 'number' ? block.header.number : undefined
-          for (const input of block.inputs || []) {
-            const transactionIndex = typeof input.transactionIndex === 'number'
-              ? input.transactionIndex
-              : typeof input.transactionIndex === 'string'
-                ? Number(input.transactionIndex)
+        for (const block of inlineBlocks as Array<any>) {
+          const blockNumber =
+            typeof block.number === 'number'
+              ? block.number
+              : typeof block.header?.number === 'number'
+                ? block.header.number
                 : undefined
+          for (const input of block.inputs || []) {
+            const transactionIndex =
+              typeof input.transactionIndex === 'number'
+                ? input.transactionIndex
+                : typeof input.transactionIndex === 'string'
+                  ? Number(input.transactionIndex)
+                  : undefined
             if (blockNumber === undefined || !Number.isFinite(transactionIndex)) continue
             const txKey = `${blockNumber}:${transactionIndex}`
             if (!txKeys.has(txKey)) continue
             if (!inputsByTx.has(txKey)) inputsByTx.set(txKey, [])
-            inputsByTx.get(txKey)!.push(normalizeBitcoinInputResult({
-              ...input,
-              block_number: blockNumber,
-            }))
+            inputsByTx.get(txKey)!.push(
+              normalizeBitcoinInputResult({
+                ...input,
+                block_number: blockNumber,
+              }),
+            )
           }
         }
         const outputsByTx = new Map<string, Record<string, unknown>[]>()
-        for (const block of outputBlocks as Array<any>) {
-          const blockNumber = typeof block.number === 'number' ? block.number : typeof block.header?.number === 'number' ? block.header.number : undefined
-          for (const output of block.outputs || []) {
-            const transactionIndex = typeof output.transactionIndex === 'number'
-              ? output.transactionIndex
-              : typeof output.transactionIndex === 'string'
-                ? Number(output.transactionIndex)
+        for (const block of inlineBlocks as Array<any>) {
+          const blockNumber =
+            typeof block.number === 'number'
+              ? block.number
+              : typeof block.header?.number === 'number'
+                ? block.header.number
                 : undefined
+          for (const output of block.outputs || []) {
+            const transactionIndex =
+              typeof output.transactionIndex === 'number'
+                ? output.transactionIndex
+                : typeof output.transactionIndex === 'string'
+                  ? Number(output.transactionIndex)
+                  : undefined
             if (blockNumber === undefined || !Number.isFinite(transactionIndex)) continue
             const txKey = `${blockNumber}:${transactionIndex}`
             if (!txKeys.has(txKey)) continue
             if (!outputsByTx.has(txKey)) outputsByTx.set(txKey, [])
-            outputsByTx.get(txKey)!.push(normalizeBitcoinOutputResult({
-              ...output,
-              block_number: blockNumber,
-            }))
+            outputsByTx.get(txKey)!.push(
+              normalizeBitcoinOutputResult({
+                ...output,
+                block_number: blockNumber,
+              }),
+            )
           }
         }
 
         pageItems = pageItems.map((item) => {
           const blockNumber = typeof item.block_number === 'number' ? item.block_number : undefined
-          const transactionIndex = typeof item.transactionIndex === 'number'
-            ? item.transactionIndex
-            : typeof item.transactionIndex === 'string'
-              ? Number(item.transactionIndex)
-              : undefined
-          const txKey = blockNumber !== undefined && Number.isFinite(transactionIndex) ? `${blockNumber}:${transactionIndex}` : ''
+          const transactionIndex =
+            typeof item.transactionIndex === 'number'
+              ? item.transactionIndex
+              : typeof item.transactionIndex === 'string'
+                ? Number(item.transactionIndex)
+                : undefined
+          const txKey =
+            blockNumber !== undefined && Number.isFinite(transactionIndex) ? `${blockNumber}:${transactionIndex}` : ''
           return {
             ...item,
             ...(include_inputs ? { inputs: inputsByTx.get(txKey) || [] } : {}),
@@ -346,9 +418,10 @@ export function registerQueryBitcoinTransactionsTool(server: McpServer) {
         hasMore: page.hasMore,
       })
 
-      const message = effectiveResponseFormat === 'summary'
-        ? `Summary of ${pageItems.length} Bitcoin transactions${page.hasMore ? ' (latest preview page)' : ''}`
-        : `Retrieved ${pageItems.length} Bitcoin transactions${page.hasMore ? ` from the most recent matching blocks (preview page limited to ${limit})` : ''}`
+      const message =
+        effectiveResponseFormat === 'summary'
+          ? `Summary of ${pageItems.length} Bitcoin transactions${page.hasMore ? ' (latest preview page)' : ''}`
+          : `Retrieved ${pageItems.length} Bitcoin transactions${page.hasMore ? ` from the most recent matching blocks (preview page limited to ${limit})` : ''}`
 
       return formatResult(formattedData, message, {
         toolName: 'portal_bitcoin_query_transactions',
@@ -371,7 +444,7 @@ export function registerQueryBitcoinTransactionsTool(server: McpServer) {
           normalized_output: true,
           notes: [
             include_inputs || include_outputs
-              ? 'Inputs and/or outputs were attached inline to each transaction.'
+              ? `Inputs and/or outputs were attached inline for returned transactions by hydrating ${inlineHydratedBlockCount} selected block${inlineHydratedBlockCount === 1 ? '' : 's'}.`
               : 'Transaction-only Bitcoin view.',
           ],
         }),
