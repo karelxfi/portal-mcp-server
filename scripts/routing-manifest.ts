@@ -25,6 +25,8 @@ const EXTRA_ROUTING_CASES: RoutingEvalCase[] = [
   { prompt: 'give me raw base transactions from the last hour', expected: 'portal_evm_query_transactions', max_rank: 1, source: 'extra' },
   { prompt: 'which tx was the first one on ethereum mainnet with tx type 0x1 starting from block 12244000', expected: 'portal_evm_query_transactions', max_rank: 1, source: 'extra' },
   { prompt: 'show me the biggest gas used transfer calls to USDC on Base', expected: 'portal_evm_query_transactions', max_rank: 1, source: 'extra' },
+  { prompt: 'top senders on Base over the past hour', expected: 'portal_evm_query_transactions', max_rank: 1, source: 'extra' },
+  { prompt: 'top receivers by transaction count on Base today', expected: 'portal_evm_query_transactions', max_rank: 1, source: 'extra' },
   {
     prompt: 'show me usdc transfer events on base',
     expected: 'portal_evm_query_logs',

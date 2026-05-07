@@ -4,6 +4,7 @@ import { z } from 'zod'
 import { resolveDataset, validateBlockRange } from '../../cache/datasets.js'
 import { PORTAL_URL } from '../../constants/index.js'
 import { detectChainType, isL2Chain } from '../../helpers/chain.js'
+import { buildTableDescriptor } from '../../helpers/chart-metadata.js'
 import { createUnsupportedChainError } from '../../helpers/errors.js'
 import { resolveMethodSighashes } from '../../helpers/evm-aliases.js'
 import { portalFetchRecentRecords, portalFetchStreamRange } from '../../helpers/fetch.js'
@@ -52,6 +53,8 @@ function flattenTransactionsWithBlockContext(results: unknown[]) {
       normalizeEvmTransactionResult(
         formatTransactionFields({
           ...tx,
+          ...(readBigIntField(tx, 'value') !== undefined ? { value_wei: readBigIntField(tx, 'value')?.toString() } : {}),
+          ...(readBigIntField(tx, 'effectiveGasPrice') !== undefined ? { effectiveGasPrice_wei: readBigIntField(tx, 'effectiveGasPrice')?.toString() } : {}),
           ...(blockNumber !== undefined ? { block_number: blockNumber } : {}),
           ...(timestamp !== undefined
             ? {
@@ -82,6 +85,8 @@ type QueryTransactionsRequest = {
   min_gas_used?: string | number
   min_effective_gas_price_wei?: string | number
   order_by?: 'chronological' | 'value_desc' | 'gas_used_desc' | 'effective_gas_price_desc'
+  aggregate_by?: 'sender' | 'receiver'
+  aggregate_metric?: 'count' | 'value' | 'gas_used' | 'effective_gas_price'
   max_scan_blocks?: number
   scan_order?: 'earliest' | 'latest'
   first_nonce?: number
@@ -108,6 +113,19 @@ type EvmTransactionItem = Record<string, unknown> & {
   block_number?: number
   transactionIndex?: number
   hash?: string
+}
+
+type TransactionAggregateRow = {
+  rank: number
+  address: string
+  transaction_count: number
+  total_value_wei: string
+  total_gas_used: string
+  max_gas_used: string
+  max_effective_gas_price_wei: string
+  first_block?: number
+  last_block?: number
+  sample_transaction_hash?: string
 }
 
 function getBlockNumber(tx: EvmTransactionItem): number | undefined {
@@ -197,12 +215,20 @@ function normalizeBigIntFilter(value: string | number | undefined, name: string)
 }
 
 function readBigIntField(tx: Record<string, unknown>, field: string): bigint | undefined {
-  const value = tx[field]
-  if (typeof value === 'bigint') return value
-  if (typeof value === 'number' && Number.isFinite(value)) return BigInt(Math.trunc(value))
-  if (typeof value === 'string') {
-    const trimmed = value.trim().toLowerCase()
-    if (/^(0x[0-9a-f]+|\d+)$/.test(trimmed)) return BigInt(trimmed)
+  const comparableAliases: Record<string, string[]> = {
+    value: ['value_wei'],
+    effectiveGasPrice: ['effectiveGasPrice_wei'],
+  }
+  const candidateFields = [field, ...(comparableAliases[field] ?? [])]
+
+  for (const candidateField of candidateFields) {
+    const value = tx[candidateField]
+    if (typeof value === 'bigint') return value
+    if (typeof value === 'number' && Number.isFinite(value)) return BigInt(Math.trunc(value))
+    if (typeof value === 'string') {
+      const trimmed = value.trim().toLowerCase()
+      if (/^(0x[0-9a-f]+|\d+)$/.test(trimmed)) return BigInt(trimmed)
+    }
   }
   return undefined
 }
@@ -266,6 +292,80 @@ function orderTransactionsForOutput(items: EvmTransactionItem[], orderBy: QueryT
   })
 }
 
+function getAggregateAddress(tx: EvmTransactionItem, aggregateBy: NonNullable<QueryTransactionsRequest['aggregate_by']>): string | undefined {
+  const value = aggregateBy === 'sender' ? tx.from : tx.to
+  return typeof value === 'string' && /^0x[0-9a-f]{40}$/i.test(value) ? value.toLowerCase() : undefined
+}
+
+function getAggregateSortValue(row: Omit<TransactionAggregateRow, 'rank'>, metric: NonNullable<QueryTransactionsRequest['aggregate_metric']>): bigint {
+  switch (metric) {
+    case 'value':
+      return BigInt(row.total_value_wei)
+    case 'gas_used':
+      return BigInt(row.total_gas_used)
+    case 'effective_gas_price':
+      return BigInt(row.max_effective_gas_price_wei)
+    case 'count':
+    default:
+      return BigInt(row.transaction_count)
+  }
+}
+
+function aggregateTransactions(
+  items: EvmTransactionItem[],
+  aggregateBy: NonNullable<QueryTransactionsRequest['aggregate_by']>,
+  metric: NonNullable<QueryTransactionsRequest['aggregate_metric']>,
+  limit: number,
+): TransactionAggregateRow[] {
+  const groups = new Map<string, Omit<TransactionAggregateRow, 'rank'>>()
+
+  for (const tx of items) {
+    const address = getAggregateAddress(tx, aggregateBy)
+    if (!address) continue
+
+    const existing = groups.get(address) ?? {
+      address,
+      transaction_count: 0,
+      total_value_wei: '0',
+      total_gas_used: '0',
+      max_gas_used: '0',
+      max_effective_gas_price_wei: '0',
+      first_block: undefined,
+      last_block: undefined,
+      sample_transaction_hash: typeof tx.hash === 'string' ? tx.hash : undefined,
+    }
+
+    const value = readBigIntField(tx, 'value') ?? 0n
+    const gasUsed = readBigIntField(tx, 'gasUsed') ?? 0n
+    const effectiveGasPrice = readBigIntField(tx, 'effectiveGasPrice') ?? 0n
+    const blockNumber = getBlockNumber(tx)
+
+    existing.transaction_count += 1
+    existing.total_value_wei = (BigInt(existing.total_value_wei) + value).toString()
+    existing.total_gas_used = (BigInt(existing.total_gas_used) + gasUsed).toString()
+    existing.max_gas_used = (BigInt(existing.max_gas_used) > gasUsed ? BigInt(existing.max_gas_used) : gasUsed).toString()
+    existing.max_effective_gas_price_wei = (BigInt(existing.max_effective_gas_price_wei) > effectiveGasPrice
+      ? BigInt(existing.max_effective_gas_price_wei)
+      : effectiveGasPrice).toString()
+    existing.first_block = blockNumber === undefined ? existing.first_block : Math.min(existing.first_block ?? blockNumber, blockNumber)
+    existing.last_block = blockNumber === undefined ? existing.last_block : Math.max(existing.last_block ?? blockNumber, blockNumber)
+    if (!existing.sample_transaction_hash && typeof tx.hash === 'string') existing.sample_transaction_hash = tx.hash
+
+    groups.set(address, existing)
+  }
+
+  return [...groups.values()]
+    .sort((left, right) => {
+      const leftValue = getAggregateSortValue(left, metric)
+      const rightValue = getAggregateSortValue(right, metric)
+      if (leftValue !== rightValue) return leftValue > rightValue ? -1 : 1
+      if (left.transaction_count !== right.transaction_count) return right.transaction_count - left.transaction_count
+      return left.address.localeCompare(right.address)
+    })
+    .slice(0, limit)
+    .map((row, index) => ({ rank: index + 1, ...row }))
+}
+
 async function fetchTransactionsByScanOrder({
   url,
   query,
@@ -277,6 +377,7 @@ async function fetchTransactionsByScanOrder({
   orderBy,
   maxScanBlocks,
   clientFilters,
+  candidateLimit,
 }: {
   url: string
   query: Record<string, unknown>
@@ -288,33 +389,40 @@ async function fetchTransactionsByScanOrder({
   orderBy: QueryTransactionsRequest['order_by']
   maxScanBlocks: number
   clientFilters: Parameters<typeof matchesClientTransactionFilters>[1]
+  candidateLimit?: number
 }) {
   const targetCount = limit + 1
-  const candidateLimit = orderBy && orderBy !== 'chronological' ? Math.max(limit * 20, 500) : targetCount
+  const effectiveCandidateLimit = candidateLimit ?? (orderBy && orderBy !== 'chronological' ? Math.max(limit * 20, 500) : targetCount)
   const collected: EvmTransactionItem[] = []
   let scannedFromBlock = scanOrder === 'earliest' ? fromBlock : toBlock
   let scannedToBlock = scanOrder === 'earliest' ? fromBlock : toBlock
   let scannedBlocks = 0
 
   if (scanOrder === 'earliest') {
-    for (let chunkFrom = fromBlock; chunkFrom <= toBlock && collected.length < candidateLimit && scannedBlocks < maxScanBlocks; chunkFrom += chunkSize) {
+    for (let chunkFrom = fromBlock; chunkFrom <= toBlock && collected.length < effectiveCandidateLimit && scannedBlocks < maxScanBlocks; chunkFrom += chunkSize) {
       const chunkTo = Math.min(toBlock, chunkFrom + chunkSize - 1, fromBlock + maxScanBlocks - 1)
       scannedToBlock = chunkTo
       const records = await portalFetchStreamRange(url, { ...query, fromBlock: chunkFrom, toBlock: chunkTo })
       const txs = sortTransactions(flattenTransactionsWithBlockContext(records) as EvmTransactionItem[])
         .filter((tx) => matchesClientTransactionFilters(tx, clientFilters))
-      collected.push(...txs)
+      for (const tx of txs) {
+        if (collected.length >= effectiveCandidateLimit) break
+        collected.push(tx)
+      }
       scannedBlocks += chunkTo - chunkFrom + 1
     }
   } else {
-    for (let chunkTo = toBlock; chunkTo >= fromBlock && collected.length < candidateLimit && scannedBlocks < maxScanBlocks; chunkTo -= chunkSize) {
+    for (let chunkTo = toBlock; chunkTo >= fromBlock && collected.length < effectiveCandidateLimit && scannedBlocks < maxScanBlocks; chunkTo -= chunkSize) {
       const chunkFrom = Math.max(fromBlock, chunkTo - chunkSize + 1, toBlock - maxScanBlocks + 1)
       scannedFromBlock = chunkFrom
       const records = await portalFetchStreamRange(url, { ...query, fromBlock: chunkFrom, toBlock: chunkTo })
       const txs = sortTransactions(flattenTransactionsWithBlockContext(records) as EvmTransactionItem[])
         .filter((tx) => matchesClientTransactionFilters(tx, clientFilters))
         .reverse()
-      collected.push(...txs)
+      for (const tx of txs) {
+        if (collected.length >= effectiveCandidateLimit) break
+        collected.push(tx)
+      }
       scannedBlocks += chunkTo - chunkFrom + 1
     }
   }
@@ -322,6 +430,7 @@ async function fetchTransactionsByScanOrder({
   const ordered = orderTransactionsForOutput(collected, orderBy)
   return {
     items: ordered.slice(0, limit),
+    candidates: ordered,
     hasMore: collected.length > limit || scannedBlocks >= maxScanBlocks && (scanOrder === 'earliest' ? scannedToBlock < toBlock : scannedFromBlock > fromBlock),
     scannedFromBlock,
     scannedToBlock,
@@ -414,6 +523,15 @@ export function registerQueryTransactionsTool(server: McpServer) {
         .optional()
         .default('chronological')
         .describe('Optional ranking for top-N questions. Use value_desc, gas_used_desc, or effective_gas_price_desc.'),
+      aggregate_by: z
+        .enum(['sender', 'receiver'])
+        .optional()
+        .describe('Optional bounded aggregation for top sender/receiver questions. Returns ranked address rows instead of raw transactions.'),
+      aggregate_metric: z
+        .enum(['count', 'value', 'gas_used', 'effective_gas_price'])
+        .optional()
+        .default('count')
+        .describe('Metric used with aggregate_by. count ranks by tx count; value by total native value; gas_used by total gas used; effective_gas_price by max effective gas price.'),
       max_scan_blocks: z
         .number()
         .max(50000)
@@ -472,6 +590,8 @@ export function registerQueryTransactionsTool(server: McpServer) {
       min_gas_used,
       min_effective_gas_price_wei,
       order_by,
+      aggregate_by,
+      aggregate_metric,
       max_scan_blocks,
       scan_order,
       first_nonce,
@@ -526,6 +646,8 @@ export function registerQueryTransactionsTool(server: McpServer) {
         min_gas_used = paginationCursor.request.min_gas_used
         min_effective_gas_price_wei = paginationCursor.request.min_effective_gas_price_wei
         order_by = paginationCursor.request.order_by ?? 'chronological'
+        aggregate_by = paginationCursor.request.aggregate_by
+        aggregate_metric = paginationCursor.request.aggregate_metric ?? 'count'
         max_scan_blocks = paginationCursor.request.max_scan_blocks
         scan_order = paginationCursor.request.scan_order
         first_nonce = paginationCursor.request.first_nonce
@@ -573,6 +695,7 @@ export function registerQueryTransactionsTool(server: McpServer) {
       const normalizedMinGasUsed = normalizeBigIntFilter(min_gas_used, 'min_gas_used')
       const normalizedMinEffectiveGasPriceWei = normalizeBigIntFilter(min_effective_gas_price_wei, 'min_effective_gas_price_wei')
       const effectiveOrderBy = order_by ?? 'chronological'
+      const effectiveAggregateMetric = aggregate_metric ?? 'count'
       const hasClientFilters = normalizedTransactionType !== undefined
         || normalizedTransactionStatus !== undefined
         || contract_creation !== undefined
@@ -580,6 +703,7 @@ export function registerQueryTransactionsTool(server: McpServer) {
         || normalizedMinGasUsed !== undefined
         || normalizedMinEffectiveGasPriceWei !== undefined
         || effectiveOrderBy !== 'chronological'
+        || aggregate_by !== undefined
       const effectiveScanOrder: 'earliest' | 'latest' =
         scan_order ?? (hasClientFilters && effectiveOrderBy === 'chronological' ? 'earliest' : 'latest')
       const { validatedToBlock: endBlock, head } = await validateBlockRange(
@@ -636,13 +760,13 @@ export function registerQueryTransactionsTool(server: McpServer) {
         status: true,
         contractAddress: true,
       }
-      if (normalizedMinGasUsed !== undefined || effectiveOrderBy === 'gas_used_desc') {
+      if (normalizedMinGasUsed !== undefined || effectiveOrderBy === 'gas_used_desc' || aggregate_by !== undefined && effectiveAggregateMetric === 'gas_used') {
         fields.transaction = {
           ...(fields.transaction as Record<string, boolean>),
           gasUsed: true,
         }
       }
-      if (normalizedMinEffectiveGasPriceWei !== undefined || effectiveOrderBy === 'effective_gas_price_desc') {
+      if (normalizedMinEffectiveGasPriceWei !== undefined || effectiveOrderBy === 'effective_gas_price_desc' || aggregate_by !== undefined && effectiveAggregateMetric === 'effective_gas_price') {
         fields.transaction = {
           ...(fields.transaction as Record<string, boolean>),
           effectiveGasPrice: true,
@@ -707,7 +831,7 @@ export function registerQueryTransactionsTool(server: McpServer) {
             chunkSize: normalizedTransactionType !== undefined ? 100 : adaptiveChunkSize,
             scanOrder: effectiveScanOrder,
             orderBy: effectiveOrderBy,
-            maxScanBlocks: Math.max(1, Math.min(max_scan_blocks ?? 10000, endBlock - resolvedFromBlock + 1)),
+            maxScanBlocks: Math.max(1, Math.min(max_scan_blocks ?? (aggregate_by ? 1000 : 10000), endBlock - resolvedFromBlock + 1)),
             clientFilters: {
               transactionType: normalizedTransactionType,
               transactionStatus: normalizedTransactionStatus,
@@ -716,6 +840,7 @@ export function registerQueryTransactionsTool(server: McpServer) {
               minGasUsed: normalizedMinGasUsed,
               minEffectiveGasPriceWei: normalizedMinEffectiveGasPriceWei,
             },
+            candidateLimit: aggregate_by ? Math.max(limit * 200, 5000) : undefined,
           })
         : undefined
       const allTxs = scanResult
@@ -759,6 +884,8 @@ export function registerQueryTransactionsTool(server: McpServer) {
               ...(min_gas_used !== undefined ? { min_gas_used } : {}),
               ...(min_effective_gas_price_wei !== undefined ? { min_effective_gas_price_wei } : {}),
               order_by: effectiveOrderBy,
+              ...(aggregate_by ? { aggregate_by } : {}),
+              aggregate_metric: effectiveAggregateMetric,
               ...(max_scan_blocks !== undefined ? { max_scan_blocks } : {}),
               scan_order: effectiveScanOrder,
               ...(first_nonce !== undefined ? { first_nonce } : {}),
@@ -777,9 +904,95 @@ export function registerQueryTransactionsTool(server: McpServer) {
           })
         : undefined
 
+      const notices = [...getTimestampWindowNotices(resolvedBlocks), ...getValidationNotices(validation)]
+      if (aggregate_by) {
+        const aggregateRows = aggregateTransactions(scanResult?.candidates ?? allTxs, aggregate_by, effectiveAggregateMetric, limit)
+        const aggregateKey = aggregate_by === 'sender' ? 'top_senders' : 'top_receivers'
+        if (scanResult?.hasMore) {
+          notices.push(`Aggregation is bounded to ${scanResult.candidateCount.toLocaleString()} scanned candidate transactions across blocks ${scanResult.scannedFromBlock}-${scanResult.scannedToBlock}; narrow the window or raise max_scan_blocks for deeper coverage.`)
+        }
+
+        const aggregatePayload = {
+          [aggregateKey]: aggregateRows,
+          summary: {
+            aggregate_by,
+            aggregate_metric: effectiveAggregateMetric,
+            scanned_transactions: scanResult?.candidateCount ?? allTxs.length,
+            scanned_blocks: scanResult?.scannedBlocks,
+          },
+          tables: [
+            buildTableDescriptor({
+              id: aggregateKey,
+              dataKey: aggregateKey,
+              title: aggregate_by === 'sender' ? 'Top Senders' : 'Top Receivers',
+              rowCount: aggregateRows.length,
+              keyField: 'address',
+              defaultSort: { key: effectiveAggregateMetric === 'count' ? 'transaction_count' : effectiveAggregateMetric === 'value' ? 'total_value_wei' : effectiveAggregateMetric === 'gas_used' ? 'total_gas_used' : 'max_effective_gas_price_wei', direction: 'desc' },
+              columns: [
+                { key: 'rank', label: '#', kind: 'rank', align: 'right' },
+                { key: 'address', label: aggregate_by === 'sender' ? 'Sender' : 'Receiver', kind: 'dimension', format: 'address' },
+                { key: 'transaction_count', label: 'Txs', kind: 'metric', format: 'integer', align: 'right' },
+                { key: 'total_value_wei', label: 'Total value (wei)', kind: 'metric', format: 'integer', align: 'right' },
+                { key: 'total_gas_used', label: 'Total gas used', kind: 'metric', format: 'integer', align: 'right' },
+                { key: 'max_effective_gas_price_wei', label: 'Max effective gas price (wei)', kind: 'metric', format: 'integer', align: 'right' },
+              ],
+              dense: true,
+            }),
+          ],
+        }
+
+        const freshness = buildQueryFreshness({
+          finality: finalized_only ? 'finalized' : 'latest',
+          headBlockNumber: head.number,
+          windowToBlock: endBlock,
+          resolvedWindow: resolvedBlocks,
+        })
+        const coverage = buildQueryCoverage({
+          windowFromBlock: resolvedFromBlock,
+          windowToBlock: endBlock,
+          pageToBlock: scanResult && effectiveScanOrder === 'earliest' ? scanResult.scannedToBlock : pageToBlock,
+          items: scanResult?.candidates ?? allTxs,
+          getBlockNumber,
+          hasMore: Boolean(scanResult?.hasMore),
+        })
+
+        return formatResult(
+          aggregatePayload,
+          `Ranked ${aggregateRows.length} ${aggregate_by === 'sender' ? 'senders' : 'receivers'} by ${effectiveAggregateMetric} from ${scanResult?.candidateCount ?? allTxs.length} scanned transactions.`,
+          {
+            toolName: 'portal_evm_query_transactions',
+            notices,
+            freshness,
+            coverage,
+            execution: buildExecutionMetadata({
+              response_format: effectiveResponseFormat,
+              finalized_only,
+              limit,
+              from_block: resolvedFromBlock,
+              to_block: endBlock,
+              page_to_block: pageToBlock,
+              scan_order: effectiveScanOrder,
+              order_by: effectiveOrderBy,
+              range_kind: resolvedBlocks.range_kind,
+              notes: [
+                `Aggregated by ${aggregate_by} using ${effectiveAggregateMetric}.`,
+                `Scanned up to ${max_scan_blocks ?? 1000} blocks or ${Math.max(limit * 200, 5000).toLocaleString()} candidate transactions for bounded aggregation.`,
+              ],
+              normalized_output: true,
+            }),
+            metadata: {
+              network: dataset,
+              dataset,
+              from_block: resolvedFromBlock,
+              to_block: pageToBlock,
+              query_start_time: queryStartTime,
+            },
+          },
+        )
+      }
+
       // Apply response format (summary/compact/full)
       const formattedData = applyResponseFormat(page.pageItems, effectiveResponseFormat, 'transactions')
-      const notices = [...getTimestampWindowNotices(resolvedBlocks), ...getValidationNotices(validation)]
       if (nextCursor) {
         notices.push('Older results are available via _pagination.next_cursor.')
       }

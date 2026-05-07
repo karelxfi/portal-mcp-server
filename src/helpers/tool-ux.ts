@@ -309,6 +309,7 @@ const TOOL_DEFINITIONS: Record<string, ToolDefinition> = {
       'You want chain-specific transaction fields or include flags that convenience tools do not expose.',
       'You need to find the first transaction matching a raw field condition such as transaction type 0x1 from a known block.',
       'You need top-N raw transactions ranked by value, gas used, or effective gas price.',
+      'You need top senders or receivers from a bounded transaction window.',
       'You want common method names such as transfer, approve, deposit, or withdraw instead of remembering sighashes.',
     ],
     avoid_when: ['You only need a quick recent feed or wallet-level summary.'],
@@ -317,6 +318,7 @@ const TOOL_DEFINITIONS: Record<string, ToolDefinition> = {
       { label: 'Filter by sender', input: { network: 'ethereum-mainnet', timeframe: '6h', from_addresses: ['0xabc...'], limit: 20 } },
       { label: 'First EIP-2930 transaction from Berlin fork', input: { network: 'ethereum-mainnet', from_block: 12244000, transaction_type: '0x1', scan_order: 'earliest', limit: 1, field_preset: 'minimal' } },
       { label: 'Largest recent transfers to USDC', input: { network: 'base-mainnet', timeframe: '1h', to_addresses: ['0x833589fcd6edb6e08f4c7c32d4f71b54bda02913'], method: 'transfer', order_by: 'gas_used_desc', limit: 5 } },
+      { label: 'Top senders by transaction count', input: { network: 'base-mainnet', timeframe: '1h', aggregate_by: 'sender', aggregate_metric: 'count', limit: 10 } },
     ],
     supports: {
       pagination: true,

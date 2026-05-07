@@ -335,6 +335,8 @@ const TRUNCATABLE_ARRAY_KEYS = new Set([
   'comparison_series',
   'bucket_deltas',
   'top_contracts',
+  'top_senders',
+  'top_receivers',
   'top_programs',
   'programs',
   'volume_by_coin',
