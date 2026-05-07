@@ -125,6 +125,24 @@ Add an entry like this to `claude_desktop_config.json`:
 - Use `portal_evm_get_ohlc` and `portal_hyperliquid_get_ohlc` only when you actually need candle-shaped output.
 - For large or exploratory queries, prefer `response_format: "compact"` unless you need the full record shape.
 
+## Observability
+
+HTTP mode exposes Prometheus metrics at `/metrics` and health state at `/health`.
+
+The bundled Grafana dashboard is at `grafana/portal-mcp-dashboard.json`. It uses:
+
+- Prometheus for live `/metrics` scrape data such as request rates, active calls, latency, and response sizes.
+- Loki for long-window tool-call history. Configure `GRAFANA_LOKI_URL` plus either `GRAFANA_LOKI_TOKEN` or `GRAFANA_LOKI_USERNAME`/`GRAFANA_LOKI_PASSWORD` to push structured tool events.
+
+Useful environment variables:
+
+- `OBS_SERVICE_NAME` (default `sqd-portal-mcp`)
+- `OBS_ENV` (default `NODE_ENV` or `production`)
+- `OBS_LOG_JSON=true` to emit structured events to stderr
+- `OBS_CAPTURE_USER_QUERY=true` to include forwarded `x-mcp-user-query` text in telemetry
+
+For 30-day Grafana windows, Prometheus must scrape `/metrics` continuously with matching retention, or the Loki event panels must be backed by configured log export. In-process Prometheus counters cannot backfill history by themselves.
+
 ## Tests
 
 ```bash
@@ -132,6 +150,8 @@ npm test
 npm run test:tools
 npm run test:routing
 npm run test:substrate
+npm run test:timestamps
+npm run test:observability
 npm run test:conversations
 npm run test:negative
 npm run test:quality

@@ -115,7 +115,8 @@
         }
       ],
       "title": "Successful tool calls / sec",
-      "type": "timeseries"
+      "type": "timeseries",
+      "description": "Live Prometheus scrape data from /metrics. Use the Loki panels below for long-range event history when Prometheus retention or scraping is missing."
     },
     {
       "datasource": "${DS_PROMETHEUS}",
@@ -169,7 +170,8 @@
         }
       ],
       "title": "Errored tool calls / sec",
-      "type": "timeseries"
+      "type": "timeseries",
+      "description": "Live Prometheus scrape data from /metrics. Use the Loki panels below for long-range event history when Prometheus retention or scraping is missing."
     },
     {
       "datasource": "${DS_PROMETHEUS}",
@@ -210,7 +212,8 @@
         }
       ],
       "title": "Tool latency p95",
-      "type": "timeseries"
+      "type": "timeseries",
+      "description": "Live Prometheus scrape data from /metrics. Use the Loki panels below for long-range event history when Prometheus retention or scraping is missing."
     },
     {
       "datasource": "${DS_PROMETHEUS}",
@@ -251,7 +254,8 @@
         }
       ],
       "title": "Response size p95",
-      "type": "timeseries"
+      "type": "timeseries",
+      "description": "Live Prometheus scrape data from /metrics. Use the Loki panels below for long-range event history when Prometheus retention or scraping is missing."
     },
     {
       "datasource": "${DS_PROMETHEUS}",
@@ -300,7 +304,8 @@
         }
       ],
       "title": "Active tool calls",
-      "type": "stat"
+      "type": "stat",
+      "description": "Live Prometheus scrape data from /metrics. Use the Loki panels below for long-range event history when Prometheus retention or scraping is missing."
     },
     {
       "datasource": "${DS_PROMETHEUS}",
@@ -349,7 +354,8 @@
         }
       ],
       "title": "Total tool calls",
-      "type": "stat"
+      "type": "stat",
+      "description": "Live Prometheus scrape data from /metrics. Use the Loki panels below for long-range event history when Prometheus retention or scraping is missing."
     },
     {
       "datasource": "${DS_PROMETHEUS}",
@@ -402,7 +408,8 @@
         }
       ],
       "title": "Total tool errors",
-      "type": "stat"
+      "type": "stat",
+      "description": "Live Prometheus scrape data from /metrics. Use the Loki panels below for long-range event history when Prometheus retention or scraping is missing."
     },
     {
       "datasource": "${DS_PROMETHEUS}",
@@ -453,7 +460,8 @@
         }
       ],
       "title": "Running server version",
-      "type": "stat"
+      "type": "stat",
+      "description": "Live Prometheus scrape data from /metrics. Use the Loki panels below for long-range event history when Prometheus retention or scraping is missing."
     },
     {
       "datasource": "${DS_PROMETHEUS}",
@@ -493,7 +501,8 @@
         }
       ],
       "title": "Top networks by query volume",
-      "type": "timeseries"
+      "type": "timeseries",
+      "description": "Live Prometheus scrape data from /metrics. Use the Loki panels below for long-range event history when Prometheus retention or scraping is missing."
     },
     {
       "datasource": "${DS_PROMETHEUS}",
@@ -533,7 +542,8 @@
         }
       ],
       "title": "Intent mix",
-      "type": "timeseries"
+      "type": "timeseries",
+      "description": "Live Prometheus scrape data from /metrics. Use the Loki panels below for long-range event history when Prometheus retention or scraping is missing."
     },
     {
       "datasource": "${DS_PROMETHEUS}",
@@ -574,7 +584,8 @@
         }
       ],
       "title": "Portal upstream status codes / sec",
-      "type": "timeseries"
+      "type": "timeseries",
+      "description": "Live Prometheus scrape data from /metrics. Use the Loki panels below for long-range event history when Prometheus retention or scraping is missing."
     },
     {
       "datasource": "${DS_PROMETHEUS}",
@@ -614,7 +625,8 @@
         }
       ],
       "title": "HTTP clients by version",
-      "type": "timeseries"
+      "type": "timeseries",
+      "description": "Live Prometheus scrape data from /metrics. Use the Loki panels below for long-range event history when Prometheus retention or scraping is missing."
     },
     {
       "datasource": "${DS_LOKI}",
@@ -673,6 +685,88 @@
       ],
       "title": "Forwarded user questions",
       "type": "logs"
+    },
+    {
+      "datasource": "${DS_LOKI}",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 47
+      },
+      "id": 15,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "right"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum by (tool, status) (count_over_time({app=\"sqd-portal-mcp\", event=\"mcp_tool_call\"} | json | tool=~\"$tool\" [$__interval]))",
+          "legendFormat": "{{tool}} {{status}}",
+          "queryType": "range",
+          "refId": "A"
+        }
+      ],
+      "title": "Tool calls from Loki events",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "${DS_LOKI}",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 47
+      },
+      "id": 16,
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false,
+          "reducer": [
+            "sum"
+          ],
+          "countRows": false
+        }
+      },
+      "targets": [
+        {
+          "expr": "topk(20, sum by (network) (count_over_time({app=\"sqd-portal-mcp\", event=\"mcp_tool_call\"} | json | network != \"\" [$__range])))",
+          "legendFormat": "{{network}}",
+          "queryType": "range",
+          "refId": "A"
+        }
+      ],
+      "title": "Top networks from Loki events",
+      "type": "table"
     }
   ],
   "refresh": "30s",
@@ -713,13 +807,13 @@
     ]
   },
   "time": {
-    "from": "now-24h",
+    "from": "now-30d",
     "to": "now"
   },
   "timepicker": {},
   "timezone": "",
   "title": "SQD Portal MCP",
   "uid": "sqd-portal-mcp",
-  "version": 1,
+  "version": 2,
   "weekStart": ""
 }

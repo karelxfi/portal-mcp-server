@@ -44,6 +44,20 @@ Runs an automated response-quality audit over the full manifest. It:
 - flags truncation, legacy wording, default raw-query bloat, and non-humanized labels
 - warns when a tool is drifting toward the hard budgets before it actually fails
 
+### `npm run test:timestamps`
+Runs focused timestamp resolver QA. It:
+
+- verifies Solana head timestamp lookup uses Portal's real `block.timestamp` field
+- checks recent `1h` Solana windows are anchored to the latest indexed slot timestamp and resolved through Portal's timestamp lookup
+- confirms `"now"` timestamp requests gracefully estimate from the indexed head when hotblocks reject wall-clock now
+
+### `npm run test:observability`
+Runs focused HTTP observability QA. It:
+
+- boots the HTTP server and performs a real MCP tool call
+- verifies `/metrics` emits canonical tool, client, Portal, and dataset series
+- validates that the Grafana dashboard's Prometheus queries reference metric names the server actually emits
+
 ### `npm run test:all`
 Runs the full live matrix:
 
@@ -52,6 +66,8 @@ Runs the full live matrix:
 - tools
 - routing
 - substrate
+- timestamps
+- observability
 - conversations
 - negative paths
 - quality audit

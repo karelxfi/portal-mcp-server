@@ -2,7 +2,6 @@ import { PORTAL_URL } from '../constants/index.js'
 import { createCache } from '../helpers/cache-manager.js'
 import { createBlockRangeError, createDatasetError } from '../helpers/errors.js'
 import { portalFetch } from '../helpers/fetch.js'
-import { datasetQueriesTotal } from '../metrics.js'
 import type { BlockHead, ChainType, Dataset, DatasetMetadata } from '../types/index.js'
 
 // ============================================================================
@@ -205,7 +204,6 @@ export async function resolveDataset(dataset: string): Promise<string> {
   // Exact match
   const exactMatch = datasets.find((d) => d.dataset === dataset || d.aliases.includes(dataset))
   if (exactMatch) {
-    datasetQueriesTotal.inc({ dataset: exactMatch.dataset })
     return exactMatch.dataset
   }
 
@@ -214,7 +212,6 @@ export async function resolveDataset(dataset: string): Promise<string> {
   // Check common aliases
   for (const [canonicalName, aliases] of Object.entries(CHAIN_ALIASES)) {
     if (aliases.some((a) => a === lowerDataset || lowerDataset.includes(a) || a.includes(lowerDataset))) {
-      datasetQueriesTotal.inc({ dataset: canonicalName })
       return canonicalName
     }
   }
@@ -222,7 +219,6 @@ export async function resolveDataset(dataset: string): Promise<string> {
   // Try "{name}-mainnet"
   const mainnetMatch = datasets.find((d) => d.dataset === `${lowerDataset}-mainnet`)
   if (mainnetMatch) {
-    datasetQueriesTotal.inc({ dataset: mainnetMatch.dataset })
     return mainnetMatch.dataset
   }
 
@@ -236,7 +232,6 @@ export async function resolveDataset(dataset: string): Promise<string> {
 
   if (partialMatches.length > 0) {
     const preferredMatch = partialMatches.find((d) => d.dataset.includes('-mainnet')) || partialMatches[0]
-    datasetQueriesTotal.inc({ dataset: preferredMatch.dataset })
     return preferredMatch.dataset
   }
 

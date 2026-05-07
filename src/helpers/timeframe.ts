@@ -172,13 +172,6 @@ export function parseTimeframeToSeconds(timeframe: string): number {
 const TIMESTAMP_TIMEOUT = 3000
 
 /**
- * The Portal /timestamps/ endpoint can't resolve timestamps within ~2h of the
- * chain head (the indexer lags behind). Skip the attempt entirely for
- * timeframes shorter than this threshold — go straight to estimation.
- */
-const TIMESTAMP_INDEXER_LAG = 2 * 3600 // 2 hours in seconds
-
-/**
  * Convert a Unix timestamp to a block number using Portal's /timestamps/ endpoint.
  * Works for all EVM, Solana, Bitcoin, and Substrate chains. NOT supported for Hyperliquid.
  *
@@ -205,7 +198,7 @@ export async function getHeadTimestamp(dataset: string, headBlock: number): Prom
   switch (chainType) {
     case 'solana':
       type = 'solana'
-      fieldKey = 'slot'
+      fieldKey = 'block'
       break
     case 'bitcoin':
       type = 'bitcoin'
@@ -425,9 +418,9 @@ export async function resolveBlockAtTimestamp(dataset: string, input: string | n
  *
  * Strategy:
  * 1. Hyperliquid → always estimate (no /timestamps/ support)
- * 2. Short timeframes (≤ 2h) → always estimate (indexer may not resolve recent timestamps close to head)
- * 3. Cached failure for this dataset → estimate (avoid known-broken endpoint)
- * 4. Otherwise → try /timestamps/ with fast timeout (3s, 0 retries)
+ * 2. Cached failure for this dataset → estimate (avoid known-broken endpoint)
+ * 3. Otherwise → fetch the indexed head timestamp, subtract the timeframe,
+ *    and resolve that target through /timestamps/.
  *    - On success → return accurate block range
  *    - On failure → cache failure for 5 min, return estimated range
  */
@@ -470,7 +463,6 @@ export async function resolveTimeframeOrBlocks(params: {
     const useEstimation =
       chainType === 'hyperliquidFills' ||
       chainType === 'hyperliquidReplicaCmds' ||
-      seconds <= TIMESTAMP_INDEXER_LAG ||
       isTimestampEndpointDown(dataset)
 
     if (useEstimation) {
@@ -480,15 +472,15 @@ export async function resolveTimeframeOrBlocks(params: {
       }
     }
 
-    // Timeframe is long enough that the target timestamp should be indexed.
-    // Try the accurate /timestamps/ path with fast-fail.
+    // Real-time datasets expose head block timestamps, so anchor relative
+    // windows to the latest indexed block instead of wall-clock time.
     try {
       const headTimestamp = await getHeadTimestamp(dataset, latestBlock)
-      const targetTimestamp = headTimestamp - seconds
+      const targetTimestamp = Math.max(0, headTimestamp - seconds)
       const fromBlock = await timestampToBlock(dataset, targetTimestamp)
       markTimestampEndpointUp(dataset)
       return {
-        from_block: fromBlock,
+        from_block: Math.min(fromBlock, latestBlock),
         to_block: latestBlock,
         range_kind: 'timeframe',
       }

@@ -126,16 +126,17 @@ function classifyVm(toolName: string, args: Record<string, unknown>, payload?: R
 }
 
 function extractNetwork(args: Record<string, unknown>, payload?: Record<string, unknown>): string | undefined {
-  const direct =
-    (typeof args.network === 'string' ? args.network : undefined)
-    ?? (typeof args.dataset === 'string' ? args.dataset : undefined)
-  if (direct) return direct
-
   const meta = asRecord(payload?._meta)
   if (typeof meta?.network === 'string') return meta.network
   if (typeof meta?.dataset === 'string') return meta.dataset
 
   if (typeof payload?.network === 'string') return payload.network
+
+  const direct =
+    (typeof args.network === 'string' ? args.network : undefined)
+    ?? (typeof args.dataset === 'string' ? args.dataset : undefined)
+  if (direct) return direct
+
   return undefined
 }
 
