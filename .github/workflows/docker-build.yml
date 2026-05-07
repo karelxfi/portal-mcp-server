@@ -25,6 +25,10 @@ jobs:
           username: ${{ secrets.DOCKER_LOGIN }}
           password: ${{ secrets.DOCKER_TOKEN }}
 
+      - name: Read package version
+        id: package
+        run: echo "version=$(node -p \"require('./package.json').version\")" >> "$GITHUB_OUTPUT"
+
       - name: Docker metadata
         id: meta
         uses: docker/metadata-action@v5
@@ -32,6 +36,7 @@ jobs:
           images: subsquid/portal-mcp-server
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=${{ steps.package.outputs.version }},enable={{is_default_branch}}
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=sha

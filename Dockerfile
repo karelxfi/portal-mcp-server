@@ -2,10 +2,10 @@ FROM node:24-alpine AS build
 
 WORKDIR /app
 
-# Enable pnpm via corepack (Node 24 has it built-in)
+# Enable a pinned pnpm via corepack so Docker builds are reproducible.
 COPY package.json pnpm-lock.yaml ./
 RUN corepack enable \
-  && corepack prepare pnpm@latest --activate \
+  && corepack prepare pnpm@10.32.1 --activate \
   && pnpm install --frozen-lockfile
 
 COPY . .
