@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.7.8] - Unreleased
+## [0.7.8] - 2026-05-07
 
 Portal MCP v0.7.8 is focused on query correctness, faster analytics, and release discipline. It keeps the interactive visual app work out of this release track so the tool/runtime updates can be reviewed independently.
 
