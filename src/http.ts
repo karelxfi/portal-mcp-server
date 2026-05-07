@@ -1,5 +1,5 @@
 import { createServer, type IncomingMessage } from 'node:http'
-import { randomUUID } from 'node:crypto'
+import { randomUUID, timingSafeEqual } from 'node:crypto'
 
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import { z } from 'zod'
@@ -74,11 +74,33 @@ function buildToolCatalog(): { entries: ToolCatalogEntry[]; generatedAt: string 
 // ============================================================================
 
 const PORT = Number(process.env.PORT) || 3000
+const METRICS_PUBLIC = process.env.METRICS_PUBLIC === 'true'
+const METRICS_BEARER_TOKEN = process.env.METRICS_BEARER_TOKEN
 
 function readHeader(req: IncomingMessage, name: string): string | undefined {
   const value = req.headers[name]
   if (typeof value === 'string') return value
   return Array.isArray(value) ? value[0] : undefined
+}
+
+function safeEqual(left: string, right: string): boolean {
+  const leftBytes = Buffer.from(left)
+  const rightBytes = Buffer.from(right)
+  return leftBytes.length === rightBytes.length && timingSafeEqual(leftBytes, rightBytes)
+}
+
+function readBearerToken(req: IncomingMessage): string | undefined {
+  const authorization = readHeader(req, 'authorization')
+  if (!authorization) return undefined
+  const match = authorization.match(/^Bearer\s+(.+)$/i)
+  return match?.[1]
+}
+
+function isMetricsAuthorized(req: IncomingMessage): boolean {
+  if (METRICS_PUBLIC) return true
+  if (!METRICS_BEARER_TOKEN) return false
+  const token = readBearerToken(req)
+  return Boolean(token && safeEqual(token, METRICS_BEARER_TOKEN))
 }
 
 const server = createServer(async (req, res) => {
@@ -112,7 +134,31 @@ const server = createServer(async (req, res) => {
 
   // Prometheus metrics endpoint
   if (url.pathname === '/metrics') {
-    res.writeHead(200, { 'Content-Type': register.contentType })
+    if (req.method !== 'GET' && req.method !== 'HEAD') {
+      res.writeHead(405, { 'Content-Type': 'application/json', Allow: 'GET, HEAD' })
+      res.end(JSON.stringify({ error: 'Method not allowed' }))
+      return
+    }
+
+    if (!isMetricsAuthorized(req)) {
+      const isTokenConfigured = Boolean(METRICS_BEARER_TOKEN)
+      res.writeHead(isTokenConfigured ? 401 : 404, {
+        'Content-Type': 'application/json',
+        'Cache-Control': 'no-store',
+        ...(isTokenConfigured ? { 'WWW-Authenticate': 'Bearer realm="metrics"' } : {}),
+      })
+      res.end(JSON.stringify({ error: isTokenConfigured ? 'Unauthorized' : 'Not found' }))
+      return
+    }
+
+    res.writeHead(200, {
+      'Content-Type': register.contentType,
+      'Cache-Control': 'no-store',
+    })
+    if (req.method === 'HEAD') {
+      res.end()
+      return
+    }
     res.end(await register.metrics())
     return
   }

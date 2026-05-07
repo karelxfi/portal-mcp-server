@@ -127,7 +127,11 @@ Add an entry like this to `claude_desktop_config.json`:
 
 ## Observability
 
-HTTP mode exposes Prometheus metrics at `/metrics` and health state at `/health`.
+HTTP mode exposes health state at `/health`. Prometheus metrics are available at `/metrics`, but the endpoint is private by default:
+
+- Set `METRICS_BEARER_TOKEN` and scrape with `Authorization: Bearer <token>`.
+- Set `METRICS_PUBLIC=true` only for local/dev environments where public metrics are intentional.
+- If neither variable is set, `/metrics` returns `404`.
 
 The bundled Grafana dashboard is at `grafana/portal-mcp-dashboard.json`. It uses:
 
@@ -140,6 +144,8 @@ Useful environment variables:
 - `OBS_ENV` (default `NODE_ENV` or `production`)
 - `OBS_LOG_JSON=true` to emit structured events to stderr
 - `OBS_CAPTURE_USER_QUERY=true` to include forwarded `x-mcp-user-query` text in telemetry
+- `METRICS_BEARER_TOKEN` to protect `/metrics`
+- `METRICS_PUBLIC=true` to deliberately expose `/metrics` without auth
 
 For 30-day Grafana windows, Prometheus must scrape `/metrics` continuously with matching retention, or the Loki event panels must be backed by configured log export. In-process Prometheus counters cannot backfill history by themselves.
 

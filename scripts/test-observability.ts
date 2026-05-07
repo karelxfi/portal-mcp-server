@@ -6,6 +6,7 @@ import { setTimeout as sleep } from 'node:timers/promises'
 
 const PORT = 3197
 const BASE_URL = `http://localhost:${PORT}`
+const METRICS_TOKEN = 'test-metrics-token'
 
 let child: ChildProcessWithoutNullStreams | undefined
 
@@ -100,7 +101,7 @@ async function main() {
 
   child = spawn('node', ['dist/http.js'], {
     cwd: process.cwd(),
-    env: { ...process.env, PORT: String(PORT) },
+    env: { ...process.env, PORT: String(PORT), METRICS_BEARER_TOKEN: METRICS_TOKEN },
     stdio: ['pipe', 'pipe', 'pipe'],
   })
   child.stderr.on('data', (chunk) => process.stderr.write(chunk))
@@ -116,7 +117,14 @@ async function main() {
     arguments: { network: 'base' },
   })
 
-  const metricsText = await (await fetch(`${BASE_URL}/metrics`)).text()
+  const anonymousMetrics = await fetch(`${BASE_URL}/metrics`)
+  assert(anonymousMetrics.status === 401, `Anonymous /metrics should be blocked, got ${anonymousMetrics.status}`)
+
+  const authorizedMetrics = await fetch(`${BASE_URL}/metrics`, {
+    headers: { Authorization: `Bearer ${METRICS_TOKEN}` },
+  })
+  assert(authorizedMetrics.ok, `Authorized /metrics should succeed, got ${authorizedMetrics.status}`)
+  const metricsText = await authorizedMetrics.text()
 
   assert(metricsText.includes('mcp_server_info{'), 'Metrics should expose mcp_server_info')
   assert(metricsText.includes('mcp_tool_calls_total{tool="portal_get_head",status="success",transport="http"'), 'Metrics should count the HTTP tool call')
@@ -127,6 +135,7 @@ async function main() {
 
   await assertDashboardMetricNames(metricsText)
 
+  console.log('PASS  /metrics blocks anonymous access and accepts bearer auth')
   console.log('PASS  /metrics emits canonical tool, client, Portal, and dataset series')
   console.log('PASS  Grafana dashboard Prometheus metric names match emitted metrics')
   console.log('\nObservability QA passed')

@@ -56,6 +56,7 @@ Runs focused timestamp resolver QA. It:
 Runs focused HTTP observability QA. It:
 
 - boots the HTTP server and performs a real MCP tool call
+- verifies anonymous `/metrics` access is blocked and bearer auth works
 - verifies `/metrics` emits canonical tool, client, Portal, and dataset series
 - validates that the Grafana dashboard's Prometheus queries reference metric names the server actually emits
 
