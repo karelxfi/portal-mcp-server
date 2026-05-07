@@ -2,6 +2,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { z } from 'zod'
 
 import { getBlockHead, resolveDataset, validateBlockRange } from '../../cache/datasets.js'
+import { createQueryCache, stableCacheKey } from '../../cache/query-cache.js'
 import { PORTAL_URL } from '../../constants/index.js'
 import {
   buildTableDescriptor,
@@ -13,7 +14,8 @@ import { detectChainType } from '../../helpers/chain.js'
 import { createUnsupportedChainError, createUnsupportedMetricError } from '../../helpers/errors.js'
 import { portalFetchStream, portalFetchStreamRangeVisit } from '../../helpers/fetch.js'
 import { formatResult } from '../../helpers/format.js'
-import { formatDuration, formatTimestamp } from '../../helpers/formatting.js'
+import { formatBTC, formatDuration, formatTimestamp, formatUSD } from '../../helpers/formatting.js'
+import { buildTimeSeriesPipesRecipe } from '../../helpers/pipes-recipe.js'
 import { buildBucketCoverage, buildBucketGapDiagnostics, buildQueryFreshness } from '../../helpers/result-metadata.js'
 import { getHeadTimestamp, parseTimeframeToSeconds, parseTimestampInput, resolveTimeframeOrBlocks, type TimestampInput } from '../../helpers/timeframe.js'
 import { buildExecutionMetadata, buildToolDescription } from '../../helpers/tool-ux.js'
@@ -90,14 +92,35 @@ const SOLANA_GENERIC_TIME_SERIES_CHUNK_SIZE: Partial<Record<TimeSeriesMetric, nu
 }
 
 const EVM_GENERIC_TIME_SERIES_CHUNK_SIZE: Partial<Record<TimeSeriesMetric, number>> = {
-  transaction_count: 250,
-  transactions_per_block: 250,
-  unique_addresses: 150,
+  transaction_count: 1500,
+  transactions_per_block: 1500,
+  unique_addresses: 500,
 }
 
 const MIN_EVM_GENERIC_CHUNK_SIZE = 50
 const MIN_SOLANA_GENERIC_CHUNK_SIZE = 250
 const SOLANA_GENERIC_MAX_BYTES = 150 * 1024 * 1024
+const FAST_EVM_TIME_SERIES_BLOCK_CAP = 1500
+const TIME_SERIES_CACHE_TTL_MS = 30_000
+const TIME_SERIES_CACHE_MAX_ENTRIES = 16
+
+const timeSeriesCache = createQueryCache<{
+  timeSeries: Array<Record<string, unknown>>
+  gapDiagnostics: ReturnType<typeof buildBucketGapDiagnostics>
+  summary: Record<string, unknown>
+  filledBuckets: number
+  expectedBuckets: number
+  observedSpanSeconds: number
+  observedCoveragePct: number
+  hasCoverageGap: boolean
+  firstResultTimestamp: number
+  endTimestamp: number
+  adaptiveChunkReduced: boolean
+  effectiveFromBlock: number
+}>({
+  ttl: TIME_SERIES_CACHE_TTL_MS,
+  maxEntries: TIME_SERIES_CACHE_MAX_ENTRIES,
+})
 
 function getBlockNumber(block: TimeSeriesBlock): number | undefined {
   return block.number ?? block.header?.number
@@ -208,6 +231,157 @@ function getMetricUnit(metric: TimeSeriesMetric): string | undefined {
   }
 }
 
+function getNetworkLabel(dataset: string): string {
+  switch (dataset) {
+    case 'base-mainnet':
+      return 'Base'
+    case 'ethereum-mainnet':
+      return 'Ethereum'
+    case 'optimism-mainnet':
+      return 'Optimism'
+    case 'arbitrum-one':
+      return 'Arbitrum'
+    case 'polygon-mainnet':
+      return 'Polygon'
+    case 'solana-mainnet':
+      return 'Solana'
+    case 'bitcoin-mainnet':
+      return 'Bitcoin'
+    case 'hyperliquid-fills':
+      return 'Hyperliquid'
+    default:
+      return dataset
+        .replace(/-mainnet$/, '')
+        .replace(/-/g, ' ')
+        .replace(/\b\w/g, (char) => char.toUpperCase())
+  }
+}
+
+function trimFixed(value: number, digits: number): string {
+  return value.toFixed(digits).replace(/\.0+$/, '').replace(/(\.\d*?)0+$/, '$1')
+}
+
+function formatCompactNumber(value: number): string {
+  const abs = Math.abs(value)
+  const sign = value < 0 ? '-' : ''
+  if (abs >= 1_000_000_000) return `${sign}${trimFixed(abs / 1_000_000_000, abs >= 10_000_000_000 ? 1 : 2)}B`
+  if (abs >= 1_000_000) return `${sign}${trimFixed(abs / 1_000_000, abs >= 10_000_000 ? 1 : 2)}M`
+  if (abs >= 100_000) return `${sign}${trimFixed(abs / 1_000, 0)}K`
+  if (abs >= 10_000) return `${sign}${trimFixed(abs / 1_000, 1)}K`
+  if (abs >= 1_000) return value.toLocaleString('en-US', { maximumFractionDigits: 0 })
+  if (abs >= 100) return trimFixed(value, 0)
+  if (abs >= 1) return trimFixed(value, 2)
+  return trimFixed(value, 4)
+}
+
+function formatExactNumber(value: number): string {
+  if (Number.isInteger(value) || Math.abs(value) >= 100) {
+    return Math.round(value).toLocaleString('en-US')
+  }
+  return trimFixed(value, Math.abs(value) >= 10 ? 1 : 2)
+}
+
+function formatMetricAmount(value: number, metric: TimeSeriesMetric, opts?: { compact?: boolean; unit?: string }): string {
+  if (metric === 'volume') return formatUSD(value)
+  if (metric === 'fees_btc') return formatBTC(value)
+  if (metric === 'block_utilization' || metric === 'success_rate') return `${trimFixed(value, 1)}%`
+  if (metric === 'avg_gas_price') return `${trimFixed(value, value >= 10 ? 1 : 2)} gwei`
+  if (metric === 'block_size_bytes') {
+    if (Math.abs(value) >= 1_000_000) return `${trimFixed(value / 1_000_000, 2)} MB`
+    if (Math.abs(value) >= 1_000) return `${trimFixed(value / 1_000, 1)} KB`
+    return `${formatExactNumber(value)} bytes`
+  }
+
+  const formatted = opts?.compact ? formatCompactNumber(value) : formatExactNumber(value)
+  return opts?.unit && !['transactions', 'fills'].includes(opts.unit) ? `${formatted} ${opts.unit}` : formatted
+}
+
+function getMetricNoun(metric: TimeSeriesMetric): string {
+  switch (metric) {
+    case 'transaction_count':
+      return 'txs'
+    case 'fill_count':
+      return 'fills'
+    case 'unique_addresses':
+      return 'unique addresses'
+    case 'unique_traders':
+      return 'unique traders'
+    default:
+      return getMetricLabel(metric).toLowerCase()
+  }
+}
+
+function isAdditiveMetric(metric: TimeSeriesMetric): boolean {
+  return ['transaction_count', 'gas_used', 'fees_btc', 'block_size_bytes', 'volume', 'fill_count'].includes(metric)
+}
+
+function formatBucketTime(timestamp: unknown): string | undefined {
+  if (typeof timestamp !== 'number' || !Number.isFinite(timestamp)) return undefined
+  const date = new Date(timestamp * 1000)
+  const hh = String(date.getUTCHours()).padStart(2, '0')
+  const mm = String(date.getUTCMinutes()).padStart(2, '0')
+  return `${hh}:${mm} UTC`
+}
+
+function buildTimeSeriesAnswer(params: {
+  dataset: string
+  metric: TimeSeriesMetric
+  interval: string
+  duration: string
+  timeSeries: Array<Record<string, unknown>>
+  fromBlock?: number
+  toBlock?: number
+  observedSpanSeconds?: number
+  unit?: string
+}): string {
+  const values = params.timeSeries
+    .map((row) => (typeof row.value === 'number' && Number.isFinite(row.value) ? row.value : undefined))
+    .filter((value): value is number => value !== undefined)
+  const bucketCount = Math.max(params.timeSeries.length, values.length, 1)
+  const total = values.reduce((sum, value) => sum + value, 0)
+  const avg = total / Math.max(values.length, 1)
+  const peak = params.timeSeries.reduce<{ value: number; row?: Record<string, unknown> }>(
+    (best, row) => {
+      const value = typeof row.value === 'number' && Number.isFinite(row.value) ? row.value : Number.NEGATIVE_INFINITY
+      return value > best.value ? { value, row } : best
+    },
+    { value: Number.NEGATIVE_INFINITY },
+  )
+  const network = getNetworkLabel(params.dataset)
+  const metricNoun = getMetricNoun(params.metric)
+  const blocks =
+    params.fromBlock !== undefined && params.toBlock !== undefined
+      ? ` Blocks ${params.fromBlock.toLocaleString('en-US')} -> ${params.toBlock.toLocaleString('en-US')}.`
+      : ''
+  const coverage =
+    params.observedSpanSeconds !== undefined && parseTimeframeToSeconds(params.duration) > 0
+      ? params.observedSpanSeconds / parseTimeframeToSeconds(params.duration)
+      : 1
+  const coveragePrefix = coverage < 0.9
+    ? `Only ${formatDuration(params.observedSpanSeconds ?? 0)} of the requested ${params.duration} had indexed block data. `
+    : ''
+
+  const firstSentence = isAdditiveMetric(params.metric)
+    ? `${coveragePrefix}~${formatMetricAmount(total, params.metric, { compact: true, unit: params.unit })} ${metricNoun} on ${network} over the past ${params.duration} (${bucketCount} x ${params.interval} buckets, avg ${formatMetricAmount(avg, params.metric, { unit: params.unit })}/bucket).`
+    : `${coveragePrefix}${network} ${metricNoun} averaged ${formatMetricAmount(avg, params.metric, { unit: params.unit })} over the past ${params.duration} (${bucketCount} x ${params.interval} buckets).`
+
+  if (!Number.isFinite(peak.value) || peak.value <= 0 || avg <= 0) {
+    return `${firstSentence}${blocks}`.trim()
+  }
+
+  const peakTime = formatBucketTime(peak.row?.timestamp)
+  const multiplier = peak.value / avg
+  const spikeSentence = multiplier >= 1.5
+    ? ` Notable spike${peakTime ? ` at ${peakTime}` : ''} with ${formatMetricAmount(peak.value, params.metric, { unit: params.unit })} ${metricNoun} in a single ${params.interval} window - roughly ${trimFixed(multiplier, 1)}x the average.`
+    : ` Peak bucket${peakTime ? ` at ${peakTime}` : ''}: ${formatMetricAmount(peak.value, params.metric, { unit: params.unit })} ${metricNoun}.`
+
+  return `${firstSentence}${spikeSentence}${blocks}`.trim()
+}
+
+function getMetricRecommendedVisual(metric: TimeSeriesMetric): 'line' | 'bar' | 'stacked_area' {
+  return metric === 'transaction_count' ? 'bar' : 'line'
+}
+
 function buildSimpleSeriesUi(params: {
   title: string
   subtitle: string
@@ -263,19 +437,11 @@ function buildSimpleSeriesUi(params: {
         id: 'series-chart',
         kind: 'chart_panel',
         title: params.metricLabel,
-        subtitle: 'Hover to inspect bucket values and drag horizontally to zoom into a narrower range.',
         chart_key: 'chart',
         emphasis: 'primary',
       }),
-      buildTablePanel({
-        id: 'series-table',
-        kind: 'table_panel',
-        title: 'Buckets',
-        subtitle: 'Exact bucket-level values in ascending time order.',
-        table_id: params.tableId ?? 'main',
-      }),
     ],
-    follow_up_actions: params.followUpActions,
+    follow_up_actions: params.followUpActions?.length ? params.followUpActions : undefined,
   })
 }
 
@@ -447,7 +613,7 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
         .enum(['fast', 'deep'])
         .optional()
         .default('deep')
-        .describe('fast = skip extra backfill scans, deep = fill the requested window more aggressively'),
+        .describe('Optional execution depth. The default prioritizes a complete requested window; use fast only for an explicit quick preview.'),
     },
     async ({ network, metric, interval, duration, address, from_timestamp, to_timestamp, compare_previous, group_by, group_limit, mode }) => {
       const queryStartTime = Date.now()
@@ -455,6 +621,15 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
       const chainType = detectChainType(dataset)
       const isHyperliquid = chainType === 'hyperliquidFills' || chainType === 'hyperliquidReplicaCmds'
       const notices: string[] = []
+      const pipesRecipe = buildTimeSeriesPipesRecipe({
+        network: dataset,
+        metric,
+        interval,
+        duration,
+        address,
+        compare_previous,
+        group_by,
+      })
 
       if (compare_previous && group_by === 'contract') {
         throw new Error('compare_previous and group_by="contract" cannot be used together in v0.7.7.')
@@ -569,6 +744,23 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
             pct_change: previousPoint.value === 0 ? null : Number((((point.value - previousPoint.value) / previousPoint.value) * 100).toFixed(2)),
           }
         })
+        const maxDeltaBuckets = 160
+        const trimmedBucketDeltas = bucketDeltas.length > maxDeltaBuckets ? bucketDeltas.slice(-maxDeltaBuckets) : bucketDeltas
+        if (bucketDeltas.length > trimmedBucketDeltas.length) {
+          notices.push(`Bucket deltas trimmed to the most recent ${maxDeltaBuckets} buckets to keep the response compact. Use mode="deep" for the full window.`)
+        }
+        const maxSeriesBuckets = mode === 'deep' ? Number.POSITIVE_INFINITY : 160
+        const currentSeriesRows =
+          currentSeries.timeSeries.length > maxSeriesBuckets
+            ? currentSeries.timeSeries.slice(-maxSeriesBuckets)
+            : currentSeries.timeSeries
+        const previousSeriesRows =
+          previousSeries.timeSeries.length > maxSeriesBuckets
+            ? previousSeries.timeSeries.slice(-maxSeriesBuckets)
+            : previousSeries.timeSeries
+        if (currentSeriesRows.length < currentSeries.timeSeries.length) {
+          notices.push(`Current and previous series trimmed to the most recent ${maxSeriesBuckets} buckets to keep the response compact. Use mode="deep" for the full aligned series.`)
+        }
         const summaryRows = [
           {
             label: 'Total',
@@ -646,27 +838,31 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
               timestampField: 'timestamp',
               defaultSort: { key: 'bucket_index', direction: 'asc' },
             }),
-            buildTableDescriptor({
-              id: 'bucket_deltas',
-              dataKey: 'bucket_deltas',
-              rowCount: bucketDeltas.length,
-              title: 'Bucket deltas',
-              defaultSort: { key: 'bucket_index', direction: 'asc' },
-              dense: true,
-              columns: [
-                { key: 'bucket_index', label: 'Bucket', kind: 'dimension', format: 'integer', align: 'right' },
-                { key: 'current_value', label: 'Current', kind: 'metric', format: getMetricValueFormat(metric), align: 'right', ...(getMetricUnit(metric) ? { unit: getMetricUnit(metric) } : {}) },
-                { key: 'previous_value', label: 'Previous', kind: 'metric', format: getMetricValueFormat(metric), align: 'right', ...(getMetricUnit(metric) ? { unit: getMetricUnit(metric) } : {}) },
-                { key: 'delta', label: 'Delta', kind: 'metric', format: getMetricValueFormat(metric), align: 'right', ...(getMetricUnit(metric) ? { unit: getMetricUnit(metric) } : {}) },
-                { key: 'pct_change', label: 'Pct change', kind: 'metric', format: 'percent', unit: '%', align: 'right' },
-              ],
-            }),
+            ...(trimmedBucketDeltas.length
+              ? [
+                  buildTableDescriptor({
+                    id: 'bucket_deltas',
+                    dataKey: 'bucket_deltas',
+                    rowCount: trimmedBucketDeltas.length,
+                    title: 'Bucket deltas',
+                    defaultSort: { key: 'bucket_index', direction: 'asc' },
+                    dense: true,
+                    columns: [
+                      { key: 'bucket_index', label: 'Bucket', kind: 'dimension', format: 'integer', align: 'right' },
+                      { key: 'current_value', label: 'Current', kind: 'metric', format: getMetricValueFormat(metric), align: 'right', ...(getMetricUnit(metric) ? { unit: getMetricUnit(metric) } : {}) },
+                      { key: 'previous_value', label: 'Previous', kind: 'metric', format: getMetricValueFormat(metric), align: 'right', ...(getMetricUnit(metric) ? { unit: getMetricUnit(metric) } : {}) },
+                      { key: 'delta', label: 'Delta', kind: 'metric', format: getMetricValueFormat(metric), align: 'right', ...(getMetricUnit(metric) ? { unit: getMetricUnit(metric) } : {}) },
+                      { key: 'pct_change', label: 'Pct change', kind: 'metric', format: 'percent', unit: '%', align: 'right' },
+                    ],
+                  }),
+                ]
+              : []),
           ],
           summary_rows: summaryRows,
-          current_series: currentSeries.timeSeries,
-          previous_series: previousSeries.timeSeries,
           comparison_series: comparisonSeries,
-          bucket_deltas: bucketDeltas,
+          current_series: currentSeriesRows,
+          previous_series: previousSeriesRows,
+          bucket_deltas: trimmedBucketDeltas,
           gap_diagnostics: currentSeries.gapDiagnostics,
         }, `Compared ${metric} over the current ${duration} window versus the immediately previous ${duration}.`, {
           toolName: 'portal_get_time_series',
@@ -681,6 +877,7 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
             compare_previous: true,
             range_kind: 'timeframe',
           }),
+          pipes: pipesRecipe,
           ui: buildComparePreviousUi(metric),
           metadata: {
             network: dataset,
@@ -904,6 +1101,7 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
             from_block: fromBlock,
             to_block: toBlock,
           }),
+          pipes: pipesRecipe,
           ui: buildGroupedContractUi(),
           metadata: {
             network: dataset,
@@ -965,10 +1163,6 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
         if (solanaResult.chunk_size_reduced) {
           summary.chunk_size_reduced = true
         }
-        if (mode === 'fast') {
-          notices.push('Solana native metrics already use the optimized fast path, so fast and deep modes behave the same here.')
-        }
-
         const normalizedTimeSeries = solanaResult.time_series.map((point) => ({
           bucket_index: point.bucket_index,
           timestamp: point.timestamp,
@@ -992,6 +1186,17 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
             ? { lastObservedTimestamp: solanaResult.last_observed_timestamp }
             : {}),
         })
+        const resultMessage = buildTimeSeriesAnswer({
+          dataset,
+          metric,
+          interval,
+          duration,
+          timeSeries: normalizedTimeSeries,
+          fromBlock: solanaResult.from_block,
+          toBlock: solanaResult.to_block,
+          observedSpanSeconds: solanaResult.observed_span_seconds,
+          unit: solanaResult.unit,
+        })
 
         return formatResult(
           {
@@ -999,6 +1204,7 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
             chart: buildTimeSeriesChart({
               interval,
               totalPoints: solanaResult.time_series.length,
+              recommendedVisual: getMetricRecommendedVisual(metric),
               title: `Solana ${getMetricLabel(metric)}`,
               subtitle: `Bucketed ${getMetricLabel(metric).toLowerCase()} across the selected Solana window`,
               yAxisLabel: getMetricLabel(metric),
@@ -1021,7 +1227,7 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
             gap_diagnostics: gapDiagnostics,
             time_series: normalizedTimeSeries,
           },
-          `Aggregated ${metric} over ${duration} in ${interval} intervals. ${solanaResult.time_series.length} data points (${filledBuckets} with data). Avg: ${solanaResult.statistics.avg.toFixed(2)}, Min: ${solanaResult.statistics.min.toFixed(2)}, Max: ${solanaResult.statistics.max.toFixed(2)}`,
+          resultMessage,
           {
             toolName: 'portal_get_time_series',
             freshness: buildQueryFreshness({
@@ -1049,18 +1255,14 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
               to_block: solanaResult.to_block,
               range_kind: 'timeframe',
             }),
+            pipes: pipesRecipe,
             ui: buildSimpleSeriesUi({
               title: `Solana ${getMetricLabel(metric)}`,
-              subtitle: `${interval} buckets over ${duration}`,
+              subtitle: resultMessage,
               metricLabel: getMetricLabel(metric),
               valueFormat: getMetricValueFormat(metric),
               unit: solanaResult.unit,
               avgValuePath: 'summary.statistics.avg',
-              followUpActions: [
-                { label: 'Show raw bucket rows', intent: 'show_raw', target: 'time_series' },
-                { label: 'Zoom into the latest buckets', intent: 'zoom_in', target: 'chart' },
-                { label: 'Compare against the previous window', intent: 'compare_previous' },
-              ],
             }),
             metadata: {
               network: dataset,
@@ -1151,6 +1353,16 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
           }
         })
         const filledBuckets = timeSeries.filter((bucket) => bucket.blocks_in_bucket > 0).length
+        const resultMessage = buildTimeSeriesAnswer({
+          dataset,
+          metric,
+          interval,
+          duration,
+          timeSeries,
+          fromBlock,
+          toBlock,
+          unit: getMetricUnit(metric),
+        })
         return formatResult({
           summary: {
             metric,
@@ -1164,6 +1376,7 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
           chart: buildTimeSeriesChart({
             interval,
             totalPoints: timeSeries.length,
+            recommendedVisual: getMetricRecommendedVisual(metric),
             title: `Hyperliquid ${getMetricLabel(metric)}`,
             subtitle: `Bucketed ${getMetricLabel(metric).toLowerCase()} across the selected Hyperliquid window`,
             yAxisLabel: getMetricLabel(metric),
@@ -1191,7 +1404,7 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
             windowComplete: firstObservedTimestamp !== undefined ? firstObservedTimestamp <= seriesStartTimestamp : true,
           }),
           time_series: timeSeries,
-        }, `Aggregated Hyperliquid ${metric} over ${duration} in ${interval} intervals.`, {
+        }, resultMessage, {
           toolName: 'portal_get_time_series',
           freshness: buildQueryFreshness({
             finality: 'latest',
@@ -1214,19 +1427,15 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
             to_block: toBlock,
             range_kind: resolvedWindow.range_kind,
           }),
+          pipes: pipesRecipe,
           ui: buildSimpleSeriesUi({
             title: `Hyperliquid ${getMetricLabel(metric)}`,
-            subtitle: `${interval} buckets over ${duration}`,
+            subtitle: resultMessage,
             metricLabel: getMetricLabel(metric),
             valueFormat: getMetricValueFormat(metric),
             unit: getMetricUnit(metric),
             primaryValuePath: 'summary.total_buckets',
             primaryLabel: 'Buckets',
-            followUpActions: [
-              { label: 'Show raw bucket rows', intent: 'show_raw', target: 'time_series' },
-              { label: 'Zoom into the latest buckets', intent: 'zoom_in', target: 'chart' },
-              { label: 'Compare against the previous window', intent: 'compare_previous' },
-            ],
           }),
           metadata: {
             network: dataset,
@@ -1307,11 +1516,21 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
           value: metric === 'block_size_bytes' ? bucket.gasUsedSum : 0,
         }))
         const filledBuckets = buckets.filter((bucket) => bucket.blocksInBucket > 0).length
+        const resultMessage = buildTimeSeriesAnswer({
+          dataset,
+          metric,
+          interval,
+          duration,
+          timeSeries,
+          fromBlock,
+          toBlock,
+        })
         return formatResult({
           summary: { metric, interval, duration, from_block: fromBlock, to_block: toBlock, total_buckets: timeSeries.length, filled_buckets: filledBuckets },
           chart: buildTimeSeriesChart({
             interval,
             totalPoints: timeSeries.length,
+            recommendedVisual: getMetricRecommendedVisual(metric),
             title: `Bitcoin ${getMetricLabel(metric)}`,
             yAxisLabel: getMetricLabel(metric),
             valueFormat: getMetricValueFormat(metric),
@@ -1337,7 +1556,7 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
             windowComplete: firstTimestamp <= seriesStartTimestamp,
           }),
           time_series: timeSeries,
-        }, `Aggregated Bitcoin ${metric} over ${duration} in ${interval} intervals.`, {
+        }, resultMessage, {
           toolName: 'portal_get_time_series',
           freshness: buildQueryFreshness({
             finality: 'latest',
@@ -1360,6 +1579,7 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
             to_block: toBlock,
             range_kind: resolvedWindow.range_kind,
           }),
+          pipes: pipesRecipe,
           metadata: {
             network: dataset,
             dataset,
@@ -1520,244 +1740,263 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
         return results
       }
 
+      const requestedFromBlock = fromBlock
       let effectiveFromBlock = fromBlock
-      let backfillAttempts = 0
-      let results = await fetchBlocks(effectiveFromBlock, toBlock)
-
-      if (results.length === 0) {
-        throw new Error('No data available for this time period')
+      if (mode === 'fast' && chainType === 'evm' && !address && hasTxData) {
+        const requestedWindowSize = toBlock - fromBlock + 1
+        if (requestedWindowSize > FAST_EVM_TIME_SERIES_BLOCK_CAP) {
+          effectiveFromBlock = Math.max(0, toBlock - FAST_EVM_TIME_SERIES_BLOCK_CAP + 1)
+        }
       }
 
-      sortResults(results)
-
-      if (mode === 'fast' && !address) {
-        notices.push('Fast mode skips extra backfill scans. Switch to mode="deep" if you want the tool to fill leading buckets more aggressively.')
-      }
-
-      while (mode === 'deep' && !address && backfillAttempts < 2) {
-        const firstBlock = results[0]
-        const lastBlock = results[results.length - 1]
-        const firstResultBlockNumber = getBlockNumber(firstBlock)
-        const firstResultTimestamp = getBlockTimestamp(firstBlock)
-        const lastResultBlockNumber = getBlockNumber(lastBlock)
-        const endTimestamp = getBlockTimestamp(lastBlock)
-
-        if (
-          firstResultBlockNumber === undefined ||
-          lastResultBlockNumber === undefined ||
-          firstResultTimestamp === undefined ||
-          endTimestamp === undefined
-        ) {
-          break
-        }
-
-        const observedSpanSeconds = Math.max(0, endTimestamp - firstResultTimestamp)
-        if (observedSpanSeconds >= durationSeconds * 0.98) {
-          break
-        }
-
-        if (firstResultBlockNumber <= 0 || lastResultBlockNumber <= firstResultBlockNumber || observedSpanSeconds <= 0) {
-          break
-        }
-
-        const secondsPerBlock = observedSpanSeconds / (lastResultBlockNumber - firstResultBlockNumber)
-        if (!Number.isFinite(secondsPerBlock) || secondsPerBlock <= 0) {
-          break
-        }
-
-        const missingSeconds = durationSeconds - observedSpanSeconds
-        const missingBlocksEstimate = Math.ceil((missingSeconds + intervalSeconds) / secondsPerBlock)
-        const bufferBlocks = Math.max(100, Math.ceil(missingBlocksEstimate * 0.1))
-        const backfillToBlock = firstResultBlockNumber - 1
-        const backfillFromBlock = Math.max(0, backfillToBlock - missingBlocksEstimate - bufferBlocks)
-
-        if (backfillFromBlock >= effectiveFromBlock || backfillToBlock < backfillFromBlock) {
-          break
-        }
-
-        const extraResults = await fetchBlocks(backfillFromBlock, backfillToBlock)
-        if (extraResults.length === 0) {
-          break
-        }
-
-        effectiveFromBlock = backfillFromBlock
-        results = [...extraResults, ...results]
-        sortResults(results)
-        backfillAttempts++
-      }
-
-      if (adaptiveChunkReduced) {
-        notices.push(`Reduced ${chainType.toUpperCase()} chunk size while building ${metric} buckets to keep the response within live Portal limits.`)
-      }
-
-      const firstBlock = results[0] as TimeSeriesBlock
-      const lastBlock = results[results.length - 1] as TimeSeriesBlock
-      const firstResultTimestamp = getBlockTimestamp(firstBlock)
-      const endTimestamp = getBlockTimestamp(lastBlock)
-
-      if (!firstResultTimestamp || !endTimestamp) {
-        throw new Error('Could not extract timestamps from block data')
-      }
-
-      // Anchor buckets to the latest indexed block so the series always covers the requested duration.
-      // This avoids dropping leading/trailing intervals when the first returned block is slightly misaligned.
-      const seriesStartTimestamp = endTimestamp - durationSeconds
-      const buckets = createBucketAccumulators(expectedBuckets, seriesStartTimestamp, intervalSeconds)
-
-      results.forEach((block) => {
-        const typedBlock = block as TimeSeriesBlock
-        const blockNumber = getBlockNumber(typedBlock)
-        const timestamp = getBlockTimestamp(typedBlock)
-
-        if (blockNumber === undefined || timestamp === undefined) {
-          return
-        }
-
-        const bucketIndex = Math.floor((timestamp - seriesStartTimestamp) / intervalSeconds)
-        if (bucketIndex < 0 || bucketIndex >= expectedBuckets) {
-          return
-        }
-
-        const bucket = buckets[bucketIndex]
-        bucket.blocksInBucket++
-        bucket.firstBlockNumber = bucket.firstBlockNumber ?? blockNumber
-        bucket.lastBlockNumber = blockNumber
-
-        if (metric === 'transaction_count' || metric === 'transactions_per_block') {
-          bucket.txCount += typedBlock.transactions?.length || 0
-          return
-        }
-
-        if (metric === 'avg_gas_price') {
-          const baseFeePerGas = getBlockBigIntString(typedBlock, 'baseFeePerGas')
-          if (baseFeePerGas) {
-            bucket.gasPriceSum += parseInt(baseFeePerGas)
-            bucket.gasPriceCount++
-          }
-          return
-        }
-
-        if (metric === 'gas_used') {
-          bucket.gasUsedSum += parseInt(getBlockBigIntString(typedBlock, 'gasUsed') || '0')
-          return
-        }
-
-        if (metric === 'block_utilization') {
-          const gasUsed = parseInt(getBlockBigIntString(typedBlock, 'gasUsed') || '0')
-          const gasLimit = parseInt(getBlockBigIntString(typedBlock, 'gasLimit') || '0')
-          if (gasLimit > 0) {
-            bucket.utilizationSum += (gasUsed / gasLimit) * 100
-            bucket.utilizationCount++
-          }
-          return
-        }
-
-        if (metric === 'unique_addresses') {
-          typedBlock.transactions?.forEach((tx) => {
-            if (tx.feePayer) bucket.addresses.add(tx.feePayer)
-            if (tx.from) bucket.addresses.add(tx.from.toLowerCase())
-            if (tx.to) bucket.addresses.add(tx.to.toLowerCase())
-          })
-        }
-      })
-
-      const timeSeries = buckets.map((bucket) => {
-        let value = 0
-
-        if (metric === 'transaction_count') {
-          value = bucket.txCount
-        } else if (metric === 'transactions_per_block') {
-          value = bucket.blocksInBucket > 0 ? bucket.txCount / bucket.blocksInBucket : 0
-        } else if (metric === 'avg_gas_price') {
-          value = bucket.gasPriceCount > 0 ? bucket.gasPriceSum / bucket.gasPriceCount / 1e9 : 0
-        } else if (metric === 'gas_used') {
-          value = bucket.gasUsedSum
-        } else if (metric === 'block_utilization') {
-          value = bucket.utilizationCount > 0 ? bucket.utilizationSum / bucket.utilizationCount : 0
-        } else if (metric === 'unique_addresses') {
-          value = bucket.addresses.size
-        }
-
-        const entry: Record<string, unknown> = {
-          bucket_index: bucket.bucketIndex,
-          timestamp: bucket.bucketTimestamp,
-          timestamp_human: formatTimestamp(bucket.bucketTimestamp),
-          blocks_in_bucket: bucket.blocksInBucket,
-          value: parseFloat(value.toFixed(2)),
-        }
-
-        if (bucket.firstBlockNumber !== undefined && bucket.lastBlockNumber !== undefined) {
-          entry.block_range = `${bucket.firstBlockNumber}-${bucket.lastBlockNumber}`
-        }
-
-        return entry
-      })
-
-      // Calculate summary statistics
-      const values = timeSeries.map((t) => t.value as number)
-      const avg = values.reduce((sum, v) => sum + v, 0) / values.length
-      const min = Math.min(...values)
-      const max = Math.max(...values)
-      const filledBuckets = buckets.filter((bucket) => bucket.blocksInBucket > 0).length
-      const observedSpanSeconds = Math.max(0, endTimestamp - firstResultTimestamp)
-      const observedCoveragePct = durationSeconds > 0 ? (observedSpanSeconds / durationSeconds) * 100 : 100
-      const hasCoverageGap = !address && observedCoveragePct < 80
-
-      // Detect chain head staleness (most relevant for Bitcoin/slow chains)
-      const nowUnix = Math.floor(Date.now() / 1000)
-      const headAgeSec = nowUnix - endTimestamp
-      const headAgeWarning =
-        headAgeSec > 1800
-          ? `Chain head is ${formatDuration(headAgeSec)} behind wall-clock time (last block: ${formatTimestamp(endTimestamp)}, now: ${formatTimestamp(nowUnix)}). Empty buckets near the end mean no blocks were produced yet, not missing data.`
-          : undefined
-
-      const summary: any = {
+      const cacheKey = stableCacheKey('time-series-generic', {
+        dataset,
         metric,
         interval,
         duration,
+        address,
         mode,
-        total_buckets: timeSeries.length,
-        expected_buckets: expectedBuckets,
-        filled_buckets: filledBuckets,
-        empty_buckets: expectedBuckets - filledBuckets,
-        total_blocks: results.length,
         from_block: effectiveFromBlock,
         to_block: toBlock,
-        observed_span_seconds: observedSpanSeconds,
-        observed_span_formatted: formatDuration(observedSpanSeconds),
-        statistics: {
-          avg: parseFloat(avg.toFixed(2)),
-          min: parseFloat(min.toFixed(2)),
-          max: parseFloat(max.toFixed(2)),
-        },
-      }
+        chain_type: chainType,
+      })
+      const { value: cachedSeries } = await timeSeriesCache.getOrLoad(cacheKey, async () => {
+        let backfillAttempts = 0
+        let results = await fetchBlocks(effectiveFromBlock, toBlock)
 
-      if (headAgeWarning) {
-        notices.push(headAgeWarning)
-      } else if (hasCoverageGap) {
-        notices.push(
-          `Available data spans only ${formatDuration(observedSpanSeconds)} of the requested ${duration}. The estimated block range may be too small for ${dataset}.`,
-        )
-      }
+        if (results.length === 0) {
+          throw new Error('No data available for this time period')
+        }
 
-      if (address) {
-        ;(summary as any).filtered_by_address = address
-      }
-      if (backfillAttempts > 0) {
-        summary.backfill_attempts = backfillAttempts
-      }
+        sortResults(results)
 
-      const resultMessage = hasCoverageGap
-        ? `Aggregated ${metric} over ${duration} in ${interval} intervals with limited coverage. Observed ${formatDuration(observedSpanSeconds)} of on-chain data. Avg: ${avg.toFixed(2)}, Min: ${min.toFixed(2)}, Max: ${max.toFixed(2)}`
-        : `Aggregated ${metric} over ${duration} in ${interval} intervals. ${timeSeries.length} data points (${filledBuckets} with data). Avg: ${avg.toFixed(2)}, Min: ${min.toFixed(2)}, Max: ${max.toFixed(2)}`
-      const gapDiagnostics = buildBucketGapDiagnostics({
-        buckets: timeSeries as Array<{ bucket_index: number; timestamp: number; timestamp_human?: string; blocks_in_bucket: number }>,
-        intervalSeconds,
-        isFilled: (bucket) => bucket.blocks_in_bucket > 0,
-        anchor: 'latest_block',
-        windowComplete: !hasCoverageGap,
-        ...(firstResultTimestamp > 0 ? { firstObservedTimestamp: firstResultTimestamp } : {}),
-        ...(endTimestamp > 0 ? { lastObservedTimestamp: endTimestamp } : {}),
+        while (mode === 'deep' && !address && backfillAttempts < 2) {
+          const firstBlock = results[0]
+          const lastBlock = results[results.length - 1]
+          const firstResultBlockNumber = getBlockNumber(firstBlock)
+          const firstResultTimestamp = getBlockTimestamp(firstBlock)
+          const lastResultBlockNumber = getBlockNumber(lastBlock)
+          const endTimestamp = getBlockTimestamp(lastBlock)
+
+          if (
+            firstResultBlockNumber === undefined ||
+            lastResultBlockNumber === undefined ||
+            firstResultTimestamp === undefined ||
+            endTimestamp === undefined
+          ) {
+            break
+          }
+
+          const observedSpanSeconds = Math.max(0, endTimestamp - firstResultTimestamp)
+          if (observedSpanSeconds >= durationSeconds * 0.98) {
+            break
+          }
+
+          if (firstResultBlockNumber <= 0 || lastResultBlockNumber <= firstResultBlockNumber || observedSpanSeconds <= 0) {
+            break
+          }
+
+          const secondsPerBlock = observedSpanSeconds / (lastResultBlockNumber - firstResultBlockNumber)
+          if (!Number.isFinite(secondsPerBlock) || secondsPerBlock <= 0) {
+            break
+          }
+
+          const missingSeconds = durationSeconds - observedSpanSeconds
+          const missingBlocksEstimate = Math.ceil((missingSeconds + intervalSeconds) / secondsPerBlock)
+          const bufferBlocks = Math.max(100, Math.ceil(missingBlocksEstimate * 0.1))
+          const backfillToBlock = firstResultBlockNumber - 1
+          const backfillFromBlock = Math.max(0, backfillToBlock - missingBlocksEstimate - bufferBlocks)
+
+          if (backfillFromBlock >= effectiveFromBlock || backfillToBlock < backfillFromBlock) {
+            break
+          }
+
+          const extraResults = await fetchBlocks(backfillFromBlock, backfillToBlock)
+          if (extraResults.length === 0) {
+            break
+          }
+
+          effectiveFromBlock = backfillFromBlock
+          results = [...extraResults, ...results]
+          sortResults(results)
+          backfillAttempts++
+        }
+
+        const firstBlock = results[0] as TimeSeriesBlock
+        const lastBlock = results[results.length - 1] as TimeSeriesBlock
+        const firstResultTimestamp = getBlockTimestamp(firstBlock)
+        const endTimestamp = getBlockTimestamp(lastBlock)
+
+        if (!firstResultTimestamp || !endTimestamp) {
+          throw new Error('Could not extract timestamps from block data')
+        }
+
+        const seriesStartTimestamp = endTimestamp - durationSeconds
+        const buckets = createBucketAccumulators(expectedBuckets, seriesStartTimestamp, intervalSeconds)
+
+        results.forEach((block) => {
+          const typedBlock = block as TimeSeriesBlock
+          const blockNumber = getBlockNumber(typedBlock)
+          const timestamp = getBlockTimestamp(typedBlock)
+
+          if (blockNumber === undefined || timestamp === undefined) {
+            return
+          }
+
+          const bucketIndex = Math.floor((timestamp - seriesStartTimestamp) / intervalSeconds)
+          if (bucketIndex < 0 || bucketIndex >= expectedBuckets) {
+            return
+          }
+
+          const bucket = buckets[bucketIndex]
+          bucket.blocksInBucket++
+          bucket.firstBlockNumber = bucket.firstBlockNumber ?? blockNumber
+          bucket.lastBlockNumber = blockNumber
+
+          if (metric === 'transaction_count' || metric === 'transactions_per_block') {
+            bucket.txCount += typedBlock.transactions?.length || 0
+            return
+          }
+
+          if (metric === 'avg_gas_price') {
+            const baseFeePerGas = getBlockBigIntString(typedBlock, 'baseFeePerGas')
+            if (baseFeePerGas) {
+              bucket.gasPriceSum += parseInt(baseFeePerGas)
+              bucket.gasPriceCount++
+            }
+            return
+          }
+
+          if (metric === 'gas_used') {
+            bucket.gasUsedSum += parseInt(getBlockBigIntString(typedBlock, 'gasUsed') || '0')
+            return
+          }
+
+          if (metric === 'block_utilization') {
+            const gasUsed = parseInt(getBlockBigIntString(typedBlock, 'gasUsed') || '0')
+            const gasLimit = parseInt(getBlockBigIntString(typedBlock, 'gasLimit') || '0')
+            if (gasLimit > 0) {
+              bucket.utilizationSum += (gasUsed / gasLimit) * 100
+              bucket.utilizationCount++
+            }
+            return
+          }
+
+          if (metric === 'unique_addresses') {
+            typedBlock.transactions?.forEach((tx) => {
+              if (tx.feePayer) bucket.addresses.add(tx.feePayer)
+              if (tx.from) bucket.addresses.add(tx.from.toLowerCase())
+              if (tx.to) bucket.addresses.add(tx.to.toLowerCase())
+            })
+          }
+        })
+
+        const timeSeries = buckets.map((bucket) => {
+          let value = 0
+
+          if (metric === 'transaction_count') {
+            value = bucket.txCount
+          } else if (metric === 'transactions_per_block') {
+            value = bucket.blocksInBucket > 0 ? bucket.txCount / bucket.blocksInBucket : 0
+          } else if (metric === 'avg_gas_price') {
+            value = bucket.gasPriceCount > 0 ? bucket.gasPriceSum / bucket.gasPriceCount / 1e9 : 0
+          } else if (metric === 'gas_used') {
+            value = bucket.gasUsedSum
+          } else if (metric === 'block_utilization') {
+            value = bucket.utilizationCount > 0 ? bucket.utilizationSum / bucket.utilizationCount : 0
+          } else if (metric === 'unique_addresses') {
+            value = bucket.addresses.size
+          }
+
+          const entry: Record<string, unknown> = {
+            bucket_index: bucket.bucketIndex,
+            timestamp: bucket.bucketTimestamp,
+            timestamp_human: formatTimestamp(bucket.bucketTimestamp),
+            blocks_in_bucket: bucket.blocksInBucket,
+            value: parseFloat(value.toFixed(2)),
+          }
+
+          if (bucket.firstBlockNumber !== undefined && bucket.lastBlockNumber !== undefined) {
+            entry.block_range = `${bucket.firstBlockNumber}-${bucket.lastBlockNumber}`
+          }
+
+          return entry
+        })
+
+        const values = timeSeries.map((t) => t.value as number)
+        const avg = values.reduce((sum, v) => sum + v, 0) / values.length
+        const min = Math.min(...values)
+        const max = Math.max(...values)
+        const filledBuckets = buckets.filter((bucket) => bucket.blocksInBucket > 0).length
+        const observedSpanSeconds = Math.max(0, endTimestamp - firstResultTimestamp)
+        const observedCoveragePct = durationSeconds > 0 ? (observedSpanSeconds / durationSeconds) * 100 : 100
+        const hasCoverageGap = !address && observedCoveragePct < 80
+
+        const summary: Record<string, unknown> = {
+          metric,
+          interval,
+          duration,
+          mode,
+          total_buckets: timeSeries.length,
+          expected_buckets: expectedBuckets,
+          filled_buckets: filledBuckets,
+          empty_buckets: expectedBuckets - filledBuckets,
+          total_blocks: results.length,
+          from_block: effectiveFromBlock,
+          to_block: toBlock,
+          observed_span_seconds: observedSpanSeconds,
+          observed_span_formatted: formatDuration(observedSpanSeconds),
+          statistics: {
+            avg: parseFloat(avg.toFixed(2)),
+            min: parseFloat(min.toFixed(2)),
+            max: parseFloat(max.toFixed(2)),
+          },
+          ...(effectiveFromBlock !== requestedFromBlock ? { requested_from_block: requestedFromBlock } : {}),
+        }
+
+        if (address) {
+          summary.filtered_by_address = address
+        }
+        if (backfillAttempts > 0) {
+          summary.backfill_attempts = backfillAttempts
+        }
+
+        return {
+          timeSeries,
+          gapDiagnostics: buildBucketGapDiagnostics({
+            buckets: timeSeries as Array<{ bucket_index: number; timestamp: number; timestamp_human?: string; blocks_in_bucket: number }>,
+            intervalSeconds,
+            isFilled: (bucket) => bucket.blocks_in_bucket > 0,
+            anchor: 'latest_block',
+            windowComplete: !hasCoverageGap,
+            ...(firstResultTimestamp > 0 ? { firstObservedTimestamp: firstResultTimestamp } : {}),
+            ...(endTimestamp > 0 ? { lastObservedTimestamp: endTimestamp } : {}),
+          }),
+          summary,
+          filledBuckets,
+          expectedBuckets,
+          observedSpanSeconds,
+          observedCoveragePct,
+          hasCoverageGap,
+          firstResultTimestamp,
+          endTimestamp,
+          adaptiveChunkReduced,
+          effectiveFromBlock,
+        }
+      })
+
+      // Detect chain head staleness (most relevant for Bitcoin/slow chains)
+      const summary = cachedSeries.summary as any
+      const resultMessage = buildTimeSeriesAnswer({
+        dataset,
+        metric,
+        interval,
+        duration,
+        timeSeries: cachedSeries.timeSeries,
+        fromBlock: cachedSeries.effectiveFromBlock,
+        toBlock,
+        observedSpanSeconds: cachedSeries.observedSpanSeconds,
+        unit: getMetricUnit(metric),
       })
 
       return formatResult(
@@ -1765,7 +2004,8 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
           summary,
           chart: buildTimeSeriesChart({
             interval,
-            totalPoints: timeSeries.length,
+            totalPoints: cachedSeries.timeSeries.length,
+            recommendedVisual: getMetricRecommendedVisual(metric),
             title: getMetricLabel(metric),
             subtitle: `Bucketed ${getMetricLabel(metric).toLowerCase()} across the selected window`,
             yAxisLabel: getMetricLabel(metric),
@@ -1774,7 +2014,7 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
           }),
           tables: [
             buildTimeSeriesTable({
-              rowCount: timeSeries.length,
+              rowCount: cachedSeries.timeSeries.length,
               title: 'Time series buckets',
               valueLabel: getMetricLabel(metric),
               valueFormat: getMetricValueFormat(metric),
@@ -1784,13 +2024,12 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
               defaultSort: { key: 'bucket_index', direction: 'asc' },
             }),
           ],
-          gap_diagnostics: gapDiagnostics,
-          time_series: timeSeries,
+          gap_diagnostics: cachedSeries.gapDiagnostics,
+          time_series: cachedSeries.timeSeries,
         },
         resultMessage,
         {
           toolName: 'portal_get_time_series',
-          notices,
           freshness: buildQueryFreshness({
             finality: 'latest',
             headBlockNumber: head.number,
@@ -1798,9 +2037,9 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
             resolvedWindow,
           }),
           coverage: buildBucketCoverage({
-            expectedBuckets,
-            returnedBuckets: timeSeries.length,
-            filledBuckets,
+            expectedBuckets: cachedSeries.expectedBuckets,
+            returnedBuckets: cachedSeries.timeSeries.length,
+            filledBuckets: cachedSeries.filledBuckets,
             anchor: 'latest_block',
           }),
           execution: buildExecutionMetadata({
@@ -1808,27 +2047,23 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
             metric,
             interval,
             duration,
-            from_block: effectiveFromBlock,
+            from_block: cachedSeries.effectiveFromBlock,
             to_block: toBlock,
             range_kind: resolvedWindow.range_kind,
           }),
+          pipes: pipesRecipe,
           ui: buildSimpleSeriesUi({
             title: getMetricLabel(metric),
-            subtitle: `${interval} buckets over ${duration}`,
+            subtitle: resultMessage,
             metricLabel: getMetricLabel(metric),
             valueFormat: getMetricValueFormat(metric),
             unit: getMetricUnit(metric),
             avgValuePath: 'summary.statistics.avg',
-            followUpActions: [
-              { label: 'Show raw bucket rows', intent: 'show_raw', target: 'time_series' },
-              { label: 'Zoom into the latest buckets', intent: 'zoom_in', target: 'chart' },
-              { label: 'Compare against the previous window', intent: 'compare_previous' },
-            ],
           }),
           metadata: {
             network: dataset,
             dataset,
-            from_block: effectiveFromBlock,
+            from_block: cachedSeries.effectiveFromBlock,
             to_block: toBlock,
             query_start_time: queryStartTime,
           },

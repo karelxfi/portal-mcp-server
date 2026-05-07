@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Release script: bump version, update CHANGELOG, create git tag.
+# Release script: bump version, date a hand-written CHANGELOG entry, create git tag.
 # Usage: npm run release:patch|minor|major
 #   or:  ./scripts/release.sh patch|minor|major
 
@@ -39,46 +39,76 @@ if git tag -l "$TAG" | grep -q "$TAG"; then
   exit 1
 fi
 
-# Bump package.json version
-node -e "
-const pkg = require('./package.json');
-pkg.version = '${NEW_VERSION}';
-require('fs').writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
-"
-
-# Generate changelog entry from git log since last tag
-LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
-if [[ -n "$LAST_TAG" ]]; then
-  COMMITS=$(git log "${LAST_TAG}..HEAD" --pretty=format:"- %s" --no-merges)
-else
-  COMMITS=$(git log --pretty=format:"- %s" --no-merges)
+# Require a deliberate changelog entry before mutating files. Release notes
+# should be written for users, not generated from raw commit subjects.
+if [[ ! -f CHANGELOG.md ]]; then
+  echo "Error: CHANGELOG.md is missing. Draft release notes before cutting $TAG."
+  exit 1
 fi
 
-# Insert new entry at top of CHANGELOG.md (after the header lines)
-ENTRY="## [${NEW_VERSION}] - ${DATE}\n\n### Changes\n${COMMITS}\n"
+UNRELEASED_HEADING="## [${NEW_VERSION}] - Unreleased"
+DATED_HEADING_REGEX="^## \\[${NEW_VERSION}\\] - [0-9]{4}-[0-9]{2}-[0-9]{2}$"
 
-if [[ -f CHANGELOG.md ]]; then
-  # Insert after the header (line with "and this project adheres")
-  awk -v entry="$ENTRY" '
-    /^## \[/ && !inserted {
-      printf "%s\n\n", entry
-      inserted=1
-    }
-    { print }
-  ' CHANGELOG.md > CHANGELOG.tmp && mv CHANGELOG.tmp CHANGELOG.md
+if grep -Fxq "$UNRELEASED_HEADING" CHANGELOG.md; then
+  CHANGELOG_MODE="date"
+elif grep -Eq "$DATED_HEADING_REGEX" CHANGELOG.md; then
+  CHANGELOG_MODE="keep"
 else
-  printf "# Changelog\n\n%b\n" "$ENTRY" > CHANGELOG.md
+  cat <<EOF
+Error: CHANGELOG.md does not contain an entry for $TAG.
+
+Add a hand-written entry before releasing, for example:
+
+## [${NEW_VERSION}] - Unreleased
+
+<1-2 sentence lead focused on user-visible impact.>
+
+### Highlights
+- **Bold lede** — short explanation.
+
+**Full Changelog**: https://github.com/subsquid-labs/portal-mcp-server/compare/v${CURRENT}...v${NEW_VERSION}
+EOF
+  exit 1
+fi
+
+# Bump package.json and package-lock.json versions
+node -e "
+const fs = require('fs');
+
+const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+pkg.version = '${NEW_VERSION}';
+fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
+
+if (fs.existsSync('package-lock.json')) {
+  const lock = JSON.parse(fs.readFileSync('package-lock.json', 'utf8'));
+  lock.version = '${NEW_VERSION}';
+  if (lock.packages && lock.packages['']) {
+    lock.packages[''].version = '${NEW_VERSION}';
+  }
+  fs.writeFileSync('package-lock.json', JSON.stringify(lock, null, 2) + '\n');
+}
+"
+
+if [[ "$CHANGELOG_MODE" == "date" ]]; then
+  node -e "
+const fs = require('fs');
+const path = 'CHANGELOG.md';
+const oldHeading = '## [${NEW_VERSION}] - Unreleased';
+const newHeading = '## [${NEW_VERSION}] - ${DATE}';
+const text = fs.readFileSync(path, 'utf8');
+fs.writeFileSync(path, text.replace(oldHeading, newHeading));
+"
 fi
 
 # Commit and tag
-git add package.json CHANGELOG.md
+git add package.json package-lock.json CHANGELOG.md
 git commit -m "chore: release v${NEW_VERSION}"
 git tag -a "$TAG" -m "v${NEW_VERSION}"
 
 echo ""
 echo "Released $TAG"
-echo "  - package.json bumped to $NEW_VERSION"
-echo "  - CHANGELOG.md updated"
+echo "  - package.json/package-lock.json bumped to $NEW_VERSION"
+echo "  - CHANGELOG.md entry dated"
 echo "  - Git tag $TAG created"
 echo ""
 echo "To publish:"

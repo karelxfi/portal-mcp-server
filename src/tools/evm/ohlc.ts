@@ -13,7 +13,7 @@ import {
 } from '../../helpers/chart-metadata.js'
 import { createCache, estimateSize } from '../../helpers/cache-manager.js'
 import { detectChainType } from '../../helpers/chain.js'
-import { getKnownTokenDecimals, getKnownTokenSymbol } from '../../helpers/conversions.js'
+import { getKnownPoolMetadata, getKnownTokenDecimals, getKnownTokenSymbol } from '../../helpers/conversions.js'
 import { createUnsupportedChainError } from '../../helpers/errors.js'
 import { portalFetchRecentRecords, portalFetchStreamRangeVisit } from '../../helpers/fetch.js'
 import { buildEvmLogFields } from '../../helpers/fields.js'
@@ -1103,12 +1103,21 @@ export function registerEvmOhlcTool(server: McpServer) {
         }
       }
 
+      // When the caller only gave us a pool address, try to resolve its
+      // token0/token1 from a well-known pool registry. This unlocks human-
+      // readable prices for the top Uniswap v3 pools without the caller
+      // having to hand-thread token decimals for every invocation.
+      const knownPool =
+        pool_address && !token0_address && !token1_address
+          ? getKnownPoolMetadata(normalizeEvmAddress(pool_address))
+          : undefined
+
       const effectiveToken0Address = token0_address
         ? normalizeEvmAddress(token0_address)
-        : normalizedCurrency0Address
+        : (normalizedCurrency0Address ?? knownPool?.token0)
       const effectiveToken1Address = token1_address
         ? normalizeEvmAddress(token1_address)
-        : normalizedCurrency1Address
+        : (normalizedCurrency1Address ?? knownPool?.token1)
       const resolvedToken0Decimals = token0_decimals ?? (effectiveToken0Address ? getKnownTokenDecimals(effectiveToken0Address) : undefined)
       const resolvedToken1Decimals = token1_decimals ?? (effectiveToken1Address ? getKnownTokenDecimals(effectiveToken1Address) : undefined)
       const resolvedToken0Symbol = token0_symbol ?? (effectiveToken0Address ? getKnownTokenSymbol(effectiveToken0Address) : undefined)

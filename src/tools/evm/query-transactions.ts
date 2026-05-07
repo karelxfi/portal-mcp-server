@@ -5,7 +5,7 @@ import { resolveDataset, validateBlockRange } from '../../cache/datasets.js'
 import { PORTAL_URL } from '../../constants/index.js'
 import { detectChainType, isL2Chain } from '../../helpers/chain.js'
 import { createUnsupportedChainError } from '../../helpers/errors.js'
-import { portalFetchRecentRecords } from '../../helpers/fetch.js'
+import { portalFetchRecentRecords, portalFetchStreamRange } from '../../helpers/fetch.js'
 import { getTransactionFields } from '../../helpers/field-presets.js'
 import { normalizeEvmTransactionResult } from '../../helpers/normalized-results.js'
 import { buildPaginationInfo, decodeRecentPageCursor, encodeRecentPageCursor, paginateAscendingItems } from '../../helpers/pagination.js'
@@ -73,6 +73,8 @@ type QueryTransactionsRequest = {
   from_addresses?: string[]
   to_addresses?: string[]
   sighash?: string[]
+  transaction_type?: number
+  scan_order?: 'earliest' | 'latest'
   first_nonce?: number
   last_nonce?: number
   field_preset: 'minimal' | 'standard' | 'full'
@@ -126,6 +128,94 @@ function sortTransactions(items: EvmTransactionItem[]) {
   })
 }
 
+function normalizeTransactionType(value: unknown): number | undefined {
+  if (value === undefined || value === null || value === '') return undefined
+
+  const parsed =
+    typeof value === 'number'
+      ? value
+      : typeof value === 'string' && value.trim().toLowerCase().startsWith('0x')
+        ? Number.parseInt(value.trim().slice(2), 16)
+        : typeof value === 'string'
+          ? Number(value.trim())
+          : Number.NaN
+
+  if (!Number.isInteger(parsed) || parsed < 0) {
+    throw new Error(`transaction_type must be a non-negative integer or hex string such as "0x1"; got ${String(value)}`)
+  }
+
+  return parsed
+}
+
+function getTransactionType(tx: Record<string, unknown>): number | undefined {
+  const value = tx.type
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value === 'string') {
+    const parsed = value.toLowerCase().startsWith('0x')
+      ? Number.parseInt(value.slice(2), 16)
+      : Number(value)
+    return Number.isFinite(parsed) ? parsed : undefined
+  }
+  return undefined
+}
+
+function matchesTransactionType(tx: Record<string, unknown>, type: number | undefined): boolean {
+  return type === undefined || getTransactionType(tx) === type
+}
+
+async function fetchTransactionsByScanOrder({
+  url,
+  query,
+  fromBlock,
+  toBlock,
+  limit,
+  chunkSize,
+  scanOrder,
+  transactionType,
+}: {
+  url: string
+  query: Record<string, unknown>
+  fromBlock: number
+  toBlock: number
+  limit: number
+  chunkSize: number
+  scanOrder: 'earliest' | 'latest'
+  transactionType: number | undefined
+}) {
+  const targetCount = limit + 1
+  const collected: EvmTransactionItem[] = []
+  let scannedFromBlock = scanOrder === 'earliest' ? fromBlock : toBlock
+  let scannedToBlock = scanOrder === 'earliest' ? fromBlock : toBlock
+
+  if (scanOrder === 'earliest') {
+    for (let chunkFrom = fromBlock; chunkFrom <= toBlock && collected.length < targetCount; chunkFrom += chunkSize) {
+      const chunkTo = Math.min(toBlock, chunkFrom + chunkSize - 1)
+      scannedToBlock = chunkTo
+      const records = await portalFetchStreamRange(url, { ...query, fromBlock: chunkFrom, toBlock: chunkTo })
+      const txs = sortTransactions(flattenTransactionsWithBlockContext(records) as EvmTransactionItem[])
+        .filter((tx) => matchesTransactionType(tx, transactionType))
+      collected.push(...txs)
+    }
+  } else {
+    for (let chunkTo = toBlock; chunkTo >= fromBlock && collected.length < targetCount; chunkTo -= chunkSize) {
+      const chunkFrom = Math.max(fromBlock, chunkTo - chunkSize + 1)
+      scannedFromBlock = chunkFrom
+      const records = await portalFetchStreamRange(url, { ...query, fromBlock: chunkFrom, toBlock: chunkTo })
+      const txs = sortTransactions(flattenTransactionsWithBlockContext(records) as EvmTransactionItem[])
+        .filter((tx) => matchesTransactionType(tx, transactionType))
+        .reverse()
+      collected.push(...txs)
+    }
+  }
+
+  return {
+    items: sortTransactions(collected.slice(0, limit)),
+    hasMore: collected.length > limit,
+    scannedFromBlock,
+    scannedToBlock,
+  }
+}
+
 export function registerQueryTransactionsTool(server: McpServer) {
   server.tool(
     'portal_evm_query_transactions',
@@ -173,6 +263,18 @@ export function registerQueryTransactionsTool(server: McpServer) {
         .array(z.string())
         .optional()
         .describe("FILTER: Function sighash (4-byte hex, e.g., '0xa9059cbb' for transfer). Optional if limit <=100."),
+      transaction_type: z
+        .union([z.number(), z.string()])
+        .optional()
+        .describe(
+          'FILTER: EVM transaction type. Accepts decimal or hex strings such as 0, 1, 2, "0x0", "0x1", "0x2". Applied client-side while streaming Portal results; use with scan_order="earliest" and from_block to find the first typed transaction.',
+        ),
+      scan_order: z
+        .enum(['latest', 'earliest'])
+        .optional()
+        .describe(
+          'Which side of the block window to scan first. Normal previews default to latest; transaction_type searches default to earliest, so "first tx type 0x1 from block N" scans forward from from_block.',
+        ),
       first_nonce: z.number().optional().describe('Minimum nonce'),
       last_nonce: z.number().optional().describe('Maximum nonce'),
       limit: z
@@ -212,6 +314,8 @@ export function registerQueryTransactionsTool(server: McpServer) {
       from_addresses,
       to_addresses,
       sighash,
+      transaction_type,
+      scan_order,
       first_nonce,
       last_nonce,
       limit,
@@ -256,6 +360,8 @@ export function registerQueryTransactionsTool(server: McpServer) {
         from_addresses = paginationCursor.request.from_addresses
         to_addresses = paginationCursor.request.to_addresses
         sighash = paginationCursor.request.sighash
+        transaction_type = paginationCursor.request.transaction_type
+        scan_order = paginationCursor.request.scan_order
         first_nonce = paginationCursor.request.first_nonce
         last_nonce = paginationCursor.request.last_nonce
         field_preset = paginationCursor.request.field_preset
@@ -294,6 +400,9 @@ export function registerQueryTransactionsTool(server: McpServer) {
 
       const normalizedFrom = normalizeAddresses(from_addresses, chainType)
       const normalizedTo = normalizeAddresses(to_addresses, chainType)
+      const normalizedTransactionType = normalizeTransactionType(transaction_type)
+      const effectiveScanOrder: 'earliest' | 'latest' =
+        scan_order ?? (normalizedTransactionType !== undefined ? 'earliest' : 'latest')
       const { validatedToBlock: endBlock, head } = await validateBlockRange(
         dataset,
         resolvedFromBlock,
@@ -305,7 +414,7 @@ export function registerQueryTransactionsTool(server: McpServer) {
 
       // Validate query size to prevent crashes
       const blockRange = pageToBlock - resolvedFromBlock
-      const hasFilters = !!(normalizedFrom || normalizedTo || sighash)
+      const hasFilters = !!(normalizedFrom || normalizedTo || sighash || normalizedTransactionType !== undefined)
 
       const validation = validateQuerySize({
         blockRange,
@@ -344,6 +453,7 @@ export function registerQueryTransactionsTool(server: McpServer) {
         transactionIndex: true,
         from: true,
         to: true,
+        type: true,
       }
 
       // Merge L2 fields if requested (but keep preset as base)
@@ -384,25 +494,49 @@ export function registerQueryTransactionsTool(server: McpServer) {
               fetchLimit * (effectiveResponseFormat === 'summary' ? 4 : field_preset === 'minimal' ? 5 : 3),
             ),
           )
-      const results = await portalFetchRecentRecords(`${PORTAL_URL}/datasets/${dataset}/stream`, query, {
-        itemKeys: ['transactions'],
-        limit: fetchLimit,
-        chunkSize: adaptiveChunkSize,
-      })
+      const portalUrl = `${PORTAL_URL}/datasets/${dataset}/stream`
+      const scanPath = effectiveScanOrder === 'earliest' || normalizedTransactionType !== undefined
+      const results = scanPath
+        ? []
+        : await portalFetchRecentRecords(portalUrl, query, {
+            itemKeys: ['transactions'],
+            limit: fetchLimit,
+            chunkSize: adaptiveChunkSize,
+          })
 
-      const allTxs = sortTransactions(flattenTransactionsWithBlockContext(results) as EvmTransactionItem[])
-      const page = paginateAscendingItems(
-        allTxs,
-        limit,
-        getBlockNumber,
-        paginationCursor
-          ? {
-              page_to_block: paginationCursor.page_to_block,
-              skip_inclusive_block: paginationCursor.skip_inclusive_block,
-            }
-          : undefined,
-      )
-      const nextCursor = page.hasMore && page.nextBoundary
+      const scanResult = scanPath
+        ? await fetchTransactionsByScanOrder({
+            url: portalUrl,
+            query,
+            fromBlock: resolvedFromBlock,
+            toBlock: pageToBlock,
+            limit,
+            chunkSize: normalizedTransactionType !== undefined ? 100 : adaptiveChunkSize,
+            scanOrder: effectiveScanOrder,
+            transactionType: normalizedTransactionType,
+          })
+        : undefined
+      const allTxs = scanResult
+        ? scanResult.items
+        : sortTransactions(flattenTransactionsWithBlockContext(results) as EvmTransactionItem[])
+      const page = scanResult
+        ? {
+            pageItems: scanResult.items,
+            hasMore: scanResult.hasMore,
+            nextBoundary: undefined,
+          }
+        : paginateAscendingItems(
+            allTxs,
+            limit,
+            getBlockNumber,
+            paginationCursor
+              ? {
+                  page_to_block: paginationCursor.page_to_block,
+                  skip_inclusive_block: paginationCursor.skip_inclusive_block,
+                }
+              : undefined,
+          )
+      const nextCursor = !scanResult && page.hasMore && page.nextBoundary
         ? encodeRecentPageCursor<QueryTransactionsRequest>({
             tool: 'portal_evm_query_transactions',
             dataset,
@@ -415,6 +549,8 @@ export function registerQueryTransactionsTool(server: McpServer) {
               ...(normalizedFrom ? { from_addresses: normalizedFrom } : {}),
               ...(normalizedTo ? { to_addresses: normalizedTo } : {}),
               ...(sighash ? { sighash } : {}),
+              ...(normalizedTransactionType !== undefined ? { transaction_type: normalizedTransactionType } : {}),
+              scan_order: effectiveScanOrder,
               ...(first_nonce !== undefined ? { first_nonce } : {}),
               ...(last_nonce !== undefined ? { last_nonce } : {}),
               field_preset,
@@ -437,6 +573,9 @@ export function registerQueryTransactionsTool(server: McpServer) {
       if (nextCursor) {
         notices.push('Older results are available via _pagination.next_cursor.')
       }
+      if (scanResult && page.hasMore) {
+        notices.push(`More matches may exist after the scanned ${scanResult.scannedFromBlock}-${scanResult.scannedToBlock} block slice; narrow the window or raise limit for more.`)
+      }
       const freshness = buildQueryFreshness({
         finality: finalized_only ? 'finalized' : 'latest',
         headBlockNumber: head.number,
@@ -446,7 +585,7 @@ export function registerQueryTransactionsTool(server: McpServer) {
       const coverage = buildQueryCoverage({
         windowFromBlock: resolvedFromBlock,
         windowToBlock: endBlock,
-        pageToBlock,
+        pageToBlock: scanResult && effectiveScanOrder === 'earliest' ? scanResult.scannedToBlock : pageToBlock,
         items: page.pageItems,
         getBlockNumber,
         hasMore: page.hasMore,
@@ -455,7 +594,9 @@ export function registerQueryTransactionsTool(server: McpServer) {
       const message =
         effectiveResponseFormat === 'summary'
           ? `Transaction summary for ${page.pageItems.length} transactions${page.hasMore ? ' (latest preview page)' : ''}`
-          : `Retrieved ${page.pageItems.length} transactions${page.hasMore ? ` from the most recent matching blocks (preview page limited to ${limit})` : ''}`
+          : scanResult
+            ? `Retrieved ${page.pageItems.length} transactions by scanning ${effectiveScanOrder === 'earliest' ? 'forward' : 'backward'} from the ${effectiveScanOrder === 'earliest' ? 'start' : 'end'} of the window`
+            : `Retrieved ${page.pageItems.length} transactions${page.hasMore ? ` from the most recent matching blocks (preview page limited to ${limit})` : ''}`
 
       return formatResult(formattedData, message, {
         toolName: 'portal_evm_query_transactions',
@@ -474,8 +615,12 @@ export function registerQueryTransactionsTool(server: McpServer) {
           from_block: resolvedFromBlock,
           to_block: endBlock,
           page_to_block: pageToBlock,
+          scan_order: effectiveScanOrder,
           range_kind: resolvedBlocks.range_kind,
           notes: [
+            normalizedTransactionType !== undefined
+              ? `Filtered client-side to transaction type ${normalizedTransactionType} (0x${normalizedTransactionType.toString(16)}).`
+              : undefined,
             include_logs || include_traces || include_state_diffs
               ? 'Expanded transaction context was requested with include flags.'
               : `Using ${field_preset} field preset.`,

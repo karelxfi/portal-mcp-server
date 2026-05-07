@@ -48,6 +48,7 @@ type ToolDefinition = RuntimeToolContract & {
 export type ToolExecutionMetadataInput = {
   mode?: string
   response_format?: string
+  scan_order?: string
   range_kind?: string
   from_block?: number
   to_block?: number
@@ -305,11 +306,13 @@ const TOOL_DEFINITIONS: Record<string, ToolDefinition> = {
     when_to_use: [
       'You need raw transaction records on an EVM network.',
       'You want chain-specific transaction fields or include flags that convenience tools do not expose.',
+      'You need to find the first transaction matching a raw field condition such as transaction type 0x1 from a known block.',
     ],
     avoid_when: ['You only need a quick recent feed or wallet-level summary.'],
     examples: [
       { label: 'Recent Base transactions', input: { network: 'base-mainnet', timeframe: '1h', limit: 20 } },
       { label: 'Filter by sender', input: { network: 'ethereum-mainnet', timeframe: '6h', from_addresses: ['0xabc...'], limit: 20 } },
+      { label: 'First EIP-2930 transaction from Berlin fork', input: { network: 'ethereum-mainnet', from_block: 12244000, transaction_type: '0x1', scan_order: 'earliest', limit: 1, field_preset: 'minimal' } },
     ],
     supports: {
       pagination: true,
@@ -751,6 +754,7 @@ export function buildExecutionMetadata(input: ToolExecutionMetadataInput): Recor
 
   if (input.mode) metadata.mode = input.mode
   if (input.response_format) metadata.response_format = input.response_format
+  if (input.scan_order) metadata.scan_order = input.scan_order
   if (input.metric) metadata.metric = input.metric
   if (input.interval) metadata.interval = input.interval
   if (input.duration) metadata.duration = input.duration

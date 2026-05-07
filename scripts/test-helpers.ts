@@ -23,9 +23,14 @@ const RETRYABLE_PATTERNS = [
   /timed out/i,
   /gateway timeout/i,
   /worker temporarily unavailable/i,
+  /temporarily unavailable/i,
+  /internal server error/i,
+  /server error/i,
+  /upstream/i,
   /portal server error/i,
   /rate limited/i,
   /fetch failed/i,
+  /failed to fetch/i,
   /socket hang up/i,
   /ECONNRESET/i,
   /ETIMEDOUT/i,
@@ -89,7 +94,7 @@ export function assertErrorQuality(text: string, label: string) {
   assert(text.length > 0, `${label} error should not be empty`)
   assert(!/TypeError|ReferenceError|SyntaxError|at .*:\d+:\d+/i.test(text), `${label} should not leak stack traces`)
   assert(
-    /Suggestions:|supported|required|Unknown dataset|does not support dataset|Invalid|cannot be used together/i.test(text),
+    /Suggestions:|supported|required|Unknown network|does not support network|Invalid|cannot be used together/i.test(text),
     `${label} should explain the problem clearly`,
   )
 }

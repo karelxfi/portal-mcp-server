@@ -43,6 +43,9 @@ export const LOG_FIELD_PRESETS = {
 export const TRANSACTION_FIELD_PRESETS = {
   minimal: {
     transaction: {
+      hash: true,
+      transactionIndex: true,
+      type: true,
       from: true,
       to: true,
       value: true,
@@ -54,6 +57,8 @@ export const TRANSACTION_FIELD_PRESETS = {
   standard: {
     transaction: {
       hash: true,
+      transactionIndex: true,
+      type: true,
       from: true,
       to: true,
       value: true,
@@ -68,6 +73,8 @@ export const TRANSACTION_FIELD_PRESETS = {
   full: {
     transaction: {
       hash: true,
+      transactionIndex: true,
+      type: true,
       from: true,
       to: true,
       value: true,

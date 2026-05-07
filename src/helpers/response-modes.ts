@@ -200,9 +200,13 @@ export function compactTransactions(txs: any[]): any[] {
   return txs.map((tx) => ({
     ...pickCommonAliases(tx),
     hash: tx.hash,
+    transactionIndex: tx.transactionIndex,
+    type: tx.type,
+    nonce: tx.nonce,
     from: tx.from,
     to: tx.to,
     value: tx.value,
+    value_eth: tx.value_eth,
     blockNumber: getBlockNumber(tx),
     timestamp: getTimestamp(tx),
     ...(Array.isArray(tx.logs) && tx.logs.length > 0

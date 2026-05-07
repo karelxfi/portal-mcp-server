@@ -58,7 +58,7 @@ const SCENARIOS: ConversationScenario[] = [
         args: () => ({ network: 'base', metric: 'transaction_count', duration: '1h', interval: '5m' }),
         validate: (data) => {
           assert(Array.isArray(data.time_series) && data.time_series.length >= 12, 'Time series should return chart buckets')
-          assert(data.next_steps?.actions?.length > 0, 'Time series should suggest next steps')
+          assert(typeof data.answer === 'string' && data.answer.includes('Base'), 'Time series should include a concise natural-language answer')
         },
       },
     ],

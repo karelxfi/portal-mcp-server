@@ -2,12 +2,72 @@ import { createServer, type IncomingMessage } from 'node:http'
 import { randomUUID } from 'node:crypto'
 
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
+import { z } from 'zod'
+import { zodToJsonSchema } from 'zod-to-json-schema'
 
 import { clientRequestsTotal } from './metrics.js'
 import { getObservabilityStatus } from './observability.js'
 import { register } from './metrics.js'
 import { createPortalServer } from './server.js'
 import { npmVersion } from './version.js'
+
+// ----------------------------------------------------------------------------
+// Tool catalog cache
+//
+// `GET /tools` exposes the same data the MCP `tools/list` JSON-RPC method
+// returns, but as a plain HTTP endpoint a browser or curl can hit. Useful
+// for changelog links and quick discoverability without an MCP client.
+//
+// The catalog is built once on first request and cached for the process
+// lifetime — registration is deterministic, so there's no point rebuilding.
+// ----------------------------------------------------------------------------
+
+type ToolCatalogEntry = {
+  name: string
+  title?: string
+  description?: string
+  inputSchema?: unknown
+}
+
+let catalogCache: { entries: ToolCatalogEntry[]; generatedAt: string } | null = null
+
+function buildToolCatalog(): { entries: ToolCatalogEntry[]; generatedAt: string } {
+  if (catalogCache) return catalogCache
+
+  // Spin up a throwaway server purely to walk its registered-tool table.
+  // No transport is connected, so nothing actually runs.
+  const probe = createPortalServer({ transport: 'http' })
+  // biome-ignore lint: SDK exposes _registeredTools as the same source tools/list reads from
+  const registry = (probe as unknown as { _registeredTools: Record<string, any> })._registeredTools ?? {}
+
+  const entries: ToolCatalogEntry[] = Object.entries(registry)
+    .filter(([, tool]) => tool?.enabled !== false)
+    .map(([name, tool]) => {
+      const entry: ToolCatalogEntry = { name }
+      if (typeof tool.title === 'string') entry.title = tool.title
+      if (typeof tool.description === 'string') entry.description = tool.description
+      if (tool.inputSchema) {
+        try {
+          // tool.inputSchema is either a zod object or a plain props record
+          // depending on which registration overload the tool used. Wrap
+          // plain records in z.object() so zod-to-json-schema accepts them.
+          const schema =
+            tool.inputSchema instanceof z.ZodType
+              ? tool.inputSchema
+              : z.object(tool.inputSchema as Record<string, z.ZodTypeAny>)
+          entry.inputSchema = zodToJsonSchema(schema, { target: 'jsonSchema7' })
+        } catch {
+          /* schema unrepresentable; skip */
+        }
+      }
+      return entry
+    })
+    .sort((a, b) => a.name.localeCompare(b.name))
+
+  catalogCache = { entries, generatedAt: new Date().toISOString() }
+  // The probe server is unreferenced after this; let it be GC'd.
+  return catalogCache
+}
 
 // ============================================================================
 // SQD Portal MCP Server - Node.js HTTP Entry Point
@@ -57,8 +117,40 @@ const server = createServer(async (req, res) => {
     return
   }
 
-  // MCP endpoint
-  if (url.pathname === '/') {
+  // Public tool catalog — same data as MCP `tools/list`, served as plain
+  // JSON so a browser, curl, or docs page can introspect the available
+  // tools without an MCP client. Read-only, no auth, GET only.
+  if (url.pathname === '/tools' || url.pathname === '/tools.json') {
+    if (req.method !== 'GET' && req.method !== 'HEAD') {
+      res.writeHead(405, { 'Content-Type': 'application/json', Allow: 'GET, HEAD' })
+      res.end(JSON.stringify({ error: 'Method not allowed' }))
+      return
+    }
+    const catalog = buildToolCatalog()
+    res.writeHead(200, {
+      'Content-Type': 'application/json; charset=utf-8',
+      'Cache-Control': 'public, max-age=300',
+      'Access-Control-Allow-Origin': '*',
+    })
+    res.end(
+      JSON.stringify(
+        {
+          server: 'sqd-portal-mcp-server',
+          version: npmVersion,
+          generated_at: catalog.generatedAt,
+          tool_count: catalog.entries.length,
+          tools: catalog.entries,
+        },
+        null,
+        2,
+      ),
+    )
+    return
+  }
+
+  // MCP endpoint. Keep /mcp as an alias because remote MCP clients and
+  // quick-tunnel prompts commonly use that path.
+  if (url.pathname === '/' || url.pathname === '/mcp') {
     if (req.method === 'POST') {
       try {
         clientRequestsTotal.inc({
@@ -118,6 +210,9 @@ const server = createServer(async (req, res) => {
     )
     return
   }
+
+  res.writeHead(404, { 'Content-Type': 'application/json' })
+  res.end(JSON.stringify({ error: 'Not found' }))
 })
 
 server.listen(PORT, () => {
