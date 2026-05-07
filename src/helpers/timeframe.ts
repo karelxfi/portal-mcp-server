@@ -173,7 +173,8 @@ const TIMESTAMP_TIMEOUT = 3000
 
 /**
  * Convert a Unix timestamp to a block number using Portal's /timestamps/ endpoint.
- * Works for all EVM, Solana, Bitcoin, and Substrate chains. NOT supported for Hyperliquid.
+ * Works for supported Portal datasets, including real-time datasets that expose
+ * timestamp lookups.
  *
  * Uses a short timeout and zero retries — the caller should fall back to
  * block time estimation on failure.
@@ -417,7 +418,7 @@ export async function resolveBlockAtTimestamp(dataset: string, input: string | n
  * Resolve timeframe to from_block/to_block.
  *
  * Strategy:
- * 1. Hyperliquid → always estimate (no /timestamps/ support)
+ * 1. Datasets without /timestamps/ support → estimate
  * 2. Cached failure for this dataset → estimate (avoid known-broken endpoint)
  * 3. Otherwise → fetch the indexed head timestamp, subtract the timeframe,
  *    and resolve that target through /timestamps/.
@@ -461,7 +462,6 @@ export async function resolveTimeframeOrBlocks(params: {
     const seconds = parseTimeframeToSeconds(timeframe)
 
     const useEstimation =
-      chainType === 'hyperliquidFills' ||
       chainType === 'hyperliquidReplicaCmds' ||
       isTimestampEndpointDown(dataset)
 
@@ -483,6 +483,18 @@ export async function resolveTimeframeOrBlocks(params: {
         from_block: Math.min(fromBlock, latestBlock),
         to_block: latestBlock,
         range_kind: 'timeframe',
+        from_lookup: {
+          timestamp: targetTimestamp,
+          source: 'relative',
+          normalized_input: `${timeframe} before indexed head`,
+          block_number: Math.min(fromBlock, latestBlock),
+          dataset,
+          resolution: 'exact',
+          timestamp_human: formatTimestamp(targetTimestamp),
+          head_block_number: latestBlock,
+          head_timestamp: headTimestamp,
+          head_timestamp_human: formatTimestamp(headTimestamp),
+        },
       }
     } catch {
       // Cache the failure so subsequent calls skip straight to estimation

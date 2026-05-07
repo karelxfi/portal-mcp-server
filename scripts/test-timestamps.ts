@@ -59,6 +59,29 @@ async function assertRealtimeTimestampMatrix() {
   console.log(`PASS  real-time timestamp matrix -> ${rows.length} datasets (${Object.entries(byKind).map(([kind, count]) => `${kind}:${count}`).join(', ')})`)
 }
 
+async function assertHyperliquidFillsExactTimestampLookup() {
+  const dataset = 'hyperliquid-fills'
+  const head = await getBlockHead(dataset)
+  const headTimestamp = await getHeadTimestamp(dataset, head.number)
+  assert(Number.isFinite(headTimestamp) && headTimestamp > 1_000_000_000, 'Hyperliquid fills head timestamp should resolve from block.timestamp')
+
+  const targetTimestamp = headTimestamp - 300
+  const exactProbeBlock = await timestampToBlock(dataset, targetTimestamp)
+  const fiveMinuteWindow = await resolveTimeframeOrBlocks({ dataset, timeframe: '5m' })
+
+  assert(fiveMinuteWindow.to_block === head.number, '5m Hyperliquid fills window should anchor to the cached latest block')
+  assert(fiveMinuteWindow.from_block < fiveMinuteWindow.to_block, '5m Hyperliquid fills window should produce an ordered block range')
+  assert(fiveMinuteWindow.from_lookup?.resolution === 'exact', '5m Hyperliquid fills window should use exact Portal timestamp lookup')
+  assert(fiveMinuteWindow.from_lookup.block_number === fiveMinuteWindow.from_block, '5m Hyperliquid fills lookup metadata should match the resolved window')
+  assert(exactProbeBlock <= head.number, 'Hyperliquid fills timestamp endpoint should return a block at or before head')
+
+  const directLookup = await resolveBlockAtTimestamp(dataset, targetTimestamp)
+  assert(directLookup.resolution === 'exact', 'Hyperliquid fills timestamp lookup should use the exact Portal endpoint')
+  assert(directLookup.block_number <= head.number, 'Hyperliquid fills direct lookup should not exceed indexed head')
+
+  console.log(`PASS  Hyperliquid fills 5m window -> ${fiveMinuteWindow.from_block}..${fiveMinuteWindow.to_block} (exact)`)
+}
+
 async function main() {
   console.log('Starting timestamp resolver QA...\n')
 
@@ -83,6 +106,8 @@ async function main() {
     assert(nowLookup.head_timestamp === headTimestamp, 'Solana "now" estimate should use the resolved head timestamp')
   }
   console.log(`PASS  Solana now lookup -> ${nowLookup.block_number} (${nowLookup.resolution})`)
+
+  await assertHyperliquidFillsExactTimestampLookup()
 
   await assertRealtimeTimestampMatrix()
 

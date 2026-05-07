@@ -27,15 +27,15 @@ export function registerBlockAtTimestampTool(server: McpServer) {
       const dataset = await resolveDataset(network)
       const chainType = detectChainType(dataset)
 
-      if (chainType === 'hyperliquidFills' || chainType === 'hyperliquidReplicaCmds') {
+      if (chainType === 'hyperliquidReplicaCmds') {
         throw createUnsupportedChainError({
           toolName: 'portal_debug_resolve_time_to_block',
           dataset,
           actualChainType: chainType,
-          supportedChains: ['evm', 'solana', 'bitcoin', 'substrate'],
+          supportedChains: ['evm', 'solana', 'bitcoin', 'substrate', 'hyperliquidFills'],
           suggestions: [
             'Use portal_get_head for the current head block.',
-            'Use portal_hyperliquid_query_fills with a recent block window for Hyperliquid activity.',
+            'Use portal_hyperliquid_query_fills for Hyperliquid fills activity.',
           ],
         })
       }
