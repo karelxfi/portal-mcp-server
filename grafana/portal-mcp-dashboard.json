@@ -83,7 +83,7 @@
               }
             ]
           },
-          "unit": "reqps"
+          "unit": "short"
         },
         "overrides": []
       },
@@ -109,12 +109,12 @@
       },
       "targets": [
         {
-          "expr": "sum by (tool) (rate(mcp_tool_calls_total{status=\"success\",tool=~\"$tool\"}[$__rate_interval]))",
+          "expr": "sum by (tool) (increase(mcp_tool_calls_total{status=\"success\",tool=~\"$tool\"}[$__interval]))",
           "legendFormat": "{{tool}}",
           "refId": "A"
         }
       ],
-      "title": "Successful tool calls / sec",
+      "title": "Successful tool calls",
       "type": "timeseries",
       "description": "Live Prometheus scrape data from /metrics. Use the Loki panels below for long-range event history when Prometheus retention or scraping is missing."
     },
@@ -138,7 +138,7 @@
               }
             ]
           },
-          "unit": "reqps"
+          "unit": "short"
         },
         "overrides": []
       },
@@ -164,12 +164,12 @@
       },
       "targets": [
         {
-          "expr": "sum by (tool) (rate(mcp_tool_calls_total{status=\"error\",tool=~\"$tool\"}[$__rate_interval]))",
+          "expr": "sum by (tool) (increase(mcp_tool_calls_total{status=\"error\",tool=~\"$tool\"}[$__interval]))",
           "legendFormat": "{{tool}}",
           "refId": "A"
         }
       ],
-      "title": "Errored tool calls / sec",
+      "title": "Errored tool calls",
       "type": "timeseries",
       "description": "Live Prometheus scrape data from /metrics. Use the Loki panels below for long-range event history when Prometheus retention or scraping is missing."
     },
@@ -206,12 +206,12 @@
       },
       "targets": [
         {
-          "expr": "histogram_quantile(0.95, sum by (le, tool) (rate(mcp_tool_call_duration_seconds_bucket{tool=~\"$tool\"}[$__rate_interval])))",
+          "expr": "histogram_quantile(0.95, sum by (le, tool) (increase(mcp_tool_call_duration_seconds_bucket{tool=~\"$tool\"}[$__interval])))",
           "legendFormat": "{{tool}}",
           "refId": "A"
         }
       ],
-      "title": "Tool latency p95",
+      "title": "Tool latency p95 by bucket",
       "type": "timeseries",
       "description": "Live Prometheus scrape data from /metrics. Use the Loki panels below for long-range event history when Prometheus retention or scraping is missing."
     },
@@ -248,12 +248,12 @@
       },
       "targets": [
         {
-          "expr": "histogram_quantile(0.95, sum by (le, tool) (rate(mcp_tool_response_size_bytes_bucket{tool=~\"$tool\"}[$__rate_interval])))",
+          "expr": "histogram_quantile(0.95, sum by (le, tool) (increase(mcp_tool_response_size_bytes_bucket{tool=~\"$tool\"}[$__interval])))",
           "legendFormat": "{{tool}}",
           "refId": "A"
         }
       ],
-      "title": "Response size p95",
+      "title": "Response size p95 by bucket",
       "type": "timeseries",
       "description": "Live Prometheus scrape data from /metrics. Use the Loki panels below for long-range event history when Prometheus retention or scraping is missing."
     },
@@ -340,7 +340,7 @@
         "orientation": "auto",
         "reduceOptions": {
           "calcs": [
-            "sum"
+            "lastNotNull"
           ],
           "fields": "",
           "values": false
@@ -350,6 +350,8 @@
       "targets": [
         {
           "expr": "sum(increase(mcp_tool_calls_total[$__range]))",
+          "instant": true,
+          "range": false,
           "refId": "A"
         }
       ],
@@ -394,7 +396,7 @@
         "orientation": "auto",
         "reduceOptions": {
           "calcs": [
-            "sum"
+            "lastNotNull"
           ],
           "fields": "",
           "values": false
@@ -404,6 +406,8 @@
       "targets": [
         {
           "expr": "sum(increase(mcp_tool_errors_total[$__range]))",
+          "instant": true,
+          "range": false,
           "refId": "A"
         }
       ],
@@ -455,7 +459,9 @@
       "targets": [
         {
           "expr": "mcp_server_info",
+          "instant": true,
           "legendFormat": "{{server_version}}",
+          "range": false,
           "refId": "A"
         }
       ],
@@ -481,27 +487,27 @@
       },
       "id": 9,
       "options": {
-        "legend": {
-          "calcs": [
-            "lastNotNull"
+        "cellHeight": "sm",
+        "footer": {
+          "countRows": false,
+          "reducer": [
+            "sum"
           ],
-          "displayMode": "table",
-          "placement": "right"
+          "show": false
         },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
+        "showHeader": true
       },
       "targets": [
         {
-          "expr": "topk(15, sum by (dataset) (increase(mcp_dataset_queries_total[$__range])))",
+          "expr": "topk(15, sum by (dataset, vm) (increase(mcp_dataset_queries_total{vm!=\"\"}[$__range])))",
+          "instant": true,
           "legendFormat": "{{dataset}}",
+          "range": false,
           "refId": "A"
         }
       ],
       "title": "Top networks by query volume",
-      "type": "timeseries",
+      "type": "table",
       "description": "Live Prometheus scrape data from /metrics. Use the Loki panels below for long-range event history when Prometheus retention or scraping is missing."
     },
     {
@@ -522,27 +528,27 @@
       },
       "id": 10,
       "options": {
-        "legend": {
-          "calcs": [
-            "lastNotNull"
+        "cellHeight": "sm",
+        "footer": {
+          "countRows": false,
+          "reducer": [
+            "sum"
           ],
-          "displayMode": "table",
-          "placement": "right"
+          "show": false
         },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
+        "showHeader": true
       },
       "targets": [
         {
-          "expr": "sum by (intent) (increase(mcp_tool_intent_calls_total[$__range]))",
+          "expr": "sum by (intent, vm) (increase(mcp_tool_intent_calls_total[$__range]))",
+          "instant": true,
           "legendFormat": "{{intent}}",
+          "range": false,
           "refId": "A"
         }
       ],
       "title": "Intent mix",
-      "type": "timeseries",
+      "type": "table",
       "description": "Live Prometheus scrape data from /metrics. Use the Loki panels below for long-range event history when Prometheus retention or scraping is missing."
     },
     {
@@ -552,7 +558,7 @@
           "color": {
             "mode": "palette-classic"
           },
-          "unit": "reqps"
+          "unit": "short"
         },
         "overrides": []
       },
@@ -578,12 +584,12 @@
       },
       "targets": [
         {
-          "expr": "sum by (status_code) (rate(mcp_portal_api_requests_total[$__rate_interval]))",
+          "expr": "sum by (status_code) (increase(mcp_portal_api_requests_total[$__interval]))",
           "legendFormat": "{{status_code}}",
           "refId": "A"
         }
       ],
-      "title": "Portal upstream status codes / sec",
+      "title": "Portal upstream status codes",
       "type": "timeseries",
       "description": "Live Prometheus scrape data from /metrics. Use the Loki panels below for long-range event history when Prometheus retention or scraping is missing."
     },
@@ -605,27 +611,27 @@
       },
       "id": 12,
       "options": {
-        "legend": {
-          "calcs": [
-            "lastNotNull"
+        "cellHeight": "sm",
+        "footer": {
+          "countRows": false,
+          "reducer": [
+            "sum"
           ],
-          "displayMode": "table",
-          "placement": "right"
+          "show": false
         },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
+        "showHeader": true
       },
       "targets": [
         {
-          "expr": "sum by (client_name, client_version) (increase(mcp_client_requests_total[$__range]))",
+          "expr": "topk(20, sum by (client_name, client_version) (increase(mcp_client_requests_total[$__range])))",
+          "instant": true,
           "legendFormat": "{{client_name}} {{client_version}}",
+          "range": false,
           "refId": "A"
         }
       ],
       "title": "HTTP clients by version",
-      "type": "timeseries",
+      "type": "table",
       "description": "Live Prometheus scrape data from /metrics. Use the Loki panels below for long-range event history when Prometheus retention or scraping is missing."
     },
     {
