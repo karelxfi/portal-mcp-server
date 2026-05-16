@@ -94,6 +94,8 @@ type BucketAccumulator = {
   addresses: Set<string>
 }
 
+const DEFAULT_TIME_SERIES_DURATION = '6h'
+const INTERACTIVE_TIME_SERIES_WINDOW_SECONDS = 6 * 60 * 60
 const SOLANA_GENERIC_TIME_SERIES_CHUNK_SIZE: Partial<Record<TimeSeriesMetric, number>> = {
   transaction_count: 5000,
   unique_addresses: 1000,
@@ -129,6 +131,17 @@ const timeSeriesCache = createQueryCache<{
   ttl: TIME_SERIES_CACHE_TTL_MS,
   maxEntries: TIME_SERIES_CACHE_MAX_ENTRIES,
 })
+
+function buildLongWindowNotice(duration: string): string | undefined {
+  const durationSeconds = parseTimeframeToSeconds(duration)
+  if (durationSeconds <= INTERACTIVE_TIME_SERIES_WINDOW_SECONDS) return undefined
+
+  return `Long-window note: ${describeTimeWindowInput(duration)} is supported, but complete scans can take longer than the default ${DEFAULT_TIME_SERIES_DURATION} interactive window.`
+}
+
+function withWindowNotice(message: string, notice?: string): string {
+  return notice ? `${message} ${notice}` : message
+}
 
 function getBlockNumber(block: TimeSeriesBlock): number | undefined {
   return block.number ?? block.header?.number
@@ -301,7 +314,7 @@ function formatMetricAmount(value: number, metric: TimeSeriesMetric, opts?: { co
   }
 
   const formatted = opts?.compact ? formatCompactNumber(value) : formatExactNumber(value)
-  return opts?.unit && !['transactions', 'fills'].includes(opts.unit) ? `${formatted} ${opts.unit}` : formatted
+  return opts?.unit && !['transactions', 'txs', 'fills'].includes(opts.unit) ? `${formatted} ${opts.unit}` : formatted
 }
 
 function getMetricNoun(metric: TimeSeriesMetric): string {
@@ -604,7 +617,9 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
       interval: z.enum(['5m', '15m', '1h', '6h', '1d']).describe('Time bucket interval (5m, 15m, 1h, 6h, 1d)'),
       duration: z
         .string()
-        .describe('Total time period to analyze. Accepts compact durations like "30m" or natural phrases like "past 30 minutes".'),
+        .optional()
+        .default(DEFAULT_TIME_SERIES_DURATION)
+        .describe('Total time period to analyze. Defaults to "6h" for fast interactive UX. Explicit longer windows like "24h" or "7d" are supported but can take longer. Accepts compact durations like "30m" or natural phrases like "past 30 minutes".'),
       address: z
         .string()
         .optional()
@@ -641,6 +656,10 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
         compare_previous,
         group_by,
       })
+      const longWindowNotice = buildLongWindowNotice(duration)
+      if (longWindowNotice) {
+        notices.push(longWindowNotice)
+      }
 
       if (compare_previous && group_by === 'contract') {
         throw new Error('compare_previous and group_by="contract" cannot be used together in v0.7.7.')
@@ -809,6 +828,11 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
             previousSeries.coverage.window_complete === true,
         })
 
+        const resultMessage = withWindowNotice(
+          `Compared ${metric} over the current window (${describeTimeWindowInput(duration)}) versus the immediately previous matching window.`,
+          longWindowNotice,
+        )
+
         return formatResult({
           summary: {
             metric,
@@ -885,9 +909,9 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
           previous_series: previousSeriesRows,
           bucket_deltas: trimmedBucketDeltas,
           gap_diagnostics: currentSeries.gapDiagnostics,
-        }, `Compared ${metric} over the current window (${describeTimeWindowInput(duration)}) versus the immediately previous matching window.`, {
+        }, resultMessage, {
           toolName: 'portal_get_time_series',
-          notices: [...currentSeries.notices, ...previousSeries.notices],
+          notices: [...notices, ...currentSeries.notices, ...previousSeries.notices],
           freshness: currentSeries.freshness,
           coverage: compareCoverage,
           execution: buildExecutionMetadata({
@@ -897,6 +921,7 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
             duration,
             compare_previous: true,
             range_kind: 'timeframe',
+            ...(longWindowNotice ? { notes: [longWindowNotice] } : {}),
           }),
           pipes: pipesRecipe,
           ui: buildComparePreviousUi(metric),
@@ -1054,6 +1079,10 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
           windowComplete:
             firstObservedTimestamp !== undefined ? firstObservedTimestamp <= seriesStartTimestamp : true,
         })
+        const resultMessage = withWindowNotice(
+          `Tracked ${topContracts.length} top contracts over ${describeTimeWindowInput(duration)} in ${interval} buckets.`,
+          longWindowNotice,
+        )
 
         return formatResult({
           summary: {
@@ -1117,8 +1146,9 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
           top_contracts: topContracts,
           gap_diagnostics: gapDiagnostics,
           time_series: timeSeries,
-        }, `Tracked ${topContracts.length} top contracts over ${describeTimeWindowInput(duration)} in ${interval} buckets.`, {
+        }, resultMessage, {
           toolName: 'portal_get_time_series',
+          ...(notices.length > 0 ? { notices } : {}),
           freshness: buildQueryFreshness({
             finality: 'latest',
             headBlockNumber: head.number,
@@ -1140,6 +1170,7 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
             range_kind: resolvedWindow.range_kind,
             from_block: fromBlock,
             to_block: toBlock,
+            ...(longWindowNotice ? { notes: [longWindowNotice] } : {}),
           }),
           pipes: pipesRecipe,
           ui: buildGroupedContractUi(),
@@ -1194,7 +1225,7 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
             to_block: solanaResult.to_block,
           })
         }
-        const notices: string[] = []
+        const solanaNotices = [...notices]
         const summary: any = {
           metric,
           interval,
@@ -1247,17 +1278,20 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
             ? { lastObservedTimestamp: solanaResult.last_observed_timestamp }
             : {}),
         })
-        const resultMessage = buildTimeSeriesAnswer({
-          dataset,
-          metric,
-          interval,
-          duration,
-          timeSeries: normalizedTimeSeries,
-          fromBlock: solanaResult.from_block,
-          toBlock: solanaResult.to_block,
-          observedSpanSeconds: solanaResult.observed_span_seconds,
-          unit: solanaResult.unit,
-        })
+        const resultMessage = withWindowNotice(
+          buildTimeSeriesAnswer({
+            dataset,
+            metric,
+            interval,
+            duration,
+            timeSeries: normalizedTimeSeries,
+            fromBlock: solanaResult.from_block,
+            toBlock: solanaResult.to_block,
+            observedSpanSeconds: solanaResult.observed_span_seconds,
+            unit: solanaResult.unit,
+          }),
+          longWindowNotice,
+        )
 
         return formatResult(
           {
@@ -1291,7 +1325,7 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
           resultMessage,
           {
             toolName: 'portal_get_time_series',
-            ...(notices.length > 0 ? { notices } : {}),
+            ...(solanaNotices.length > 0 ? { notices: solanaNotices } : {}),
             freshness: buildQueryFreshness({
               finality: 'latest',
               headBlockNumber: head.number,
@@ -1317,6 +1351,7 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
               from_block: solanaResult.from_block,
               to_block: solanaResult.to_block,
               range_kind: 'timeframe',
+              ...(longWindowNotice ? { notes: [longWindowNotice] } : {}),
             }),
             pipes: pipesRecipe,
             ui: buildSimpleSeriesUi({
@@ -1371,6 +1406,14 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
         const buckets = new Map<number, { fills: number; volume: number; traders: Set<number> }>()
         let latestTimestamp = 0
         let firstObservedTimestamp: number | undefined
+        const fillFields: Record<string, boolean> = { time: true }
+        if (metric === 'volume') {
+          fillFields.px = true
+          fillFields.sz = true
+        }
+        if (metric === 'unique_traders') {
+          fillFields.user = true
+        }
 
         const getBucket = (bucketTimestamp: number) => {
           let bucket = buckets.get(bucketTimestamp)
@@ -1386,12 +1429,7 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
           fromBlock,
           toBlock,
           fillFilter: {},
-          fillFields: {
-            time: true,
-            px: true,
-            sz: true,
-            user: true,
-          },
+          fillFields,
           initialChunkSize: 100_000,
           minChunkSize: 10_000,
           maxBytes: 200 * 1024 * 1024,
@@ -1405,8 +1443,12 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
               const bucketTimestamp = Math.floor(ts / intervalSeconds) * intervalSeconds
               const bucket = getBucket(bucketTimestamp)
               bucket.fills += 1
-              bucket.volume += Number(fill.px || 0) * Number(fill.sz || 0)
-              if (typeof fill.user === 'string') bucket.traders.add(hashString53(fill.user))
+              if (metric === 'volume') {
+                bucket.volume += Number(fill.px || 0) * Number(fill.sz || 0)
+              }
+              if (metric === 'unique_traders' && typeof fill.user === 'string') {
+                bucket.traders.add(hashString53(fill.user))
+              }
             }
           },
         })
@@ -1432,16 +1474,19 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
           }
         })
         const filledBuckets = timeSeries.filter((bucket) => bucket.blocks_in_bucket > 0).length
-        const resultMessage = buildTimeSeriesAnswer({
-          dataset,
-          metric,
-          interval,
-          duration,
-          timeSeries,
-          fromBlock,
-          toBlock,
-          unit: getMetricUnit(metric),
-        })
+        const resultMessage = withWindowNotice(
+          buildTimeSeriesAnswer({
+            dataset,
+            metric,
+            interval,
+            duration,
+            timeSeries,
+            fromBlock,
+            toBlock,
+            unit: getMetricUnit(metric),
+          }),
+          longWindowNotice,
+        )
         return formatResult({
           summary: {
             metric,
@@ -1485,6 +1530,7 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
           time_series: timeSeries,
         }, resultMessage, {
           toolName: 'portal_get_time_series',
+          ...(notices.length > 0 ? { notices } : {}),
           freshness: buildQueryFreshness({
             finality: 'latest',
             headBlockNumber: head.number,
@@ -1505,6 +1551,7 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
             from_block: fromBlock,
             to_block: toBlock,
             range_kind: resolvedWindow.range_kind,
+            ...(longWindowNotice ? { notes: [longWindowNotice] } : {}),
           }),
           pipes: pipesRecipe,
           ui: buildSimpleSeriesUi({
@@ -1595,15 +1642,18 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
           value: metric === 'block_size_bytes' ? bucket.gasUsedSum : 0,
         }))
         const filledBuckets = buckets.filter((bucket) => bucket.blocksInBucket > 0).length
-        const resultMessage = buildTimeSeriesAnswer({
-          dataset,
-          metric,
-          interval,
-          duration,
-          timeSeries,
-          fromBlock,
-          toBlock,
-        })
+        const resultMessage = withWindowNotice(
+          buildTimeSeriesAnswer({
+            dataset,
+            metric,
+            interval,
+            duration,
+            timeSeries,
+            fromBlock,
+            toBlock,
+          }),
+          longWindowNotice,
+        )
         return formatResult({
           summary: { metric, interval, duration, from_block: fromBlock, to_block: toBlock, total_buckets: timeSeries.length, filled_buckets: filledBuckets },
           chart: buildTimeSeriesChart({
@@ -1637,6 +1687,7 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
           time_series: timeSeries,
         }, resultMessage, {
           toolName: 'portal_get_time_series',
+          ...(notices.length > 0 ? { notices } : {}),
           freshness: buildQueryFreshness({
             finality: 'latest',
             headBlockNumber: head.number,
@@ -1657,6 +1708,7 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
             from_block: fromBlock,
             to_block: toBlock,
             range_kind: resolvedWindow.range_kind,
+            ...(longWindowNotice ? { notes: [longWindowNotice] } : {}),
           }),
           pipes: pipesRecipe,
           metadata: {
@@ -2081,20 +2133,26 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
           to_block: toBlock,
         })
       }
-      const genericNotices = cachedSeries.adaptiveChunkReduced
-        ? ['Chunk size was reduced automatically to keep Portal responses within MCP limits.']
-        : []
-      const resultMessage = buildTimeSeriesAnswer({
-        dataset,
-        metric,
-        interval,
-        duration,
-        timeSeries: cachedSeries.timeSeries,
-        fromBlock: cachedSeries.effectiveFromBlock,
-        toBlock,
-        observedSpanSeconds: cachedSeries.observedSpanSeconds,
-        unit: getMetricUnit(metric),
-      })
+      const genericNotices = [
+        ...notices,
+        ...(cachedSeries.adaptiveChunkReduced
+          ? ['Chunk size was reduced automatically to keep Portal responses within MCP limits.']
+          : []),
+      ]
+      const resultMessage = withWindowNotice(
+        buildTimeSeriesAnswer({
+          dataset,
+          metric,
+          interval,
+          duration,
+          timeSeries: cachedSeries.timeSeries,
+          fromBlock: cachedSeries.effectiveFromBlock,
+          toBlock,
+          observedSpanSeconds: cachedSeries.observedSpanSeconds,
+          unit: getMetricUnit(metric),
+        }),
+        longWindowNotice,
+      )
 
       return formatResult(
         {
@@ -2149,6 +2207,7 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
             from_block: cachedSeries.effectiveFromBlock,
             to_block: toBlock,
             range_kind: resolvedWindow.range_kind,
+            ...(longWindowNotice ? { notes: [longWindowNotice] } : {}),
           }),
           pipes: pipesRecipe,
           ui: buildSimpleSeriesUi({

@@ -244,7 +244,7 @@ const TOOL_DEFINITIONS: Record<string, ToolDefinition> = {
       'Build simple activity charts and other time-series views across supported VMs, including compare-previous windows and grouped EVM contract trends.',
     when_to_use: [
       'You want chart-ready metric buckets over time.',
-      'You want a simple activity chart for a network over the last hour, day, or week.',
+      'You want a simple activity chart for a network, defaulting to a fast 6h interactive window unless a longer window is explicitly requested.',
       'You want to compare the current period to the previous period.',
     ],
     avoid_when: [
@@ -253,8 +253,8 @@ const TOOL_DEFINITIONS: Record<string, ToolDefinition> = {
     ],
     examples: [
       {
-        label: 'Base transactions per 5m bucket',
-        input: { network: 'base-mainnet', metric: 'transaction_count', duration: '1h', interval: '5m' },
+        label: 'Base transactions per 15m bucket',
+        input: { network: 'base-mainnet', metric: 'transaction_count', duration: '6h', interval: '15m' },
       },
       {
         label: 'Compare two periods',
