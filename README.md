@@ -144,6 +144,7 @@ Add an entry like this to `claude_desktop_config.json`:
 - If you do not know the exact network name, start with `portal_list_networks`.
 - If you need recent indexed state, use `portal_get_network_info` or `portal_get_head` first.
 - If the question is broad, start with `portal_get_recent_activity`, `portal_get_wallet_summary`, or `portal_get_time_series` before dropping to raw queries.
+- Time windows accept compact and natural wording such as `30m`, `past 30 minutes`, `in the past 1h`, `in last 38 mins`, `last hour`, or `30 minutes ago`.
 - Use `portal_evm_get_ohlc` and `portal_hyperliquid_get_ohlc` only when you actually need candle-shaped output.
 - For large or exploratory queries, prefer `response_format: "compact"` unless you need the full record shape.
 

@@ -52,7 +52,7 @@ interface ComputeSolanaTimeSeriesOptions {
   dataset: string
   metric: SolanaTimeSeriesMetric
   interval: '5m' | '15m' | '1h' | '6h' | '1d'
-  duration: '1h' | '6h' | '24h' | '7d'
+  duration: string
   trimIncompleteLastBucket?: boolean
   from_timestamp?: TimestampInput
   to_timestamp?: TimestampInput

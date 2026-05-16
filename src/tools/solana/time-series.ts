@@ -8,7 +8,7 @@ import { createUnsupportedChainError } from '../../helpers/errors.js'
 import { formatResult } from '../../helpers/format.js'
 import { formatTimestamp, formatNumber } from '../../helpers/formatting.js'
 import { buildBucketCoverage, buildBucketGapDiagnostics, buildQueryFreshness } from '../../helpers/result-metadata.js'
-import { parseTimeframeToSeconds } from '../../helpers/timeframe.js'
+import { describeTimeWindowInput, parseTimeframeToSeconds } from '../../helpers/timeframe.js'
 import { computeSolanaTimeSeries } from './time-series-shared.js'
 
 // ============================================================================
@@ -34,7 +34,9 @@ EXAMPLES:
       dataset: z.string().default('solana-mainnet').describe('Dataset name (default: solana-mainnet)'),
       metric: z.enum(['tps', 'transaction_count', 'unique_wallets', 'avg_fee', 'success_rate', 'slots_per_hour']).describe('Metric to chart'),
       interval: z.enum(['5m', '15m', '1h', '6h', '1d']).describe('Time bucket interval'),
-      duration: z.enum(['1h', '6h', '24h', '7d']).describe('Total time period to analyze'),
+      duration: z
+        .string()
+        .describe('Total time period to analyze. Accepts compact durations like "1h" or natural phrases like "past 30 minutes".'),
     },
     async ({ dataset, metric, interval, duration }) => {
       const queryStartTime = Date.now()
@@ -129,7 +131,7 @@ EXAMPLES:
           gap_diagnostics: gapDiagnostics,
           time_series: timeSeries,
         },
-        `Solana ${metric} over ${duration} in ${interval} intervals. ${timeSeries.length} data points. Avg: ${statistics.avg_formatted}, Min: ${formatNumber(statistics.min)} ${result.unit}, Max: ${formatNumber(statistics.max)} ${result.unit}`,
+        `Solana ${metric} over ${describeTimeWindowInput(duration)} in ${interval} intervals. ${timeSeries.length} data points. Avg: ${statistics.avg_formatted}, Min: ${formatNumber(statistics.min)} ${result.unit}, Max: ${formatNumber(statistics.max)} ${result.unit}`,
         {
           freshness: buildQueryFreshness({
             finality: 'latest',

@@ -12,7 +12,7 @@ import { getRecordBlockNumber, portalFetchStreamRangeVisit } from '../../helpers
 import { formatResult, humanizeLabel } from '../../helpers/format.js'
 import { buildAnalysisCoverage, buildQueryFreshness, buildRankedOrdering } from '../../helpers/result-metadata.js'
 import { buildPaginationInfo, decodeOffsetPageCursor, encodeOffsetPageCursor, paginateOffsetItems } from '../../helpers/pagination.js'
-import { getTimestampWindowNotices, type ResolvedBlockWindow, type TimestampInput, resolveTimeframeOrBlocks } from '../../helpers/timeframe.js'
+import { describeTimeWindowInput, getTimestampWindowNotices, type ResolvedBlockWindow, type TimestampInput, resolveTimeframeOrBlocks } from '../../helpers/timeframe.js'
 import { buildExecutionMetadata, buildToolDescription } from '../../helpers/tool-ux.js'
 import { buildMetricCard, buildPortalUi, buildRankedBarsPanel, buildTablePanel } from '../../helpers/ui-metadata.js'
 
@@ -187,7 +187,7 @@ export function registerGetTopContractsTool(server: McpServer) {
       const currentOffset = paginationCursor?.offset ?? 0
       const windowDescription = request.range_label.includes('->') || request.range_label.endsWith('blocks')
         ? request.range_label
-        : `last ${request.range_label}`
+        : describeTimeWindowInput(request.range_label)
 
       let analyzedFromBlock = requestedFromBlock
       const requestedWindowSize = latestBlock - requestedFromBlock + 1

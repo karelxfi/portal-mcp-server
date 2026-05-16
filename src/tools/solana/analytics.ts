@@ -13,7 +13,7 @@ import { buildPaginationInfo, decodeOffsetPageCursor, encodeOffsetPageCursor, pa
 import { buildAnalysisCoverage, buildQueryFreshness } from '../../helpers/result-metadata.js'
 import type { ResponseFormat } from '../../helpers/response-modes.js'
 import { buildPercentileSummary } from '../../helpers/statistics.js'
-import { resolveTimeframeOrBlocks, type TimestampInput } from '../../helpers/timeframe.js'
+import { parseTimeframeToSeconds, resolveTimeframeOrBlocks, type TimestampInput } from '../../helpers/timeframe.js'
 import { buildExecutionMetadata, buildToolDescription } from '../../helpers/tool-ux.js'
 
 // ============================================================================
@@ -49,35 +49,35 @@ const MIN_SOLANA_PROGRAM_CHUNK_SIZE = 125
 const SOLANA_PROGRAM_CONCURRENCY = 2
 const SOLANA_ANALYTICS_CACHE_TTL_MS = 30_000
 const SOLANA_ANALYTICS_CACHE_MAX_ENTRIES = 8
-const SOLANA_ANALYTICS_SLOT_BUDGET: Record<SolanaAnalyticsTimeframe, number> = {
+const SOLANA_ANALYTICS_SLOT_BUDGET: Record<SolanaAnalyticsBudgetKey, number> = {
   '5m': 750,
   '15m': 2250,
   '1h': 9000,
   '6h': 9000,
 }
-const SOLANA_ANALYTICS_FAST_SLOT_BUDGET: Record<SolanaAnalyticsTimeframe, number> = {
+const SOLANA_ANALYTICS_FAST_SLOT_BUDGET: Record<SolanaAnalyticsBudgetKey, number> = {
   '5m': 750,
   '15m': 2250,
   '1h': 4500,
   '6h': 6000,
 }
-const SOLANA_ANALYTICS_CHUNK_SIZE: Record<SolanaAnalyticsTimeframe, number> = {
+const SOLANA_ANALYTICS_CHUNK_SIZE: Record<SolanaAnalyticsBudgetKey, number> = {
   '5m': 500,
   '15m': 750,
   '1h': 3000,
   '6h': 3000,
 }
-const SOLANA_ANALYTICS_FAST_CHUNK_SIZE: Record<SolanaAnalyticsTimeframe, number> = {
+const SOLANA_ANALYTICS_FAST_CHUNK_SIZE: Record<SolanaAnalyticsBudgetKey, number> = {
   '5m': 500,
   '15m': 750,
   '1h': 1500,
   '6h': 2000,
 }
 
-type SolanaAnalyticsTimeframe = '5m' | '15m' | '1h' | '6h'
+type SolanaAnalyticsBudgetKey = '5m' | '15m' | '1h' | '6h'
 
 type SolanaAnalyticsCursorRequest = {
-  timeframe: SolanaAnalyticsTimeframe
+  timeframe: string
   mode: 'fast' | 'deep'
   include_compute_units: boolean
   include_programs: boolean
@@ -88,6 +88,14 @@ type SolanaAnalyticsCursorRequest = {
   range_kind: 'timeframe' | 'block_range' | 'timestamp_range'
   from_timestamp?: TimestampInput
   to_timestamp?: TimestampInput
+}
+
+function selectSolanaAnalyticsBudgetKey(timeframe: string): SolanaAnalyticsBudgetKey {
+  const seconds = parseTimeframeToSeconds(timeframe)
+  if (seconds <= 300) return '5m'
+  if (seconds <= 900) return '15m'
+  if (seconds <= 3600) return '1h'
+  return '6h'
 }
 
 type CachedAnalyticsResult = {
@@ -271,9 +279,9 @@ export function registerSolanaAnalyticsTool(server: McpServer) {
     {
       network: z.string().default('solana-mainnet').describe('Network name (default: solana-mainnet)'),
       timeframe: z
-        .enum(['5m', '15m', '1h', '6h'])
+        .string()
         .optional()
-        .describe("Time range: '5m', '15m', '1h', '6h'. Optional; defaults depend on mode."),
+        .describe("Time range. Accepts compact durations like '15m' or natural phrases like 'past 30 minutes'. Optional; defaults depend on mode."),
       mode: z
         .enum(['fast', 'deep'])
         .optional()
@@ -335,7 +343,8 @@ export function registerSolanaAnalyticsTool(server: McpServer) {
         from_timestamp = paginationCursor.request.from_timestamp
         to_timestamp = paginationCursor.request.to_timestamp
       }
-      const requestedTimeframe: SolanaAnalyticsTimeframe = timeframe ?? (mode === 'deep' ? '1h' : '5m')
+      const requestedTimeframe = timeframe ?? (mode === 'deep' ? '1h' : '5m')
+      const analyticsBudgetKey = selectSolanaAnalyticsBudgetKey(requestedTimeframe)
       const chainType = detectChainType(dataset)
 
       if (chainType !== 'solana') {
@@ -373,8 +382,8 @@ export function registerSolanaAnalyticsTool(server: McpServer) {
 
       const requestedSlots = endBlock - fromBlock + 1
       const maxSlotsForTimeframe = mode === 'deep'
-        ? SOLANA_ANALYTICS_SLOT_BUDGET[requestedTimeframe]
-        : SOLANA_ANALYTICS_FAST_SLOT_BUDGET[requestedTimeframe]
+        ? SOLANA_ANALYTICS_SLOT_BUDGET[analyticsBudgetKey]
+        : SOLANA_ANALYTICS_FAST_SLOT_BUDGET[analyticsBudgetKey]
       const slotsAnalyzed = Math.min(requestedSlots, maxSlotsForTimeframe, MAX_ANALYTICS_SLOTS)
       const effectiveFrom = requestedSlots > slotsAnalyzed ? endBlock - slotsAnalyzed + 1 : fromBlock
       const cacheKey = `${dataset}:${mode}:${requestedTimeframe}:${String(from_timestamp ?? '')}:${String(to_timestamp ?? '')}:${include_compute_units}:${include_programs}:${response_format}:${program_limit}`
@@ -460,7 +469,7 @@ export function registerSolanaAnalyticsTool(server: McpServer) {
         })
 
         const analyticsChunkSize = (
-          mode === 'deep' ? SOLANA_ANALYTICS_CHUNK_SIZE[requestedTimeframe] : SOLANA_ANALYTICS_FAST_CHUNK_SIZE[requestedTimeframe]
+          mode === 'deep' ? SOLANA_ANALYTICS_CHUNK_SIZE[analyticsBudgetKey] : SOLANA_ANALYTICS_FAST_CHUNK_SIZE[analyticsBudgetKey]
         ) || INITIAL_SOLANA_ANALYTICS_CHUNK_SIZE
         const txRanges = buildSlotRanges(effectiveFrom, endBlock, analyticsChunkSize)
         for (let index = 0; index < txRanges.length; index += SOLANA_ANALYTICS_CONCURRENCY) {
@@ -562,7 +571,7 @@ export function registerSolanaAnalyticsTool(server: McpServer) {
 
         // Query 2: Top programs by instruction count (optional)
         if (include_programs) {
-          const programSlots = Math.min(slotsAnalyzed, requestedTimeframe === '5m' ? 150 : 250)
+          const programSlots = Math.min(slotsAnalyzed, analyticsBudgetKey === '5m' ? 150 : 250)
           const programFrom = Math.max(effectiveFrom, endBlock - programSlots + 1)
 
           try {

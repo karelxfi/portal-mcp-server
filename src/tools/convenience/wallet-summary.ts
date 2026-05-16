@@ -19,7 +19,7 @@ import { normalizeEvmTransactionResult } from '../../helpers/normalized-results.
 import { decodeCursor, encodeCursor, paginateAscendingItems } from '../../helpers/pagination.js'
 import { buildWalletPipesRecipe } from '../../helpers/pipes-recipe.js'
 import { buildQueryFreshness, buildSectionCoverage } from '../../helpers/result-metadata.js'
-import { type TimestampInput, resolveTimeframeOrBlocks } from '../../helpers/timeframe.js'
+import { describeTimeWindowInput, type TimestampInput, resolveTimeframeOrBlocks } from '../../helpers/timeframe.js'
 import { buildExecutionMetadata, buildToolDescription } from '../../helpers/tool-ux.js'
 import {
   buildMetricCard,
@@ -172,7 +172,7 @@ function describeWalletWindow(timeframe: string) {
   if (timeframe.includes('->')) {
     return timeframe
   }
-  return /^\d+$/.test(timeframe) ? `last ${timeframe} blocks` : `last ${timeframe}`
+  return /^\d+$/.test(timeframe) ? `last ${timeframe} blocks` : describeTimeWindowInput(timeframe)
 }
 
 function createWalletSummaryCursor(params: Omit<WalletSummaryCursor, 'tool'>) {

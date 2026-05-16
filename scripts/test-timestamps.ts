@@ -2,7 +2,14 @@
 
 import { getBlockHead } from '../dist/cache/datasets.js'
 import { getDatasets } from '../dist/cache/datasets.js'
-import { getHeadTimestamp, resolveBlockAtTimestamp, resolveTimeframeOrBlocks, timestampToBlock } from '../dist/helpers/timeframe.js'
+import {
+  getHeadTimestamp,
+  parseTimeframeToSeconds,
+  parseTimestampInput,
+  resolveBlockAtTimestamp,
+  resolveTimeframeOrBlocks,
+  timestampToBlock,
+} from '../dist/helpers/timeframe.js'
 
 const REALTIME_MATRIX_CONCURRENCY = 5
 
@@ -82,8 +89,36 @@ async function assertHyperliquidFillsExactTimestampLookup() {
   console.log(`PASS  Hyperliquid fills 5m window -> ${fiveMinuteWindow.from_block}..${fiveMinuteWindow.to_block} (exact)`)
 }
 
+function assertNaturalLanguageTimeInputs() {
+  const now = 1_778_923_600
+  const cases: Array<[string, number]> = [
+    ['30m', 1_800],
+    ['past 30 minutes', 1_800],
+    ['in the past 1h', 3_600],
+    ['in last 38 mins', 2_280],
+    ['last hour', 3_600],
+    ['over the previous 2 weeks', 1_209_600],
+    ['30 minutes ago', 1_800],
+  ]
+
+  for (const [input, seconds] of cases) {
+    assert(parseTimeframeToSeconds(input) === seconds, `${input} should parse as ${seconds} seconds`)
+
+    const parsed = parseTimestampInput(input, now)
+    assert(parsed.timestamp === now - seconds, `${input} should resolve to now minus ${seconds} seconds`)
+    assert(parsed.source === 'relative', `${input} should be classified as a relative timestamp`)
+  }
+
+  assert(parseTimestampInput('last hour', now).normalized_input === '1h ago', 'last hour should normalize to 1h ago')
+  assert(parseTimestampInput('in last 38 mins', now).normalized_input === '38m ago', 'in last 38 mins should normalize to 38m ago')
+
+  console.log('PASS  natural-language time inputs -> past 30 minutes / in the past 1h / in last 38 mins')
+}
+
 async function main() {
   console.log('Starting timestamp resolver QA...\n')
+
+  assertNaturalLanguageTimeInputs()
 
   const dataset = 'solana-mainnet'
   const head = await getBlockHead(dataset)

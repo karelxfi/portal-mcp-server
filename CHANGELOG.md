@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.7.9] - 2026-05-15
+## [0.7.9] - 2026-05-16
 
 Portal MCP v0.7.9 is focused on developer and agent ergonomics for natural blockchain questions.
 
@@ -16,6 +16,7 @@ Portal MCP v0.7.9 is focused on developer and agent ergonomics for natural block
 - **Unified response envelope** — all current tools now emit the same answer/display/next_steps contract plus `_freshness`, `_pagination`, `_coverage`, `_ordering`, and `_tool_contract`; duplicate `_llm` and `technical_details` payloads were removed from default responses to keep agent context smaller.
 - **Response-size budget** — `npm run test:quality` now measures response sizes against the v0.7.9 live baseline and requires at least a 30% median reduction while preserving investigation metadata.
 - **SQD-only analyst prompt** — added `portal_onchain_analyst` as a reusable MCP prompt for evidence-first investigation, tracing, and market/protocol intelligence. Social-thread, newsletter, and narrative-marketing output are intentionally out of scope.
+- **Natural-language time windows** — shared timestamp parsing now accepts compact and natural forms such as `past 30 minutes`, `in the past 1h`, `in last 38 mins`, `last hour`, and `30 minutes ago` across timeframe, duration, `from_timestamp`, and `to_timestamp` paths.
 - **Developer discovery refresh** — updated the tool guide and HTTP catalog surface for the new `28`-tool registry (`25` public, `3` advanced/debug).
 
 ### Release hygiene

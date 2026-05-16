@@ -30,7 +30,12 @@ import {
   buildChronologicalPageOrdering,
   buildQueryFreshness,
 } from '../../helpers/result-metadata.js'
-import { estimateBlockTime, parseTimeframeToSeconds, resolveTimeframeOrBlocks } from '../../helpers/timeframe.js'
+import {
+  describeTimeWindowInput,
+  estimateBlockTime,
+  parseTimeframeToSeconds,
+  resolveTimeframeOrBlocks,
+} from '../../helpers/timeframe.js'
 import { buildExecutionMetadata, buildToolDescription } from '../../helpers/tool-ux.js'
 import { buildChartPanel, buildMetricCard, buildPortalUi, buildTablePanel } from '../../helpers/ui-metadata.js'
 import { normalizeEvmAddress } from '../../helpers/validation.js'
@@ -57,7 +62,7 @@ type EvmOhlcCursor = {
     pool_manager_address?: string
     source: EvmOhlcSource
     interval: OhlcIntervalInput
-    duration: OhlcDuration
+    duration: string
     mode: OhlcMode
     base_token?: BaseTokenSide
     price_in?: PriceDisplayMode
@@ -294,9 +299,19 @@ function computeUniswapV4PoolId(params: {
   return `0x${Buffer.from(keccak_256(Buffer.from(encodedPoolKey, 'hex'))).toString('hex')}`
 }
 
-function resolveInterval(duration: OhlcDuration, requestedInterval: OhlcIntervalInput): OhlcInterval {
-  if (requestedInterval === 'auto') return AUTO_INTERVAL_BY_DURATION[duration]
-  return requestedInterval
+function resolveInterval(duration: string, requestedInterval: OhlcIntervalInput): OhlcInterval {
+  if (requestedInterval !== 'auto') return requestedInterval
+
+  const presetInterval = AUTO_INTERVAL_BY_DURATION[duration as OhlcDuration]
+  if (presetInterval) return presetInterval
+
+  const durationSeconds = parseTimeframeToSeconds(duration)
+  if (durationSeconds <= 3600) return '5m'
+  if (durationSeconds <= 21600) return '15m'
+  if (durationSeconds <= 43200) return '30m'
+  if (durationSeconds <= 86400) return '1h'
+  if (durationSeconds <= 604800) return '6h'
+  return '1d'
 }
 
 function getOrCreateBucket(buckets: Map<number, CandleAccumulator>, timestamp: number): CandleAccumulator {
@@ -723,7 +738,7 @@ function buildOhlcResponseCacheKey(params: {
   dataset: string
   source: EvmOhlcSource
   interval: OhlcInterval
-  duration: OhlcDuration
+  duration: string
   mode: OhlcMode
   endBlock: number
   poolAddress?: string
@@ -884,10 +899,10 @@ export function registerEvmOhlcTool(server: McpServer) {
         .default('auto')
         .describe('Candle interval. auto uses chart-friendly defaults like 1h→5m and 24h→1h.'),
       duration: z
-        .enum(['1h', '6h', '12h', '24h', '7d', '30d'])
+        .string()
         .optional()
         .default('1h')
-        .describe('How much recent history to cover'),
+        .describe('How much recent history to cover. Accepts compact durations like "1h" or natural phrases like "past 30 minutes".'),
       mode: z
         .enum(['fast', 'deep'])
         .optional()
@@ -1103,7 +1118,7 @@ export function registerEvmOhlcTool(server: McpServer) {
         }
       }
 
-      const resolvedInterval = resolveInterval(duration as OhlcDuration, interval as OhlcIntervalInput)
+      const resolvedInterval = resolveInterval(duration, interval as OhlcIntervalInput)
       const intervalSeconds = parseTimeframeToSeconds(resolvedInterval)
       const durationSeconds = parseTimeframeToSeconds(duration)
       const expectedBuckets = Math.max(1, Math.ceil(durationSeconds / intervalSeconds))
@@ -1239,7 +1254,7 @@ export function registerEvmOhlcTool(server: McpServer) {
             dataset,
             source: source as EvmOhlcSource,
             interval: resolvedInterval,
-            duration: duration as OhlcDuration,
+            duration,
             mode: mode as OhlcMode,
             endBlock,
             poolAddress: normalizedPoolAddress,
@@ -1546,7 +1561,7 @@ export function registerEvmOhlcTool(server: McpServer) {
                 ...(normalizedPoolManagerAddress ? { pool_manager_address: normalizedPoolManagerAddress } : {}),
                 source: source as EvmOhlcSource,
                 interval: interval as OhlcIntervalInput,
-                duration: duration as OhlcDuration,
+                duration,
                 mode: mode as OhlcMode,
                 price_in: price_in as PriceDisplayMode,
                 base_token: baseTokenSide,
@@ -1794,6 +1809,7 @@ export function registerEvmOhlcTool(server: McpServer) {
         ...(chunksFetched > 1 ? { chunks_fetched: chunksFetched } : {}),
         ...(backfillAttempts > 0 ? { backfill_attempts: backfillAttempts } : {}),
       }
+      const durationLabel = describeTimeWindowInput(duration)
 
       const marketContext = {
         pair: {
@@ -1901,7 +1917,7 @@ export function registerEvmOhlcTool(server: McpServer) {
         design_intent: 'market_terminal',
         headline: {
           title: `${baseLabel}/${quoteLabel} candles`,
-          subtitle: `${summary.venue_label} • ${resolvedInterval} candles over ${duration}`,
+          subtitle: `${summary.venue_label} • ${resolvedInterval} candles over ${durationLabel}`,
         },
         metric_cards: [
           buildMetricCard({
@@ -1992,7 +2008,7 @@ export function registerEvmOhlcTool(server: McpServer) {
             interval: resolvedInterval,
             totalCandles: ohlc.length,
             title: `${summary.pair_label} ${summary.venue_label} candles`,
-            subtitle: `Price chart with volume histogram over ${duration} using ${resolvedInterval} buckets`,
+            subtitle: `Price chart with volume histogram over ${durationLabel} using ${resolvedInterval} buckets`,
             volumePanel,
             ...(volumePanel ? { volumeField: 'base_volume', volumeUnit: baseLabel } : {}),
             priceUnit: summary.price_unit,
@@ -2060,7 +2076,7 @@ export function registerEvmOhlcTool(server: McpServer) {
           ohlc,
           recent_trades: recentTrades,
         },
-        `Built ${resolvedInterval} ${summary.pair_label} candles over ${duration}. ${filledBuckets}/${ohlc.length} buckets contain price updates.`,
+        `Built ${resolvedInterval} ${summary.pair_label} candles over ${durationLabel}. ${filledBuckets}/${ohlc.length} buckets contain price updates.`,
         {
           toolName: 'portal_evm_get_ohlc',
           ...(notices.length > 0 ? { notices } : {}),

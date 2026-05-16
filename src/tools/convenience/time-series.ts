@@ -17,7 +17,14 @@ import { formatResult } from '../../helpers/format.js'
 import { formatBTC, formatDuration, formatTimestamp, formatUSD } from '../../helpers/formatting.js'
 import { buildTimeSeriesPipesRecipe } from '../../helpers/pipes-recipe.js'
 import { buildBucketCoverage, buildBucketGapDiagnostics, buildQueryFreshness } from '../../helpers/result-metadata.js'
-import { getHeadTimestamp, parseTimeframeToSeconds, parseTimestampInput, resolveTimeframeOrBlocks, type TimestampInput } from '../../helpers/timeframe.js'
+import {
+  describeTimeWindowInput,
+  getHeadTimestamp,
+  parseTimeframeToSeconds,
+  parseTimestampInput,
+  resolveTimeframeOrBlocks,
+  type TimestampInput,
+} from '../../helpers/timeframe.js'
 import { buildExecutionMetadata, buildToolDescription } from '../../helpers/tool-ux.js'
 import { buildChartPanel, buildMetricCard, buildPortalUi, buildTablePanel } from '../../helpers/ui-metadata.js'
 import { computeSolanaTimeSeries } from '../solana/time-series-shared.js'
@@ -357,13 +364,14 @@ function buildTimeSeriesAnswer(params: {
     params.observedSpanSeconds !== undefined && parseTimeframeToSeconds(params.duration) > 0
       ? params.observedSpanSeconds / parseTimeframeToSeconds(params.duration)
       : 1
+  const durationLabel = describeTimeWindowInput(params.duration)
   const coveragePrefix = coverage < 0.9
-    ? `Only ${formatDuration(params.observedSpanSeconds ?? 0)} of the requested ${params.duration} had indexed block data. `
+    ? `Only ${formatDuration(params.observedSpanSeconds ?? 0)} of the requested window (${durationLabel}) had indexed block data. `
     : ''
 
   const firstSentence = isAdditiveMetric(params.metric)
-    ? `${coveragePrefix}~${formatMetricAmount(total, params.metric, { compact: true, unit: params.unit })} ${metricNoun} on ${network} over the past ${params.duration} (${bucketCount} x ${params.interval} buckets, avg ${formatMetricAmount(avg, params.metric, { unit: params.unit })}/bucket).`
-    : `${coveragePrefix}${network} ${metricNoun} averaged ${formatMetricAmount(avg, params.metric, { unit: params.unit })} over the past ${params.duration} (${bucketCount} x ${params.interval} buckets).`
+    ? `${coveragePrefix}~${formatMetricAmount(total, params.metric, { compact: true, unit: params.unit })} ${metricNoun} on ${network} over ${durationLabel} (${bucketCount} x ${params.interval} buckets, avg ${formatMetricAmount(avg, params.metric, { unit: params.unit })}/bucket).`
+    : `${coveragePrefix}${network} ${metricNoun} averaged ${formatMetricAmount(avg, params.metric, { unit: params.unit })} over ${durationLabel} (${bucketCount} x ${params.interval} buckets).`
 
   if (!Number.isFinite(peak.value) || peak.value <= 0 || avg <= 0) {
     return `${firstSentence}${blocks}`.trim()
@@ -593,7 +601,9 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
         ])
         .describe('Metric to aggregate over time'),
       interval: z.enum(['5m', '15m', '1h', '6h', '1d']).describe('Time bucket interval (5m, 15m, 1h, 6h, 1d)'),
-      duration: z.enum(['1h', '6h', '24h', '7d', '30d']).describe('Total time period to analyze'),
+      duration: z
+        .string()
+        .describe('Total time period to analyze. Accepts compact durations like "30m" or natural phrases like "past 30 minutes".'),
       address: z
         .string()
         .optional()
@@ -864,7 +874,7 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
           previous_series: previousSeriesRows,
           bucket_deltas: trimmedBucketDeltas,
           gap_diagnostics: currentSeries.gapDiagnostics,
-        }, `Compared ${metric} over the current ${duration} window versus the immediately previous ${duration}.`, {
+        }, `Compared ${metric} over the current window (${describeTimeWindowInput(duration)}) versus the immediately previous matching window.`, {
           toolName: 'portal_get_time_series',
           notices: [...currentSeries.notices, ...previousSeries.notices],
           freshness: currentSeries.freshness,
@@ -1077,7 +1087,7 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
           top_contracts: topContracts,
           gap_diagnostics: gapDiagnostics,
           time_series: timeSeries,
-        }, `Tracked ${topContracts.length} top contracts over ${duration} in ${interval} buckets.`, {
+        }, `Tracked ${topContracts.length} top contracts over ${describeTimeWindowInput(duration)} in ${interval} buckets.`, {
           toolName: 'portal_get_time_series',
           freshness: buildQueryFreshness({
             finality: 'latest',
@@ -1124,7 +1134,7 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
                 ? metric
                 : 'transaction_count',
           interval,
-          duration: duration as '1h' | '6h' | '24h' | '7d',
+          duration,
           trimIncompleteLastBucket: false,
           ...(from_timestamp !== undefined || to_timestamp !== undefined
             ? {
