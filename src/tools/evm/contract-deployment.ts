@@ -3,7 +3,13 @@ import { z } from 'zod'
 
 import { getBlockHead, resolveDataset, validateBlockRange } from '../../cache/datasets.js'
 import { PORTAL_URL } from '../../constants/index.js'
+import {
+  buildBoundedSearchExecution,
+  buildBoundedSearchNotice,
+  scanBoundedBlockRange,
+} from '../../helpers/bounded-search.js'
 import { detectChainType } from '../../helpers/chain.js'
+import { resolveKnownContractReference } from '../../helpers/entity-resolution.js'
 import { ActionableError, createUnsupportedChainError } from '../../helpers/errors.js'
 import { portalFetchStreamRange } from '../../helpers/fetch.js'
 import { buildEvmTransactionFields } from '../../helpers/fields.js'
@@ -12,26 +18,11 @@ import { formatTimestamp } from '../../helpers/formatting.js'
 import { buildQueryCoverage, buildQueryFreshness } from '../../helpers/result-metadata.js'
 import { getTimestampWindowNotices, resolveTimeframeOrBlocks } from '../../helpers/timeframe.js'
 import { buildExecutionMetadata, buildToolDescription } from '../../helpers/tool-ux.js'
-import { isValidEvmAddress, normalizeEvmAddress } from '../../helpers/validation.js'
 
 const DEFAULT_RECENT_SEARCH_DEPTH_BLOCKS = 100_000
 const DEFAULT_MAX_SCAN_BLOCKS = 1_000_000
 const MAX_SCAN_BLOCKS = 1_000_000
 const FILTERED_CREATE_TRACE_CHUNK_SIZE = 50_000
-
-const KNOWN_CONTRACT_ALIASES: Record<string, Record<string, string>> = {
-  'ethereum-mainnet': {
-    bayc: '0xbc4ca0eda7647a8ab7c2061c2e118a18a936f13d',
-    bored_apes: '0xbc4ca0eda7647a8ab7c2061c2e118a18a936f13d',
-    bored_ape_yacht_club: '0xbc4ca0eda7647a8ab7c2061c2e118a18a936f13d',
-    boredapes: '0xbc4ca0eda7647a8ab7c2061c2e118a18a936f13d',
-    cryptopunks: '0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb',
-    crypto_punks: '0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb',
-    punks: '0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb',
-    mayc: '0x60e4d786628fea6478f785a6d7e704777c86a7c6',
-    mutant_ape_yacht_club: '0x60e4d786628fea6478f785a6d7e704777c86a7c6',
-  },
-}
 
 type DeploymentTrace = Record<string, unknown> & {
   block_number?: number
@@ -46,41 +37,6 @@ type DeploymentTrace = Record<string, unknown> & {
   deployed_contract_address?: string
   gas_used?: string | number
   error?: string | null
-}
-
-function normalizeAlias(value: string): string {
-  return value
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '_')
-    .replace(/^_+|_+$/g, '')
-}
-
-function resolveContractReference(dataset: string, input: string): { address: string; alias?: string } {
-  const trimmed = input.trim()
-  const normalizedCandidate = normalizeEvmAddress(trimmed)
-  if (isValidEvmAddress(normalizedCandidate)) {
-    return { address: normalizedCandidate }
-  }
-
-  const alias = normalizeAlias(trimmed)
-  const resolved = KNOWN_CONTRACT_ALIASES[dataset]?.[alias]
-  if (resolved) {
-    return { address: resolved, alias: trimmed }
-  }
-
-  throw new ActionableError(
-    `Unknown EVM contract reference: ${input}`,
-    [
-      'Pass a 20-byte EVM contract address when the contract is not in the small built-in alias list.',
-      'For Ethereum BAYC/Bored Apes, use contract: "bored apes" or contract_address: "0xbc4ca0eda7647a8ab7c2061c2e118a18a936f13d".',
-      'If you only know a project name, resolve it to a contract address first, then retry this deployment lookup.',
-    ],
-    {
-      dataset,
-      contract_reference: input,
-    },
-  )
 }
 
 function readNestedString(value: unknown, ...path: string[]): string | undefined {
@@ -260,7 +216,7 @@ export function registerContractDeploymentTool(server: McpServer) {
       }
 
       const contractReference = contract_address ?? contract ?? ''
-      const resolvedContract = resolveContractReference(dataset, contractReference)
+      const resolvedContract = resolveKnownContractReference(dataset, contractReference)
       const normalizedContract = resolvedContract.address
       const hasExplicitWindow =
         timeframe !== undefined ||
@@ -318,36 +274,28 @@ export function registerContractDeploymentTool(server: McpServer) {
         1,
         Math.min(max_scan_blocks ?? DEFAULT_MAX_SCAN_BLOCKS, MAX_SCAN_BLOCKS, requestedBlocks),
       )
-      let scannedFromBlock = scan_order === 'earliest' ? resolvedBlocks.from_block : endBlock
-      let scannedToBlock = scan_order === 'earliest' ? resolvedBlocks.from_block : endBlock
-      let scannedBlocks = 0
       let deployment: DeploymentTrace | undefined
-
-      if (scan_order === 'earliest') {
-        for (
-          let chunkFrom = resolvedBlocks.from_block;
-          chunkFrom <= endBlock && !deployment && scannedBlocks < maxScanBlocks;
-          chunkFrom += chunkSize
-        ) {
-          const chunkTo = Math.min(endBlock, chunkFrom + chunkSize - 1, resolvedBlocks.from_block + maxScanBlocks - 1)
-          scannedToBlock = chunkTo
-          const records = await portalFetchStreamRange(portalUrl, { ...query, fromBlock: chunkFrom, toBlock: chunkTo })
-          deployment = flattenCreateTraces(records, normalizedContract)[0]
-          scannedBlocks += chunkTo - chunkFrom + 1
-        }
-      } else {
-        for (
-          let chunkTo = endBlock;
-          chunkTo >= resolvedBlocks.from_block && !deployment && scannedBlocks < maxScanBlocks;
-          chunkTo -= chunkSize
-        ) {
-          const chunkFrom = Math.max(resolvedBlocks.from_block, chunkTo - chunkSize + 1, endBlock - maxScanBlocks + 1)
-          scannedFromBlock = chunkFrom
-          const records = await portalFetchStreamRange(portalUrl, { ...query, fromBlock: chunkFrom, toBlock: chunkTo })
-          deployment = flattenCreateTraces(records, normalizedContract).at(-1)
-          scannedBlocks += chunkTo - chunkFrom + 1
-        }
-      }
+      const scanResult = await scanBoundedBlockRange<DeploymentTrace>({
+        fromBlock: resolvedBlocks.from_block,
+        toBlock: endBlock,
+        chunkSize,
+        scanOrder: scan_order,
+        maxScanBlocks,
+        shouldContinue: () => !deployment,
+        fetchChunk: async (chunkBounds) => {
+          const records = await portalFetchStreamRange(portalUrl, {
+            ...query,
+            fromBlock: chunkBounds.fromBlock,
+            toBlock: chunkBounds.toBlock,
+          })
+          const matches = flattenCreateTraces(records, normalizedContract)
+          deployment = scan_order === 'earliest' ? matches[0] : matches.at(-1)
+          return deployment ? [deployment] : []
+        },
+      })
+      const scannedFromBlock = scanResult.scannedFromBlock
+      const scannedToBlock = scanResult.scannedToBlock
+      const scannedBlocks = scanResult.scannedBlocks
 
       const items = deployment ? [deployment] : []
       const notices = [...getTimestampWindowNotices(resolvedBlocks)]
@@ -359,15 +307,14 @@ export function registerContractDeploymentTool(server: McpServer) {
           `Searched the most recent ${search_depth_blocks.toLocaleString()} blocks. For older contracts, pass from_block or from_timestamp.`,
         )
       }
-      const scanHasMore =
-        !deployment &&
-        scannedBlocks >= maxScanBlocks &&
-        (scan_order === 'earliest' ? scannedToBlock < endBlock : scannedFromBlock > resolvedBlocks.from_block)
+      const scanHasMore = !deployment && scanResult.reachedMaxScanBlocks && scanResult.hasUnscannedBlocks
       if (scanHasMore) {
         notices.push(
           `Deployment search was capped at ${maxScanBlocks.toLocaleString()} scanned blocks (${scannedFromBlock}-${scannedToBlock}) to keep the MCP connection responsive.`,
         )
       }
+      const boundedSearchNotice = buildBoundedSearchNotice(scanResult, 'Deployment search')
+      if (boundedSearchNotice) notices.push(boundedSearchNotice)
       if (!deployment) {
         const directionHint =
           scan_order === 'earliest'
@@ -408,10 +355,7 @@ export function registerContractDeploymentTool(server: McpServer) {
           ],
         }),
         contract_reference: contractReference,
-        scanned_from_block: scannedFromBlock,
-        scanned_to_block: scannedToBlock,
-        scanned_blocks: scannedBlocks,
-        max_scan_blocks: maxScanBlocks,
+        ...buildBoundedSearchExecution(scanResult),
       }
 
       return formatResult(

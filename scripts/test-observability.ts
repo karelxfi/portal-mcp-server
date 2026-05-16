@@ -116,6 +116,10 @@ async function main() {
     name: 'portal_get_head',
     arguments: { network: 'base' },
   })
+  await postRpc(3, 'tools/call', {
+    name: 'portal_resolve_entity',
+    arguments: { network: 'base-mainnet', kind: 'token', query: 'USDC', limit: 3 },
+  })
 
   const anonymousMetrics = await fetch(`${BASE_URL}/metrics`)
   assert(anonymousMetrics.status === 401, `Anonymous /metrics should be blocked, got ${anonymousMetrics.status}`)
@@ -132,11 +136,13 @@ async function main() {
   assert(metricsText.includes('mcp_dataset_queries_total{dataset="base-mainnet",vm="evm"}'), 'Dataset metrics should use canonical network and vm labels')
   assert(!metricsText.includes('mcp_dataset_queries_total{dataset="base-mainnet"}'), 'Dataset metrics should not emit unlabeled vm series')
   assert(!metricsText.includes('mcp_dataset_queries_total{dataset="base",vm="evm"}'), 'Dataset metrics should not use network aliases for successful calls')
+  assert(metricsText.includes('mcp_token_list_requests_total{source="coingecko_token_list",chain="base",status="success"'), 'Metrics should count token-list fetch success')
+  assert(metricsText.includes('mcp_token_list_cache_events_total{source="coingecko_token_list",chain="base",event="'), 'Metrics should expose token-list cache events')
 
   await assertDashboardMetricNames(metricsText)
 
   console.log('PASS  /metrics blocks anonymous access and accepts bearer auth')
-  console.log('PASS  /metrics emits canonical tool, client, Portal, and dataset series')
+  console.log('PASS  /metrics emits canonical tool, client, Portal, dataset, and token-list series')
   console.log('PASS  Grafana dashboard Prometheus metric names match emitted metrics')
   console.log('\nObservability QA passed')
 }

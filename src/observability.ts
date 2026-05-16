@@ -181,6 +181,9 @@ function summarizeArgs(args: Record<string, unknown>): Record<string, unknown> {
   const countedArrayKeys = [
     'addresses',
     'token_addresses',
+    'token_symbols',
+    'from_token_symbols',
+    'to_token_symbols',
     'program_id',
     'account',
     'coin',

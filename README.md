@@ -6,13 +6,17 @@ This server does not index chains itself. It validates user input, maps it onto 
 
 ## Current public surface
 
-- `24` public tools
+- `25` public tools
 - `3` advanced/debug tools
 - public params use `network`
 - discovery filters use `vm`
-- no legacy tool aliases in `v0.7.7`
+- no legacy tool aliases in `v0.7.9`
 
 Raw query tools default to compact responses. Ask for `response_format: "full"` only when you need the larger payload.
+
+Entity questions can use `portal_resolve_entity` first. It resolves EVM token symbols/addresses, EVM contract aliases, pool identifiers, protocol names, and Hyperliquid coin names into query-ready filters while keeping ambiguous matches explicit.
+
+Token symbol resolution and token metadata come from open token-list data, not baked-in token address constants. Token-list fetch outcomes, cache events, stale-cache fallback, and unsupported networks are exposed through Prometheus metrics.
 
 ## Tool groups
 
@@ -20,6 +24,7 @@ Discovery:
 - `portal_list_networks`
 - `portal_get_network_info`
 - `portal_get_head`
+- `portal_resolve_entity`
 
 Cross-chain convenience:
 - `portal_get_recent_activity`
@@ -73,10 +78,16 @@ Substrate support is currently historical only. It does not have a real-time tai
 
 Most tools return a normal result body plus shared metadata such as:
 
+- `answer`
+- `display`
+- `next_steps`
+- `investigation`
 - `_freshness`
 - `_coverage`
 - `_pagination`
 - `_ordering`
+
+`investigation` is a compact evidence guide for agents: it identifies the primary result path, bounded window, useful pivot fields such as addresses or transaction hashes, follow-up filters, and limitations before a result is treated as complete.
 
 Chart-oriented tools also return chart and table descriptors so MCP clients or LLMs can render them without reverse-engineering the payload.
 
@@ -102,6 +113,14 @@ HTTP:
 ```bash
 npm run start:http
 ```
+
+## Developer discovery
+
+The server exposes a structured tool-selection guide for client builders:
+
+- MCP resource `sqd://tools` returns grouped tool metadata, examples, starting points, and integration notes.
+- MCP resource `sqd://tools/{name}` returns the guide entry for one tool, for example `sqd://tools/portal_get_time_series`.
+- HTTP `GET /tools` or `GET /tools.json` returns the live tool catalog with input schemas plus the same structured guide metadata.
 
 ## Claude Desktop
 
@@ -137,6 +156,7 @@ HTTP mode exposes health state at `/health`. Prometheus metrics are available at
 The bundled Grafana dashboard is at `grafana/portal-mcp-dashboard.json`. It uses:
 
 - Prometheus for live `/metrics` scrape data such as request rates, active calls, latency, and response sizes.
+- Prometheus token-list counters such as `mcp_token_list_requests_total`, `mcp_token_list_cache_events_total`, and `mcp_token_list_unsupported_networks_total`.
 - Loki for long-window tool-call history. Configure `GRAFANA_LOKI_URL` plus either `GRAFANA_LOKI_TOKEN` or `GRAFANA_LOKI_USERNAME`/`GRAFANA_LOKI_PASSWORD` to push structured tool events.
 
 Useful environment variables:

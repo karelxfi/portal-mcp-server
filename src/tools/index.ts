@@ -3,6 +3,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 // Discovery
 import { registerListDatasetsTool } from './datasets/list.js'
 import { registerGetDatasetInfoTool } from './datasets/info.js'
+import { registerResolveEntityTool } from './datasets/resolve-entity.js'
 
 // Global / debug
 import { registerGetBlockNumberTool } from './evm/block-number.js'
@@ -49,10 +50,11 @@ import {
 } from './substrate/index.js'
 
 export function registerAllTools(server: McpServer) {
-  // Public discovery (3)
+  // Public discovery (4)
   registerListDatasetsTool(server)
   registerGetDatasetInfoTool(server)
   registerGetBlockNumberTool(server)
+  registerResolveEntityTool(server)
 
   // Public convenience (3)
   registerGetRecentTransactionsTool(server)

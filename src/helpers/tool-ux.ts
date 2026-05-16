@@ -30,12 +30,14 @@ type RuntimeToolContract = {
   }
 }
 
-type ToolDefinition = RuntimeToolContract & {
+export type ToolDefinition = RuntimeToolContract & {
   summary: string
   when_to_use: string[]
   avoid_when?: string[]
   examples: ToolExample[]
 }
+
+export type ToolGuideEntry = ToolDefinition
 
 export type ToolExecutionMetadataInput = {
   mode?: string
@@ -126,6 +128,42 @@ const TOOL_DEFINITIONS: Record<string, ToolDefinition> = {
       time_inputs: [],
     },
   },
+  portal_resolve_entity: {
+    name: 'portal_resolve_entity',
+    audience: 'public',
+    category: 'discovery',
+    intent: 'lookup',
+    vm: ['cross-chain'],
+    result_kind: 'lookup',
+    normalized_output: true,
+    first_choice_for: [
+      'resolving a token symbol like USDC to token contract addresses',
+      'resolving EVM contract aliases, protocol names, pool identifiers, or Hyperliquid coin names before querying',
+      'checking which token-list addresses a symbol maps to before querying logs or transfers',
+      'turning a user-friendly token name into deterministic EVM filters',
+    ],
+    summary:
+      'Resolve user-facing blockchain entities into query-ready identifiers, with ambiguity kept explicit.',
+    when_to_use: [
+      'The user names a token symbol such as USDC, WETH, DAI, or PEPE and you need contract addresses before querying raw data.',
+      'The user names a well-known EVM contract, protocol, pool identifier, or Hyperliquid ticker and you need a deterministic follow-up filter.',
+      'You need to disambiguate bridged token variants on an EVM network.',
+      'You want a source-backed token address rather than relying on memory or hardcoded constants.',
+    ],
+    avoid_when: ['You already have the exact address, pool id, protocol slug, or coin filter and can pass it directly.'],
+    examples: [
+      { label: 'Resolve USDC on Base', input: { network: 'base-mainnet', kind: 'token', query: 'USDC', limit: 10 } },
+      {
+        label: 'Resolve WETH on Ethereum',
+        input: { network: 'ethereum-mainnet', kind: 'token', query: 'WETH', limit: 5 },
+      },
+      { label: 'Resolve BAYC contract', input: { network: 'ethereum-mainnet', kind: 'contract', query: 'bored apes' } },
+      { label: 'Resolve Hyperliquid coin', input: { kind: 'hyperliquid_coin', query: 'bitcoin' } },
+    ],
+    supports: {
+      time_inputs: [],
+    },
+  },
   portal_get_recent_activity: {
     name: 'portal_get_recent_activity',
     audience: 'public',
@@ -137,12 +175,15 @@ const TOOL_DEFINITIONS: Record<string, ToolDefinition> = {
     first_choice_for: [
       'recent activity on any supported network without manual block math',
       'questions like "what has been happening on Base lately?"',
+      'first-pass incident triage when the user asks what happened recently on a network',
     ],
-    summary: 'Get a simple recent-activity feed across EVM, Solana, Bitcoin, or Hyperliquid with chronological paging.',
+    summary:
+      'Get a simple recent-activity feed across EVM, Solana, Bitcoin, or Hyperliquid with chronological paging and investigation pivots.',
     when_to_use: [
       'You want a quick recent-activity feed for a network.',
       'You want to ask what has been happening lately on a network and see the newest activity first.',
       'You want the simplest starting point before reaching for raw VM-specific query tools.',
+      'You are investigating an incident and need a bounded, recent evidence timeline before narrowing to wallets, transfers, logs, or fills.',
     ],
     avoid_when: [
       'You need raw logs, instructions, or chain-specific fields that only raw query tools return.',
@@ -165,11 +206,16 @@ const TOOL_DEFINITIONS: Record<string, ToolDefinition> = {
     vm: ['cross-chain'],
     result_kind: 'summary',
     normalized_output: true,
-    first_choice_for: ['one-call wallet analysis across supported VMs'],
-    summary: 'Summarize wallet activity with shared overview, activity, and assets sections across supported networks.',
+    first_choice_for: [
+      'one-call wallet analysis across supported VMs',
+      'suspicious wallet triage before drilling into raw transaction, transfer, instruction, or fill evidence',
+    ],
+    summary:
+      'Summarize wallet activity with shared overview, activity, assets, evidence pivots, and follow-up filters across supported networks.',
     when_to_use: [
       'You want a single high-level answer about what one wallet has been doing.',
       'You want a fast preview before drilling into raw transactions or fills.',
+      'The user asks to investigate a suspicious wallet, stolen-funds path, exploit counterparty, or incident address.',
     ],
     avoid_when: ['You need every raw record with full chain-specific fields and no summarization.'],
     examples: [
@@ -340,14 +386,17 @@ const TOOL_DEFINITIONS: Record<string, ToolDefinition> = {
     vm: ['evm'],
     result_kind: 'list',
     normalized_output: true,
-    summary: 'Query raw EVM transactions with optional logs, traces, and state-diff context.',
+    summary:
+      'Query raw EVM transactions with optional logs, traces, state-diff context, and evidence pivots for transaction-level investigations.',
     when_to_use: [
       'You need raw transaction records on an EVM network.',
       'You want chain-specific transaction fields or include flags that convenience tools do not expose.',
+      'You need exact transaction evidence for an investigation, including sender, receiver, transaction hash, logs, traces, or failed calls.',
       'You need to find the first transaction matching a raw field condition such as transaction type 0x1 from a known block.',
       'You need top-N raw transactions ranked by value, gas used, or effective gas price.',
       'You need top senders or receivers from a bounded transaction window.',
       'You want common method names such as transfer, approve, deposit, or withdraw instead of remembering sighashes.',
+      'You want calls to a token contract by symbol, such as transfer calls to USDC, without hardcoding token addresses.',
     ],
     avoid_when: ['You only need a quick recent feed or wallet-level summary.'],
     examples: [
@@ -368,11 +417,11 @@ const TOOL_DEFINITIONS: Record<string, ToolDefinition> = {
         },
       },
       {
-        label: 'Largest recent transfers to USDC',
+        label: 'Largest recent calls to a resolved token contract',
         input: {
           network: 'base-mainnet',
           timeframe: '1h',
-          to_addresses: ['0x833589fcd6edb6e08f4c7c32d4f71b54bda02913'],
+          to_token_symbols: ['USDC'],
           method: 'transfer',
           order_by: 'gas_used_desc',
           limit: 5,
@@ -418,7 +467,8 @@ const TOOL_DEFINITIONS: Record<string, ToolDefinition> = {
         input: {
           network: 'base-mainnet',
           timeframe: '1h',
-          addresses: ['0x833589fcd6edb6e08f4c7c32d4f71b54bda02913'],
+          token_symbols: ['USDC'],
+          event: 'transfer',
           limit: 20,
         },
       },
@@ -427,7 +477,7 @@ const TOOL_DEFINITIONS: Record<string, ToolDefinition> = {
         input: {
           network: 'base-mainnet',
           timeframe: '1h',
-          addresses: ['0x833589fcd6edb6e08f4c7c32d4f71b54bda02913'],
+          token_symbols: ['USDC'],
           event: 'transfer',
           scan_order: 'earliest',
           limit: 1,
@@ -460,10 +510,11 @@ const TOOL_DEFINITIONS: Record<string, ToolDefinition> = {
     result_kind: 'list',
     normalized_output: true,
     summary:
-      'Query token-transfer activity on EVM without needing to remember Transfer event signatures. Best for "did token X move?" questions.',
+      'Query token-transfer activity on EVM without needing to remember Transfer event signatures. Best for "did token X move?" and asset-tracing questions.',
     when_to_use: [
       'You want ERC-20 style transfer activity filtered by token, sender, or recipient.',
       'You want the fastest answer to a token movement question like "did USDC move?".',
+      'You are tracing suspicious, stolen, bridged, or exploit-related token movement and need sender/recipient/transaction pivots.',
       'You want the easiest raw transfer query on an EVM network.',
       'You need the first matching transfer in a bounded window without typing the Transfer topic hash.',
     ],
@@ -474,7 +525,7 @@ const TOOL_DEFINITIONS: Record<string, ToolDefinition> = {
         input: {
           network: 'base-mainnet',
           timeframe: '1h',
-          token_addresses: ['0x833589fcd6edb6e08f4c7c32d4f71b54bda02913'],
+          token_symbols: ['USDC'],
           limit: 20,
         },
       },
@@ -483,7 +534,7 @@ const TOOL_DEFINITIONS: Record<string, ToolDefinition> = {
         input: {
           network: 'base-mainnet',
           timeframe: '1h',
-          token_addresses: ['0x833589fcd6edb6e08f4c7c32d4f71b54bda02913'],
+          token_symbols: ['USDC'],
           scan_order: 'earliest',
           limit: 1,
         },
@@ -958,6 +1009,42 @@ const TOOL_DEFINITIONS: Record<string, ToolDefinition> = {
 
 function stringifyExample(input: Record<string, unknown>): string {
   return JSON.stringify(input)
+}
+
+function cloneToolDefinition(definition: ToolDefinition): ToolGuideEntry {
+  return {
+    ...definition,
+    vm: [...definition.vm],
+    first_choice_for: definition.first_choice_for ? [...definition.first_choice_for] : undefined,
+    when_to_use: [...definition.when_to_use],
+    avoid_when: definition.avoid_when ? [...definition.avoid_when] : undefined,
+    examples: definition.examples.map((example) => ({
+      label: example.label,
+      input: { ...example.input },
+    })),
+    supports: definition.supports
+      ? {
+          ...definition.supports,
+          response_formats: definition.supports.response_formats
+            ? [...definition.supports.response_formats]
+            : undefined,
+          modes: definition.supports.modes ? [...definition.supports.modes] : undefined,
+          time_inputs: definition.supports.time_inputs ? [...definition.supports.time_inputs] : undefined,
+          group_by: definition.supports.group_by ? [...definition.supports.group_by] : undefined,
+        }
+      : undefined,
+  }
+}
+
+export function getToolGuideEntry(toolName: string): ToolGuideEntry | undefined {
+  const definition = TOOL_DEFINITIONS[toolName]
+  return definition ? cloneToolDefinition(definition) : undefined
+}
+
+export function getToolGuideEntries(): ToolGuideEntry[] {
+  return Object.values(TOOL_DEFINITIONS)
+    .map(cloneToolDefinition)
+    .sort((a, b) => a.name.localeCompare(b.name))
 }
 
 export function buildToolDescription(toolName: string): string {

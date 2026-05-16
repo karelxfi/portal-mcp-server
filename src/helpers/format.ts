@@ -53,6 +53,7 @@ const DISPLAY_NAME_OVERRIDES: Record<string, string> = {
   portal_list_networks: 'Find Networks',
   portal_get_network_info: 'Network Info',
   portal_get_head: 'Network Head',
+  portal_resolve_entity: 'Entity Resolver',
   portal_get_recent_activity: 'Recent Activity',
   portal_get_wallet_summary: 'Wallet Summary',
   portal_get_time_series: 'Time Series',
@@ -74,6 +75,9 @@ const DISPLAY_NAME_OVERRIDES: Record<string, string> = {
   portal_hyperliquid_query_fills: 'Hyperliquid Fills',
   portal_hyperliquid_get_analytics: 'Hyperliquid Analytics',
   portal_hyperliquid_get_ohlc: 'Hyperliquid OHLC',
+  portal_debug_query_blocks: 'Block Lookup',
+  portal_debug_resolve_time_to_block: 'Timestamp Lookup',
+  portal_debug_hyperliquid_query_replica_commands: 'Hyperliquid Commands',
   uniswap_v2_swap: 'Uniswap v2 swap',
   uniswap_v3_swap: 'Uniswap v3 swap',
   uniswap_v4_swap: 'Uniswap v4 swap',
@@ -324,6 +328,237 @@ function buildTechnicalDetails(payload: RecordLike): RecordLike | undefined {
   if (payload._tool_contract !== undefined) technicalDetails.tool_contract = payload._tool_contract
 
   return Object.keys(technicalDetails).length > 0 ? technicalDetails : undefined
+}
+
+function inferPrimaryEvidencePath(payload: RecordLike): string | undefined {
+  const table = asArray<RecordLike>(payload.tables).find((entry) => typeof entry.data_key === 'string')
+  if (typeof table?.data_key === 'string') return table.data_key
+
+  const chart = isRecord(payload.chart) ? payload.chart : undefined
+  if (typeof chart?.data_key === 'string') return chart.data_key
+
+  const preferredKeys = [
+    'items',
+    'activity.items',
+    'token_transfers.items',
+    'transactions.items',
+    'ohlc',
+    'time_series',
+    'volume_by_coin',
+    'top_traders_by_volume',
+    'top_senders',
+    'top_receivers',
+    'top_contracts',
+    'recent_outputs',
+    'recent_inputs',
+    'summary_rows',
+    'overview',
+    'summary',
+    'interactions',
+    'network',
+    'block_details',
+    'block_number',
+    'timestamp',
+  ]
+
+  return preferredKeys.find((path) => {
+    const value = getByPath(payload, path)
+    return value !== undefined
+  })
+}
+
+function inferPrimaryEvidenceKind(payload: RecordLike, primaryPath?: string): string | undefined {
+  const table = asArray<RecordLike>(payload.tables).find((entry) => entry.data_key === primaryPath)
+  if (typeof table?.title === 'string') return table.title
+
+  const chart = isRecord(payload.chart) ? payload.chart : undefined
+  if (chart && chart.data_key === primaryPath && typeof chart.kind === 'string') return chart.kind
+
+  if (!primaryPath) return undefined
+  if (primaryPath.includes('ohlc')) return 'candles'
+  if (primaryPath.includes('time_series')) return 'time_series'
+  if (primaryPath.includes('activity')) return 'activity'
+  if (primaryPath.includes('transaction')) return 'transactions'
+  if (primaryPath.includes('transfer')) return 'token_transfers'
+  if (primaryPath.includes('top_')) return 'ranked_summary'
+  if (primaryPath.includes('overview') || primaryPath.includes('summary')) return 'summary'
+  if (primaryPath.includes('block_number') || primaryPath.includes('timestamp')) return 'lookup'
+  return 'records'
+}
+
+function inferReturnedCount(payload: RecordLike, primaryPath?: string): number | undefined {
+  const meta = isRecord(payload._meta) ? payload._meta : undefined
+  if (typeof meta?.returned === 'number') return meta.returned
+
+  const primaryValue = getByPath(payload, primaryPath)
+  if (Array.isArray(primaryValue)) return primaryValue.length
+
+  const overview = isRecord(payload.overview) ? payload.overview : undefined
+  if (typeof overview?.activity_count === 'number') return overview.activity_count
+  if (typeof overview?.transaction_count === 'number') return overview.transaction_count
+
+  return undefined
+}
+
+function collectCandidateRows(payload: RecordLike): Array<{ path: string; row: RecordLike }> {
+  const paths = [
+    'items',
+    'activity.items',
+    'token_transfers.items',
+    'transactions.items',
+    'top_senders',
+    'top_receivers',
+    'top_contracts',
+    'volume_by_coin',
+    'top_traders_by_volume',
+    'recent_outputs',
+    'recent_inputs',
+  ]
+  const rows: Array<{ path: string; row: RecordLike }> = []
+
+  rows.push({ path: '$', row: payload })
+
+  for (const path of paths) {
+    const value = getByPath(payload, path)
+    if (!Array.isArray(value)) continue
+    value.slice(0, 3).forEach((entry, index) => {
+      if (isRecord(entry)) rows.push({ path: `${path}[${index}]`, row: entry })
+    })
+  }
+
+  return rows
+}
+
+function collectInvestigationPivots(payload: RecordLike): RecordLike[] {
+  const pivotKeys: Record<string, string> = {
+    address: 'address',
+    contract_address: 'address',
+    token_address: 'token_address',
+    pool_address: 'pool_address',
+    pool_id: 'pool_id',
+    block_number: 'from_block/to_block',
+    from: 'from_addresses',
+    to: 'to_addresses',
+    sender: 'from_addresses',
+    recipient: 'to_addresses',
+    user: 'user',
+    coin: 'coin',
+    program_id: 'program_id',
+    transaction_hash: 'transaction_hash',
+    tx_hash: 'transaction_hash',
+    hash: 'transaction_hash',
+    primary_id: 'primary_id',
+  }
+  const seen = new Set<string>()
+  const pivots: RecordLike[] = []
+
+  for (const { path, row } of collectCandidateRows(payload)) {
+    for (const [key, useAs] of Object.entries(pivotKeys)) {
+      const value = row[key]
+      if (typeof value !== 'string' && typeof value !== 'number') continue
+      const text = String(value)
+      if (!text || text === '0x') continue
+      const dedupeKey = `${key}:${text}`
+      if (seen.has(dedupeKey)) continue
+      seen.add(dedupeKey)
+      pivots.push({
+        field: key,
+        path: `${path}.${key}`,
+        value: text,
+        use_as: useAs,
+      })
+      if (pivots.length >= 10) return pivots
+    }
+  }
+
+  return pivots
+}
+
+function buildInvestigationGuide(payload: RecordLike): RecordLike | undefined {
+  const toolContract = isRecord(payload._tool_contract) ? payload._tool_contract : undefined
+  const intent = typeof toolContract?.intent === 'string' ? toolContract.intent : undefined
+  const isInvestigatable =
+    ['query', 'summary', 'analytics', 'chart'].includes(intent ?? '') ||
+    payload._freshness !== undefined ||
+    payload._coverage !== undefined ||
+    payload._pagination !== undefined
+
+  if (!isInvestigatable) return undefined
+
+  const meta = isRecord(payload._meta) ? payload._meta : undefined
+  const pagination = isRecord(payload._pagination) ? payload._pagination : undefined
+  const coverage = isRecord(payload._coverage) ? payload._coverage : undefined
+  const execution = isRecord(payload._execution) ? payload._execution : undefined
+  const notices = [
+    ...asArray<string>(payload._notices),
+    ...(typeof payload._notice === 'string' ? [payload._notice] : []),
+  ].slice(0, 4)
+  const primaryPath = inferPrimaryEvidencePath(payload)
+  const primaryKind = inferPrimaryEvidenceKind(payload, primaryPath)
+  const returned = inferReturnedCount(payload, primaryPath)
+  const pivots = collectInvestigationPivots(payload)
+  const limitations: string[] = []
+
+  if (typeof meta?.queried_blocks === 'string') {
+    limitations.push(`Evidence is limited to queried blocks ${meta.queried_blocks}.`)
+  }
+  if (typeof pagination?.next_cursor === 'string') {
+    limitations.push('This is a preview page. Continue with _pagination.next_cursor before treating the history as complete.')
+  }
+  if (coverage?.has_more === true || coverage?.result_complete === false || coverage?.window_complete === false) {
+    limitations.push('Coverage metadata says more matching data may exist outside this response.')
+  }
+  if (typeof execution?.max_scan_blocks === 'number' && typeof execution?.scanned_blocks === 'number') {
+    limitations.push(
+      `Bounded scan covered ${execution.scanned_blocks.toLocaleString('en-US')} of up to ${execution.max_scan_blocks.toLocaleString('en-US')} allowed blocks.`,
+    )
+  }
+  limitations.push(...notices)
+
+  const followUpFilters: RecordLike[] = []
+  const pivotFields = new Set(pivots.map((pivot) => (typeof pivot.field === 'string' ? pivot.field : undefined)))
+  if (typeof pagination?.next_cursor === 'string') {
+    followUpFilters.push({
+      goal: 'Continue the timeline',
+      use: 'Call the same tool with cursor from _pagination.next_cursor.',
+    })
+  }
+  if (pivotFields.has('block_number')) {
+    followUpFilters.push({
+      goal: 'Anchor a block window',
+      use: 'Use the block_number pivot as from_block/to_block, or expand around it for incident context.',
+    })
+  }
+  if (pivots.some((pivot) => pivot.field !== 'block_number')) {
+    followUpFilters.push({
+      goal: 'Pivot from a concrete entity',
+      use: 'Reuse values from investigation.pivots as exact filters in wallet, transaction, log, transfer, fill, or instruction queries.',
+    })
+  }
+  if (typeof meta?.queried_blocks === 'string' || execution?.range_kind !== undefined) {
+    followUpFilters.push({
+      goal: 'Expand or narrow the time window',
+      use: 'Adjust timeframe/from_block/to_block/from_timestamp/to_timestamp and compare results.',
+    })
+  }
+
+  return {
+    version: 'portal_investigation_v1',
+    status: typeof pagination?.next_cursor === 'string' ? 'partial_page' : 'bounded_result',
+    evidence: {
+      ...(typeof toolContract?.name === 'string' ? { tool: toolContract.name } : {}),
+      ...(primaryPath ? { primary_path: primaryPath } : {}),
+      ...(primaryKind ? { primary_kind: primaryKind } : {}),
+      ...(typeof meta?.network === 'string' ? { network: meta.network } : {}),
+      ...(typeof meta?.dataset === 'string' ? { dataset: meta.dataset } : {}),
+      ...(typeof meta?.queried_blocks === 'string' ? { queried_blocks: meta.queried_blocks } : {}),
+      ...(typeof meta?.response_time_ms === 'number' ? { response_time_ms: meta.response_time_ms } : {}),
+      ...(returned !== undefined ? { returned } : {}),
+    },
+    pivots,
+    follow_up_filters: followUpFilters,
+    limitations: Array.from(new Set(limitations)).slice(0, 6),
+  }
 }
 
 const TRUNCATABLE_ARRAY_KEYS = new Set([
@@ -631,6 +866,11 @@ export function formatResult(
       payloadRecord._notice = notices[0]
     } else if (notices.length > 1) {
       payloadRecord._notices = notices
+    }
+
+    const investigation = buildInvestigationGuide(payloadRecord)
+    if (investigation) {
+      payloadRecord.investigation = investigation
     }
 
     const technicalDetails = buildTechnicalDetails(payloadRecord)

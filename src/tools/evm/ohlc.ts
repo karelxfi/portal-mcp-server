@@ -4,23 +4,32 @@ import { z } from 'zod'
 
 import { resolveDataset, validateBlockRange } from '../../cache/datasets.js'
 import { EVENT_SIGNATURES, PORTAL_URL } from '../../constants/index.js'
-import {
-  buildTableDescriptor,
-  buildCandlestickChart,
-  buildOhlcTable,
-  type ChartTooltipDescriptor,
-  type TableValueFormat,
-} from '../../helpers/chart-metadata.js'
 import { createCache, estimateSize } from '../../helpers/cache-manager.js'
 import { detectChainType } from '../../helpers/chain.js'
-import { getKnownPoolMetadata, getKnownTokenDecimals, getKnownTokenSymbol } from '../../helpers/conversions.js'
+import {
+  type ChartTooltipDescriptor,
+  type TableValueFormat,
+  buildCandlestickChart,
+  buildOhlcTable,
+  buildTableDescriptor,
+} from '../../helpers/chart-metadata.js'
+import {
+  buildTokenListLookupNotices,
+  type TokenListLookupMetadata,
+  resolveTokenByAddressFromListWithStatus,
+} from '../../helpers/entity-resolution.js'
 import { createUnsupportedChainError } from '../../helpers/errors.js'
 import { portalFetchRecentRecords, portalFetchStreamRangeVisit } from '../../helpers/fetch.js'
 import { buildEvmLogFields } from '../../helpers/fields.js'
 import { formatResult } from '../../helpers/format.js'
 import { formatTimestamp } from '../../helpers/formatting.js'
-import { buildBucketCoverage, buildBucketGapDiagnostics, buildChronologicalPageOrdering, buildQueryFreshness } from '../../helpers/result-metadata.js'
 import { buildPaginationInfo, decodeCursor, encodeCursor } from '../../helpers/pagination.js'
+import {
+  buildBucketCoverage,
+  buildBucketGapDiagnostics,
+  buildChronologicalPageOrdering,
+  buildQueryFreshness,
+} from '../../helpers/result-metadata.js'
 import { estimateBlockTime, parseTimeframeToSeconds, resolveTimeframeOrBlocks } from '../../helpers/timeframe.js'
 import { buildExecutionMetadata, buildToolDescription } from '../../helpers/tool-ux.js'
 import { buildChartPanel, buildMetricCard, buildPortalUi, buildTablePanel } from '../../helpers/ui-metadata.js'
@@ -350,7 +359,7 @@ function shortenAddressLabel(address: string) {
 }
 
 function resolveTokenLabel(side: BaseTokenSide, symbol?: string, address?: string) {
-  return symbol || (address ? getKnownTokenSymbol(address) || shortenAddressLabel(address) : side)
+  return symbol || (address ? shortenAddressLabel(address) : side)
 }
 
 function isStableLikeLabel(label: string) {
@@ -425,7 +434,12 @@ function decodePriceSample(params: {
     const sqrtPriceX96 = decodeUnsignedWord(words[2])
     if (amount0 === undefined || amount1 === undefined || sqrtPriceX96 === undefined) return undefined
 
-    const priceToken1PerToken0 = getPriceFromV3SqrtPrice(sqrtPriceX96, 'token0', params.token0Decimals, params.token1Decimals)
+    const priceToken1PerToken0 = getPriceFromV3SqrtPrice(
+      sqrtPriceX96,
+      'token0',
+      params.token0Decimals,
+      params.token1Decimals,
+    )
     if (priceToken1PerToken0 === undefined) return undefined
 
     return {
@@ -443,7 +457,8 @@ function decodePriceSample(params: {
     const amount1In = decodeUnsignedWord(words[1])
     const amount0Out = decodeUnsignedWord(words[2])
     const amount1Out = decodeUnsignedWord(words[3])
-    if (amount0In === undefined || amount1In === undefined || amount0Out === undefined || amount1Out === undefined) return undefined
+    if (amount0In === undefined || amount1In === undefined || amount0Out === undefined || amount1Out === undefined)
+      return undefined
 
     const token0Delta = amount0In - amount0Out
     const token1Delta = amount1In - amount1Out
@@ -468,7 +483,13 @@ function decodePriceSample(params: {
   const reserve1 = decodeUnsignedWord(words[1])
   if (reserve0 === undefined || reserve1 === undefined) return undefined
 
-  const priceToken1PerToken0 = getPriceFromV2Reserves(reserve0, reserve1, 'token0', params.token0Decimals, params.token1Decimals)
+  const priceToken1PerToken0 = getPriceFromV2Reserves(
+    reserve0,
+    reserve1,
+    'token0',
+    params.token0Decimals,
+    params.token1Decimals,
+  )
   if (priceToken1PerToken0 === undefined) return undefined
 
   return {
@@ -479,7 +500,10 @@ function decodePriceSample(params: {
   }
 }
 
-function projectPriceSample(sample: DecodedPriceSample, baseToken: BaseTokenSide): { price: number; baseVolume: number; quoteVolume: number } | undefined {
+function projectPriceSample(
+  sample: DecodedPriceSample,
+  baseToken: BaseTokenSide,
+): { price: number; baseVolume: number; quoteVolume: number } | undefined {
   const price = baseToken === 'token0' ? sample.priceToken1PerToken0 : 1 / sample.priceToken1PerToken0
   if (price === undefined) return undefined
 
@@ -523,15 +547,10 @@ function buildRecentTradeRow(
   const baseAmount = baseTokenSide === 'token0' ? trade.token0Volume : trade.token1Volume
   const quoteAmount = baseTokenSide === 'token0' ? trade.token1Volume : trade.token0Volume
   const baseDelta = baseTokenSide === 'token0' ? trade.token0Delta : trade.token1Delta
-  const price = formatPriceForOutput(baseTokenSide === 'token0' ? trade.priceToken1PerToken0 : 1 / trade.priceToken1PerToken0)
-  const side =
-    baseDelta === undefined
-      ? 'unknown'
-      : baseDelta < 0n
-        ? 'buy'
-        : baseDelta > 0n
-          ? 'sell'
-          : 'flat'
+  const price = formatPriceForOutput(
+    baseTokenSide === 'token0' ? trade.priceToken1PerToken0 : 1 / trade.priceToken1PerToken0,
+  )
+  const side = baseDelta === undefined ? 'unknown' : baseDelta < 0n ? 'buy' : baseDelta > 0n ? 'sell' : 'flat'
 
   return {
     timestamp: trade.timestamp,
@@ -777,9 +796,7 @@ async function getCachedOrResolveUniswapV4PoolMetadata(params: {
     toBlock: params.toBlock,
     mode: params.mode,
     lookbackSteps:
-      params.mode === 'fast'
-        ? UNISWAP_V4_METADATA_LOOKBACK_STEPS.slice(0, 1)
-        : UNISWAP_V4_METADATA_LOOKBACK_STEPS,
+      params.mode === 'fast' ? UNISWAP_V4_METADATA_LOOKBACK_STEPS.slice(0, 1) : UNISWAP_V4_METADATA_LOOKBACK_STEPS,
   })
 
   pendingUniswapV4Metadata.set(cacheKey, lookupPromise)
@@ -838,17 +855,29 @@ export function registerEvmOhlcTool(server: McpServer) {
     buildToolDescription('portal_evm_get_ohlc'),
     {
       network: z.string().optional().default('base-mainnet').describe('EVM network name (default: base-mainnet)'),
-      pool_address: z.string().optional().describe('Pool/pair contract address for address-keyed sources like Uniswap v3, Slipstream, or Sync-derived CPMM pools.'),
-      pool_id: z.string().optional().describe('Uniswap v4 pool id (bytes32). Optional when you provide the full v4 pool key instead.'),
+      pool_address: z
+        .string()
+        .optional()
+        .describe(
+          'Pool/pair contract address for address-keyed sources like Uniswap v3, Slipstream, or Sync-derived CPMM pools.',
+        ),
+      pool_id: z
+        .string()
+        .optional()
+        .describe('Uniswap v4 pool id (bytes32). Optional when you provide the full v4 pool key instead.'),
       pool_manager_address: z
         .string()
         .optional()
-        .describe('Uniswap v4 PoolManager address. Optional on networks with a built-in official Uniswap deployment mapping.'),
+        .describe(
+          'Uniswap v4 PoolManager address. Optional on networks with a built-in official Uniswap deployment mapping.',
+        ),
       source: z
         .enum(['uniswap_v2_swap', 'uniswap_v3_swap', 'uniswap_v4_swap', 'aerodrome_slipstream_swap', 'uniswap_v2_sync'])
         .optional()
         .default('uniswap_v3_swap')
-        .describe('Which event source to build candles from. Prefer swap-derived sources for factual trade prices and volumes. Uniswap v4 uses PoolManager Swap events filtered by pool_id, not a per-pool contract address.'),
+        .describe(
+          'Which event source to build candles from. Prefer swap-derived sources for factual trade prices and volumes. Uniswap v4 uses PoolManager Swap events filtered by pool_id, not a per-pool contract address.',
+        ),
       interval: z
         .enum(['auto', '1m', '5m', '15m', '30m', '1h', '4h', '6h', '1d'])
         .optional()
@@ -859,16 +888,63 @@ export function registerEvmOhlcTool(server: McpServer) {
         .optional()
         .default('1h')
         .describe('How much recent history to cover'),
-      mode: z.enum(['fast', 'deep']).optional().default('deep').describe('Execution mode. fast favors a quicker preview with lighter backfill; deep works harder to fill the full requested window.'),
-      price_in: z.enum(['auto', 'token0', 'token1']).optional().default('auto').describe('Choose which token the displayed price should be expressed in. auto picks the more human-readable quote side.'),
-      base_token: z.enum(['token0', 'token1']).optional().describe('Legacy orientation input. Prefer price_in instead.'),
-      include_recent_trades: z.boolean().optional().default(true).describe('Include a recent trade tape for swap-derived sources when factual per-trade amounts are available.'),
-      recent_trades_limit: z.number().int().min(1).max(50).optional().default(5).describe('Maximum number of recent trades to return in the trade tape.'),
-      currency0_address: z.string().optional().describe('Optional Uniswap v4 currency0 address. Use with currency1_address, fee, and tick_spacing to derive pool_id factually.'),
-      currency1_address: z.string().optional().describe('Optional Uniswap v4 currency1 address. Use with currency0_address, fee, and tick_spacing to derive pool_id factually.'),
-      fee: z.number().int().optional().describe('Optional Uniswap v4 LP fee in hundredths of a bip, e.g. 3000 for 0.30%.'),
-      tick_spacing: z.number().int().optional().describe('Optional Uniswap v4 tick spacing. Required with the rest of the pool key when deriving pool_id.'),
-      hooks_address: z.string().optional().describe('Optional Uniswap v4 hooks contract address. Defaults to the zero address when omitted.'),
+      mode: z
+        .enum(['fast', 'deep'])
+        .optional()
+        .default('deep')
+        .describe(
+          'Execution mode. fast favors a quicker preview with lighter backfill; deep works harder to fill the full requested window.',
+        ),
+      price_in: z
+        .enum(['auto', 'token0', 'token1'])
+        .optional()
+        .default('auto')
+        .describe(
+          'Choose which token the displayed price should be expressed in. auto picks the more human-readable quote side.',
+        ),
+      base_token: z
+        .enum(['token0', 'token1'])
+        .optional()
+        .describe('Legacy orientation input. Prefer price_in instead.'),
+      include_recent_trades: z
+        .boolean()
+        .optional()
+        .default(true)
+        .describe('Include a recent trade tape for swap-derived sources when factual per-trade amounts are available.'),
+      recent_trades_limit: z
+        .number()
+        .int()
+        .min(1)
+        .max(50)
+        .optional()
+        .default(5)
+        .describe('Maximum number of recent trades to return in the trade tape.'),
+      currency0_address: z
+        .string()
+        .optional()
+        .describe(
+          'Optional Uniswap v4 currency0 address. Use with currency1_address, fee, and tick_spacing to derive pool_id factually.',
+        ),
+      currency1_address: z
+        .string()
+        .optional()
+        .describe(
+          'Optional Uniswap v4 currency1 address. Use with currency0_address, fee, and tick_spacing to derive pool_id factually.',
+        ),
+      fee: z
+        .number()
+        .int()
+        .optional()
+        .describe('Optional Uniswap v4 LP fee in hundredths of a bip, e.g. 3000 for 0.30%.'),
+      tick_spacing: z
+        .number()
+        .int()
+        .optional()
+        .describe('Optional Uniswap v4 tick spacing. Required with the rest of the pool key when deriving pool_id.'),
+      hooks_address: z
+        .string()
+        .optional()
+        .describe('Optional Uniswap v4 hooks contract address. Defaults to the zero address when omitted.'),
       token0_symbol: z.string().optional().describe('Optional token0 symbol label for summaries'),
       token1_symbol: z.string().optional().describe('Optional token1 symbol label for summaries'),
       token0_decimals: z.number().optional().describe('Optional token0 decimals for human-readable prices'),
@@ -905,11 +981,17 @@ export function registerEvmOhlcTool(server: McpServer) {
     }) => {
       const queryStartTime = Date.now()
       const paginationCursor = cursor ? decodeCursor<EvmOhlcCursor>(cursor, 'portal_evm_get_ohlc') : undefined
-      const requestedDataset = cursor ? (network ? await resolveDataset(network) : undefined) : await resolveDataset(network)
+      const requestedDataset = cursor
+        ? network
+          ? await resolveDataset(network)
+          : undefined
+        : await resolveDataset(network)
       let dataset = paginationCursor?.dataset ?? requestedDataset ?? 'base-mainnet'
 
       if (paginationCursor && requestedDataset && requestedDataset !== paginationCursor.dataset) {
-        throw new Error('This cursor belongs to a different network. Reuse the same network or omit cursor to start a fresh candle window.')
+        throw new Error(
+          'This cursor belongs to a different network. Reuse the same network or omit cursor to start a fresh candle window.',
+        )
       }
 
       pool_address = paginationCursor?.request.pool_address ?? pool_address
@@ -968,12 +1050,21 @@ export function registerEvmOhlcTool(server: McpServer) {
           normalizedPoolManagerAddress = UNISWAP_V4_POOL_MANAGER_BY_DATASET[dataset]
         }
         if (!normalizedPoolManagerAddress) {
-          throw new Error('pool_manager_address is required for uniswap_v4_swap on this network because there is no built-in official Uniswap deployment mapping yet')
+          throw new Error(
+            'pool_manager_address is required for uniswap_v4_swap on this network because there is no built-in official Uniswap deployment mapping yet',
+          )
         }
 
         if (normalizedPoolId === undefined) {
-          if (!normalizedCurrency0Address || !normalizedCurrency1Address || fee === undefined || tick_spacing === undefined) {
-            throw new Error('uniswap_v4_swap requires pool_id, or the full pool key: currency0_address, currency1_address, fee, and tick_spacing')
+          if (
+            !normalizedCurrency0Address ||
+            !normalizedCurrency1Address ||
+            fee === undefined ||
+            tick_spacing === undefined
+          ) {
+            throw new Error(
+              'uniswap_v4_swap requires pool_id, or the full pool key: currency0_address, currency1_address, fee, and tick_spacing',
+            )
           }
           if (compareHexAddresses(normalizedCurrency0Address, normalizedCurrency1Address) >= 0) {
             throw new Error('Uniswap v4 requires currency0_address to be lower than currency1_address in the pool key')
@@ -993,7 +1084,12 @@ export function registerEvmOhlcTool(server: McpServer) {
             hooks_address: normalizedHooksAddress,
           })
           derivedPoolIdFromKey = true
-        } else if (normalizedCurrency0Address && normalizedCurrency1Address && fee !== undefined && tick_spacing !== undefined) {
+        } else if (
+          normalizedCurrency0Address &&
+          normalizedCurrency1Address &&
+          fee !== undefined &&
+          tick_spacing !== undefined
+        ) {
           const computedPoolId = computeUniswapV4PoolId({
             currency0_address: normalizedCurrency0Address,
             currency1_address: normalizedCurrency1Address,
@@ -1066,17 +1162,16 @@ export function registerEvmOhlcTool(server: McpServer) {
       }
 
       let resolvedV4Metadata: UniswapV4PoolMetadata | undefined
-      let v4MetadataResolutionStatus: 'not_requested' | 'resolved' | 'not_found' | 'timeout' | 'failed' = 'not_requested'
+      let v4MetadataResolutionStatus: 'not_requested' | 'resolved' | 'not_found' | 'timeout' | 'failed' =
+        'not_requested'
       if (
-        isUniswapV4SwapSource(source as EvmOhlcSource)
-        && normalizedPoolId
-        && (
-          !normalizedCurrency0Address
-          || !normalizedCurrency1Address
-          || fee === undefined
-          || tick_spacing === undefined
-          || !hooksAddressProvided
-        )
+        isUniswapV4SwapSource(source as EvmOhlcSource) &&
+        normalizedPoolId &&
+        (!normalizedCurrency0Address ||
+          !normalizedCurrency1Address ||
+          fee === undefined ||
+          tick_spacing === undefined ||
+          !hooksAddressProvided)
       ) {
         try {
           resolvedV4Metadata = await getCachedOrResolveUniswapV4PoolMetadata({
@@ -1103,25 +1198,40 @@ export function registerEvmOhlcTool(server: McpServer) {
         }
       }
 
-      // When the caller only gave us a pool address, try to resolve its
-      // token0/token1 from a well-known pool registry. This unlocks human-
-      // readable prices for the top Uniswap v3 pools without the caller
-      // having to hand-thread token decimals for every invocation.
-      const knownPool =
-        pool_address && !token0_address && !token1_address
-          ? getKnownPoolMetadata(normalizeEvmAddress(pool_address))
-          : undefined
-
-      const effectiveToken0Address = token0_address
-        ? normalizeEvmAddress(token0_address)
-        : (normalizedCurrency0Address ?? knownPool?.token0)
-      const effectiveToken1Address = token1_address
-        ? normalizeEvmAddress(token1_address)
-        : (normalizedCurrency1Address ?? knownPool?.token1)
-      const resolvedToken0Decimals = token0_decimals ?? (effectiveToken0Address ? getKnownTokenDecimals(effectiveToken0Address) : undefined)
-      const resolvedToken1Decimals = token1_decimals ?? (effectiveToken1Address ? getKnownTokenDecimals(effectiveToken1Address) : undefined)
-      const resolvedToken0Symbol = token0_symbol ?? (effectiveToken0Address ? getKnownTokenSymbol(effectiveToken0Address) : undefined)
-      const resolvedToken1Symbol = token1_symbol ?? (effectiveToken1Address ? getKnownTokenSymbol(effectiveToken1Address) : undefined)
+      const effectiveToken0Address = token0_address ? normalizeEvmAddress(token0_address) : normalizedCurrency0Address
+      const effectiveToken1Address = token1_address ? normalizeEvmAddress(token1_address) : normalizedCurrency1Address
+      let tokenListMetadataFailed = false
+      const tokenListMetadataLookups: TokenListLookupMetadata[] = []
+      const [token0ListMetadata, token1ListMetadata] = await Promise.all([
+        effectiveToken0Address
+          ? resolveTokenByAddressFromListWithStatus(dataset, effectiveToken0Address)
+              .then((result) => {
+                if (result.lookup) tokenListMetadataLookups.push(result.lookup)
+                return result.match
+              })
+              .catch((error) => {
+                tokenListMetadataFailed = true
+                console.error('Failed to resolve token0 metadata from token-list data:', error)
+                return undefined
+              })
+          : Promise.resolve(undefined),
+        effectiveToken1Address
+          ? resolveTokenByAddressFromListWithStatus(dataset, effectiveToken1Address)
+              .then((result) => {
+                if (result.lookup) tokenListMetadataLookups.push(result.lookup)
+                return result.match
+              })
+              .catch((error) => {
+                tokenListMetadataFailed = true
+                console.error('Failed to resolve token1 metadata from token-list data:', error)
+                return undefined
+              })
+          : Promise.resolve(undefined),
+      ])
+      const resolvedToken0Decimals = token0_decimals ?? token0ListMetadata?.decimals
+      const resolvedToken1Decimals = token1_decimals ?? token1ListMetadata?.decimals
+      const resolvedToken0Symbol = token0_symbol ?? token0ListMetadata?.symbol
+      const resolvedToken1Symbol = token1_symbol ?? token1ListMetadata?.symbol
       const token0Label = resolveTokenLabel('token0', resolvedToken0Symbol, effectiveToken0Address)
       const token1Label = resolveTokenLabel('token1', resolvedToken1Symbol, effectiveToken1Address)
       const responseCacheKey = !paginationCursor
@@ -1194,15 +1304,18 @@ export function registerEvmOhlcTool(server: McpServer) {
         if (!include_recent_trades || !volumePanel) return
         recentTradeCandidates.push(trade)
         if (recentTradeCandidates.length > tradeLimit * 4) {
-          recentTradeCandidates.sort((left, right) =>
-            right.timestamp - left.timestamp
-            || (right.log_index ?? 0) - (left.log_index ?? 0),
+          recentTradeCandidates.sort(
+            (left, right) => right.timestamp - left.timestamp || (right.log_index ?? 0) - (left.log_index ?? 0),
           )
           recentTradeCandidates.length = Math.min(recentTradeCandidates.length, tradeLimit * 2)
         }
       }
 
-      const accumulateRange = async (rangeFrom: number, rangeTo: number, options?: { pageStartTimestamp?: number; pageEndExclusive?: number }) => {
+      const accumulateRange = async (
+        rangeFrom: number,
+        rangeTo: number,
+        options?: { pageStartTimestamp?: number; pageEndExclusive?: number },
+      ) => {
         const rangeProcessed = await visitAdaptiveEvmLogRange(dataset, logBody, rangeFrom, rangeTo, async (record) => {
           const block = record as {
             number?: number
@@ -1299,8 +1412,15 @@ export function registerEvmOhlcTool(server: McpServer) {
       }
 
       let backfillAttempts = 0
-      while (earliestObservedBelowPageEnd > seriesStartTimestamp && scannedFromBlock > 0 && backfillAttempts < maxBackfillAttempts) {
-        const observedSeconds = Math.max(1, Math.max(latestTimestamp, seriesEndExclusive - intervalSeconds) - earliestObservedBelowPageEnd)
+      while (
+        earliestObservedBelowPageEnd > seriesStartTimestamp &&
+        scannedFromBlock > 0 &&
+        backfillAttempts < maxBackfillAttempts
+      ) {
+        const observedSeconds = Math.max(
+          1,
+          Math.max(latestTimestamp, seriesEndExclusive - intervalSeconds) - earliestObservedBelowPageEnd,
+        )
         const observedBlocks = Math.max(1, endBlock - earliestObservedBlock + 1)
         const missingSeconds = earliestObservedBelowPageEnd - seriesStartTimestamp
         const estimatedBlocksNeeded = Math.ceil((observedBlocks / observedSeconds) * missingSeconds * 2)
@@ -1321,36 +1441,31 @@ export function registerEvmOhlcTool(server: McpServer) {
         backfillAttempts += 1
       }
 
-      const buildOhlcSeries = (baseSide: BaseTokenSide): OhlcRow[] => Array.from({ length: expectedBuckets }, (_, bucketIndex) => {
-        const bucketTimestamp = seriesStartTimestamp + bucketIndex * intervalSeconds
-        const bucket = bucketsByBase[baseSide].get(bucketTimestamp)
-        const open = formatPriceForOutput(bucket?.open)
-        const high = formatPriceForOutput(bucket?.high)
-        const low = formatPriceForOutput(bucket?.low)
-        const close = formatPriceForOutput(bucket?.close)
-        const direction =
-          open === null || close === null
-            ? 'none'
-            : close > open
-              ? 'up'
-              : close < open
-                ? 'down'
-                : 'flat'
+      const buildOhlcSeries = (baseSide: BaseTokenSide): OhlcRow[] =>
+        Array.from({ length: expectedBuckets }, (_, bucketIndex) => {
+          const bucketTimestamp = seriesStartTimestamp + bucketIndex * intervalSeconds
+          const bucket = bucketsByBase[baseSide].get(bucketTimestamp)
+          const open = formatPriceForOutput(bucket?.open)
+          const high = formatPriceForOutput(bucket?.high)
+          const low = formatPriceForOutput(bucket?.low)
+          const close = formatPriceForOutput(bucket?.close)
+          const direction =
+            open === null || close === null ? 'none' : close > open ? 'up' : close < open ? 'down' : 'flat'
 
-        return {
-          bucket_index: bucketIndex,
-          timestamp: bucketTimestamp,
-          timestamp_human: formatTimestamp(bucketTimestamp),
-          open,
-          high,
-          low,
-          close,
-          base_volume: bucket ? parseFloat(bucket.base_volume.toFixed(6)) : 0,
-          quote_volume: bucket ? parseFloat(bucket.quote_volume.toFixed(6)) : 0,
-          sample_count: bucket?.sample_count ?? 0,
-          direction,
-        }
-      })
+          return {
+            bucket_index: bucketIndex,
+            timestamp: bucketTimestamp,
+            timestamp_human: formatTimestamp(bucketTimestamp),
+            open,
+            high,
+            low,
+            close,
+            base_volume: bucket ? parseFloat(bucket.base_volume.toFixed(6)) : 0,
+            quote_volume: bucket ? parseFloat(bucket.quote_volume.toFixed(6)) : 0,
+            sample_count: bucket?.sample_count ?? 0,
+            direction,
+          }
+        })
 
       const ohlcByBase = {
         token0: buildOhlcSeries('token0'),
@@ -1376,7 +1491,8 @@ export function registerEvmOhlcTool(server: McpServer) {
       const baseLabel = baseTokenSide === 'token0' ? token0Label : token1Label
       const quoteLabel = quoteTokenSide === 'token0' ? token0Label : token1Label
       const ohlc = ohlcByBase[baseTokenSide]
-      const priceScale = resolvedToken0Decimals !== undefined && resolvedToken1Decimals !== undefined ? 'adjusted' : 'raw_ratio'
+      const priceScale =
+        resolvedToken0Decimals !== undefined && resolvedToken1Decimals !== undefined ? 'adjusted' : 'raw_ratio'
       const totalBaseVolume = totalVolumesByBase[baseTokenSide].base
       const totalQuoteVolume = totalVolumesByBase[baseTokenSide].quote
       const priceValues = baseTokenSide === 'token0' ? token0Values : token1Values
@@ -1391,7 +1507,10 @@ export function registerEvmOhlcTool(server: McpServer) {
       const seriesHigh = priceValues.length > 0 ? Math.max(...priceValues) : undefined
       const seriesLow = priceValues.length > 0 ? Math.min(...priceValues) : undefined
       const absoluteChange =
-        firstFilled?.open !== null && firstFilled?.open !== undefined && latestFilled?.close !== null && latestFilled?.close !== undefined
+        firstFilled?.open !== null &&
+        firstFilled?.open !== undefined &&
+        latestFilled?.close !== null &&
+        latestFilled?.close !== undefined
           ? latestFilled.close - firstFilled.open
           : undefined
       const percentChange =
@@ -1404,18 +1523,18 @@ export function registerEvmOhlcTool(server: McpServer) {
         isFilled: (bucket) => bucket.sample_count > 0,
         anchor: 'latest_event',
         windowComplete: earliestObservedBelowPageEnd <= seriesStartTimestamp,
-        ...(earliestObservedTimestamp !== Number.MAX_SAFE_INTEGER ? { firstObservedTimestamp: earliestObservedTimestamp } : {}),
+        ...(earliestObservedTimestamp !== Number.MAX_SAFE_INTEGER
+          ? { firstObservedTimestamp: earliestObservedTimestamp }
+          : {}),
         ...(latestTimestamp > 0 ? { lastObservedTimestamp: latestTimestamp } : {}),
       })
-      const recentTrades = volumePanel && include_recent_trades
-        ? recentTradeCandidates
-          .sort((left, right) =>
-            right.timestamp - left.timestamp
-            || (right.log_index ?? 0) - (left.log_index ?? 0),
-          )
-          .slice(0, tradeLimit)
-          .map((trade) => buildRecentTradeRow(trade, baseTokenSide, baseLabel, quoteLabel))
-        : []
+      const recentTrades =
+        volumePanel && include_recent_trades
+          ? recentTradeCandidates
+              .sort((left, right) => right.timestamp - left.timestamp || (right.log_index ?? 0) - (left.log_index ?? 0))
+              .slice(0, tradeLimit)
+              .map((trade) => buildRecentTradeRow(trade, baseTokenSide, baseLabel, quoteLabel))
+          : []
       const nextCursor =
         seriesStartTimestamp > 0
           ? encodeCursor({
@@ -1452,45 +1571,77 @@ export function registerEvmOhlcTool(server: McpServer) {
 
       const notices: string[] = []
       if (priceScale === 'raw_ratio') {
-        notices.push('Prices use raw pool ratios because token decimals were not fully provided. Pass token0_decimals and token1_decimals for human-readable prices.')
+        notices.push(
+          'Prices use raw pool ratios because token decimals were not fully provided or resolved from token-list data. Pass token0_decimals and token1_decimals for human-readable prices.',
+        )
+      }
+      if (tokenListMetadataFailed) {
+        notices.push('Token-list metadata lookup failed; any missing token symbols or decimals were left unresolved.')
+      }
+      for (const lookup of tokenListMetadataLookups) {
+        notices.push(...buildTokenListLookupNotices(lookup))
       }
       if (mode === 'fast') {
-        notices.push('fast mode prioritizes a quicker preview with lighter historical backfill. Switch to deep if you want the tool to work harder on filling the full window.')
+        notices.push(
+          'fast mode prioritizes a quicker preview with lighter historical backfill. Switch to deep if you want the tool to work harder on filling the full window.',
+        )
       }
       if (isReserveSyncSource(source as EvmOhlcSource)) {
-        notices.push('Sync-derived candles provide reserve-ratio prices only. base_volume and quote_volume stay 0 because Sync events do not expose traded amounts.')
-        notices.push('If the pool also emits Swap events, prefer uniswap_v2_swap for factual trade prices, volumes, and a recent trade tape.')
+        notices.push(
+          'Sync-derived candles provide reserve-ratio prices only. base_volume and quote_volume stay 0 because Sync events do not expose traded amounts.',
+        )
+        notices.push(
+          'If the pool also emits Swap events, prefer uniswap_v2_swap for factual trade prices, volumes, and a recent trade tape.',
+        )
       }
       if (source === 'uniswap_v2_swap') {
-        notices.push('Uniswap v2-style swap candles use actual Swap event amounts, so the chart and recent trade tape reflect executed trades rather than reserve snapshots.')
+        notices.push(
+          'Uniswap v2-style swap candles use actual Swap event amounts, so the chart and recent trade tape reflect executed trades rather than reserve snapshots.',
+        )
       }
       if (source === 'aerodrome_slipstream_swap') {
-        notices.push('Aerodrome Slipstream candles are decoded from its concentrated-liquidity Swap event shape, which is adapted from Uniswap V3.')
+        notices.push(
+          'Aerodrome Slipstream candles are decoded from its concentrated-liquidity Swap event shape, which is adapted from Uniswap V3.',
+        )
       }
       if (source === 'uniswap_v4_swap') {
-        notices.push('Uniswap v4 candles are filtered on the PoolManager Swap event by pool_id rather than a per-pool contract address.')
+        notices.push(
+          'Uniswap v4 candles are filtered on the PoolManager Swap event by pool_id rather than a per-pool contract address.',
+        )
         if (!normalizedCurrency0Address || !normalizedCurrency1Address) {
-          notices.push('pool_id is a one-way hash. Pass currency0_address/currency1_address or token symbols if you want clearer token labeling.')
+          notices.push(
+            'pool_id is a one-way hash. Pass currency0_address/currency1_address, token0_address/token1_address, or token metadata if you want clearer token labeling.',
+          )
         }
         if (v4MetadataResolutionStatus === 'timeout') {
-          notices.push('Skipped the optional Initialize-event metadata lookup after a short timeout. Candles still come from factual Swap events, but labels may stay generic unless you pass the pool key or token metadata.')
+          notices.push(
+            'Skipped the optional Initialize-event metadata lookup after a short timeout. Candles still come from factual Swap events, but labels may stay generic unless you pass the pool key or token metadata.',
+          )
         } else if (v4MetadataResolutionStatus === 'failed') {
-          notices.push('Skipped the optional Initialize-event metadata enrichment after an upstream lookup error. Candles still come from factual Swap events.')
+          notices.push(
+            'Skipped the optional Initialize-event metadata enrichment after an upstream lookup error. Candles still come from factual Swap events.',
+          )
         } else if (v4MetadataResolutionStatus === 'not_found') {
-          notices.push('Did not resolve Initialize-event metadata within the bounded recent lookup budget. Pass the pool key or token metadata if you want richer labels.')
+          notices.push(
+            'Did not resolve Initialize-event metadata within the bounded recent lookup budget. Pass the pool key or token metadata if you want richer labels.',
+          )
         }
         if (derivedPoolIdFromKey) {
           notices.push('pool_id was derived from the provided Uniswap v4 pool key.')
         }
         if (resolvedV4Metadata) {
-          notices.push('Resolved missing Uniswap v4 pool metadata from the on-chain Initialize event so labels and pricing stay factual.')
+          notices.push(
+            'Resolved missing Uniswap v4 pool metadata from the on-chain Initialize event so labels and pricing stay factual.',
+          )
         }
       }
       if (price_in === 'auto') {
         notices.push(orientation.reason)
       }
       if (include_recent_trades && !volumePanel) {
-        notices.push('Recent trade tape is unavailable for Sync-derived reserve snapshots because those events do not carry per-trade amounts.')
+        notices.push(
+          'Recent trade tape is unavailable for Sync-derived reserve snapshots because those events do not carry per-trade amounts.',
+        )
       }
       if (nextCursor) {
         notices.push('Older candles are available via _pagination.next_cursor.')
@@ -1500,11 +1651,15 @@ export function registerEvmOhlcTool(server: McpServer) {
       const querySuggestions: GuidanceQuerySuggestion[] = []
 
       if (priceScale === 'raw_ratio') {
-        recommendedNextSteps.push('Pass token0_decimals and token1_decimals, or token addresses that map to known metadata, so prices render in human units.')
+        recommendedNextSteps.push(
+          'Pass token0_decimals and token1_decimals, or token addresses that resolve through open token-list metadata, so prices render in human units.',
+        )
       }
 
       if (source === 'uniswap_v2_sync') {
-        recommendedNextSteps.push('Use swap-derived candles when available if you want actual traded amounts, trade tape rows, and executed-price candles instead of reserve snapshots.')
+        recommendedNextSteps.push(
+          'Use swap-derived candles when available if you want actual traded amounts, trade tape rows, and executed-price candles instead of reserve snapshots.',
+        )
         querySuggestions.push({
           label: 'Retry with swap-derived candles',
           reason: 'Swap events carry traded token amounts and produce a more chart-friendly tape than Sync events.',
@@ -1516,7 +1671,9 @@ export function registerEvmOhlcTool(server: McpServer) {
       }
 
       if (mode === 'deep' && (chunksFetched >= 3 || backfillAttempts > 0)) {
-        recommendedNextSteps.push('If you mainly need a fast preview chart, rerun with mode=fast to reduce extra backfill work.')
+        recommendedNextSteps.push(
+          'If you mainly need a fast preview chart, rerun with mode=fast to reduce extra backfill work.',
+        )
         querySuggestions.push({
           label: 'Retry in fast mode',
           reason: 'Fast mode uses lighter backfill and shallower v4 metadata lookups for quicker previews.',
@@ -1526,8 +1683,13 @@ export function registerEvmOhlcTool(server: McpServer) {
         })
       }
 
-      if (mode === 'fast' && (!gapDiagnostics.window_complete || gapDiagnostics.coverage_gap_likely_bucket_count > 0 || backfillAttempts > 0)) {
-        recommendedNextSteps.push('Rerun in deep mode if you want the tool to spend more effort filling likely gaps near the start of the requested window.')
+      if (
+        mode === 'fast' &&
+        (!gapDiagnostics.window_complete || gapDiagnostics.coverage_gap_likely_bucket_count > 0 || backfillAttempts > 0)
+      ) {
+        recommendedNextSteps.push(
+          'Rerun in deep mode if you want the tool to spend more effort filling likely gaps near the start of the requested window.',
+        )
         querySuggestions.push({
           label: 'Retry in deep mode',
           reason: 'Deep mode expands backfill further when the quick preview still looks partial.',
@@ -1538,7 +1700,9 @@ export function registerEvmOhlcTool(server: McpServer) {
       }
 
       if (source === 'uniswap_v4_swap' && (!resolvedToken0Symbol || !resolvedToken1Symbol)) {
-        recommendedNextSteps.push('Pass explicit token0_symbol and token1_symbol if you want cleaner labels than raw addresses on a Uniswap v4 pool.')
+        recommendedNextSteps.push(
+          'Pass explicit token0_symbol and token1_symbol if you want cleaner labels than raw addresses on a Uniswap v4 pool.',
+        )
       }
 
       const guidance = {
@@ -1581,9 +1745,9 @@ export function registerEvmOhlcTool(server: McpServer) {
               ? 'Uniswap v3'
               : source === 'uniswap_v2_swap'
                 ? 'Uniswap v2-style CPMM'
-              : source === 'aerodrome_slipstream_swap'
-                ? 'Aerodrome Slipstream'
-                : 'Sync-derived CPMM',
+                : source === 'aerodrome_slipstream_swap'
+                  ? 'Aerodrome Slipstream'
+                  : 'Sync-derived CPMM',
         base_token_side: baseTokenSide,
         quote_token_side: quoteTokenSide,
         source_family: sourceFamily,
@@ -1613,14 +1777,20 @@ export function registerEvmOhlcTool(server: McpServer) {
         ...(latestFilled?.open !== null && latestFilled?.open !== undefined ? { latest_open: latestFilled.open } : {}),
         ...(latestFilled?.high !== null && latestFilled?.high !== undefined ? { latest_high: latestFilled.high } : {}),
         ...(latestFilled?.low !== null && latestFilled?.low !== undefined ? { latest_low: latestFilled.low } : {}),
-        ...(latestFilled?.close !== null && latestFilled?.close !== undefined ? { latest_close: latestFilled.close } : {}),
+        ...(latestFilled?.close !== null && latestFilled?.close !== undefined
+          ? { latest_close: latestFilled.close }
+          : {}),
         ...(seriesHigh !== undefined ? { series_high: seriesHigh } : {}),
         ...(seriesLow !== undefined ? { series_low: seriesLow } : {}),
         ...(absoluteChange !== undefined ? { price_change_abs: absoluteChange } : {}),
         ...(percentChange !== undefined ? { price_change_pct: percentChange } : {}),
         ...(latestFilled ? { latest_bucket_volume: latestFilled.base_volume } : {}),
-        ...(resolvedV4Metadata?.initialized_block !== undefined ? { pool_initialized_block: resolvedV4Metadata.initialized_block } : {}),
-        ...(resolvedV4Metadata?.initialized_timestamp !== undefined ? { pool_initialized_timestamp: resolvedV4Metadata.initialized_timestamp } : {}),
+        ...(resolvedV4Metadata?.initialized_block !== undefined
+          ? { pool_initialized_block: resolvedV4Metadata.initialized_block }
+          : {}),
+        ...(resolvedV4Metadata?.initialized_timestamp !== undefined
+          ? { pool_initialized_timestamp: resolvedV4Metadata.initialized_timestamp }
+          : {}),
         ...(chunksFetched > 1 ? { chunks_fetched: chunksFetched } : {}),
         ...(backfillAttempts > 0 ? { backfill_attempts: backfillAttempts } : {}),
       }
@@ -1686,8 +1856,12 @@ export function registerEvmOhlcTool(server: McpServer) {
           ...(normalizedHooksAddress !== ZERO_ADDRESS ? { hooks_address: normalizedHooksAddress } : {}),
           metadata_resolution_status: v4MetadataResolutionStatus,
           metadata_resolved_from_initialize: Boolean(resolvedV4Metadata),
-          ...(resolvedV4Metadata?.initialized_block !== undefined ? { initialized_block: resolvedV4Metadata.initialized_block } : {}),
-          ...(resolvedV4Metadata?.initialized_timestamp !== undefined ? { initialized_timestamp: resolvedV4Metadata.initialized_timestamp } : {}),
+          ...(resolvedV4Metadata?.initialized_block !== undefined
+            ? { initialized_block: resolvedV4Metadata.initialized_block }
+            : {}),
+          ...(resolvedV4Metadata?.initialized_timestamp !== undefined
+            ? { initialized_timestamp: resolvedV4Metadata.initialized_timestamp }
+            : {}),
         },
         trade_tape: {
           included: include_recent_trades && volumePanel,
@@ -1708,7 +1882,12 @@ export function registerEvmOhlcTool(server: McpServer) {
           { key: 'close', label: 'Close', format: priceValueFormat, unit: summary.price_unit, emphasis: 'primary' },
           ...(volumePanel
             ? [
-                { key: 'base_volume', label: `${baseLabel} volume`, format: volumeValueFormat, unit: baseLabel } as const,
+                {
+                  key: 'base_volume',
+                  label: `${baseLabel} volume`,
+                  format: volumeValueFormat,
+                  unit: baseLabel,
+                } as const,
                 { key: 'sample_count', label: 'Samples', format: 'integer' } as const,
               ]
             : [{ key: 'sample_count', label: 'Samples', format: 'integer' } as const]),
@@ -1725,10 +1904,35 @@ export function registerEvmOhlcTool(server: McpServer) {
           subtitle: `${summary.venue_label} • ${resolvedInterval} candles over ${duration}`,
         },
         metric_cards: [
-          buildMetricCard({ id: 'last_close', label: 'Last close', value_path: 'summary.latest_close', format: priceValueFormat, unit: summary.price_unit, emphasis: 'primary' }),
-          buildMetricCard({ id: 'change_pct', label: 'Change', value_path: 'summary.price_change_pct', format: 'percent', emphasis: 'primary' }),
-          buildMetricCard({ id: 'series_high', label: 'High', value_path: 'summary.series_high', format: priceValueFormat, unit: summary.price_unit }),
-          buildMetricCard({ id: 'series_low', label: 'Low', value_path: 'summary.series_low', format: priceValueFormat, unit: summary.price_unit }),
+          buildMetricCard({
+            id: 'last_close',
+            label: 'Last close',
+            value_path: 'summary.latest_close',
+            format: priceValueFormat,
+            unit: summary.price_unit,
+            emphasis: 'primary',
+          }),
+          buildMetricCard({
+            id: 'change_pct',
+            label: 'Change',
+            value_path: 'summary.price_change_pct',
+            format: 'percent',
+            emphasis: 'primary',
+          }),
+          buildMetricCard({
+            id: 'series_high',
+            label: 'High',
+            value_path: 'summary.series_high',
+            format: priceValueFormat,
+            unit: summary.price_unit,
+          }),
+          buildMetricCard({
+            id: 'series_low',
+            label: 'Low',
+            value_path: 'summary.series_low',
+            format: priceValueFormat,
+            unit: summary.price_unit,
+          }),
           buildMetricCard({
             id: 'base_volume',
             label: 'Volume',
@@ -1742,7 +1946,8 @@ export function registerEvmOhlcTool(server: McpServer) {
             id: 'candles',
             kind: 'chart_panel',
             title: `${summary.pair_label} price action`,
-            subtitle: 'Candles plus color-matched volume bars. Hover for O/H/L/C and volume; drag to zoom narrower windows.',
+            subtitle:
+              'Candles plus color-matched volume bars. Hover for O/H/L/C and volume; drag to zoom narrower windows.',
             chart_key: 'chart',
             emphasis: 'primary',
           }),
@@ -1754,19 +1959,25 @@ export function registerEvmOhlcTool(server: McpServer) {
             table_id: 'ohlc',
           }),
           ...(recentTrades.length > 0
-            ? [buildTablePanel({
-                id: 'recent-trades-table',
-                kind: 'table_panel',
-                title: 'Recent trades',
-                subtitle: 'Newest swap events in descending time order for a Dexscreener-style tape.',
-                table_id: 'recent_trades',
-              })]
+            ? [
+                buildTablePanel({
+                  id: 'recent-trades-table',
+                  kind: 'table_panel',
+                  title: 'Recent trades',
+                  subtitle: 'Newest swap events in descending time order for a Dexscreener-style tape.',
+                  table_id: 'recent_trades',
+                }),
+              ]
             : []),
         ],
         follow_up_actions: [
-          ...(nextCursor ? [{ label: 'Load older candles', intent: 'continue' as const, target: '_pagination.next_cursor' }] : []),
+          ...(nextCursor
+            ? [{ label: 'Load older candles', intent: 'continue' as const, target: '_pagination.next_cursor' }]
+            : []),
           { label: 'Show raw candle rows', intent: 'show_raw', target: 'ohlc' },
-          ...(recentTrades.length > 0 ? [{ label: 'Show recent trades', intent: 'show_raw' as const, target: 'recent_trades' }] : []),
+          ...(recentTrades.length > 0
+            ? [{ label: 'Show recent trades', intent: 'show_raw' as const, target: 'recent_trades' }]
+            : []),
           { label: 'Zoom into the latest move', intent: 'zoom_in', target: 'chart' },
         ],
       })
@@ -1794,30 +2005,55 @@ export function registerEvmOhlcTool(server: McpServer) {
               rowCount: ohlc.length,
               title: `${summary.pair_label} candle table`,
               subtitle: 'Bucket-aligned OHLC values for each interval',
-              ...(volumePanel ? { volumeField: 'base_volume', volumeLabel: `${baseLabel} volume`, volumeUnit: baseLabel } : {}),
+              ...(volumePanel
+                ? { volumeField: 'base_volume', volumeLabel: `${baseLabel} volume`, volumeUnit: baseLabel }
+                : {}),
               priceUnit: summary.price_unit,
               priceFormat: priceValueFormat,
             }),
             ...(recentTrades.length > 0
-              ? [buildTableDescriptor({
-                  id: 'recent_trades',
-                  dataKey: 'recent_trades',
-                  rowCount: recentTrades.length,
-                  title: `${summary.pair_label} recent trades`,
-                  subtitle: 'Newest trades first, ready for a lower trade tape panel.',
-                  keyField: 'tx_hash',
-                  defaultSort: { key: 'timestamp', direction: 'desc' },
-                  dense: true,
-                  columns: [
-                    { key: 'timestamp_human', label: 'Time', kind: 'time', format: 'timestamp_human' },
-                    { key: 'side', label: 'Side', kind: 'dimension' },
-                    { key: 'price', label: 'Price', kind: 'metric', format: priceValueFormat, unit: summary.price_unit, align: 'right' },
-                    { key: 'base_amount', label: `${baseLabel} amount`, kind: 'metric', format: volumeValueFormat, unit: baseLabel, align: 'right' },
-                    { key: 'quote_amount', label: `${quoteLabel} amount`, kind: 'metric', format: volumeValueFormat, unit: quoteLabel, align: 'right' },
-                    { key: 'sender', label: 'Sender', kind: 'dimension', format: 'address' },
-                    { key: 'tx_hash', label: 'Tx hash', kind: 'dimension', format: 'address' },
-                  ],
-                })]
+              ? [
+                  buildTableDescriptor({
+                    id: 'recent_trades',
+                    dataKey: 'recent_trades',
+                    rowCount: recentTrades.length,
+                    title: `${summary.pair_label} recent trades`,
+                    subtitle: 'Newest trades first, ready for a lower trade tape panel.',
+                    keyField: 'tx_hash',
+                    defaultSort: { key: 'timestamp', direction: 'desc' },
+                    dense: true,
+                    columns: [
+                      { key: 'timestamp_human', label: 'Time', kind: 'time', format: 'timestamp_human' },
+                      { key: 'side', label: 'Side', kind: 'dimension' },
+                      {
+                        key: 'price',
+                        label: 'Price',
+                        kind: 'metric',
+                        format: priceValueFormat,
+                        unit: summary.price_unit,
+                        align: 'right',
+                      },
+                      {
+                        key: 'base_amount',
+                        label: `${baseLabel} amount`,
+                        kind: 'metric',
+                        format: volumeValueFormat,
+                        unit: baseLabel,
+                        align: 'right',
+                      },
+                      {
+                        key: 'quote_amount',
+                        label: `${quoteLabel} amount`,
+                        kind: 'metric',
+                        format: volumeValueFormat,
+                        unit: quoteLabel,
+                        align: 'right',
+                      },
+                      { key: 'sender', label: 'Sender', kind: 'dimension', format: 'address' },
+                      { key: 'tx_hash', label: 'Tx hash', kind: 'dimension', format: 'address' },
+                    ],
+                  }),
+                ]
               : []),
           ],
           gap_diagnostics: gapDiagnostics,
@@ -1853,12 +2089,21 @@ export function registerEvmOhlcTool(server: McpServer) {
               `Source family: ${sourceFamily}; price method: ${priceMethod}.`,
               ...(volumePanel
                 ? ['Volume fields come from swap-level token amounts emitted in each event.']
-                : ['Volume fields are unavailable for this source because reserve Sync events do not expose per-trade amounts.']),
+                : [
+                    'Volume fields are unavailable for this source because reserve Sync events do not expose per-trade amounts.',
+                  ]),
             ],
           }),
           ui,
           llm: {
-            answer_sequence: ['market_context.price.latest_close', 'summary.total_base_volume', 'summary.total_quote_volume', 'summary.filled_buckets', 'ohlc', 'recent_trades'],
+            answer_sequence: [
+              'market_context.price.latest_close',
+              'summary.total_base_volume',
+              'summary.total_quote_volume',
+              'summary.filled_buckets',
+              'ohlc',
+              'recent_trades',
+            ],
             parser_notes: [
               'Use _llm.metric_cards and primary_preview for the headline price before scanning rows.',
               'Check _coverage and gap_diagnostics before claiming the window is complete.',

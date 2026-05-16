@@ -6,19 +6,28 @@ import { createQueryCache, stableCacheKey } from '../../cache/query-cache.js'
 import { EVENT_SIGNATURES, PORTAL_URL } from '../../constants/index.js'
 import { detectChainType, isL2Chain } from '../../helpers/chain.js'
 import { buildTableDescriptor } from '../../helpers/chart-metadata.js'
+import {
+  buildTokenListLookupNotices,
+  getTokenMetadataMapForDatasetWithStatus,
+} from '../../helpers/entity-resolution.js'
 import { ActionableError, createUnsupportedChainError } from '../../helpers/errors.js'
 import { portalFetchRecentRecords } from '../../helpers/fetch.js'
-import { getKnownTokenDecimals } from '../../helpers/conversions.js'
 import { buildEvmLogFields } from '../../helpers/fields.js'
 import { formatResult, humanizeLabel } from '../../helpers/format.js'
 import { formatTimestamp, formatTokenAmount, formatTransactionFields, hexToBigInt } from '../../helpers/formatting.js'
 import { normalizeEvmTransactionResult } from '../../helpers/normalized-results.js'
-import { encodeCursor, decodeCursor, paginateAscendingItems } from '../../helpers/pagination.js'
+import { decodeCursor, encodeCursor, paginateAscendingItems } from '../../helpers/pagination.js'
 import { buildWalletPipesRecipe } from '../../helpers/pipes-recipe.js'
 import { buildQueryFreshness, buildSectionCoverage } from '../../helpers/result-metadata.js'
-import { resolveTimeframeOrBlocks, type TimestampInput } from '../../helpers/timeframe.js'
+import { type TimestampInput, resolveTimeframeOrBlocks } from '../../helpers/timeframe.js'
 import { buildExecutionMetadata, buildToolDescription } from '../../helpers/tool-ux.js'
-import { buildMetricCard, buildPortalUi, buildTablePanel, buildTimelinePanel, buildStatListPanel } from '../../helpers/ui-metadata.js'
+import {
+  buildMetricCard,
+  buildPortalUi,
+  buildStatListPanel,
+  buildTablePanel,
+  buildTimelinePanel,
+} from '../../helpers/ui-metadata.js'
 import { normalizeEvmAddress } from '../../helpers/validation.js'
 
 // ============================================================================
@@ -63,6 +72,7 @@ type WalletSectionPage<T> = {
   pageItems: T[]
   hasMore: boolean
   nextBoundary: WalletBoundaryCursor | null
+  notices?: string[]
 }
 
 const WALLET_SECTION_CACHE_TTL_MS = 30_000
@@ -207,7 +217,12 @@ async function fetchCachedWalletSection(params: {
 }
 
 function compactWalletTransactionItem(tx: WalletTransactionItem) {
-  const txHash = typeof tx['hash'] === 'string' ? String(tx['hash']) : typeof tx['tx_hash'] === 'string' ? String(tx['tx_hash']) : undefined
+  const txHash =
+    typeof tx['hash'] === 'string'
+      ? String(tx['hash'])
+      : typeof tx['tx_hash'] === 'string'
+        ? String(tx['tx_hash'])
+        : undefined
   const timestamp = typeof tx['timestamp'] === 'number' ? Number(tx['timestamp']) : undefined
 
   return {
@@ -341,9 +356,16 @@ function buildBitcoinInputsTable(title: string, rowCount: number) {
   })
 }
 
-function buildTopCounterparties(items: Array<Record<string, unknown>>, walletAddress: string, limit: number = 5): WalletCounterpartyRow[] {
+function buildTopCounterparties(
+  items: Array<Record<string, unknown>>,
+  walletAddress: string,
+  limit: number = 5,
+): WalletCounterpartyRow[] {
   const normalizedWallet = walletAddress.toLowerCase()
-  const counterparties = new Map<string, { activityCount: number; sentCount: number; receivedCount: number; recordTypes: Set<string> }>()
+  const counterparties = new Map<
+    string,
+    { activityCount: number; sentCount: number; receivedCount: number; recordTypes: Set<string> }
+  >()
 
   for (const item of items) {
     const sender = typeof item.sender === 'string' ? item.sender.toLowerCase() : undefined
@@ -413,7 +435,9 @@ function buildWalletUi(params: {
   primaryFormat?: 'integer' | 'decimal' | 'currency_usd' | 'btc'
   primaryUnit?: string
   secondaryCards?: Array<ReturnType<typeof buildMetricCard>>
-  panels?: Array<ReturnType<typeof buildTablePanel> | ReturnType<typeof buildTimelinePanel> | ReturnType<typeof buildStatListPanel>>
+  panels?: Array<
+    ReturnType<typeof buildTablePanel> | ReturnType<typeof buildTimelinePanel> | ReturnType<typeof buildStatListPanel>
+  >
   followUpActions?: Array<{ label: string; intent: 'continue' | 'show_raw' | 'drilldown'; target?: string }>
 }) {
   return buildPortalUi({
@@ -427,22 +451,26 @@ function buildWalletUi(params: {
     },
     metric_cards: [
       ...(params.activityCountPath
-        ? [buildMetricCard({
-            id: 'activity-count',
-            label: 'Activity',
-            value_path: params.activityCountPath,
-            format: 'integer',
-            emphasis: 'primary',
-          })]
+        ? [
+            buildMetricCard({
+              id: 'activity-count',
+              label: 'Activity',
+              value_path: params.activityCountPath,
+              format: 'integer',
+              emphasis: 'primary',
+            }),
+          ]
         : []),
       ...(params.primaryValuePath
-        ? [buildMetricCard({
-            id: 'primary-value',
-            label: params.primaryLabel ?? 'Primary',
-            value_path: params.primaryValuePath,
-            ...(params.primaryFormat ? { format: params.primaryFormat } : {}),
-            ...(params.primaryUnit ? { unit: params.primaryUnit } : {}),
-          })]
+        ? [
+            buildMetricCard({
+              id: 'primary-value',
+              label: params.primaryLabel ?? 'Primary',
+              value_path: params.primaryValuePath,
+              ...(params.primaryFormat ? { format: params.primaryFormat } : {}),
+              ...(params.primaryUnit ? { unit: params.primaryUnit } : {}),
+            }),
+          ]
         : []),
       ...(params.secondaryCards ?? []),
     ],
@@ -473,10 +501,38 @@ function buildWalletUi(params: {
 
 function buildWalletLlmOverrides(vm: 'evm' | 'solana' | 'bitcoin' | 'hyperliquid') {
   const answerSequenceByVm: Record<typeof vm, string[]> = {
-    evm: ['overview', 'activity.count', 'evm.transactions.count', 'relationships.top_counterparties', 'assets.token_transfers', 'assets.nft_transfers', 'activity.items'],
-    solana: ['overview', 'activity.count', 'solana.fee_summary.total_fees_lamports', 'solana.fee_summary.avg_fee_lamports', 'activity.items'],
-    bitcoin: ['overview', 'activity.count', 'assets.total_btc_received_sats', 'assets.total_btc_spent_sats', 'bitcoin.outputs_count', 'bitcoin.inputs_count', 'activity.items'],
-    hyperliquid: ['overview', 'activity.count', 'hyperliquid.fee_summary.total_fees', 'assets.volume_by_coin', 'activity.items'],
+    evm: [
+      'overview',
+      'activity.count',
+      'evm.transactions.count',
+      'relationships.top_counterparties',
+      'assets.token_transfers',
+      'assets.nft_transfers',
+      'activity.items',
+    ],
+    solana: [
+      'overview',
+      'activity.count',
+      'solana.fee_summary.total_fees_lamports',
+      'solana.fee_summary.avg_fee_lamports',
+      'activity.items',
+    ],
+    bitcoin: [
+      'overview',
+      'activity.count',
+      'assets.total_btc_received_sats',
+      'assets.total_btc_spent_sats',
+      'bitcoin.outputs_count',
+      'bitcoin.inputs_count',
+      'activity.items',
+    ],
+    hyperliquid: [
+      'overview',
+      'activity.count',
+      'hyperliquid.fee_summary.total_fees',
+      'assets.volume_by_coin',
+      'activity.items',
+    ],
   }
 
   const parserNotesByVm: Record<typeof vm, string[]> = {
@@ -539,9 +595,22 @@ export function registerGetWalletSummaryTool(server: McpServer) {
         .describe('fast = cap the scanned window for responsiveness, deep = use the full requested wallet window'),
       cursor: z.string().optional().describe('Continuation cursor from a previous response'),
     },
-    async ({ network, address, timeframe, from_timestamp, to_timestamp, include_tokens, include_nfts, limit_per_type, mode, cursor }) => {
+    async ({
+      network,
+      address,
+      timeframe,
+      from_timestamp,
+      to_timestamp,
+      include_tokens,
+      include_nfts,
+      limit_per_type,
+      mode,
+      cursor,
+    }) => {
       const queryStartTime = Date.now()
-      const paginationCursor = cursor ? decodeCursor<WalletSummaryCursor>(cursor, 'portal_get_wallet_summary') : undefined
+      const paginationCursor = cursor
+        ? decodeCursor<WalletSummaryCursor>(cursor, 'portal_get_wallet_summary')
+        : undefined
       const requestedDataset = network ? await resolveDataset(network) : undefined
       let dataset = paginationCursor?.dataset ?? requestedDataset
       if (!dataset) {
@@ -590,22 +659,30 @@ export function registerGetWalletSummaryTool(server: McpServer) {
       }
 
       if (paginationCursor && requestedDataset && paginationCursor.dataset !== requestedDataset) {
-        throw new ActionableError('This cursor belongs to a different network.', [
-          'Reuse the cursor with the same network and wallet address.',
-          'Omit cursor to start a fresh wallet summary.',
-        ], {
-          cursor_dataset: paginationCursor.dataset,
-          requested_dataset: requestedDataset,
-        })
+        throw new ActionableError(
+          'This cursor belongs to a different network.',
+          [
+            'Reuse the cursor with the same network and wallet address.',
+            'Omit cursor to start a fresh wallet summary.',
+          ],
+          {
+            cursor_dataset: paginationCursor.dataset,
+            requested_dataset: requestedDataset,
+          },
+        )
       }
       if (paginationCursor && requestedAddress && paginationCursor.address !== requestedAddress) {
-        throw new ActionableError('This cursor belongs to a different wallet address.', [
-          'Reuse the cursor with the same wallet address as the previous response.',
-          'Omit cursor to start a fresh wallet summary.',
-        ], {
-          cursor_address: paginationCursor.address,
-          requested_address: requestedAddress,
-        })
+        throw new ActionableError(
+          'This cursor belongs to a different wallet address.',
+          [
+            'Reuse the cursor with the same wallet address as the previous response.',
+            'Omit cursor to start a fresh wallet summary.',
+          ],
+          {
+            cursor_address: paginationCursor.address,
+            requested_address: requestedAddress,
+          },
+        )
       }
 
       if (paginationCursor) {
@@ -630,7 +707,9 @@ export function registerGetWalletSummaryTool(server: McpServer) {
       let fromBlock: number
       let windowToBlock: number
       let head = paginationCursor ? await getBlockHead(dataset) : undefined
-      let resolvedWindow: { range_kind: string; from_lookup?: never; to_lookup?: never } | Awaited<ReturnType<typeof resolveTimeframeOrBlocks>>
+      let resolvedWindow:
+        | { range_kind: string; from_lookup?: never; to_lookup?: never }
+        | Awaited<ReturnType<typeof resolveTimeframeOrBlocks>>
       let windowDescription = timeframe
 
       if (paginationCursor) {
@@ -665,8 +744,11 @@ export function registerGetWalletSummaryTool(server: McpServer) {
           resolvedWindow = resolved
           head = await getBlockHead(dataset)
           if (from_timestamp !== undefined || to_timestamp !== undefined) {
-            const fromLabel = resolved.from_lookup?.normalized_input ?? (from_timestamp !== undefined ? String(from_timestamp) : 'start')
-            const toLabel = resolved.to_lookup?.normalized_input ?? (to_timestamp !== undefined ? String(to_timestamp) : 'now')
+            const fromLabel =
+              resolved.from_lookup?.normalized_input ??
+              (from_timestamp !== undefined ? String(from_timestamp) : 'start')
+            const toLabel =
+              resolved.to_lookup?.normalized_input ?? (to_timestamp !== undefined ? String(to_timestamp) : 'now')
             windowDescription = `${fromLabel} -> ${toLabel}`
           }
         }
@@ -756,19 +838,20 @@ export function registerGetWalletSummaryTool(server: McpServer) {
               const blockNumber = typedBlock.number ?? typedBlock.header?.number
               const timestamp = typedBlock.timestamp ?? typedBlock.header?.timestamp
 
-              return (typedBlock.transactions || []).map((tx) =>
-                normalizeEvmTransactionResult(
-                  formatTransactionFields({
-                    ...tx,
-                    ...(blockNumber !== undefined ? { block_number: blockNumber } : {}),
-                    ...(timestamp !== undefined
-                      ? {
-                          timestamp,
-                          timestamp_human: formatTimestamp(timestamp),
-                        }
-                      : {}),
-                  }),
-                ) as WalletTransactionItem,
+              return (typedBlock.transactions || []).map(
+                (tx) =>
+                  normalizeEvmTransactionResult(
+                    formatTransactionFields({
+                      ...tx,
+                      ...(blockNumber !== undefined ? { block_number: blockNumber } : {}),
+                      ...(timestamp !== undefined
+                        ? {
+                            timestamp,
+                            timestamp_human: formatTimestamp(timestamp),
+                          }
+                        : {}),
+                    }),
+                  ) as WalletTransactionItem,
               )
             }),
           ),
@@ -780,7 +863,7 @@ export function registerGetWalletSummaryTool(server: McpServer) {
         return {
           pageItems: pagedTransactions.pageItems,
           hasMore: pagedTransactions.hasMore,
-          nextBoundary: pagedTransactions.hasMore ? pagedTransactions.nextBoundary ?? null : null,
+          nextBoundary: pagedTransactions.hasMore ? (pagedTransactions.nextBoundary ?? null) : null,
         }
       }
 
@@ -824,6 +907,19 @@ export function registerGetWalletSummaryTool(server: McpServer) {
           chunkSize: 250,
         })
 
+        let tokenMetadataByAddress = new Map<string, { symbol?: string; name?: string; decimals?: number }>()
+        const tokenMetadataNotices: string[] = []
+        try {
+          const tokenMetadataResult = await getTokenMetadataMapForDatasetWithStatus(dataset)
+          tokenMetadataByAddress = tokenMetadataResult.metadata
+          tokenMetadataNotices.push(...buildTokenListLookupNotices(tokenMetadataResult.lookup))
+        } catch (error) {
+          console.error('Failed to fetch token-list metadata:', error)
+          tokenMetadataNotices.push(
+            'Token-list metadata enrichment failed; token transfer values use 18 decimals unless a known token match was already cached.',
+          )
+        }
+
         const pagedTokens = paginateAscendingItems(
           sortLogs(
             tokenResults.flatMap((block: unknown) => {
@@ -841,18 +937,21 @@ export function registerGetWalletSummaryTool(server: McpServer) {
               return (typedBlock.logs || []).map((log) => {
                 const tokenAddress = log.address.toLowerCase()
                 const rawValue = log.data
-                const decimals = getKnownTokenDecimals(tokenAddress) ?? 18
-                const formattedValue = formatTokenAmount(rawValue, decimals, undefined)
+                const tokenInfo = tokenMetadataByAddress.get(tokenAddress)
+                const decimals = tokenInfo?.decimals ?? 18
+                const formattedValue = formatTokenAmount(rawValue, decimals, tokenInfo?.symbol)
 
                 return {
                   block_number: typedBlock.header?.number,
                   timestamp: typedBlock.header?.timestamp,
-                  timestamp_human: typedBlock.header?.timestamp ? formatTimestamp(typedBlock.header.timestamp) : undefined,
+                  timestamp_human: typedBlock.header?.timestamp
+                    ? formatTimestamp(typedBlock.header.timestamp)
+                    : undefined,
                   transaction_hash: log.transactionHash,
                   log_index: log.logIndex,
                   token_address: tokenAddress,
-                  token_name: undefined,
-                  token_symbol: undefined,
+                  token_name: tokenInfo?.name,
+                  token_symbol: tokenInfo?.symbol,
                   from: '0x' + (log.topics?.[1]?.slice(-40) || ''),
                   to: '0x' + (log.topics?.[2]?.slice(-40) || ''),
                   value_raw: rawValue,
@@ -871,7 +970,8 @@ export function registerGetWalletSummaryTool(server: McpServer) {
         return {
           pageItems: pagedTokens.pageItems,
           hasMore: pagedTokens.hasMore,
-          nextBoundary: pagedTokens.hasMore ? pagedTokens.nextBoundary ?? null : null,
+          nextBoundary: pagedTokens.hasMore ? (pagedTokens.nextBoundary ?? null) : null,
+          notices: tokenMetadataNotices,
         }
       }
 
@@ -941,15 +1041,18 @@ export function registerGetWalletSummaryTool(server: McpServer) {
                 }>
               }
 
-              return (typedBlock.logs || []).map((log) => ({
-                block_number: typedBlock.header?.number,
-                timestamp: typedBlock.header?.timestamp,
-                transaction_hash: log.transactionHash,
-                log_index: log.logIndex,
-                contract_address: log.address,
-                token_id: log.topics?.[3],
-                data: log.data,
-              }) as WalletLogItem)
+              return (typedBlock.logs || []).map(
+                (log) =>
+                  ({
+                    block_number: typedBlock.header?.number,
+                    timestamp: typedBlock.header?.timestamp,
+                    transaction_hash: log.transactionHash,
+                    log_index: log.logIndex,
+                    contract_address: log.address,
+                    token_id: log.topics?.[3],
+                    data: log.data,
+                  }) as WalletLogItem,
+              )
             }),
           ),
           limit_per_type,
@@ -960,7 +1063,7 @@ export function registerGetWalletSummaryTool(server: McpServer) {
         return {
           pageItems: pagedNfts.pageItems,
           hasMore: pagedNfts.hasMore,
-          nextBoundary: pagedNfts.hasMore ? pagedNfts.nextBoundary ?? null : null,
+          nextBoundary: pagedNfts.hasMore ? (pagedNfts.nextBoundary ?? null) : null,
         }
       }
 
@@ -1003,6 +1106,7 @@ export function registerGetWalletSummaryTool(server: McpServer) {
         : undefined
 
       const notices: string[] = []
+      notices.push(...(tokenSection.notices ?? []))
       if (hasMore) {
         const limitedItems = []
         if (txHasMore) limitedItems.push('transactions')
@@ -1127,9 +1231,24 @@ export function registerGetWalletSummaryTool(server: McpServer) {
           primaryLabel: 'Transactions',
           primaryFormat: 'integer',
           secondaryCards: [
-            buildMetricCard({ id: 'counterparties', label: 'Counterparties', value_path: 'relationships.top_counterparties.length', format: 'integer' }),
-            buildMetricCard({ id: 'token-transfers', label: 'Token transfers', value_path: 'assets.token_transfers', format: 'integer' }),
-            buildMetricCard({ id: 'nft-transfers', label: 'NFT transfers', value_path: 'assets.nft_transfers', format: 'integer' }),
+            buildMetricCard({
+              id: 'counterparties',
+              label: 'Counterparties',
+              value_path: 'relationships.top_counterparties.length',
+              format: 'integer',
+            }),
+            buildMetricCard({
+              id: 'token-transfers',
+              label: 'Token transfers',
+              value_path: 'assets.token_transfers',
+              format: 'integer',
+            }),
+            buildMetricCard({
+              id: 'nft-transfers',
+              label: 'NFT transfers',
+              value_path: 'assets.nft_transfers',
+              format: 'integer',
+            }),
           ],
           panels: [
             buildTimelinePanel({
@@ -1163,7 +1282,15 @@ export function registerGetWalletSummaryTool(server: McpServer) {
             }),
           ],
           followUpActions: [
-            ...(nextCursor ? [{ label: 'Load older wallet activity', intent: 'continue' as const, target: '_pagination.next_cursor' }] : []),
+            ...(nextCursor
+              ? [
+                  {
+                    label: 'Load older wallet activity',
+                    intent: 'continue' as const,
+                    target: '_pagination.next_cursor',
+                  },
+                ]
+              : []),
             { label: 'Show raw activity rows', intent: 'show_raw', target: 'activity.items' },
           ],
         }),
@@ -1191,7 +1318,8 @@ async function buildNonEvmWalletSummary(params: {
   limit_per_type: number
   queryStartTime: number
 }) {
-  const { dataset, chainType, address, timeframe, from_timestamp, to_timestamp, mode, limit_per_type, queryStartTime } = params
+  const { dataset, chainType, address, timeframe, from_timestamp, to_timestamp, mode, limit_per_type, queryStartTime } =
+    params
   const networkLabel = humanizeLabel(dataset) ?? dataset
   const pipesRecipe = buildWalletPipesRecipe({
     network: dataset,
@@ -1226,7 +1354,9 @@ async function buildNonEvmWalletSummary(params: {
   const requestedFromBlock = resolvedWindow.from_block
   const toBlock = resolvedWindow.to_block
   let fromBlock = requestedFromBlock
-  const notices = ['This non-EVM wallet summary currently returns a fast cross-chain overview rather than the richer EVM multi-section scan.']
+  const notices = [
+    'This non-EVM wallet summary currently returns a fast cross-chain overview rather than the richer EVM multi-section scan.',
+  ]
 
   if (mode === 'fast') {
     const fastBlockCap =
@@ -1238,7 +1368,9 @@ async function buildNonEvmWalletSummary(params: {
 
     if (fastBlockCap !== undefined && toBlock - fromBlock + 1 > fastBlockCap) {
       fromBlock = Math.max(fromBlock, toBlock - fastBlockCap + 1)
-      notices.push(`Fast mode analyzed the most recent ${fastBlockCap.toLocaleString()} blocks in the requested wallet window.`)
+      notices.push(
+        `Fast mode analyzed the most recent ${fastBlockCap.toLocaleString()} blocks in the requested wallet window.`,
+      )
     }
   }
 
@@ -1283,289 +1415,347 @@ async function buildNonEvmWalletSummary(params: {
     })
     const totalFees = items.reduce((sum, item) => sum + Number(item.fee || 0), 0)
 
-    return formatResult({
-      overview: {
-        network: dataset,
-        vm: 'solana',
-        address,
-        from_block: requestedFromBlock,
-        to_block: toBlock,
-        analyzed_from_block: fromBlock,
-        recent_activity_count: items.length,
-        mode,
+    return formatResult(
+      {
+        overview: {
+          network: dataset,
+          vm: 'solana',
+          address,
+          from_block: requestedFromBlock,
+          to_block: toBlock,
+          analyzed_from_block: fromBlock,
+          recent_activity_count: items.length,
+          mode,
+        },
+        activity: {
+          count: items.length,
+          items,
+        },
+        assets: {
+          token_balance_changes: [],
+        },
+        solana: {
+          fee_summary: {
+            total_fees_lamports: totalFees,
+            avg_fee_lamports: items.length > 0 ? totalFees / items.length : 0,
+          },
+        },
+        tables: [buildWalletActivityTable('Wallet activity', items.length)],
       },
-      activity: {
-        count: items.length,
-        items,
-      },
-      assets: {
-        token_balance_changes: [],
-      },
-      solana: {
-        fee_summary: {
-          total_fees_lamports: totalFees,
-          avg_fee_lamports: items.length > 0 ? totalFees / items.length : 0,
+      `Wallet summary for ${address} on ${networkLabel}: ${items.length} recent Solana transactions.`,
+      {
+        toolName: 'portal_get_wallet_summary',
+        notices,
+        pagination: buildSectionPagination(items.length, false),
+        freshness: buildQueryFreshness({
+          finality: 'latest',
+          headBlockNumber: head.number,
+          windowToBlock: toBlock,
+          resolvedWindow,
+        }),
+        execution: buildExecutionMetadata({
+          mode,
+          from_block: fromBlock,
+          to_block: toBlock,
+          range_kind: resolvedWindow.range_kind,
+          normalized_output: true,
+        }),
+        pipes: pipesRecipe,
+        ui: buildWalletUi({
+          title: `Wallet summary: ${address}`,
+          subtitle: `${describeWalletWindow(timeframe)} on ${networkLabel}`,
+          activityCountPath: 'activity.count',
+          primaryValuePath: 'solana.fee_summary.total_fees_lamports',
+          primaryLabel: 'Total fees',
+          primaryFormat: 'decimal',
+          secondaryCards: [
+            buildMetricCard({
+              id: 'avg-fee',
+              label: 'Average fee',
+              value_path: 'solana.fee_summary.avg_fee_lamports',
+              format: 'decimal',
+            }),
+          ],
+          followUpActions: [{ label: 'Show raw activity rows', intent: 'show_raw', target: 'activity.items' }],
+        }),
+        llm: buildWalletLlmOverrides('solana'),
+        coverage: buildSectionCoverage({
+          windowFromBlock: fromBlock,
+          windowToBlock: toBlock,
+          hasMore: false,
+          sections: {
+            activity: buildSectionPagination(items.length, false),
+          },
+        }),
+        metadata: {
+          network: dataset,
+          dataset,
+          from_block: fromBlock,
+          to_block: toBlock,
+          query_start_time: queryStartTime,
         },
       },
-      tables: [
-        buildWalletActivityTable('Wallet activity', items.length),
-      ],
-    }, `Wallet summary for ${address} on ${networkLabel}: ${items.length} recent Solana transactions.`, {
-      toolName: 'portal_get_wallet_summary',
-      notices,
-      pagination: buildSectionPagination(items.length, false),
-      freshness: buildQueryFreshness({
-        finality: 'latest',
-        headBlockNumber: head.number,
-        windowToBlock: toBlock,
-        resolvedWindow,
-      }),
-      execution: buildExecutionMetadata({
-        mode,
-        from_block: fromBlock,
-        to_block: toBlock,
-        range_kind: resolvedWindow.range_kind,
-        normalized_output: true,
-      }),
-      pipes: pipesRecipe,
-      ui: buildWalletUi({
-        title: `Wallet summary: ${address}`,
-        subtitle: `${describeWalletWindow(timeframe)} on ${networkLabel}`,
-        activityCountPath: 'activity.count',
-        primaryValuePath: 'solana.fee_summary.total_fees_lamports',
-        primaryLabel: 'Total fees',
-        primaryFormat: 'decimal',
-        secondaryCards: [
-          buildMetricCard({ id: 'avg-fee', label: 'Average fee', value_path: 'solana.fee_summary.avg_fee_lamports', format: 'decimal' }),
-        ],
-        followUpActions: [
-          { label: 'Show raw activity rows', intent: 'show_raw', target: 'activity.items' },
-        ],
-      }),
-      llm: buildWalletLlmOverrides('solana'),
-      coverage: buildSectionCoverage({
-        windowFromBlock: fromBlock,
-        windowToBlock: toBlock,
-        hasMore: false,
-        sections: {
-          activity: buildSectionPagination(items.length, false),
-        },
-      }),
-      metadata: {
-        network: dataset,
-        dataset,
-        from_block: fromBlock,
-        to_block: toBlock,
-        query_start_time: queryStartTime,
-      },
-    })
+    )
   }
 
   if (chainType === 'bitcoin') {
     const [outputBlocks, inputBlocks] = await Promise.all([
-      portalFetchRecentRecords(`${PORTAL_URL}/datasets/${dataset}/stream`, {
-        type: 'bitcoin',
-        fromBlock,
-        toBlock,
-        fields: {
-          block: { number: true, timestamp: true },
-          output: { transactionIndex: true, outputIndex: true, value: true, scriptPubKeyAddress: true },
-          transaction: { hash: true },
+      portalFetchRecentRecords(
+        `${PORTAL_URL}/datasets/${dataset}/stream`,
+        {
+          type: 'bitcoin',
+          fromBlock,
+          toBlock,
+          fields: {
+            block: { number: true, timestamp: true },
+            output: { transactionIndex: true, outputIndex: true, value: true, scriptPubKeyAddress: true },
+            transaction: { hash: true },
+          },
+          outputs: [{ scriptPubKeyAddress: [address], transaction: true }],
         },
-        outputs: [{ scriptPubKeyAddress: [address], transaction: true }],
-      }, {
-        itemKeys: ['outputs'],
-        limit: limit_per_type,
-        chunkSize: 20,
-      }),
-      portalFetchRecentRecords(`${PORTAL_URL}/datasets/${dataset}/stream`, {
-        type: 'bitcoin',
-        fromBlock,
-        toBlock,
-        fields: {
-          block: { number: true, timestamp: true },
-          input: { transactionIndex: true, inputIndex: true, prevoutValue: true, prevoutScriptPubKeyAddress: true },
-          transaction: { hash: true },
+        {
+          itemKeys: ['outputs'],
+          limit: limit_per_type,
+          chunkSize: 20,
         },
-        inputs: [{ prevoutScriptPubKeyAddress: [address], transaction: true }],
-      }, {
-        itemKeys: ['inputs'],
-        limit: limit_per_type,
-        chunkSize: 20,
-      }),
+      ),
+      portalFetchRecentRecords(
+        `${PORTAL_URL}/datasets/${dataset}/stream`,
+        {
+          type: 'bitcoin',
+          fromBlock,
+          toBlock,
+          fields: {
+            block: { number: true, timestamp: true },
+            input: { transactionIndex: true, inputIndex: true, prevoutValue: true, prevoutScriptPubKeyAddress: true },
+            transaction: { hash: true },
+          },
+          inputs: [{ prevoutScriptPubKeyAddress: [address], transaction: true }],
+        },
+        {
+          itemKeys: ['inputs'],
+          limit: limit_per_type,
+          chunkSize: 20,
+        },
+      ),
     ])
 
-    const outputs = outputBlocks.flatMap((block: any) => (block.outputs || []).map((output: any) => ({
-      ...output,
-      block_number: block.number ?? block.header?.number,
-      timestamp: block.timestamp ?? block.header?.timestamp,
-      timestamp_human: (block.timestamp ?? block.header?.timestamp) ? formatTimestamp(block.timestamp ?? block.header?.timestamp) : undefined,
-      chain_kind: 'bitcoin',
-      record_type: 'output',
-      primary_id: output.transaction?.hash && output.outputIndex !== undefined ? `${output.transaction.hash}:${output.outputIndex}` : output.transaction?.hash,
-      tx_hash: output.transaction?.hash,
-      recipient: output.scriptPubKeyAddress,
-    })))
-    const inputs = inputBlocks.flatMap((block: any) => (block.inputs || []).map((input: any) => ({
-      ...input,
-      block_number: block.number ?? block.header?.number,
-      timestamp: block.timestamp ?? block.header?.timestamp,
-      timestamp_human: (block.timestamp ?? block.header?.timestamp) ? formatTimestamp(block.timestamp ?? block.header?.timestamp) : undefined,
-      chain_kind: 'bitcoin',
-      record_type: 'input',
-      primary_id: input.transaction?.hash && input.inputIndex !== undefined ? `${input.transaction.hash}:${input.inputIndex}` : input.transaction?.hash,
-      tx_hash: input.transaction?.hash,
-      sender: input.prevoutScriptPubKeyAddress,
-    })))
+    const outputs = outputBlocks.flatMap((block: any) =>
+      (block.outputs || []).map((output: any) => ({
+        ...output,
+        block_number: block.number ?? block.header?.number,
+        timestamp: block.timestamp ?? block.header?.timestamp,
+        timestamp_human:
+          (block.timestamp ?? block.header?.timestamp)
+            ? formatTimestamp(block.timestamp ?? block.header?.timestamp)
+            : undefined,
+        chain_kind: 'bitcoin',
+        record_type: 'output',
+        primary_id:
+          output.transaction?.hash && output.outputIndex !== undefined
+            ? `${output.transaction.hash}:${output.outputIndex}`
+            : output.transaction?.hash,
+        tx_hash: output.transaction?.hash,
+        recipient: output.scriptPubKeyAddress,
+      })),
+    )
+    const inputs = inputBlocks.flatMap((block: any) =>
+      (block.inputs || []).map((input: any) => ({
+        ...input,
+        block_number: block.number ?? block.header?.number,
+        timestamp: block.timestamp ?? block.header?.timestamp,
+        timestamp_human:
+          (block.timestamp ?? block.header?.timestamp)
+            ? formatTimestamp(block.timestamp ?? block.header?.timestamp)
+            : undefined,
+        chain_kind: 'bitcoin',
+        record_type: 'input',
+        primary_id:
+          input.transaction?.hash && input.inputIndex !== undefined
+            ? `${input.transaction.hash}:${input.inputIndex}`
+            : input.transaction?.hash,
+        tx_hash: input.transaction?.hash,
+        sender: input.prevoutScriptPubKeyAddress,
+      })),
+    )
     const totalIn = outputs.reduce((sum, item) => sum + Number(item.value || 0), 0)
     const totalOut = inputs.reduce((sum, item) => sum + Number(item.prevoutValue || 0), 0)
 
-    return formatResult({
-      overview: {
-        network: dataset,
-        vm: 'bitcoin',
-        address,
-        from_block: requestedFromBlock,
-        to_block: toBlock,
-        analyzed_from_block: fromBlock,
-        mode,
-      },
-      activity: {
-        count: outputs.length + inputs.length,
-        items: [...outputs, ...inputs].sort((a, b) => (Number(a.timestamp || 0) - Number(b.timestamp || 0))),
-      },
-      assets: {
-        total_btc_received_sats: totalIn,
-        total_btc_spent_sats: totalOut,
-      },
-      bitcoin: {
-        outputs_count: outputs.length,
-        inputs_count: inputs.length,
-        recent_outputs: outputs,
-        recent_inputs: inputs,
-      },
-      tables: [
-        buildWalletActivityTable('Wallet activity', outputs.length + inputs.length),
-        buildBitcoinOutputsTable('Recent outputs', outputs.length),
-        buildBitcoinInputsTable('Recent inputs', inputs.length),
-      ],
-    }, `Wallet summary for ${address} on ${networkLabel}: ${outputs.length} recent outputs and ${inputs.length} recent inputs.`, {
-      toolName: 'portal_get_wallet_summary',
-      notices,
-      freshness: buildQueryFreshness({
-        finality: 'latest',
-        headBlockNumber: head.number,
-        windowToBlock: toBlock,
-        resolvedWindow,
-      }),
-      execution: buildExecutionMetadata({
-        mode,
-        from_block: fromBlock,
-        to_block: toBlock,
-        range_kind: resolvedWindow.range_kind,
-        normalized_output: true,
-      }),
-      pipes: pipesRecipe,
-      ui: buildWalletUi({
-        title: `Wallet summary: ${address}`,
-        subtitle: `${describeWalletWindow(timeframe)} on ${networkLabel}`,
-        activityCountPath: 'activity.count',
-        primaryValuePath: 'assets.total_btc_received_sats',
-        primaryLabel: 'BTC received (sats)',
-        primaryFormat: 'decimal',
-        secondaryCards: [
-          buildMetricCard({ id: 'btc-spent', label: 'BTC spent (sats)', value_path: 'assets.total_btc_spent_sats', format: 'decimal' }),
-          buildMetricCard({ id: 'outputs', label: 'Outputs', value_path: 'bitcoin.outputs_count', format: 'integer' }),
-          buildMetricCard({ id: 'inputs', label: 'Inputs', value_path: 'bitcoin.inputs_count', format: 'integer' }),
-        ],
-        panels: [
-          buildTimelinePanel({
-            id: 'wallet-timeline',
-            kind: 'timeline_panel',
-            title: 'Activity timeline',
-            subtitle: 'Chronological Bitcoin activity for this wallet.',
-            data_key: 'activity.items',
-            timestamp_key: 'timestamp_human',
-            title_key: 'primary_id',
-            subtitle_keys: ['record_type', 'tx_hash'],
-            badge_key: 'record_type',
-            emphasis: 'primary',
-          }),
-          buildTablePanel({
-            id: 'wallet-table',
-            kind: 'table_panel',
-            title: 'Wallet activity',
-            subtitle: 'Normalized inputs and outputs for this wallet window.',
-            table_id: 'activity',
-          }),
-          buildTablePanel({
-            id: 'wallet-outputs',
-            kind: 'table_panel',
-            title: 'Recent outputs',
-            subtitle: 'Most recent outputs sent to the wallet.',
-            table_id: 'bitcoin_outputs',
-          }),
-          buildTablePanel({
-            id: 'wallet-inputs',
-            kind: 'table_panel',
-            title: 'Recent inputs',
-            subtitle: 'Most recent inputs spent by the wallet.',
-            table_id: 'bitcoin_inputs',
-          }),
-        ],
-        followUpActions: [
-          { label: 'Show raw activity rows', intent: 'show_raw', target: 'activity.items' },
-        ],
-      }),
-      llm: buildWalletLlmOverrides('bitcoin'),
-      coverage: buildSectionCoverage({
-        windowFromBlock: fromBlock,
-        windowToBlock: toBlock,
-        hasMore: false,
-        sections: {
-          activity: buildSectionPagination(outputs.length + inputs.length, false),
+    return formatResult(
+      {
+        overview: {
+          network: dataset,
+          vm: 'bitcoin',
+          address,
+          from_block: requestedFromBlock,
+          to_block: toBlock,
+          analyzed_from_block: fromBlock,
+          mode,
         },
-      }),
-      metadata: {
-        network: dataset,
-        dataset,
-        from_block: fromBlock,
-        to_block: toBlock,
-        query_start_time: queryStartTime,
+        activity: {
+          count: outputs.length + inputs.length,
+          items: [...outputs, ...inputs].sort((a, b) => Number(a.timestamp || 0) - Number(b.timestamp || 0)),
+        },
+        assets: {
+          total_btc_received_sats: totalIn,
+          total_btc_spent_sats: totalOut,
+        },
+        bitcoin: {
+          outputs_count: outputs.length,
+          inputs_count: inputs.length,
+          recent_outputs: outputs,
+          recent_inputs: inputs,
+        },
+        tables: [
+          buildWalletActivityTable('Wallet activity', outputs.length + inputs.length),
+          buildBitcoinOutputsTable('Recent outputs', outputs.length),
+          buildBitcoinInputsTable('Recent inputs', inputs.length),
+        ],
       },
-    })
+      `Wallet summary for ${address} on ${networkLabel}: ${outputs.length} recent outputs and ${inputs.length} recent inputs.`,
+      {
+        toolName: 'portal_get_wallet_summary',
+        notices,
+        freshness: buildQueryFreshness({
+          finality: 'latest',
+          headBlockNumber: head.number,
+          windowToBlock: toBlock,
+          resolvedWindow,
+        }),
+        execution: buildExecutionMetadata({
+          mode,
+          from_block: fromBlock,
+          to_block: toBlock,
+          range_kind: resolvedWindow.range_kind,
+          normalized_output: true,
+        }),
+        pipes: pipesRecipe,
+        ui: buildWalletUi({
+          title: `Wallet summary: ${address}`,
+          subtitle: `${describeWalletWindow(timeframe)} on ${networkLabel}`,
+          activityCountPath: 'activity.count',
+          primaryValuePath: 'assets.total_btc_received_sats',
+          primaryLabel: 'BTC received (sats)',
+          primaryFormat: 'decimal',
+          secondaryCards: [
+            buildMetricCard({
+              id: 'btc-spent',
+              label: 'BTC spent (sats)',
+              value_path: 'assets.total_btc_spent_sats',
+              format: 'decimal',
+            }),
+            buildMetricCard({
+              id: 'outputs',
+              label: 'Outputs',
+              value_path: 'bitcoin.outputs_count',
+              format: 'integer',
+            }),
+            buildMetricCard({ id: 'inputs', label: 'Inputs', value_path: 'bitcoin.inputs_count', format: 'integer' }),
+          ],
+          panels: [
+            buildTimelinePanel({
+              id: 'wallet-timeline',
+              kind: 'timeline_panel',
+              title: 'Activity timeline',
+              subtitle: 'Chronological Bitcoin activity for this wallet.',
+              data_key: 'activity.items',
+              timestamp_key: 'timestamp_human',
+              title_key: 'primary_id',
+              subtitle_keys: ['record_type', 'tx_hash'],
+              badge_key: 'record_type',
+              emphasis: 'primary',
+            }),
+            buildTablePanel({
+              id: 'wallet-table',
+              kind: 'table_panel',
+              title: 'Wallet activity',
+              subtitle: 'Normalized inputs and outputs for this wallet window.',
+              table_id: 'activity',
+            }),
+            buildTablePanel({
+              id: 'wallet-outputs',
+              kind: 'table_panel',
+              title: 'Recent outputs',
+              subtitle: 'Most recent outputs sent to the wallet.',
+              table_id: 'bitcoin_outputs',
+            }),
+            buildTablePanel({
+              id: 'wallet-inputs',
+              kind: 'table_panel',
+              title: 'Recent inputs',
+              subtitle: 'Most recent inputs spent by the wallet.',
+              table_id: 'bitcoin_inputs',
+            }),
+          ],
+          followUpActions: [{ label: 'Show raw activity rows', intent: 'show_raw', target: 'activity.items' }],
+        }),
+        llm: buildWalletLlmOverrides('bitcoin'),
+        coverage: buildSectionCoverage({
+          windowFromBlock: fromBlock,
+          windowToBlock: toBlock,
+          hasMore: false,
+          sections: {
+            activity: buildSectionPagination(outputs.length + inputs.length, false),
+          },
+        }),
+        metadata: {
+          network: dataset,
+          dataset,
+          from_block: fromBlock,
+          to_block: toBlock,
+          query_start_time: queryStartTime,
+        },
+      },
+    )
   }
 
-  const fillBlocks = await portalFetchRecentRecords(`${PORTAL_URL}/datasets/${dataset}/stream`, {
-    type: 'hyperliquidFills',
-    fromBlock,
-    toBlock,
-    fields: {
-      block: { number: true, timestamp: true },
-      fill: { fillIndex: true, user: true, coin: true, px: true, sz: true, fee: true, dir: true, side: true, hash: true, time: true },
+  const fillBlocks = await portalFetchRecentRecords(
+    `${PORTAL_URL}/datasets/${dataset}/stream`,
+    {
+      type: 'hyperliquidFills',
+      fromBlock,
+      toBlock,
+      fields: {
+        block: { number: true, timestamp: true },
+        fill: {
+          fillIndex: true,
+          user: true,
+          coin: true,
+          px: true,
+          sz: true,
+          fee: true,
+          dir: true,
+          side: true,
+          hash: true,
+          time: true,
+        },
+      },
+      fills: [{ user: [address.toLowerCase()] }],
     },
-    fills: [{ user: [address.toLowerCase()] }],
-  }, {
-    itemKeys: ['fills'],
-    limit: limit_per_type,
-    chunkSize: Math.max(50, Math.min(250, limit_per_type * 10)),
-    maxBytes: 25 * 1024 * 1024,
-  })
+    {
+      itemKeys: ['fills'],
+      limit: limit_per_type,
+      chunkSize: Math.max(50, Math.min(250, limit_per_type * 10)),
+      maxBytes: 25 * 1024 * 1024,
+    },
+  )
 
-  const fills = fillBlocks.flatMap((block: any) => (block.fills || []).map((fill: any) => {
-    const timestamp = block.timestamp ?? block.header?.timestamp
-    return {
-      ...fill,
-      block_number: block.number ?? block.header?.number,
-      timestamp,
-      timestamp_human: timestamp ? formatTimestamp(timestamp) : undefined,
-      chain_kind: 'hyperliquid',
-      record_type: 'fill',
-      primary_id: fill.hash && fill.fillIndex !== undefined ? `${fill.hash}:${fill.fillIndex}` : fill.hash,
-      tx_hash: fill.hash,
-      sender: fill.user,
-    }
-  }))
+  const fills = fillBlocks.flatMap((block: any) =>
+    (block.fills || []).map((fill: any) => {
+      const timestamp = block.timestamp ?? block.header?.timestamp
+      return {
+        ...fill,
+        block_number: block.number ?? block.header?.number,
+        timestamp,
+        timestamp_human: timestamp ? formatTimestamp(timestamp) : undefined,
+        chain_kind: 'hyperliquid',
+        record_type: 'fill',
+        primary_id: fill.hash && fill.fillIndex !== undefined ? `${fill.hash}:${fill.fillIndex}` : fill.hash,
+        tx_hash: fill.hash,
+        sender: fill.user,
+      }
+    }),
+  )
   const byCoin = new Map<string, number>()
   let totalFees = 0
   fills.forEach((fill: any) => {
@@ -1574,128 +1764,135 @@ async function buildNonEvmWalletSummary(params: {
     totalFees += Math.abs(Number(fill.fee || 0))
   })
 
-  return formatResult({
-    overview: {
-      network: dataset,
-      vm: 'hyperliquid',
-      address,
-      from_block: requestedFromBlock,
-      to_block: toBlock,
-      analyzed_from_block: fromBlock,
-      mode,
-    },
-    activity: {
-      count: fills.length,
-      items: fills,
-    },
-    assets: {
-      volume_by_coin: Array.from(byCoin.entries()).map(([coin, volume]) => ({ coin, volume_usd: volume })),
-    },
-    hyperliquid: {
-      fee_summary: {
-        total_fees: totalFees,
+  return formatResult(
+    {
+      overview: {
+        network: dataset,
+        vm: 'hyperliquid',
+        address,
+        from_block: requestedFromBlock,
+        to_block: toBlock,
+        analyzed_from_block: fromBlock,
+        mode,
       },
-      side_breakdown: fills.reduce((acc: Record<string, number>, fill: any) => {
-        const side = String(fill.side || 'unknown')
-        acc[side] = (acc[side] || 0) + 1
-        return acc
-      }, {}),
-    },
-    tables: [
-      buildWalletActivityTable('Wallet activity', fills.length),
-      buildTableDescriptor({
-        id: 'volume_by_coin',
-        dataKey: 'assets.volume_by_coin',
-        rowCount: byCoin.size,
-        title: 'Volume by coin',
-        subtitle: 'Coin-level notional volume for this wallet in the selected window',
-        keyField: 'coin',
-        defaultSort: { key: 'volume_usd', direction: 'desc' },
-        dense: true,
-        columns: [
-          { key: 'coin', label: 'Coin', kind: 'dimension' },
-          { key: 'volume_usd', label: 'Volume', kind: 'metric', format: 'currency_usd', unit: 'USD', align: 'right' },
-        ],
-      }),
-    ],
-  }, `Wallet summary for ${address} on ${networkLabel}: ${fills.length} recent fills.`, {
-    toolName: 'portal_get_wallet_summary',
-    notices,
-    freshness: buildQueryFreshness({
-      finality: 'latest',
-      headBlockNumber: head.number,
-      windowToBlock: toBlock,
-      resolvedWindow,
-    }),
-    execution: buildExecutionMetadata({
-      mode,
-      from_block: fromBlock,
-      to_block: toBlock,
-      range_kind: resolvedWindow.range_kind,
-      normalized_output: true,
-    }),
-    pipes: pipesRecipe,
-    ui: buildWalletUi({
-      title: `Wallet summary: ${address}`,
-      subtitle: `${describeWalletWindow(timeframe)} on ${networkLabel}`,
-      activityCountPath: 'activity.count',
-      primaryValuePath: 'hyperliquid.fee_summary.total_fees',
-      primaryLabel: 'Total fees',
-      primaryFormat: 'decimal',
-      secondaryCards: [
-        buildMetricCard({ id: 'coins', label: 'Coins traded', value_path: 'assets.volume_by_coin.length', format: 'integer' }),
-      ],
-      panels: [
-        buildTimelinePanel({
-          id: 'wallet-timeline',
-          kind: 'timeline_panel',
-          title: 'Fill timeline',
-          subtitle: 'Chronological fill activity with trader and coin context.',
-          data_key: 'activity.items',
-          timestamp_key: 'timestamp_human',
-          title_key: 'primary_id',
-          subtitle_keys: ['record_type', 'sender', 'coin'],
-          badge_key: 'record_type',
-          emphasis: 'primary',
-        }),
-        buildTablePanel({
-          id: 'wallet-table',
-          kind: 'table_panel',
-          title: 'Fill activity table',
-          subtitle: 'Exact normalized fill rows.',
-          table_id: 'activity',
-        }),
-        buildStatListPanel({
-          id: 'coin-volume',
-          kind: 'stat_list_panel',
+      activity: {
+        count: fills.length,
+        items: fills,
+      },
+      assets: {
+        volume_by_coin: Array.from(byCoin.entries()).map(([coin, volume]) => ({ coin, volume_usd: volume })),
+      },
+      hyperliquid: {
+        fee_summary: {
+          total_fees: totalFees,
+        },
+        side_breakdown: fills.reduce((acc: Record<string, number>, fill: any) => {
+          const side = String(fill.side || 'unknown')
+          acc[side] = (acc[side] || 0) + 1
+          return acc
+        }, {}),
+      },
+      tables: [
+        buildWalletActivityTable('Wallet activity', fills.length),
+        buildTableDescriptor({
+          id: 'volume_by_coin',
+          dataKey: 'assets.volume_by_coin',
+          rowCount: byCoin.size,
           title: 'Volume by coin',
-          subtitle: 'Top coin exposure in the selected wallet window.',
-          data_key: 'assets.volume_by_coin',
-          label_key: 'coin',
-          value_key: 'volume_usd',
-          value_format: 'currency_usd',
-          unit: 'USD',
+          subtitle: 'Coin-level notional volume for this wallet in the selected window',
+          keyField: 'coin',
+          defaultSort: { key: 'volume_usd', direction: 'desc' },
+          dense: true,
+          columns: [
+            { key: 'coin', label: 'Coin', kind: 'dimension' },
+            { key: 'volume_usd', label: 'Volume', kind: 'metric', format: 'currency_usd', unit: 'USD', align: 'right' },
+          ],
         }),
       ],
-      followUpActions: [
-        { label: 'Show raw activity rows', intent: 'show_raw', target: 'activity.items' },
-      ],
-    }),
-    llm: buildWalletLlmOverrides('hyperliquid'),
-    coverage: buildSectionCoverage({
-      windowFromBlock: fromBlock,
-      windowToBlock: toBlock,
-      hasMore: false,
-      sections: {
-        activity: buildSectionPagination(fills.length, false),
-      },
-    }),
-    metadata: {
-      network: dataset,
-      dataset,
-      from_block: fromBlock,
-      to_block: toBlock,
-      query_start_time: queryStartTime,
     },
-  })
+    `Wallet summary for ${address} on ${networkLabel}: ${fills.length} recent fills.`,
+    {
+      toolName: 'portal_get_wallet_summary',
+      notices,
+      freshness: buildQueryFreshness({
+        finality: 'latest',
+        headBlockNumber: head.number,
+        windowToBlock: toBlock,
+        resolvedWindow,
+      }),
+      execution: buildExecutionMetadata({
+        mode,
+        from_block: fromBlock,
+        to_block: toBlock,
+        range_kind: resolvedWindow.range_kind,
+        normalized_output: true,
+      }),
+      pipes: pipesRecipe,
+      ui: buildWalletUi({
+        title: `Wallet summary: ${address}`,
+        subtitle: `${describeWalletWindow(timeframe)} on ${networkLabel}`,
+        activityCountPath: 'activity.count',
+        primaryValuePath: 'hyperliquid.fee_summary.total_fees',
+        primaryLabel: 'Total fees',
+        primaryFormat: 'decimal',
+        secondaryCards: [
+          buildMetricCard({
+            id: 'coins',
+            label: 'Coins traded',
+            value_path: 'assets.volume_by_coin.length',
+            format: 'integer',
+          }),
+        ],
+        panels: [
+          buildTimelinePanel({
+            id: 'wallet-timeline',
+            kind: 'timeline_panel',
+            title: 'Fill timeline',
+            subtitle: 'Chronological fill activity with trader and coin context.',
+            data_key: 'activity.items',
+            timestamp_key: 'timestamp_human',
+            title_key: 'primary_id',
+            subtitle_keys: ['record_type', 'sender', 'coin'],
+            badge_key: 'record_type',
+            emphasis: 'primary',
+          }),
+          buildTablePanel({
+            id: 'wallet-table',
+            kind: 'table_panel',
+            title: 'Fill activity table',
+            subtitle: 'Exact normalized fill rows.',
+            table_id: 'activity',
+          }),
+          buildStatListPanel({
+            id: 'coin-volume',
+            kind: 'stat_list_panel',
+            title: 'Volume by coin',
+            subtitle: 'Top coin exposure in the selected wallet window.',
+            data_key: 'assets.volume_by_coin',
+            label_key: 'coin',
+            value_key: 'volume_usd',
+            value_format: 'currency_usd',
+            unit: 'USD',
+          }),
+        ],
+        followUpActions: [{ label: 'Show raw activity rows', intent: 'show_raw', target: 'activity.items' }],
+      }),
+      llm: buildWalletLlmOverrides('hyperliquid'),
+      coverage: buildSectionCoverage({
+        windowFromBlock: fromBlock,
+        windowToBlock: toBlock,
+        hasMore: false,
+        sections: {
+          activity: buildSectionPagination(fills.length, false),
+        },
+      }),
+      metadata: {
+        network: dataset,
+        dataset,
+        from_block: fromBlock,
+        to_block: toBlock,
+        query_start_time: queryStartTime,
+      },
+    },
+  )
 }

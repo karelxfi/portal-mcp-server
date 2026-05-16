@@ -84,6 +84,35 @@ export function assertChatSurface(parsed: any, label: string, options?: { expect
   assert(isFriendlyDisplayTitle(parsed?.display?.title), `${label} display.title should be product-friendly`)
   assert(!hasLegacyWording(JSON.stringify(parsed?.display ?? {})), `${label} display should avoid legacy wording`)
   assert(!hasLegacyWording(String(parsed?.answer ?? '')), `${label} answer should avoid legacy wording`)
+  assert(
+    Array.isArray(parsed?._llm?.answer_sequence) && parsed._llm.answer_sequence.length > 0,
+    `${label} should include answer-first _llm.answer_sequence guidance`,
+  )
+
+  if (parsed?._execution !== undefined) {
+    assert(parsed?.technical_details?.execution !== undefined, `${label} should mirror _execution in technical_details`)
+  }
+
+  if (parsed?._freshness !== undefined || parsed?._coverage !== undefined) {
+    assert(parsed?._execution !== undefined, `${label} should include _execution for queried data`)
+    assert(parsed?.technical_details !== undefined, `${label} should include technical_details for queried data`)
+    assert(parsed?.investigation?.version === 'portal_investigation_v1', `${label} should include investigation guide`)
+    assert(
+      parsed?.investigation?.evidence?.primary_path !== undefined,
+      `${label} investigation guide should point to the primary evidence path`,
+    )
+    assert(
+      Array.isArray(parsed?.investigation?.follow_up_filters),
+      `${label} investigation guide should expose follow-up filters`,
+    )
+    assert(
+      parsed._execution?.range_kind !== undefined ||
+        parsed._execution?.scan_window !== undefined ||
+        parsed._execution?.timestamp !== undefined ||
+        parsed._execution?.resolution !== undefined,
+      `${label} should describe what block or time window was queried`,
+    )
+  }
 
   if (options?.expectNextSteps) {
     assert(parsed?.next_steps !== undefined, `${label} should include next_steps`)

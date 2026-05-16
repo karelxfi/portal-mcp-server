@@ -5,7 +5,7 @@ These scripts all use the shared manifest in `scripts/tool-manifest.ts`, which k
 ## Available scripts
 
 ### `npm test`
-Builds the server, starts it over stdio, and runs a fast smoke test over the core discovery tools.
+Builds the server, starts it over stdio, verifies developer guide resources, and runs a fast smoke test over the core discovery tools.
 
 ### `npm run test:tools`
 Runs the full live tool suite against the current MCP server. It:
@@ -28,6 +28,13 @@ Runs multi-step user journeys that behave more like an AI chat session than isol
 - simulates confused-user flows such as discovery -> summary -> chart
 - checks that `answer`, `display`, and `next_steps` stay useful across the conversation
 - catches places where a tool works technically but still feels awkward in chat
+
+### `npm run test:realistic-prompts`
+Runs skeptical, user-style prompts for the v0.7.9 investigation features. It:
+
+- maps messy incident-response prompts to the intended existing tool
+- calls the live MCP server and validates the returned artifact, not only routing rank
+- checks `investigation` evidence paths, pivots, limitations, and deterministic resolver suggestions
 
 ### `npm run test:negative`
 Runs focused negative-path checks for invalid inputs and unsupported flows. It:
@@ -57,7 +64,7 @@ Runs focused HTTP observability QA. It:
 
 - boots the HTTP server and performs a real MCP tool call
 - verifies anonymous `/metrics` access is blocked and bearer auth works
-- verifies `/metrics` emits canonical tool, client, Portal, and dataset series
+- verifies `/metrics` emits canonical tool, client, Portal, dataset, and token-list dependency series
 - validates that the Grafana dashboard's Prometheus queries reference metric names the server actually emits
 
 ### `npm run test:all`
@@ -71,6 +78,7 @@ Runs the full live matrix:
 - timestamps
 - observability
 - conversations
+- realistic prompts
 - negative paths
 - quality audit
 
@@ -98,9 +106,10 @@ When tool names or recommended arguments change:
 2. Re-run `npm run test:tools`
 3. Re-run `npm run test:routing`
 4. Re-run `npm run test:conversations`
-5. Re-run `npm run test:negative`
-6. Re-run `npm run test:quality`
-7. Re-run `npx tsx scripts/data-quality-test.ts` for a quick qualitative review
+5. Re-run `npm run test:realistic-prompts`
+6. Re-run `npm run test:negative`
+7. Re-run `npm run test:quality`
+8. Re-run `npx tsx scripts/data-quality-test.ts` for a quick qualitative review
 
 ## Why the manifest exists
 

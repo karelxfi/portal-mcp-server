@@ -10,7 +10,16 @@ import type { PortalUiSpec, UiFollowUpAction, UiMetricCard, UiPanel } from './ui
 type RecordLike = Record<string, unknown>
 
 const SUMMARY_SECTION_KEYS = ['summary', 'overview', 'activity', 'assets', 'market_context', 'guidance', 'evm', 'solana', 'bitcoin', 'hyperliquid', 'liquidations']
-const RESERVED_TOP_LEVEL_KEYS = new Set(['chart', 'tables', 'gap_diagnostics', 'answer', 'display', 'next_steps', 'technical_details'])
+const RESERVED_TOP_LEVEL_KEYS = new Set([
+  'chart',
+  'tables',
+  'gap_diagnostics',
+  'answer',
+  'display',
+  'next_steps',
+  'investigation',
+  'technical_details',
+])
 const NORMALIZED_ALIAS_KEYS = [
   'chain_kind',
   'record_type',

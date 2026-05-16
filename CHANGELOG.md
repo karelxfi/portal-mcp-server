@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.7.9] - 2026-05-15
+
+Portal MCP v0.7.9 is focused on developer and agent ergonomics for natural blockchain questions.
+
+### Highlights
+- **Entity resolver** — added `portal_resolve_entity` so clients can resolve EVM token symbols/addresses, EVM contract aliases, pool identifiers, DeFi protocol names, and Hyperliquid coin names before building deterministic filters.
+- **Token-list backed symbols** — `portal_evm_query_logs` and `portal_evm_query_token_transfers` now accept `token_symbols`; `portal_evm_query_transactions` accepts `from_token_symbols` and `to_token_symbols`, resolving them through open token-list data instead of hardcoded token address constants.
+- **Token metadata cleanup** — removed baked-in common token and pool metadata from runtime helpers. Token decimals, symbols, and names now come from token-list lookups where available, with explicit fallback and stale-cache notices.
+- **Token-list observability** — added Prometheus counters for token-list fetch outcomes, cache events, stale-cache use, and unsupported token-list networks.
+- **Shared bounded search** — EVM logs, ERC20 transfers, transaction scans, and contract deployment lookup now share bounded block-scan metadata and partial-window notices.
+- **Investigation-ready responses** — queried and summary responses now include an `investigation` guide with primary evidence paths, pivot fields, follow-up filters, and limitations so agents can trace onchain incidents without new tools.
+- **Incident prompt routing** — tool descriptions and routing tests now explicitly cover suspicious-wallet triage, stolen-token movement, hack/incident traces, and exact transaction evidence using the existing 28-tool surface.
+- **Cross-VM investigator parity** — added regression coverage for Solana program investigations, Bitcoin address-flow summaries, and Hyperliquid trader/coin questions.
+- **Answer-first contracts** — tightened response QA around `_llm.answer_sequence`, `technical_details`, queried-window metadata, human-readable token units, and suggested follow-up filters.
+- **Developer discovery refresh** — updated the tool guide and HTTP catalog surface for the new `28`-tool registry (`25` public, `3` advanced/debug).
+
+### Release hygiene
+- Reviewed the large v0.7.9 diff before tagging. The pre-hardening snapshot was `22 files, 2631 insertions, 1248 deletions`; `git diff -w --stat` still showed `2045 insertions, 662 deletions`, so the churn is not only whitespace.
+- The largest tracked churn remains in `wallet-summary.ts`, `ohlc.ts`, and `query-transactions.ts`; it is accepted for v0.7.9 because those files also carry the release behavior changes and are covered by the live manifest/quality suites.
+- Keep ignored local directories such as `.preview/`, `output/`, and `web-analytics-starter-kit/` out of the release unless they become intentional artifacts.
+
 ## [0.7.8] - 2026-05-07
 
 Portal MCP v0.7.8 is focused on query correctness, faster analytics, and release discipline. It keeps the interactive visual app work out of this release track so the tool/runtime updates can be reviewed independently.
@@ -19,6 +40,7 @@ Portal MCP v0.7.8 is focused on query correctness, faster analytics, and release
 ### Post-release hardening
 - **Contract deployment lookup stability** — `portal_evm_get_contract_deployment` now uses Portal-side `createResultAddress` filtering, supports known aliases such as BAYC/Bored Apes, caps broad historical scans, and returns actionable empty-window guidance instead of risking MCP disconnects.
 - **Bitcoin inline IO hydration** — `portal_bitcoin_query_transactions` now attaches requested inputs/outputs only for returned transaction blocks with compact fields, avoiding oversized 1h inline IO scans.
+- **Developer tool guide** — exposed structured tool-selection metadata through `sqd://tools`, `sqd://tools/{name}`, and enriched HTTP `/tools` output so client builders can discover examples, categories, and starting points without reading source.
 
 **Full Changelog**: https://github.com/subsquid-labs/portal-mcp-server/compare/v0.7.7...v0.7.8
 

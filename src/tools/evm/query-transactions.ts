@@ -3,14 +3,23 @@ import { z } from 'zod'
 
 import { resolveDataset, validateBlockRange } from '../../cache/datasets.js'
 import { PORTAL_URL } from '../../constants/index.js'
+import {
+  buildBoundedSearchExecution,
+  buildBoundedSearchNotice,
+  scanBoundedBlockRange,
+} from '../../helpers/bounded-search.js'
 import { detectChainType, isL2Chain } from '../../helpers/chain.js'
 import { buildTableDescriptor } from '../../helpers/chart-metadata.js'
+import {
+  type TokenSymbolResolution,
+  buildTokenListLookupNotices,
+  type TokenListLookupMetadata,
+  resolveTokenSymbolsForQuery,
+} from '../../helpers/entity-resolution.js'
 import { createUnsupportedChainError } from '../../helpers/errors.js'
 import { resolveMethodSighashes } from '../../helpers/evm-aliases.js'
 import { portalFetchRecentRecords, portalFetchStreamRange } from '../../helpers/fetch.js'
 import { getTransactionFields } from '../../helpers/field-presets.js'
-import { normalizeEvmTransactionResult } from '../../helpers/normalized-results.js'
-import { buildPaginationInfo, decodeRecentPageCursor, encodeRecentPageCursor, paginateAscendingItems } from '../../helpers/pagination.js'
 import {
   buildEvmLogFields,
   buildEvmStateDiffFields,
@@ -19,9 +28,20 @@ import {
 } from '../../helpers/fields.js'
 import { formatResult } from '../../helpers/format.js'
 import { formatTimestamp, formatTransactionFields } from '../../helpers/formatting.js'
-import { buildChronologicalPageOrdering, buildQueryCoverage, buildQueryFreshness } from '../../helpers/result-metadata.js'
+import { normalizeEvmTransactionResult } from '../../helpers/normalized-results.js'
+import {
+  buildPaginationInfo,
+  decodeRecentPageCursor,
+  encodeRecentPageCursor,
+  paginateAscendingItems,
+} from '../../helpers/pagination.js'
 import { type ResponseFormat, applyResponseFormat, resolveDefaultResponseFormat } from '../../helpers/response-modes.js'
-import { getTimestampWindowNotices, type TimestampInput, resolveTimeframeOrBlocks } from '../../helpers/timeframe.js'
+import {
+  buildChronologicalPageOrdering,
+  buildQueryCoverage,
+  buildQueryFreshness,
+} from '../../helpers/result-metadata.js'
+import { type TimestampInput, getTimestampWindowNotices, resolveTimeframeOrBlocks } from '../../helpers/timeframe.js'
 import { buildExecutionMetadata, buildToolDescription } from '../../helpers/tool-ux.js'
 import {
   getQueryExamples,
@@ -53,8 +73,12 @@ function flattenTransactionsWithBlockContext(results: unknown[]) {
       normalizeEvmTransactionResult(
         formatTransactionFields({
           ...tx,
-          ...(readBigIntField(tx, 'value') !== undefined ? { value_wei: readBigIntField(tx, 'value')?.toString() } : {}),
-          ...(readBigIntField(tx, 'effectiveGasPrice') !== undefined ? { effectiveGasPrice_wei: readBigIntField(tx, 'effectiveGasPrice')?.toString() } : {}),
+          ...(readBigIntField(tx, 'value') !== undefined
+            ? { value_wei: readBigIntField(tx, 'value')?.toString() }
+            : {}),
+          ...(readBigIntField(tx, 'effectiveGasPrice') !== undefined
+            ? { effectiveGasPrice_wei: readBigIntField(tx, 'effectiveGasPrice')?.toString() }
+            : {}),
           ...(blockNumber !== undefined ? { block_number: blockNumber } : {}),
           ...(timestamp !== undefined
             ? {
@@ -76,6 +100,9 @@ type QueryTransactionsRequest = {
   finalized_only: boolean
   from_addresses?: string[]
   to_addresses?: string[]
+  from_token_symbols?: string[]
+  to_token_symbols?: string[]
+  max_token_symbol_matches?: number
   sighash?: string[]
   method?: string | string[]
   transaction_type?: number
@@ -132,6 +159,32 @@ function getBlockNumber(tx: EvmTransactionItem): number | undefined {
   return typeof tx.block_number === 'number' ? tx.block_number : undefined
 }
 
+const uniqueStrings = (values: string[]) => Array.from(new Set(values))
+
+function buildTokenResolutionNotices(
+  resolutions: TokenSymbolResolution[],
+  unresolvedSymbols: string[],
+  fieldName: string,
+) {
+  const notices: string[] = []
+  if (unresolvedSymbols.length > 0) {
+    notices.push(`No token-list match found for ${fieldName}: ${unresolvedSymbols.join(', ')}.`)
+  }
+  for (const resolution of resolutions) {
+    if (resolution.matches.length > 1) {
+      notices.push(
+        `${fieldName} ${resolution.symbol} resolved to ${resolution.matches.length} token-list matches; all selected addresses were included. Use from_addresses/to_addresses for deterministic single-contract filters.`,
+      )
+    }
+    if (resolution.truncated) {
+      notices.push(
+        `${fieldName} ${resolution.symbol} had more matches than max_token_symbol_matches; results were capped.`,
+      )
+    }
+  }
+  return notices
+}
+
 function getTransactionIndex(tx: EvmTransactionItem): number {
   if (typeof tx.transactionIndex === 'number') return tx.transactionIndex
   if (typeof tx.transactionIndex === 'string') {
@@ -178,9 +231,7 @@ function getTransactionType(tx: Record<string, unknown>): number | undefined {
   const value = tx.type
   if (typeof value === 'number' && Number.isFinite(value)) return value
   if (typeof value === 'string') {
-    const parsed = value.toLowerCase().startsWith('0x')
-      ? Number.parseInt(value.slice(2), 16)
-      : Number(value)
+    const parsed = value.toLowerCase().startsWith('0x') ? Number.parseInt(value.slice(2), 16) : Number(value)
     return Number.isFinite(parsed) ? parsed : undefined
   }
   return undefined
@@ -193,7 +244,15 @@ function matchesTransactionType(tx: Record<string, unknown>, type: number | unde
 function normalizeTransactionStatus(value: unknown): number | undefined {
   if (value === undefined || value === null || value === '') return undefined
   if (value === true || value === 'success' || value === 'succeeded' || value === 'ok' || value === '1') return 1
-  if (value === false || value === 'failed' || value === 'failure' || value === 'error' || value === 'reverted' || value === '0') return 0
+  if (
+    value === false ||
+    value === 'failed' ||
+    value === 'failure' ||
+    value === 'error' ||
+    value === 'reverted' ||
+    value === '0'
+  )
+    return 0
 
   const parsed = typeof value === 'number' ? value : Number(String(value).trim())
   if (parsed === 0 || parsed === 1) return parsed
@@ -247,18 +306,24 @@ function matchesClientTransactionFilters(
   if (!matchesTransactionType(tx, filters.transactionType)) return false
 
   if (filters.transactionStatus !== undefined) {
-    const status = typeof tx.status === 'number' ? tx.status : typeof tx.status === 'string' ? Number(tx.status) : undefined
+    const status =
+      typeof tx.status === 'number' ? tx.status : typeof tx.status === 'string' ? Number(tx.status) : undefined
     if (status !== filters.transactionStatus) return false
   }
 
   if (filters.contractCreation !== undefined) {
-    const createsContract = !tx.to || tx.to === null || (tx.contractAddress !== undefined && tx.contractAddress !== null)
+    const createsContract =
+      !tx.to || tx.to === null || (tx.contractAddress !== undefined && tx.contractAddress !== null)
     if (createsContract !== filters.contractCreation) return false
   }
 
   if (filters.minValueWei !== undefined && (readBigIntField(tx, 'value') ?? 0n) < filters.minValueWei) return false
   if (filters.minGasUsed !== undefined && (readBigIntField(tx, 'gasUsed') ?? 0n) < filters.minGasUsed) return false
-  if (filters.minEffectiveGasPriceWei !== undefined && (readBigIntField(tx, 'effectiveGasPrice') ?? 0n) < filters.minEffectiveGasPriceWei) return false
+  if (
+    filters.minEffectiveGasPriceWei !== undefined &&
+    (readBigIntField(tx, 'effectiveGasPrice') ?? 0n) < filters.minEffectiveGasPriceWei
+  )
+    return false
 
   return true
 }
@@ -292,12 +357,18 @@ function orderTransactionsForOutput(items: EvmTransactionItem[], orderBy: QueryT
   })
 }
 
-function getAggregateAddress(tx: EvmTransactionItem, aggregateBy: NonNullable<QueryTransactionsRequest['aggregate_by']>): string | undefined {
+function getAggregateAddress(
+  tx: EvmTransactionItem,
+  aggregateBy: NonNullable<QueryTransactionsRequest['aggregate_by']>,
+): string | undefined {
   const value = aggregateBy === 'sender' ? tx.from : tx.to
   return typeof value === 'string' && /^0x[0-9a-f]{40}$/i.test(value) ? value.toLowerCase() : undefined
 }
 
-function getAggregateSortValue(row: Omit<TransactionAggregateRow, 'rank'>, metric: NonNullable<QueryTransactionsRequest['aggregate_metric']>): bigint {
+function getAggregateSortValue(
+  row: Omit<TransactionAggregateRow, 'rank'>,
+  metric: NonNullable<QueryTransactionsRequest['aggregate_metric']>,
+): bigint {
   switch (metric) {
     case 'value':
       return BigInt(row.total_value_wei)
@@ -343,12 +414,18 @@ function aggregateTransactions(
     existing.transaction_count += 1
     existing.total_value_wei = (BigInt(existing.total_value_wei) + value).toString()
     existing.total_gas_used = (BigInt(existing.total_gas_used) + gasUsed).toString()
-    existing.max_gas_used = (BigInt(existing.max_gas_used) > gasUsed ? BigInt(existing.max_gas_used) : gasUsed).toString()
-    existing.max_effective_gas_price_wei = (BigInt(existing.max_effective_gas_price_wei) > effectiveGasPrice
-      ? BigInt(existing.max_effective_gas_price_wei)
-      : effectiveGasPrice).toString()
-    existing.first_block = blockNumber === undefined ? existing.first_block : Math.min(existing.first_block ?? blockNumber, blockNumber)
-    existing.last_block = blockNumber === undefined ? existing.last_block : Math.max(existing.last_block ?? blockNumber, blockNumber)
+    existing.max_gas_used = (
+      BigInt(existing.max_gas_used) > gasUsed ? BigInt(existing.max_gas_used) : gasUsed
+    ).toString()
+    existing.max_effective_gas_price_wei = (
+      BigInt(existing.max_effective_gas_price_wei) > effectiveGasPrice
+        ? BigInt(existing.max_effective_gas_price_wei)
+        : effectiveGasPrice
+    ).toString()
+    existing.first_block =
+      blockNumber === undefined ? existing.first_block : Math.min(existing.first_block ?? blockNumber, blockNumber)
+    existing.last_block =
+      blockNumber === undefined ? existing.last_block : Math.max(existing.last_block ?? blockNumber, blockNumber)
     if (!existing.sample_transaction_hash && typeof tx.hash === 'string') existing.sample_transaction_hash = tx.hash
 
     groups.set(address, existing)
@@ -392,49 +469,43 @@ async function fetchTransactionsByScanOrder({
   candidateLimit?: number
 }) {
   const targetCount = limit + 1
-  const effectiveCandidateLimit = candidateLimit ?? (orderBy && orderBy !== 'chronological' ? Math.max(limit * 20, 500) : targetCount)
+  const effectiveCandidateLimit =
+    candidateLimit ?? (orderBy && orderBy !== 'chronological' ? Math.max(limit * 20, 500) : targetCount)
   const collected: EvmTransactionItem[] = []
-  let scannedFromBlock = scanOrder === 'earliest' ? fromBlock : toBlock
-  let scannedToBlock = scanOrder === 'earliest' ? fromBlock : toBlock
-  let scannedBlocks = 0
-
-  if (scanOrder === 'earliest') {
-    for (let chunkFrom = fromBlock; chunkFrom <= toBlock && collected.length < effectiveCandidateLimit && scannedBlocks < maxScanBlocks; chunkFrom += chunkSize) {
-      const chunkTo = Math.min(toBlock, chunkFrom + chunkSize - 1, fromBlock + maxScanBlocks - 1)
-      scannedToBlock = chunkTo
-      const records = await portalFetchStreamRange(url, { ...query, fromBlock: chunkFrom, toBlock: chunkTo })
+  const scan = await scanBoundedBlockRange<EvmTransactionItem>({
+    fromBlock,
+    toBlock,
+    chunkSize,
+    scanOrder,
+    maxScanBlocks,
+    shouldContinue: () => collected.length < effectiveCandidateLimit,
+    fetchChunk: async (chunk) => {
+      const records = await portalFetchStreamRange(url, {
+        ...query,
+        fromBlock: chunk.fromBlock,
+        toBlock: chunk.toBlock,
+      })
       const txs = sortTransactions(flattenTransactionsWithBlockContext(records) as EvmTransactionItem[])
         .filter((tx) => matchesClientTransactionFilters(tx, clientFilters))
-      for (const tx of txs) {
-        if (collected.length >= effectiveCandidateLimit) break
-        collected.push(tx)
+      const orderedChunk = scanOrder === 'latest' ? txs.reverse() : txs
+      const selected: EvmTransactionItem[] = []
+      for (const tx of orderedChunk) {
+        if (collected.length + selected.length >= effectiveCandidateLimit) break
+        selected.push(tx)
       }
-      scannedBlocks += chunkTo - chunkFrom + 1
-    }
-  } else {
-    for (let chunkTo = toBlock; chunkTo >= fromBlock && collected.length < effectiveCandidateLimit && scannedBlocks < maxScanBlocks; chunkTo -= chunkSize) {
-      const chunkFrom = Math.max(fromBlock, chunkTo - chunkSize + 1, toBlock - maxScanBlocks + 1)
-      scannedFromBlock = chunkFrom
-      const records = await portalFetchStreamRange(url, { ...query, fromBlock: chunkFrom, toBlock: chunkTo })
-      const txs = sortTransactions(flattenTransactionsWithBlockContext(records) as EvmTransactionItem[])
-        .filter((tx) => matchesClientTransactionFilters(tx, clientFilters))
-        .reverse()
-      for (const tx of txs) {
-        if (collected.length >= effectiveCandidateLimit) break
-        collected.push(tx)
-      }
-      scannedBlocks += chunkTo - chunkFrom + 1
-    }
-  }
+      collected.push(...selected)
+      return selected
+    },
+  })
 
   const ordered = orderTransactionsForOutput(collected, orderBy)
   return {
+    ...scan,
     items: ordered.slice(0, limit),
     candidates: ordered,
-    hasMore: collected.length > limit || scannedBlocks >= maxScanBlocks && (scanOrder === 'earliest' ? scannedToBlock < toBlock : scannedFromBlock > fromBlock),
-    scannedFromBlock,
-    scannedToBlock,
-    scannedBlocks,
+    hasMore:
+      collected.length > limit ||
+      (scan.reachedMaxScanBlocks && scan.hasUnscannedBlocks),
     candidateCount: collected.length,
   }
 }
@@ -464,11 +535,15 @@ export function registerQueryTransactionsTool(server: McpServer) {
       from_timestamp: z
         .union([z.number(), z.string()])
         .optional()
-        .describe('Starting timestamp. Accepts Unix seconds, Unix milliseconds, ISO datetime, or relative input like "1h ago".'),
+        .describe(
+          'Starting timestamp. Accepts Unix seconds, Unix milliseconds, ISO datetime, or relative input like "1h ago".',
+        ),
       to_timestamp: z
         .union([z.number(), z.string()])
         .optional()
-        .describe('Ending timestamp. Accepts Unix seconds, Unix milliseconds, ISO datetime, or relative input like "now".'),
+        .describe(
+          'Ending timestamp. Accepts Unix seconds, Unix milliseconds, ISO datetime, or relative input like "now".',
+        ),
       finalized_only: z.boolean().optional().default(false).describe('Only query finalized blocks'),
       from_addresses: z
         .array(z.string())
@@ -481,6 +556,27 @@ export function registerQueryTransactionsTool(server: McpServer) {
         .optional()
         .describe(
           'FILTER: Recipient addresses (typically contracts being called, or wallets receiving ETH). Optional if limit <=100.',
+        ),
+      from_token_symbols: z
+        .array(z.string())
+        .optional()
+        .describe(
+          'Resolve token symbols via open token-list data and merge them into from_addresses. Rare, but useful for token-contract-originated transactions.',
+        ),
+      to_token_symbols: z
+        .array(z.string())
+        .optional()
+        .describe(
+          'Resolve token symbols via open token-list data and merge them into to_addresses, e.g. transfer/approve calls to USDC.',
+        ),
+      max_token_symbol_matches: z
+        .number()
+        .min(1)
+        .max(20)
+        .optional()
+        .default(5)
+        .describe(
+          'Maximum token-list matches to include per token symbol. Use from_addresses/to_addresses for deterministic single-contract filters.',
         ),
       sighash: z
         .array(z.string())
@@ -501,11 +597,15 @@ export function registerQueryTransactionsTool(server: McpServer) {
       transaction_status: z
         .union([z.enum(['success', 'failed', 'succeeded', 'reverted']), z.number(), z.string()])
         .optional()
-        .describe('FILTER: Transaction receipt status. Use "success"/1 or "failed"/0 for failed/reverted transaction searches.'),
+        .describe(
+          'FILTER: Transaction receipt status. Use "success"/1 or "failed"/0 for failed/reverted transaction searches.',
+        ),
       contract_creation: z
         .boolean()
         .optional()
-        .describe('FILTER: true returns contract-creation transactions; false excludes them. Useful for "first contract creation from this wallet".'),
+        .describe(
+          'FILTER: true returns contract-creation transactions; false excludes them. Useful for "first contract creation from this wallet".',
+        ),
       min_value_wei: z
         .union([z.string(), z.number()])
         .optional()
@@ -526,12 +626,16 @@ export function registerQueryTransactionsTool(server: McpServer) {
       aggregate_by: z
         .enum(['sender', 'receiver'])
         .optional()
-        .describe('Optional bounded aggregation for top sender/receiver questions. Returns ranked address rows instead of raw transactions.'),
+        .describe(
+          'Optional bounded aggregation for top sender/receiver questions. Returns ranked address rows instead of raw transactions.',
+        ),
       aggregate_metric: z
         .enum(['count', 'value', 'gas_used', 'effective_gas_price'])
         .optional()
         .default('count')
-        .describe('Metric used with aggregate_by. count ranks by tx count; value by total native value; gas_used by total gas used; effective_gas_price by max effective gas price.'),
+        .describe(
+          'Metric used with aggregate_by. count ranks by tx count; value by total native value; gas_used by total gas used; effective_gas_price by max effective gas price.',
+        ),
       max_scan_blocks: z
         .number()
         .max(50000)
@@ -581,6 +685,9 @@ export function registerQueryTransactionsTool(server: McpServer) {
       finalized_only,
       from_addresses,
       to_addresses,
+      from_token_symbols,
+      to_token_symbols,
+      max_token_symbol_matches,
       sighash,
       method,
       transaction_type,
@@ -637,6 +744,9 @@ export function registerQueryTransactionsTool(server: McpServer) {
         finalized_only = paginationCursor.request.finalized_only
         from_addresses = paginationCursor.request.from_addresses
         to_addresses = paginationCursor.request.to_addresses
+        from_token_symbols = paginationCursor.request.from_token_symbols
+        to_token_symbols = paginationCursor.request.to_token_symbols
+        max_token_symbol_matches = paginationCursor.request.max_token_symbol_matches ?? 5
         sighash = paginationCursor.request.sighash
         method = paginationCursor.request.method
         transaction_type = paginationCursor.request.transaction_type
@@ -669,7 +779,8 @@ export function registerQueryTransactionsTool(server: McpServer) {
             from_block: paginationCursor.window_from_block,
             to_block: paginationCursor.window_to_block,
             range_kind:
-              paginationCursor.request.from_timestamp !== undefined || paginationCursor.request.to_timestamp !== undefined
+              paginationCursor.request.from_timestamp !== undefined ||
+              paginationCursor.request.to_timestamp !== undefined
                 ? 'timestamp_range'
                 : paginationCursor.request.timeframe
                   ? 'timeframe'
@@ -686,24 +797,74 @@ export function registerQueryTransactionsTool(server: McpServer) {
       const resolvedFromBlock = resolvedBlocks.from_block
       const resolvedToBlock = resolvedBlocks.to_block
 
-      const normalizedFrom = normalizeAddresses(from_addresses, chainType)
-      const normalizedTo = normalizeAddresses(to_addresses, chainType)
-      const normalizedSighash = Array.from(new Set([...(sighash ?? []), ...resolveMethodSighashes(method)].map((value) => value.toLowerCase())))
+      const normalizedFromAddressFilters = normalizeAddresses(from_addresses, chainType) ?? []
+      const normalizedToAddressFilters = normalizeAddresses(to_addresses, chainType) ?? []
+      let fromTokenSymbolResolutions: TokenSymbolResolution[] = []
+      let toTokenSymbolResolutions: TokenSymbolResolution[] = []
+      let unresolvedFromTokenSymbols: string[] = []
+      let unresolvedToTokenSymbols: string[] = []
+      let resolvedFromTokenSymbolAddresses: string[] = []
+      let resolvedToTokenSymbolAddresses: string[] = []
+      let fromTokenSymbolLookup: TokenListLookupMetadata | undefined
+      let toTokenSymbolLookup: TokenListLookupMetadata | undefined
+      if (!paginationCursor && from_token_symbols && from_token_symbols.length > 0) {
+        const resolvedSymbols = await resolveTokenSymbolsForQuery({
+          dataset,
+          symbols: from_token_symbols,
+          maxMatchesPerSymbol: max_token_symbol_matches,
+        })
+        fromTokenSymbolResolutions = resolvedSymbols.resolutions
+        unresolvedFromTokenSymbols = resolvedSymbols.unresolved_symbols
+        resolvedFromTokenSymbolAddresses = resolvedSymbols.addresses
+        fromTokenSymbolLookup = resolvedSymbols.lookup
+        if (resolvedFromTokenSymbolAddresses.length === 0 && normalizedFromAddressFilters.length === 0) {
+          throw new Error(
+            `No token-list matches found for from_token_symbols: ${from_token_symbols.join(', ')}. Use portal_resolve_entity to inspect matches or pass from_addresses directly.`,
+          )
+        }
+      }
+      if (!paginationCursor && to_token_symbols && to_token_symbols.length > 0) {
+        const resolvedSymbols = await resolveTokenSymbolsForQuery({
+          dataset,
+          symbols: to_token_symbols,
+          maxMatchesPerSymbol: max_token_symbol_matches,
+        })
+        toTokenSymbolResolutions = resolvedSymbols.resolutions
+        unresolvedToTokenSymbols = resolvedSymbols.unresolved_symbols
+        resolvedToTokenSymbolAddresses = resolvedSymbols.addresses
+        toTokenSymbolLookup = resolvedSymbols.lookup
+        if (resolvedToTokenSymbolAddresses.length === 0 && normalizedToAddressFilters.length === 0) {
+          throw new Error(
+            `No token-list matches found for to_token_symbols: ${to_token_symbols.join(', ')}. Use portal_resolve_entity to inspect matches or pass to_addresses directly.`,
+          )
+        }
+      }
+      const normalizedFrom = uniqueStrings([...normalizedFromAddressFilters, ...resolvedFromTokenSymbolAddresses])
+      const normalizedTo = uniqueStrings([...normalizedToAddressFilters, ...resolvedToTokenSymbolAddresses])
+      const fromFilters = normalizedFrom.length > 0 ? normalizedFrom : undefined
+      const toFilters = normalizedTo.length > 0 ? normalizedTo : undefined
+      const normalizedSighash = Array.from(
+        new Set([...(sighash ?? []), ...resolveMethodSighashes(method)].map((value) => value.toLowerCase())),
+      )
       const normalizedTransactionType = normalizeTransactionType(transaction_type)
       const normalizedTransactionStatus = normalizeTransactionStatus(transaction_status)
       const normalizedMinValueWei = normalizeBigIntFilter(min_value_wei, 'min_value_wei')
       const normalizedMinGasUsed = normalizeBigIntFilter(min_gas_used, 'min_gas_used')
-      const normalizedMinEffectiveGasPriceWei = normalizeBigIntFilter(min_effective_gas_price_wei, 'min_effective_gas_price_wei')
+      const normalizedMinEffectiveGasPriceWei = normalizeBigIntFilter(
+        min_effective_gas_price_wei,
+        'min_effective_gas_price_wei',
+      )
       const effectiveOrderBy = order_by ?? 'chronological'
       const effectiveAggregateMetric = aggregate_metric ?? 'count'
-      const hasClientFilters = normalizedTransactionType !== undefined
-        || normalizedTransactionStatus !== undefined
-        || contract_creation !== undefined
-        || normalizedMinValueWei !== undefined
-        || normalizedMinGasUsed !== undefined
-        || normalizedMinEffectiveGasPriceWei !== undefined
-        || effectiveOrderBy !== 'chronological'
-        || aggregate_by !== undefined
+      const hasClientFilters =
+        normalizedTransactionType !== undefined ||
+        normalizedTransactionStatus !== undefined ||
+        contract_creation !== undefined ||
+        normalizedMinValueWei !== undefined ||
+        normalizedMinGasUsed !== undefined ||
+        normalizedMinEffectiveGasPriceWei !== undefined ||
+        effectiveOrderBy !== 'chronological' ||
+        aggregate_by !== undefined
       const effectiveScanOrder: 'earliest' | 'latest' =
         scan_order ?? (hasClientFilters && effectiveOrderBy === 'chronological' ? 'earliest' : 'latest')
       const { validatedToBlock: endBlock, head } = await validateBlockRange(
@@ -717,7 +878,14 @@ export function registerQueryTransactionsTool(server: McpServer) {
 
       // Validate query size to prevent crashes
       const blockRange = pageToBlock - resolvedFromBlock
-      const hasFilters = !!(normalizedFrom || normalizedTo || normalizedSighash.length > 0 || first_nonce !== undefined || last_nonce !== undefined || hasClientFilters)
+      const hasFilters = !!(
+        fromFilters ||
+        toFilters ||
+        normalizedSighash.length > 0 ||
+        first_nonce !== undefined ||
+        last_nonce !== undefined ||
+        hasClientFilters
+      )
 
       const validation = validateQuerySize({
         blockRange,
@@ -733,8 +901,8 @@ export function registerQueryTransactionsTool(server: McpServer) {
       }
 
       const txFilter: Record<string, unknown> = {}
-      if (normalizedFrom) txFilter.from = normalizedFrom
-      if (normalizedTo) txFilter.to = normalizedTo
+      if (fromFilters) txFilter.from = fromFilters
+      if (toFilters) txFilter.to = toFilters
       if (normalizedSighash.length > 0) txFilter.sighash = normalizedSighash
       if (first_nonce !== undefined) txFilter.firstNonce = first_nonce
       if (last_nonce !== undefined) txFilter.lastNonce = last_nonce
@@ -760,13 +928,21 @@ export function registerQueryTransactionsTool(server: McpServer) {
         status: true,
         contractAddress: true,
       }
-      if (normalizedMinGasUsed !== undefined || effectiveOrderBy === 'gas_used_desc' || aggregate_by !== undefined && effectiveAggregateMetric === 'gas_used') {
+      if (
+        normalizedMinGasUsed !== undefined ||
+        effectiveOrderBy === 'gas_used_desc' ||
+        (aggregate_by !== undefined && effectiveAggregateMetric === 'gas_used')
+      ) {
         fields.transaction = {
           ...(fields.transaction as Record<string, boolean>),
           gasUsed: true,
         }
       }
-      if (normalizedMinEffectiveGasPriceWei !== undefined || effectiveOrderBy === 'effective_gas_price_desc' || aggregate_by !== undefined && effectiveAggregateMetric === 'effective_gas_price') {
+      if (
+        normalizedMinEffectiveGasPriceWei !== undefined ||
+        effectiveOrderBy === 'effective_gas_price_desc' ||
+        (aggregate_by !== undefined && effectiveAggregateMetric === 'effective_gas_price')
+      ) {
         fields.transaction = {
           ...(fields.transaction as Record<string, boolean>),
           effectiveGasPrice: true,
@@ -806,10 +982,7 @@ export function registerQueryTransactionsTool(server: McpServer) {
         ? 500
         : Math.max(
             10,
-            Math.min(
-              40,
-              fetchLimit * (effectiveResponseFormat === 'summary' ? 4 : field_preset === 'minimal' ? 5 : 3),
-            ),
+            Math.min(40, fetchLimit * (effectiveResponseFormat === 'summary' ? 4 : field_preset === 'minimal' ? 5 : 3)),
           )
       const portalUrl = `${PORTAL_URL}/datasets/${dataset}/stream`
       const scanPath = effectiveScanOrder === 'earliest' || hasClientFilters
@@ -831,7 +1004,10 @@ export function registerQueryTransactionsTool(server: McpServer) {
             chunkSize: normalizedTransactionType !== undefined ? 100 : adaptiveChunkSize,
             scanOrder: effectiveScanOrder,
             orderBy: effectiveOrderBy,
-            maxScanBlocks: Math.max(1, Math.min(max_scan_blocks ?? (aggregate_by ? 1000 : 10000), endBlock - resolvedFromBlock + 1)),
+            maxScanBlocks: Math.max(
+              1,
+              Math.min(max_scan_blocks ?? (aggregate_by ? 1000 : 10000), endBlock - resolvedFromBlock + 1),
+            ),
             clientFilters: {
               transactionType: normalizedTransactionType,
               transactionStatus: normalizedTransactionStatus,
@@ -845,7 +1021,10 @@ export function registerQueryTransactionsTool(server: McpServer) {
         : undefined
       const allTxs = scanResult
         ? scanResult.items
-        : orderTransactionsForOutput(flattenTransactionsWithBlockContext(results) as EvmTransactionItem[], effectiveOrderBy)
+        : orderTransactionsForOutput(
+            flattenTransactionsWithBlockContext(results) as EvmTransactionItem[],
+            effectiveOrderBy,
+          )
       const page = scanResult
         ? {
             pageItems: scanResult.items,
@@ -863,54 +1042,78 @@ export function registerQueryTransactionsTool(server: McpServer) {
                 }
               : undefined,
           )
-      const nextCursor = !scanResult && page.hasMore && page.nextBoundary
-        ? encodeRecentPageCursor<QueryTransactionsRequest>({
-            tool: 'portal_evm_query_transactions',
-            dataset,
-            request: {
-              ...(timeframe ? { timeframe } : {}),
-              ...(from_timestamp !== undefined ? { from_timestamp } : {}),
-              ...(to_timestamp !== undefined ? { to_timestamp } : {}),
-              limit,
-              finalized_only,
-              ...(normalizedFrom ? { from_addresses: normalizedFrom } : {}),
-              ...(normalizedTo ? { to_addresses: normalizedTo } : {}),
-              ...(normalizedSighash.length > 0 ? { sighash: normalizedSighash } : {}),
-              ...(method ? { method } : {}),
-              ...(normalizedTransactionType !== undefined ? { transaction_type: normalizedTransactionType } : {}),
-              ...(normalizedTransactionStatus !== undefined ? { transaction_status: normalizedTransactionStatus } : {}),
-              ...(contract_creation !== undefined ? { contract_creation } : {}),
-              ...(min_value_wei !== undefined ? { min_value_wei } : {}),
-              ...(min_gas_used !== undefined ? { min_gas_used } : {}),
-              ...(min_effective_gas_price_wei !== undefined ? { min_effective_gas_price_wei } : {}),
-              order_by: effectiveOrderBy,
-              ...(aggregate_by ? { aggregate_by } : {}),
-              aggregate_metric: effectiveAggregateMetric,
-              ...(max_scan_blocks !== undefined ? { max_scan_blocks } : {}),
-              scan_order: effectiveScanOrder,
-              ...(first_nonce !== undefined ? { first_nonce } : {}),
-              ...(last_nonce !== undefined ? { last_nonce } : {}),
-              field_preset,
-              response_format: effectiveResponseFormat,
-              include_logs,
-              include_traces,
-              include_state_diffs,
-              include_l2_fields,
-            },
-            window_from_block: resolvedFromBlock,
-            window_to_block: endBlock,
-            page_to_block: page.nextBoundary.page_to_block,
-            skip_inclusive_block: page.nextBoundary.skip_inclusive_block,
-          })
-        : undefined
+      const nextCursor =
+        !scanResult && page.hasMore && page.nextBoundary
+          ? encodeRecentPageCursor<QueryTransactionsRequest>({
+              tool: 'portal_evm_query_transactions',
+              dataset,
+              request: {
+                ...(timeframe ? { timeframe } : {}),
+                ...(from_timestamp !== undefined ? { from_timestamp } : {}),
+                ...(to_timestamp !== undefined ? { to_timestamp } : {}),
+                limit,
+                finalized_only,
+                ...(fromFilters ? { from_addresses: fromFilters } : {}),
+                ...(toFilters ? { to_addresses: toFilters } : {}),
+                ...(from_token_symbols ? { from_token_symbols } : {}),
+                ...(to_token_symbols ? { to_token_symbols } : {}),
+                ...(max_token_symbol_matches !== undefined ? { max_token_symbol_matches } : {}),
+                ...(normalizedSighash.length > 0 ? { sighash: normalizedSighash } : {}),
+                ...(method ? { method } : {}),
+                ...(normalizedTransactionType !== undefined ? { transaction_type: normalizedTransactionType } : {}),
+                ...(normalizedTransactionStatus !== undefined
+                  ? { transaction_status: normalizedTransactionStatus }
+                  : {}),
+                ...(contract_creation !== undefined ? { contract_creation } : {}),
+                ...(min_value_wei !== undefined ? { min_value_wei } : {}),
+                ...(min_gas_used !== undefined ? { min_gas_used } : {}),
+                ...(min_effective_gas_price_wei !== undefined ? { min_effective_gas_price_wei } : {}),
+                order_by: effectiveOrderBy,
+                ...(aggregate_by ? { aggregate_by } : {}),
+                aggregate_metric: effectiveAggregateMetric,
+                ...(max_scan_blocks !== undefined ? { max_scan_blocks } : {}),
+                scan_order: effectiveScanOrder,
+                ...(first_nonce !== undefined ? { first_nonce } : {}),
+                ...(last_nonce !== undefined ? { last_nonce } : {}),
+                field_preset,
+                response_format: effectiveResponseFormat,
+                include_logs,
+                include_traces,
+                include_state_diffs,
+                include_l2_fields,
+              },
+              window_from_block: resolvedFromBlock,
+              window_to_block: endBlock,
+              page_to_block: page.nextBoundary.page_to_block,
+              skip_inclusive_block: page.nextBoundary.skip_inclusive_block,
+            })
+          : undefined
 
-      const notices = [...getTimestampWindowNotices(resolvedBlocks), ...getValidationNotices(validation)]
+      const notices = [
+        ...getTimestampWindowNotices(resolvedBlocks),
+        ...getValidationNotices(validation),
+        ...buildTokenResolutionNotices(fromTokenSymbolResolutions, unresolvedFromTokenSymbols, 'from_token_symbols'),
+        ...buildTokenResolutionNotices(toTokenSymbolResolutions, unresolvedToTokenSymbols, 'to_token_symbols'),
+        ...buildTokenListLookupNotices(fromTokenSymbolLookup),
+        ...buildTokenListLookupNotices(toTokenSymbolLookup),
+      ]
       if (aggregate_by) {
-        const aggregateRows = aggregateTransactions(scanResult?.candidates ?? allTxs, aggregate_by, effectiveAggregateMetric, limit)
+        const aggregateRows = aggregateTransactions(
+          scanResult?.candidates ?? allTxs,
+          aggregate_by,
+          effectiveAggregateMetric,
+          limit,
+        )
         const aggregateKey = aggregate_by === 'sender' ? 'top_senders' : 'top_receivers'
         if (scanResult?.hasMore) {
-          notices.push(`Aggregation is bounded to ${scanResult.candidateCount.toLocaleString()} scanned candidate transactions across blocks ${scanResult.scannedFromBlock}-${scanResult.scannedToBlock}; narrow the window or raise max_scan_blocks for deeper coverage.`)
+          notices.push(
+            `Aggregation is bounded to ${scanResult.candidateCount.toLocaleString()} scanned candidate transactions across blocks ${scanResult.scannedFromBlock}-${scanResult.scannedToBlock}; narrow the window or raise max_scan_blocks for deeper coverage.`,
+          )
         }
+        const boundedSearchNotice = scanResult
+          ? buildBoundedSearchNotice(scanResult, 'EVM transaction aggregation')
+          : undefined
+        if (boundedSearchNotice) notices.push(boundedSearchNotice)
 
         const aggregatePayload = {
           [aggregateKey]: aggregateRows,
@@ -927,14 +1130,41 @@ export function registerQueryTransactionsTool(server: McpServer) {
               title: aggregate_by === 'sender' ? 'Top Senders' : 'Top Receivers',
               rowCount: aggregateRows.length,
               keyField: 'address',
-              defaultSort: { key: effectiveAggregateMetric === 'count' ? 'transaction_count' : effectiveAggregateMetric === 'value' ? 'total_value_wei' : effectiveAggregateMetric === 'gas_used' ? 'total_gas_used' : 'max_effective_gas_price_wei', direction: 'desc' },
+              defaultSort: {
+                key:
+                  effectiveAggregateMetric === 'count'
+                    ? 'transaction_count'
+                    : effectiveAggregateMetric === 'value'
+                      ? 'total_value_wei'
+                      : effectiveAggregateMetric === 'gas_used'
+                        ? 'total_gas_used'
+                        : 'max_effective_gas_price_wei',
+                direction: 'desc',
+              },
               columns: [
                 { key: 'rank', label: '#', kind: 'rank', align: 'right' },
-                { key: 'address', label: aggregate_by === 'sender' ? 'Sender' : 'Receiver', kind: 'dimension', format: 'address' },
+                {
+                  key: 'address',
+                  label: aggregate_by === 'sender' ? 'Sender' : 'Receiver',
+                  kind: 'dimension',
+                  format: 'address',
+                },
                 { key: 'transaction_count', label: 'Txs', kind: 'metric', format: 'integer', align: 'right' },
-                { key: 'total_value_wei', label: 'Total value (wei)', kind: 'metric', format: 'integer', align: 'right' },
+                {
+                  key: 'total_value_wei',
+                  label: 'Total value (wei)',
+                  kind: 'metric',
+                  format: 'integer',
+                  align: 'right',
+                },
                 { key: 'total_gas_used', label: 'Total gas used', kind: 'metric', format: 'integer', align: 'right' },
-                { key: 'max_effective_gas_price_wei', label: 'Max effective gas price (wei)', kind: 'metric', format: 'integer', align: 'right' },
+                {
+                  key: 'max_effective_gas_price_wei',
+                  label: 'Max effective gas price (wei)',
+                  kind: 'metric',
+                  format: 'integer',
+                  align: 'right',
+                },
               ],
               dense: true,
             }),
@@ -964,22 +1194,31 @@ export function registerQueryTransactionsTool(server: McpServer) {
             notices,
             freshness,
             coverage,
-            execution: buildExecutionMetadata({
-              response_format: effectiveResponseFormat,
-              finalized_only,
-              limit,
-              from_block: resolvedFromBlock,
-              to_block: endBlock,
-              page_to_block: pageToBlock,
-              scan_order: effectiveScanOrder,
-              order_by: effectiveOrderBy,
-              range_kind: resolvedBlocks.range_kind,
-              notes: [
-                `Aggregated by ${aggregate_by} using ${effectiveAggregateMetric}.`,
-                `Scanned up to ${max_scan_blocks ?? 1000} blocks or ${Math.max(limit * 200, 5000).toLocaleString()} candidate transactions for bounded aggregation.`,
-              ],
-              normalized_output: true,
-            }),
+            execution: {
+              ...buildExecutionMetadata({
+                response_format: effectiveResponseFormat,
+                finalized_only,
+                limit,
+                from_block: resolvedFromBlock,
+                to_block: endBlock,
+                page_to_block: pageToBlock,
+                scan_order: effectiveScanOrder,
+                order_by: effectiveOrderBy,
+                range_kind: resolvedBlocks.range_kind,
+                notes: [
+                  from_token_symbols && from_token_symbols.length > 0
+                    ? 'from_token_symbols were resolved from open token-list data and merged into from_addresses.'
+                    : undefined,
+                  to_token_symbols && to_token_symbols.length > 0
+                    ? 'to_token_symbols were resolved from open token-list data and merged into to_addresses.'
+                    : undefined,
+                  `Aggregated by ${aggregate_by} using ${effectiveAggregateMetric}.`,
+                  `Scanned up to ${max_scan_blocks ?? 1000} blocks or ${Math.max(limit * 200, 5000).toLocaleString()} candidate transactions for bounded aggregation.`,
+                ].filter((note): note is string => Boolean(note)),
+                normalized_output: true,
+              }),
+              ...(scanResult ? buildBoundedSearchExecution(scanResult) : {}),
+            },
             metadata: {
               network: dataset,
               dataset,
@@ -997,8 +1236,12 @@ export function registerQueryTransactionsTool(server: McpServer) {
         notices.push('Older results are available via _pagination.next_cursor.')
       }
       if (scanResult && page.hasMore) {
-        notices.push(`More matches may exist outside the scanned ${scanResult.scannedFromBlock}-${scanResult.scannedToBlock} block slice; narrow the window, raise max_scan_blocks, or add Portal-side filters.`)
+        notices.push(
+          `More matching transactions exist beyond the returned page for scanned blocks ${scanResult.scannedFromBlock}-${scanResult.scannedToBlock}; narrow the window, raise max_scan_blocks, or add Portal-side filters.`,
+        )
       }
+      const boundedSearchNotice = scanResult ? buildBoundedSearchNotice(scanResult, 'EVM transaction scan') : undefined
+      if (boundedSearchNotice) notices.push(boundedSearchNotice)
       const freshness = buildQueryFreshness({
         finality: finalized_only ? 'finalized' : 'latest',
         headBlockNumber: head.number,
@@ -1031,38 +1274,47 @@ export function registerQueryTransactionsTool(server: McpServer) {
         }),
         freshness,
         coverage,
-        execution: buildExecutionMetadata({
-          response_format: effectiveResponseFormat,
-          finalized_only,
-          limit,
-          from_block: resolvedFromBlock,
-          to_block: endBlock,
-          page_to_block: pageToBlock,
-          scan_order: effectiveScanOrder,
-          order_by: effectiveOrderBy,
-          range_kind: resolvedBlocks.range_kind,
-          notes: [
-            normalizedTransactionType !== undefined
-              ? `Filtered client-side to transaction type ${normalizedTransactionType} (0x${normalizedTransactionType.toString(16)}).`
-              : undefined,
-            normalizedTransactionStatus !== undefined
-              ? `Filtered client-side to ${normalizedTransactionStatus === 1 ? 'successful' : 'failed'} transactions.`
-              : undefined,
-            contract_creation !== undefined
-              ? `Filtered client-side to ${contract_creation ? 'contract-creation' : 'non-contract-creation'} transactions.`
-              : undefined,
-            effectiveOrderBy !== 'chronological'
-              ? `Ranked ${scanResult?.candidateCount ?? page.pageItems.length} scanned candidates by ${effectiveOrderBy}.`
-              : undefined,
-            include_logs || include_traces || include_state_diffs
-              ? 'Expanded transaction context was requested with include flags.'
-              : `Using ${field_preset} field preset.`,
-            !hasFilters && adaptiveChunkSize < 100
-              ? `Used smaller ${adaptiveChunkSize}-block recent chunks to keep unfiltered live previews responsive.`
-              : undefined,
-          ].filter((note): note is string => Boolean(note)),
-          normalized_output: true,
-        }),
+        execution: {
+          ...buildExecutionMetadata({
+            response_format: effectiveResponseFormat,
+            finalized_only,
+            limit,
+            from_block: resolvedFromBlock,
+            to_block: endBlock,
+            page_to_block: pageToBlock,
+            scan_order: effectiveScanOrder,
+            order_by: effectiveOrderBy,
+            range_kind: resolvedBlocks.range_kind,
+            notes: [
+              from_token_symbols && from_token_symbols.length > 0
+                ? 'from_token_symbols were resolved from open token-list data and merged into from_addresses.'
+                : undefined,
+              to_token_symbols && to_token_symbols.length > 0
+                ? 'to_token_symbols were resolved from open token-list data and merged into to_addresses.'
+                : undefined,
+              normalizedTransactionType !== undefined
+                ? `Filtered client-side to transaction type ${normalizedTransactionType} (0x${normalizedTransactionType.toString(16)}).`
+                : undefined,
+              normalizedTransactionStatus !== undefined
+                ? `Filtered client-side to ${normalizedTransactionStatus === 1 ? 'successful' : 'failed'} transactions.`
+                : undefined,
+              contract_creation !== undefined
+                ? `Filtered client-side to ${contract_creation ? 'contract-creation' : 'non-contract-creation'} transactions.`
+                : undefined,
+              effectiveOrderBy !== 'chronological'
+                ? `Ranked ${scanResult?.candidateCount ?? page.pageItems.length} scanned candidates by ${effectiveOrderBy}.`
+                : undefined,
+              include_logs || include_traces || include_state_diffs
+                ? 'Expanded transaction context was requested with include flags.'
+                : `Using ${field_preset} field preset.`,
+              !hasFilters && adaptiveChunkSize < 100
+                ? `Used smaller ${adaptiveChunkSize}-block recent chunks to keep unfiltered live previews responsive.`
+                : undefined,
+            ].filter((note): note is string => Boolean(note)),
+            normalized_output: true,
+          }),
+          ...(scanResult ? buildBoundedSearchExecution(scanResult) : {}),
+        },
         metadata: {
           network: dataset,
           dataset,

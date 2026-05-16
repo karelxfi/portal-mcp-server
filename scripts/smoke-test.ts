@@ -1,5 +1,5 @@
 /**
- * Smoke test: build, boot the MCP server, call 3 fast tools, assert results.
+ * Smoke test: build, boot the MCP server, check developer resources, call 3 fast tools, assert results.
  * Usage: npm test
  */
 import { execSync, spawn } from 'node:child_process'
@@ -116,10 +116,54 @@ async function main() {
   ]
   const stillExposed = tools.map((tool: any) => tool.name).filter((name: string) => legacyNames.includes(name))
   console.log(`Tools registered: ${toolCount} (${publicToolCount} public, ${advancedToolCount} advanced)`)
-  if (toolCount !== 27) fail(`Expected exactly 27 tools, got ${toolCount}`)
-  if (publicToolCount !== 24) fail(`Expected exactly 24 public tools, got ${publicToolCount}`)
+  if (toolCount !== 28) fail(`Expected exactly 28 tools, got ${toolCount}`)
+  if (publicToolCount !== 25) fail(`Expected exactly 25 public tools, got ${publicToolCount}`)
   if (advancedToolCount !== 3) fail(`Expected exactly 3 advanced tools, got ${advancedToolCount}`)
   if (stillExposed.length > 0) fail(`Legacy tool names are still exposed: ${stillExposed.join(', ')}`)
+
+  // Step 4b: List and read developer-facing resources
+  const resourcesId = send('resources/list')
+  const resourcesResp = await readResponse(resourcesId)
+  if (resourcesResp.error) fail(`resources/list error: ${JSON.stringify(resourcesResp.error)}`)
+  const resources = resourcesResp.result?.resources ?? []
+  const resourceUris = resources.map((resource: any) => resource.uri)
+  if (!resourceUris.includes('sqd://tools')) fail(`Expected sqd://tools developer guide resource`)
+  console.log('resources/list OK')
+
+  const resourceTemplatesId = send('resources/templates/list')
+  const resourceTemplatesResp = await readResponse(resourceTemplatesId)
+  if (resourceTemplatesResp.error)
+    fail(`resources/templates/list error: ${JSON.stringify(resourceTemplatesResp.error)}`)
+  const resourceTemplates = resourceTemplatesResp.result?.resourceTemplates ?? []
+  const templateUris = resourceTemplates.map((template: any) => template.uriTemplate)
+  if (!templateUris.includes('sqd://tools/{name}')) fail(`Expected sqd://tools/{name} developer guide template`)
+  console.log('resources/templates/list OK')
+
+  const toolGuideId = send('resources/read', { uri: 'sqd://tools' })
+  const toolGuideResp = await readResponse(toolGuideId)
+  if (toolGuideResp.error) fail(`resources/read sqd://tools error: ${JSON.stringify(toolGuideResp.error)}`)
+  const toolGuideText = toolGuideResp.result?.contents?.[0]?.text
+  if (!toolGuideText) fail('sqd://tools returned empty content')
+  const toolGuide = JSON.parse(toolGuideText)
+  if (toolGuide.counts?.tools !== 28) fail(`sqd://tools expected 28 tool guide entries, got ${toolGuide.counts?.tools}`)
+  if (!toolGuide.categories?.convenience?.includes('portal_get_time_series')) {
+    fail('sqd://tools should group portal_get_time_series under convenience')
+  }
+  console.log('sqd://tools OK')
+
+  const toolGuideEntryId = send('resources/read', { uri: 'sqd://tools/portal_get_time_series' })
+  const toolGuideEntryResp = await readResponse(toolGuideEntryId)
+  if (toolGuideEntryResp.error)
+    fail(`resources/read sqd://tools/portal_get_time_series error: ${JSON.stringify(toolGuideEntryResp.error)}`)
+  const toolGuideEntryText = toolGuideEntryResp.result?.contents?.[0]?.text
+  if (!toolGuideEntryText) fail('sqd://tools/portal_get_time_series returned empty content')
+  const toolGuideEntry = JSON.parse(toolGuideEntryText)
+  if (toolGuideEntry.name !== 'portal_get_time_series')
+    fail('Expected the single-tool guide to return portal_get_time_series')
+  if (!Array.isArray(toolGuideEntry.examples) || toolGuideEntry.examples.length === 0) {
+    fail('Expected the single-tool guide to include examples')
+  }
+  console.log('sqd://tools/{name} OK')
 
   // Step 5: Call portal_list_networks
   const dsId = send('tools/call', {

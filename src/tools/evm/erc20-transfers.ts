@@ -3,18 +3,38 @@ import { z } from 'zod'
 
 import { resolveDataset, validateBlockRange } from '../../cache/datasets.js'
 import { EVENT_SIGNATURES, PORTAL_URL } from '../../constants/index.js'
+import {
+  buildBoundedSearchExecution,
+  buildBoundedSearchNotice,
+  scanBoundedBlockRange,
+} from '../../helpers/bounded-search.js'
 import { detectChainType } from '../../helpers/chain.js'
+import { formatTokenValue } from '../../helpers/conversions.js'
+import {
+  type TokenSymbolResolution,
+  buildTokenListLookupNotices,
+  getTokenMetadataMapForDatasetWithStatus,
+  type TokenListLookupMetadata,
+  resolveTokenSymbolsForQuery,
+} from '../../helpers/entity-resolution.js'
 import { ActionableError, createUnsupportedChainError } from '../../helpers/errors.js'
-import { formatTokenValue, getKnownTokenDecimals } from '../../helpers/conversions.js'
-import { getCoinGeckoTokenList } from '../../helpers/external-apis.js'
-import { portalFetch, portalFetchRecentRecords, portalFetchStreamRange } from '../../helpers/fetch.js'
+import { portalFetchRecentRecords, portalFetchStreamRange } from '../../helpers/fetch.js'
 import { buildEvmLogFields } from '../../helpers/fields.js'
 import { formatResult } from '../../helpers/format.js'
 import { formatTimestamp } from '../../helpers/formatting.js'
 import { normalizeErc20TransferResult } from '../../helpers/normalized-results.js'
-import { buildPaginationInfo, decodeRecentPageCursor, encodeRecentPageCursor, paginateAscendingItems } from '../../helpers/pagination.js'
-import { buildChronologicalPageOrdering, buildQueryCoverage, buildQueryFreshness } from '../../helpers/result-metadata.js'
-import { getTimestampWindowNotices, type TimestampInput, resolveTimeframeOrBlocks } from '../../helpers/timeframe.js'
+import {
+  buildPaginationInfo,
+  decodeRecentPageCursor,
+  encodeRecentPageCursor,
+  paginateAscendingItems,
+} from '../../helpers/pagination.js'
+import {
+  buildChronologicalPageOrdering,
+  buildQueryCoverage,
+  buildQueryFreshness,
+} from '../../helpers/result-metadata.js'
+import { type TimestampInput, getTimestampWindowNotices, resolveTimeframeOrBlocks } from '../../helpers/timeframe.js'
 import { buildExecutionMetadata, buildToolDescription } from '../../helpers/tool-ux.js'
 import { normalizeAddresses, normalizeEvmAddress } from '../../helpers/validation.js'
 import type { BlockHead } from '../../types/index.js'
@@ -32,6 +52,8 @@ export function registerGetErc20TransfersTool(server: McpServer) {
     to_timestamp?: TimestampInput
     limit: number
     token_addresses?: string[]
+    token_symbols?: string[]
+    max_token_symbol_matches?: number
     from_addresses?: string[]
     to_addresses?: string[]
     scan_order?: 'earliest' | 'latest'
@@ -54,7 +76,28 @@ export function registerGetErc20TransfersTool(server: McpServer) {
     transaction_hash?: string
   }
 
-  const getBlockNumber = (item: Erc20TransferItem) => typeof item.block_number === 'number' ? item.block_number : undefined
+  const getBlockNumber = (item: Erc20TransferItem) =>
+    typeof item.block_number === 'number' ? item.block_number : undefined
+  const uniqueStrings = (values: string[]) => Array.from(new Set(values))
+  const buildTokenResolutionNotices = (resolutions: TokenSymbolResolution[], unresolvedSymbols: string[]) => {
+    const notices: string[] = []
+    if (unresolvedSymbols.length > 0) {
+      notices.push(`No token-list match found for symbol(s): ${unresolvedSymbols.join(', ')}.`)
+    }
+    for (const resolution of resolutions) {
+      if (resolution.matches.length > 1) {
+        notices.push(
+          `Token symbol ${resolution.symbol} resolved to ${resolution.matches.length} token-list matches; all selected addresses were included. Use token_addresses for a single deterministic contract.`,
+        )
+      }
+      if (resolution.truncated) {
+        notices.push(
+          `Token symbol ${resolution.symbol} had more matches than max_token_symbol_matches; results were capped.`,
+        )
+      }
+    }
+    return notices
+  }
   const sortTransfers = (items: Erc20TransferItem[]) =>
     items.sort((left, right) => {
       const leftBlock = getBlockNumber(left) ?? 0
@@ -88,34 +131,33 @@ export function registerGetErc20TransfersTool(server: McpServer) {
     const records: unknown[] = []
     const targetCount = limit + 1
     let matchedLogs = 0
-    let scannedFromBlock = scanOrder === 'earliest' ? fromBlock : toBlock
-    let scannedToBlock = scanOrder === 'earliest' ? fromBlock : toBlock
 
-    if (scanOrder === 'earliest') {
-      for (let chunkFrom = fromBlock; chunkFrom <= toBlock && matchedLogs < targetCount; chunkFrom += chunkSize) {
-        const chunkTo = Math.min(toBlock, chunkFrom + chunkSize - 1)
-        scannedToBlock = chunkTo
-        const chunk = await portalFetchStreamRange(url, { ...query, fromBlock: chunkFrom, toBlock: chunkTo })
-        records.push(...chunk)
+    const scan = await scanBoundedBlockRange<unknown>({
+      fromBlock,
+      toBlock,
+      chunkSize,
+      scanOrder,
+      shouldContinue: () => matchedLogs < targetCount,
+      fetchChunk: async (chunkBounds) => {
+        const chunk = await portalFetchStreamRange(url, {
+          ...query,
+          fromBlock: chunkBounds.fromBlock,
+          toBlock: chunkBounds.toBlock,
+        })
         matchedLogs += chunk.reduce<number>((sum, block: unknown) => {
           const logs = (block as { logs?: unknown[] })?.logs
           return sum + (Array.isArray(logs) ? logs.length : 0)
         }, 0)
-      }
-    } else {
-      for (let chunkTo = toBlock; chunkTo >= fromBlock && matchedLogs < targetCount; chunkTo -= chunkSize) {
-        const chunkFrom = Math.max(fromBlock, chunkTo - chunkSize + 1)
-        scannedFromBlock = chunkFrom
-        const chunk = await portalFetchStreamRange(url, { ...query, fromBlock: chunkFrom, toBlock: chunkTo })
-        records.unshift(...chunk)
-        matchedLogs += chunk.reduce<number>((sum, block: unknown) => {
-          const logs = (block as { logs?: unknown[] })?.logs
-          return sum + (Array.isArray(logs) ? logs.length : 0)
-        }, 0)
-      }
-    }
+        return chunk
+      },
+      mergeChunkItems:
+        scanOrder === 'latest'
+          ? (existing, chunk) => [...chunk, ...existing]
+          : undefined,
+    })
+    records.push(...scan.items)
 
-    return { records, hasMore: matchedLogs > limit, scannedFromBlock, scannedToBlock }
+    return { ...scan, records, hasMore: matchedLogs > limit }
   }
 
   server.tool(
@@ -129,12 +171,29 @@ export function registerGetErc20TransfersTool(server: McpServer) {
       from_timestamp: z
         .union([z.number(), z.string()])
         .optional()
-        .describe('Starting timestamp. Accepts Unix seconds, Unix milliseconds, ISO datetime, or relative input like "1h ago".'),
+        .describe(
+          'Starting timestamp. Accepts Unix seconds, Unix milliseconds, ISO datetime, or relative input like "1h ago".',
+        ),
       to_timestamp: z
         .union([z.number(), z.string()])
         .optional()
-        .describe('Ending timestamp. Accepts Unix seconds, Unix milliseconds, ISO datetime, or relative input like "now".'),
+        .describe(
+          'Ending timestamp. Accepts Unix seconds, Unix milliseconds, ISO datetime, or relative input like "now".',
+        ),
       token_addresses: z.array(z.string()).optional().describe('Token contract addresses'),
+      token_symbols: z
+        .array(z.string())
+        .optional()
+        .describe('Token symbols to resolve via open token-list data, e.g. ["USDC"]. Merges with token_addresses.'),
+      max_token_symbol_matches: z
+        .number()
+        .min(1)
+        .max(20)
+        .optional()
+        .default(5)
+        .describe(
+          'Maximum token-list matches to include per token symbol. Use token_addresses for deterministic single-contract filters.',
+        ),
       from_addresses: z.array(z.string()).optional().describe('Sender addresses'),
       to_addresses: z.array(z.string()).optional().describe('Recipient addresses'),
       scan_order: z
@@ -158,6 +217,8 @@ export function registerGetErc20TransfersTool(server: McpServer) {
       from_timestamp,
       to_timestamp,
       token_addresses,
+      token_symbols,
+      max_token_symbol_matches,
       from_addresses,
       to_addresses,
       scan_order,
@@ -196,21 +257,50 @@ export function registerGetErc20TransfersTool(server: McpServer) {
         to_timestamp = paginationCursor.request.to_timestamp
         limit = paginationCursor.request.limit
         token_addresses = paginationCursor.request.token_addresses
+        token_symbols = paginationCursor.request.token_symbols
+        max_token_symbol_matches = paginationCursor.request.max_token_symbol_matches ?? 5
         from_addresses = paginationCursor.request.from_addresses
         to_addresses = paginationCursor.request.to_addresses
         scan_order = paginationCursor.request.scan_order ?? 'latest'
         include_token_info = paginationCursor.request.include_token_info
       }
       if (!paginationCursor && from_block === undefined && timeframe === undefined && from_timestamp === undefined) {
-        throw new ActionableError('portal_evm_query_token_transfers requires from_block, timeframe, or from_timestamp unless you are continuing with cursor.', [
-          'Provide from_block for a fresh query.',
-          'Or use timeframe for a recent window like "1h".',
-          'Or use from_timestamp/to_timestamp for a natural time window.',
-          'Reuse _pagination.next_cursor from a previous response to continue paging.',
-        ])
+        throw new ActionableError(
+          'portal_evm_query_token_transfers requires from_block, timeframe, or from_timestamp unless you are continuing with cursor.',
+          [
+            'Provide from_block for a fresh query.',
+            'Or use timeframe for a recent window like "1h".',
+            'Or use from_timestamp/to_timestamp for a natural time window.',
+            'Reuse _pagination.next_cursor from a previous response to continue paging.',
+          ],
+        )
       }
 
-      const normalizedTokens = normalizeAddresses(token_addresses, chainType)
+      const normalizedTokenAddressFilters = normalizeAddresses(token_addresses, chainType) ?? []
+      let tokenSymbolResolutions: TokenSymbolResolution[] = []
+      let unresolvedTokenSymbols: string[] = []
+      let resolvedTokenSymbolAddresses: string[] = []
+      let tokenSymbolLookup: TokenListLookupMetadata | undefined
+      if (!paginationCursor && token_symbols && token_symbols.length > 0) {
+        const resolvedSymbols = await resolveTokenSymbolsForQuery({
+          dataset,
+          symbols: token_symbols,
+          maxMatchesPerSymbol: max_token_symbol_matches,
+        })
+        tokenSymbolResolutions = resolvedSymbols.resolutions
+        unresolvedTokenSymbols = resolvedSymbols.unresolved_symbols
+        resolvedTokenSymbolAddresses = resolvedSymbols.addresses
+        tokenSymbolLookup = resolvedSymbols.lookup
+        if (resolvedTokenSymbolAddresses.length === 0 && normalizedTokenAddressFilters.length === 0) {
+          throw new ActionableError(`No token-list matches found for token_symbols: ${token_symbols.join(', ')}.`, [
+            'Use portal_resolve_entity to inspect available token-list matches.',
+            'Pass token_addresses directly if you know the exact contract address.',
+            'Check the network name; token symbols can differ across chains.',
+          ])
+        }
+      }
+      const normalizedTokens = uniqueStrings([...normalizedTokenAddressFilters, ...resolvedTokenSymbolAddresses])
+      const tokenFilterAddresses = normalizedTokens.length > 0 ? normalizedTokens : undefined
       const normalizedFrom = from_addresses
         ? from_addresses.map((a) => '0x' + normalizeEvmAddress(a).slice(2).padStart(64, '0'))
         : undefined
@@ -223,7 +313,8 @@ export function registerGetErc20TransfersTool(server: McpServer) {
             from_block: paginationCursor.window_from_block,
             to_block: paginationCursor.window_to_block,
             range_kind:
-              paginationCursor.request.from_timestamp !== undefined || paginationCursor.request.to_timestamp !== undefined
+              paginationCursor.request.from_timestamp !== undefined ||
+              paginationCursor.request.to_timestamp !== undefined
                 ? 'timestamp_range'
                 : paginationCursor.request.timeframe
                   ? 'timeframe'
@@ -250,7 +341,7 @@ export function registerGetErc20TransfersTool(server: McpServer) {
       const logFilter: Record<string, unknown> = {
         topic0: [EVENT_SIGNATURES.TRANSFER_ERC20],
       }
-      if (normalizedTokens) logFilter.address = normalizedTokens
+      if (tokenFilterAddresses) logFilter.address = tokenFilterAddresses
       if (normalizedFrom) logFilter.topic1 = normalizedFrom
       if (normalizedTo) logFilter.topic2 = normalizedTo
 
@@ -265,21 +356,22 @@ export function registerGetErc20TransfersTool(server: McpServer) {
         logs: [logFilter],
       }
 
-      const hasAddressFilters = !!(normalizedTokens || normalizedFrom || normalizedTo)
+      const hasAddressFilters = !!(tokenFilterAddresses || normalizedFrom || normalizedTo)
       const cursorSkip = paginationCursor?.skip_inclusive_block ?? 0
       const fetchLimit = limit + cursorSkip + 1
       const portalUrl = `${PORTAL_URL}/datasets/${dataset}/stream`
-      const scanResult = scan_order === 'earliest'
-        ? await fetchTransferBlocksByScanOrder({
-            url: portalUrl,
-            query,
-            fromBlock: resolvedFromBlock,
-            toBlock: pageToBlock,
-            limit: fetchLimit,
-            chunkSize: hasAddressFilters ? 500 : 100,
-            scanOrder: scan_order,
-          })
-        : undefined
+      const scanResult =
+        scan_order === 'earliest'
+          ? await fetchTransferBlocksByScanOrder({
+              url: portalUrl,
+              query,
+              fromBlock: resolvedFromBlock,
+              toBlock: pageToBlock,
+              limit: fetchLimit,
+              chunkSize: hasAddressFilters ? 500 : 100,
+              scanOrder: scan_order,
+            })
+          : undefined
       const results = scanResult
         ? scanResult.records
         : await portalFetchRecentRecords(portalUrl, query, {
@@ -288,37 +380,54 @@ export function registerGetErc20TransfersTool(server: McpServer) {
             chunkSize: hasAddressFilters ? 500 : 100,
           })
 
-      const allTransfers = sortTransfers(results.flatMap((block: unknown) => {
-        const b = block as {
-          header?: { number: number; timestamp: number }
-          logs?: Array<{
-            transactionHash: string
-            logIndex: number
-            address: string
-            topics?: string[]
-            data: string
-          }>
+      let tokenMetadataByAddress = new Map<string, { symbol?: string; name?: string; decimals?: number }>()
+      let tokenMetadataLookup: TokenListLookupMetadata | undefined
+      let tokenMetadataFetchFailed = false
+      if (tokenFilterAddresses || include_token_info) {
+        try {
+          const tokenMetadataResult = await getTokenMetadataMapForDatasetWithStatus(dataset)
+          tokenMetadataByAddress = tokenMetadataResult.metadata
+          tokenMetadataLookup = tokenMetadataResult.lookup
+        } catch (error) {
+          tokenMetadataFetchFailed = true
+          console.error('Failed to fetch token-list metadata:', error)
         }
-        return (b.logs || []).map((log) => {
-          const tokenAddress = log.address
-          const decimals = getKnownTokenDecimals(tokenAddress) || 18
-          const valueFormatted = formatTokenValue(log.data, decimals)
+      }
 
-          return {
-            block_number: b.header?.number,
-            timestamp: b.header?.timestamp,
-            timestamp_human: b.header?.timestamp ? formatTimestamp(b.header.timestamp) : undefined,
-            transaction_hash: log.transactionHash,
-            log_index: log.logIndex,
-            token_address: tokenAddress,
-            from: '0x' + (log.topics?.[1]?.slice(-40) || ''),
-            to: '0x' + (log.topics?.[2]?.slice(-40) || ''),
-            value: log.data,
-            value_decimal: valueFormatted.decimal,
-            value_formatted: valueFormatted.formatted,
+      const allTransfers = sortTransfers(
+        results.flatMap((block: unknown) => {
+          const b = block as {
+            header?: { number: number; timestamp: number }
+            logs?: Array<{
+              transactionHash: string
+              logIndex: number
+              address: string
+              topics?: string[]
+              data: string
+            }>
           }
-        })
-      }) as Erc20TransferItem[]).map((item) => normalizeErc20TransferResult(item))
+          return (b.logs || []).map((log) => {
+            const tokenAddress = log.address
+            const tokenInfo = tokenMetadataByAddress.get(tokenAddress.toLowerCase())
+            const decimals = tokenInfo?.decimals ?? 18
+            const valueFormatted = formatTokenValue(log.data, decimals, tokenInfo?.symbol)
+
+            return {
+              block_number: b.header?.number,
+              timestamp: b.header?.timestamp,
+              timestamp_human: b.header?.timestamp ? formatTimestamp(b.header.timestamp) : undefined,
+              transaction_hash: log.transactionHash,
+              log_index: log.logIndex,
+              token_address: tokenAddress,
+              from: '0x' + (log.topics?.[1]?.slice(-40) || ''),
+              to: '0x' + (log.topics?.[2]?.slice(-40) || ''),
+              value: log.data,
+              value_decimal: valueFormatted.decimal,
+              value_formatted: valueFormatted.formatted,
+            }
+          })
+        }) as Erc20TransferItem[],
+      ).map((item) => normalizeErc20TransferResult(item))
       const page = paginateAscendingItems(
         allTransfers,
         limit,
@@ -330,69 +439,61 @@ export function registerGetErc20TransfersTool(server: McpServer) {
             }
           : undefined,
       )
-      const nextCursor = !scanResult && page.hasMore && page.nextBoundary
-        ? encodeRecentPageCursor<Erc20Request>({
-            tool: 'portal_evm_query_token_transfers',
-            dataset,
-            request: {
-              ...(timeframe ? { timeframe } : {}),
-              ...(from_block !== undefined ? { from_block } : {}),
-              ...(to_block !== undefined ? { to_block } : {}),
-              ...(from_timestamp !== undefined ? { from_timestamp } : {}),
-              ...(to_timestamp !== undefined ? { to_timestamp } : {}),
-              limit,
-              ...(token_addresses ? { token_addresses } : {}),
-              ...(from_addresses ? { from_addresses } : {}),
-              ...(to_addresses ? { to_addresses } : {}),
-              scan_order,
-              include_token_info,
-            },
-            window_from_block: resolvedFromBlock,
-            window_to_block: endBlock,
-            page_to_block: page.nextBoundary.page_to_block,
-            skip_inclusive_block: page.nextBoundary.skip_inclusive_block,
-          })
-        : undefined
+      const nextCursor =
+        !scanResult && page.hasMore && page.nextBoundary
+          ? encodeRecentPageCursor<Erc20Request>({
+              tool: 'portal_evm_query_token_transfers',
+              dataset,
+              request: {
+                ...(timeframe ? { timeframe } : {}),
+                ...(from_block !== undefined ? { from_block } : {}),
+                ...(to_block !== undefined ? { to_block } : {}),
+                ...(from_timestamp !== undefined ? { from_timestamp } : {}),
+                ...(to_timestamp !== undefined ? { to_timestamp } : {}),
+                limit,
+                ...(tokenFilterAddresses ? { token_addresses: tokenFilterAddresses } : {}),
+                ...(token_symbols ? { token_symbols } : {}),
+                ...(max_token_symbol_matches !== undefined ? { max_token_symbol_matches } : {}),
+                ...(from_addresses ? { from_addresses } : {}),
+                ...(to_addresses ? { to_addresses } : {}),
+                scan_order,
+                include_token_info,
+              },
+              window_from_block: resolvedFromBlock,
+              window_to_block: endBlock,
+              page_to_block: page.nextBoundary.page_to_block,
+              skip_inclusive_block: page.nextBoundary.skip_inclusive_block,
+            })
+          : undefined
 
-      // Optionally enrich with token metadata
       let enrichedTransfers = page.pageItems
       if (include_token_info) {
-        try {
-          // Map dataset to chain for CoinGecko
-          const chainMap: Record<string, string> = {
-            'base-mainnet': 'base',
-            'ethereum-mainnet': 'ethereum',
-            'arbitrum-one': 'arbitrum',
-            'optimism-mainnet': 'optimism',
-            'polygon-mainnet': 'polygon',
-            'avalanche-mainnet': 'avalanche',
-            'bsc-mainnet': 'bsc',
+        enrichedTransfers = page.pageItems.map((transfer: any) => {
+          const tokenInfo = tokenMetadataByAddress.get(String(transfer.token_address ?? '').toLowerCase())
+          if (!tokenInfo) return transfer
+          return {
+            ...transfer,
+            token_symbol: tokenInfo.symbol,
+            token_name: tokenInfo.name,
+            token_decimals: tokenInfo.decimals,
           }
-          const chain = chainMap[dataset] || dataset.split('-')[0]
-
-          const tokenList = await getCoinGeckoTokenList(chain)
-          const tokenMap = new Map(tokenList.map((t) => [t.address.toLowerCase(), t]))
-
-          enrichedTransfers = page.pageItems.map((transfer: any) => {
-            const tokenInfo = tokenMap.get(transfer.token_address.toLowerCase())
-            if (tokenInfo) {
-              return {
-                ...transfer,
-                token_symbol: tokenInfo.symbol,
-                token_name: tokenInfo.name,
-                token_decimals: tokenInfo.decimals,
-              }
-            }
-            return transfer
-          })
-        } catch (error) {
-          // If token info fetch fails, continue without it
-          console.error('Failed to fetch token info:', error)
-        }
+        })
       }
-      const notices = getTimestampWindowNotices(resolvedBlocks)
+      const notices = [
+        ...getTimestampWindowNotices(resolvedBlocks),
+        ...buildTokenResolutionNotices(tokenSymbolResolutions, unresolvedTokenSymbols),
+        ...buildTokenListLookupNotices(tokenSymbolLookup),
+        ...buildTokenListLookupNotices(tokenMetadataLookup),
+      ]
+      if (tokenMetadataFetchFailed)
+        notices.push('Token-list metadata enrichment failed; raw values were formatted with 18 decimals as a fallback.')
       if (nextCursor) notices.push('Older results are available via _pagination.next_cursor.')
-      if (scanResult && page.hasMore) notices.push(`More matching transfers may exist outside the scanned ${scanResult.scannedFromBlock}-${scanResult.scannedToBlock} block slice.`)
+      if (scanResult && page.hasMore)
+        notices.push(
+          `More matching transfers exist in the scanned ${scanResult.scannedFromBlock}-${scanResult.scannedToBlock} block slice; narrow filters or reduce limit pressure before expanding the window.`,
+        )
+      const boundedSearchNotice = scanResult ? buildBoundedSearchNotice(scanResult, 'ERC20 transfer scan') : undefined
+      if (boundedSearchNotice) notices.push(boundedSearchNotice)
       const freshness = buildQueryFreshness({
         finality: 'latest',
         headBlockNumber: head.number,
@@ -423,20 +524,26 @@ export function registerGetErc20TransfersTool(server: McpServer) {
           }),
           freshness,
           coverage,
-          execution: buildExecutionMetadata({
-            limit,
-            from_block: resolvedFromBlock,
-            to_block: endBlock,
-            page_to_block: pageToBlock,
-            scan_order,
-            range_kind: resolvedBlocks.range_kind,
-            normalized_output: true,
-            notes: [
-              include_token_info
-                ? 'Token metadata was enriched inline.'
-                : 'Token metadata enrichment was disabled for a lighter response.',
-            ],
-          }),
+          execution: {
+            ...buildExecutionMetadata({
+              limit,
+              from_block: resolvedFromBlock,
+              to_block: endBlock,
+              page_to_block: pageToBlock,
+              scan_order,
+              range_kind: resolvedBlocks.range_kind,
+              normalized_output: true,
+              notes: [
+                token_symbols && token_symbols.length > 0
+                  ? 'token_symbols were resolved from open token-list data and merged into token_addresses.'
+                  : undefined,
+                include_token_info
+                  ? 'Token metadata was enriched inline from open token-list data.'
+                  : 'Token metadata enrichment was disabled for a lighter response.',
+              ].filter((note): note is string => Boolean(note)),
+            }),
+            ...(scanResult ? buildBoundedSearchExecution(scanResult) : {}),
+          },
           metadata: {
             network: dataset,
             dataset,
