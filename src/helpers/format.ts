@@ -3,6 +3,7 @@
 // ============================================================================
 
 import type { LlmOverrides } from './llm-hints.js'
+import { buildLlmHints } from './llm-hints.js'
 import type { PipesRecipe } from './pipes-recipe.js'
 import { getToolContract } from './tool-ux.js'
 
@@ -188,6 +189,322 @@ export function humanizeLabel(value: unknown): string | undefined {
   return normalized.split(' ').map((word) => capitalizeWord(word)).join(' ')
 }
 
+/**
+ * Convert hex string to decimal number.
+ */
+export function hexToNumber(hex: string): number {
+  if (!hex || hex === '0x' || hex === '0x0') return 0
+  return parseInt(hex, 16)
+}
+
+/**
+ * Convert hex string to bigint for values that can exceed Number.MAX_SAFE_INTEGER.
+ */
+export function hexToBigInt(hex: string): bigint {
+  if (!hex || hex === '0x' || hex === '0x0') return 0n
+  return BigInt(hex)
+}
+
+/**
+ * Convert hex string to decimal string.
+ */
+export function hexToDecimal(hex: string): string {
+  if (!hex || hex === '0x' || hex === '0x0') {
+    return '0'
+  }
+
+  const cleanHex = hex.startsWith('0x') ? hex.slice(2) : hex
+  try {
+    return BigInt('0x' + cleanHex).toString()
+  } catch {
+    return '0'
+  }
+}
+
+/**
+ * Convert wei (hex or bigint) to ETH with specified decimals.
+ */
+export function weiToEth(wei: string | bigint, decimals: number = 18): string {
+  const weiValue = typeof wei === 'string' ? hexToBigInt(wei) : wei
+  const divisor = 10n ** BigInt(decimals)
+  const ethValue = Number(weiValue) / Number(divisor)
+
+  if (ethValue === 0) return '0'
+  if (ethValue < 0.000001) return ethValue.toExponential(4)
+  if (ethValue < 0.01) return ethValue.toFixed(6)
+  if (ethValue < 1) return ethValue.toFixed(4)
+  if (ethValue < 1000) return ethValue.toFixed(2)
+  return ethValue.toLocaleString('en-US', { maximumFractionDigits: 2 })
+}
+
+/**
+ * Convert wei to Gwei for gas prices.
+ */
+export function weiToGwei(wei: string | bigint): string {
+  const weiValue = typeof wei === 'string' ? hexToBigInt(wei) : wei
+  const gwei = Number(weiValue) / 1e9
+
+  if (gwei === 0) return '0'
+  if (gwei < 0.01) return gwei.toFixed(4)
+  if (gwei < 100) return gwei.toFixed(2)
+  return gwei.toFixed(1)
+}
+
+export function formatTokenAmount(value: string, decimals: number = 18, symbol?: string): string {
+  const formatted = weiToEth(value, decimals)
+  return symbol ? `${formatted} ${symbol}` : formatted
+}
+
+export function formatTokenValue(
+  hexValue: string,
+  decimals: number = 18,
+  symbol?: string,
+): {
+  raw: string
+  decimal: string
+  formatted: string
+} {
+  const decimal = hexToDecimal(hexValue)
+  const bigIntValue = BigInt(decimal)
+  const divisor = BigInt(10) ** BigInt(decimals)
+  const integerPart = bigIntValue / divisor
+  const fractionalPart = bigIntValue % divisor
+  const fractionalStr = fractionalPart.toString().padStart(decimals, '0')
+  const trimmedFractional = fractionalStr.replace(/0+$/, '')
+
+  let formatted: string
+  if (trimmedFractional.length > 0) {
+    const displayDecimals = Math.min(trimmedFractional.length, 6)
+    formatted = `${integerPart}.${trimmedFractional.slice(0, displayDecimals)}`
+  } else {
+    formatted = integerPart.toString()
+  }
+
+  if (symbol) formatted += ` ${symbol}`
+
+  return {
+    raw: hexValue,
+    decimal,
+    formatted,
+  }
+}
+
+export function formatTimestamp(timestamp: number): string {
+  const date = new Date(timestamp * 1000)
+  return date.toISOString().replace('T', ' ').split('.')[0] + ' UTC'
+}
+
+export function formatTimestampRelative(timestamp: number): string {
+  const now = Math.floor(Date.now() / 1000)
+  const diff = now - timestamp
+
+  if (diff < 60) return `${diff}s ago`
+  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`
+  if (diff < 604800) return `${Math.floor(diff / 86400)}d ago`
+  return formatTimestamp(timestamp)
+}
+
+export function formatGas(gasHex: string): {
+  raw: string
+  decimal: number
+  formatted: string
+} {
+  const decimal = hexToNumber(gasHex)
+  return {
+    raw: gasHex,
+    decimal,
+    formatted: decimal.toLocaleString('en-US'),
+  }
+}
+
+export function formatGasPrice(gasPriceHex: string): {
+  raw: string
+  gwei: string
+  formatted: string
+} {
+  const gwei = weiToGwei(gasPriceHex)
+  return {
+    raw: gasPriceHex,
+    gwei,
+    formatted: `${gwei} Gwei`,
+  }
+}
+
+export function formatGasAmount(hexValue: string): {
+  raw: string
+  decimal: string
+  formatted_eth: string
+  formatted_gwei: string
+} {
+  const decimal = hexToDecimal(hexValue)
+  const bigIntValue = BigInt(decimal)
+  const ethValue = Number(bigIntValue) / Number(BigInt(10) ** BigInt(18))
+  const gweiValue = Number(bigIntValue) / Number(BigInt(10) ** BigInt(9))
+
+  return {
+    raw: hexValue,
+    decimal,
+    formatted_eth: `${ethValue.toFixed(6)} ETH`,
+    formatted_gwei: `${gweiValue.toFixed(2)} Gwei`,
+  }
+}
+
+export function formatValue(valueHex: string): {
+  raw: string
+  eth: string
+  formatted: string
+} {
+  const eth = weiToEth(valueHex)
+  return {
+    raw: valueHex,
+    eth,
+    formatted: `${eth} ETH`,
+  }
+}
+
+function isHexValue(value: unknown): value is string {
+  return typeof value === 'string' && /^0x[0-9a-fA-F]+$/.test(value) && value.length > 4
+}
+
+function isAnyHexValue(value: unknown): value is string {
+  return typeof value === 'string' && /^0x[0-9a-fA-F]*$/.test(value)
+}
+
+export function formatTransactionFields(tx: Record<string, unknown>): Record<string, unknown> {
+  const result = { ...tx }
+
+  if (isAnyHexValue(result.value)) {
+    const ethValue = weiToEth(result.value as string)
+    result.value_eth = ethValue
+    delete result.value
+  }
+
+  for (const field of ['gasPrice', 'effectiveGasPrice', 'maxFeePerGas', 'maxPriorityFeePerGas']) {
+    if (isHexValue(result[field])) {
+      result[`${field}_gwei`] = weiToGwei(result[field] as string)
+      delete result[field]
+    }
+  }
+
+  for (const field of ['gas', 'gasUsed', 'cumulativeGasUsed']) {
+    if (isHexValue(result[field])) {
+      result[field] = hexToNumber(result[field] as string)
+    }
+  }
+
+  for (const field of ['nonce', 'transactionIndex', 'type', 'status']) {
+    if (isHexValue(result[field])) {
+      result[field] = hexToNumber(result[field] as string)
+    }
+  }
+
+  if (isHexValue(result.l1Fee)) {
+    result.l1Fee_eth = weiToEth(result.l1Fee as string)
+    delete result.l1Fee
+  }
+  if (isHexValue(result.l1GasUsed)) {
+    result.l1GasUsed = hexToNumber(result.l1GasUsed as string)
+  }
+  if (isHexValue(result.l1GasPrice)) {
+    result.l1GasPrice_gwei = weiToGwei(result.l1GasPrice as string)
+    delete result.l1GasPrice
+  }
+
+  for (const field of ['v', 'r', 's', 'yParity', 'logsBloom']) {
+    delete result[field]
+  }
+
+  return result
+}
+
+export function addValueConversions<T extends Record<string, unknown>>(
+  obj: T,
+  options: {
+    tokenDecimals?: number
+    tokenSymbol?: string
+  } = {},
+): T & {
+  value_decimal?: string
+  value_formatted?: string
+  gas_decimal?: string
+  gas_formatted?: string
+} {
+  const result = { ...obj }
+
+  if (typeof obj.value === 'string' && obj.value.startsWith('0x')) {
+    const converted = formatTokenValue(obj.value, options.tokenDecimals, options.tokenSymbol)
+    return {
+      ...result,
+      value_decimal: converted.decimal,
+      value_formatted: converted.formatted,
+    }
+  }
+
+  if (typeof obj.gas === 'string' && obj.gas.startsWith('0x')) {
+    const converted = formatGasAmount(obj.gas)
+    return {
+      ...result,
+      gas_decimal: converted.decimal,
+      gas_formatted: converted.formatted_gwei,
+    }
+  }
+
+  return result
+}
+
+export function formatNumber(n: number): string {
+  if (n === 0) return '0'
+  const abs = Math.abs(n)
+  const sign = n < 0 ? '-' : ''
+  if (abs >= 1e12) return sign + (abs / 1e12).toFixed(2) + 'T'
+  if (abs >= 1e9) return sign + (abs / 1e9).toFixed(2) + 'B'
+  if (abs >= 1e6) return sign + (abs / 1e6).toFixed(2) + 'M'
+  if (abs >= 1e4) return sign + (abs / 1e3).toFixed(1) + 'K'
+  if (abs >= 1000) return sign + abs.toLocaleString('en-US', { maximumFractionDigits: 0 })
+  if (abs >= 1) return sign + abs.toFixed(2)
+  if (abs >= 0.01) return sign + abs.toFixed(4)
+  return sign + abs.toFixed(8)
+}
+
+export function formatUSD(n: number): string {
+  if (n === 0) return '$0'
+  const abs = Math.abs(n)
+  const sign = n < 0 ? '-' : ''
+  if (abs >= 1e12) return sign + '$' + (abs / 1e12).toFixed(2) + 'T'
+  if (abs >= 1e9) return sign + '$' + (abs / 1e9).toFixed(2) + 'B'
+  if (abs >= 1e6) return sign + '$' + (abs / 1e6).toFixed(2) + 'M'
+  if (abs >= 1e3) return sign + '$' + (abs / 1e3).toFixed(1) + 'K'
+  return sign + '$' + abs.toFixed(2)
+}
+
+export function formatPct(n: number): string {
+  return n.toFixed(1) + '%'
+}
+
+export function formatBTC(btc: number): string {
+  if (btc === 0) return '0 BTC'
+  if (Math.abs(btc) < 0.001) return Math.round(btc * 1e8).toLocaleString('en-US') + ' sats'
+  return btc.toFixed(8) + ' BTC'
+}
+
+export function formatDuration(seconds: number): string {
+  if (seconds < 60) return Math.round(seconds) + 's'
+  if (seconds < 3600) return Math.floor(seconds / 60) + 'm ' + Math.round(seconds % 60) + 's'
+  if (seconds < 86400) return Math.floor(seconds / 3600) + 'h ' + Math.floor((seconds % 3600) / 60) + 'm'
+  return Math.floor(seconds / 86400) + 'd ' + Math.floor((seconds % 86400) / 3600) + 'h'
+}
+
+export function shortenAddress(address: string): string {
+  if (!address || address.length < 10) return address
+  return `${address.slice(0, 6)}...${address.slice(-4)}`
+}
+
+export function formatAddress(address: string, label?: string): string {
+  if (label) return `${label} (${shortenAddress(address)})`
+  return address
+}
+
 function buildChatAnswer(payload: RecordLike): string | undefined {
   if (typeof payload._summary === 'string' && payload._summary.trim()) {
     return makeCompletenessAwareAnswer(payload._summary.trim(), payload)
@@ -321,7 +638,7 @@ function buildNextSteps(payload: RecordLike): RecordLike | undefined {
   }
 
   return {
-    ...(actions.length > 0 ? { actions } : {}),
+    actions,
     ...(hasContinuation
       ? {
           continuation: {
@@ -380,6 +697,14 @@ function buildDefaultOrdering(): RecordLike {
   return { kind: 'not_applicable' }
 }
 
+function buildDefaultExecution(toolName?: string): RecordLike {
+  return {
+    kind: 'not_applicable',
+    source: 'portal_mcp',
+    ...(toolName ? { tool: toolName } : {}),
+  }
+}
+
 function inferPrimaryEvidencePath(payload: RecordLike): string | undefined {
   const table = asArray<RecordLike>(payload.tables).find((entry) => typeof entry.data_key === 'string')
   if (typeof table?.data_key === 'string') return table.data_key
@@ -426,6 +751,7 @@ function inferPrimaryEvidenceKind(payload: RecordLike, primaryPath?: string): st
   if (chart && chart.data_key === primaryPath && typeof chart.kind === 'string') return chart.kind
 
   if (!primaryPath) return undefined
+  if (primaryPath === 'answer' || primaryPath === '_summary') return 'summary_text'
   if (primaryPath.includes('ohlc')) return 'candles'
   if (primaryPath.includes('time_series')) return 'time_series'
   if (primaryPath.includes('activity')) return 'activity'
@@ -528,11 +854,6 @@ function collectInvestigationPivots(payload: RecordLike): RecordLike[] {
 function buildInvestigationGuide(payload: RecordLike): RecordLike | undefined {
   const toolContract = isRecord(payload._tool_contract) ? payload._tool_contract : undefined
   const intent = typeof toolContract?.intent === 'string' ? toolContract.intent : undefined
-  const isInvestigatable =
-    ['query', 'summary', 'analytics', 'chart', 'lookup', 'debug'].includes(intent ?? '')
-
-  if (!isInvestigatable) return undefined
-
   const meta = isRecord(payload._meta) ? payload._meta : undefined
   const pagination = isRecord(payload._pagination) ? payload._pagination : undefined
   const coverage = isRecord(payload._coverage) ? payload._coverage : undefined
@@ -541,7 +862,7 @@ function buildInvestigationGuide(payload: RecordLike): RecordLike | undefined {
     ...asArray<string>(payload._notices),
     ...(typeof payload._notice === 'string' ? [payload._notice] : []),
   ].slice(0, 4)
-  const primaryPath = inferPrimaryEvidencePath(payload)
+  const primaryPath = inferPrimaryEvidencePath(payload) ?? (typeof payload.answer === 'string' ? 'answer' : undefined) ?? '_summary'
   const primaryKind = inferPrimaryEvidenceKind(payload, primaryPath)
   const returned = inferReturnedCount(payload, primaryPath)
   const pivots = collectInvestigationPivots(payload)
@@ -592,7 +913,12 @@ function buildInvestigationGuide(payload: RecordLike): RecordLike | undefined {
 
   return {
     version: 'portal_investigation_v1',
-    status: typeof pagination?.next_cursor === 'string' ? 'partial_page' : 'bounded_result',
+    status:
+      typeof pagination?.next_cursor === 'string'
+        ? 'partial_page'
+        : intent === 'discover'
+          ? 'reference_result'
+          : 'bounded_result',
     evidence: {
       ...(typeof toolContract?.name === 'string' ? { tool: toolContract.name } : {}),
       ...(primaryPath ? { primary_path: primaryPath } : {}),
@@ -681,6 +1007,31 @@ function mergeExecutionMetadata(
   }
 
   return merged
+}
+
+function normalizeExecutionMetadata(
+  execution: Record<string, unknown>,
+  toolName?: string,
+): Record<string, unknown> {
+  const hasWindowOrResolution =
+    execution.kind !== undefined
+    || execution.range_kind !== undefined
+    || execution.scan_window !== undefined
+    || execution.timestamp !== undefined
+    || execution.resolution !== undefined
+
+  if (hasWindowOrResolution) {
+    return {
+      ...(toolName && execution.tool === undefined ? { tool: toolName } : {}),
+      ...execution,
+    }
+  }
+
+  return {
+    kind: 'not_applicable',
+    ...(toolName ? { tool: toolName } : {}),
+    ...execution,
+  }
 }
 
 function collectTruncatableArrays(
@@ -872,7 +1223,11 @@ export function formatResult(
   if (typeof responsePayload === 'object' && responsePayload !== null) {
     const payloadRecord = responsePayload as Record<string, unknown>
     const toolContract = options?.toolName ? getToolContract(options.toolName) : undefined
-    const execution = mergeExecutionMetadata(buildInferredExecutionMetadata(metadata), options?.execution)
+    const execution = normalizeExecutionMetadata(
+      mergeExecutionMetadata(buildInferredExecutionMetadata(metadata), options?.execution)
+        ?? buildDefaultExecution(options?.toolName),
+      options?.toolName,
+    )
 
     if (message?.trim()) {
       payloadRecord._summary = message.trim()
@@ -884,9 +1239,7 @@ export function formatResult(
     payloadRecord._ordering = options?.ordering ?? buildDefaultOrdering()
     payloadRecord._freshness = options?.freshness ?? buildDefaultFreshness()
     payloadRecord._coverage = options?.coverage ?? buildDefaultCoverage()
-    if (execution) {
-      payloadRecord._execution = execution
-    }
+    payloadRecord._execution = execution
     if (options?.ui !== undefined) {
       payloadRecord._ui = options.ui
     }
@@ -907,10 +1260,8 @@ export function formatResult(
     if (display) payloadRecord.display = display
     payloadRecord.next_steps = nextSteps
 
-    const investigation = buildInvestigationGuide(payloadRecord)
-    if (investigation) {
-      payloadRecord.investigation = investigation
-    }
+    payloadRecord.investigation = buildInvestigationGuide(payloadRecord)
+    payloadRecord._llm = buildLlmHints(payloadRecord, options?.llm)
 
     const orderedPayload: Record<string, unknown> = {}
 

@@ -362,7 +362,7 @@ function buildSections(payload: RecordLike, chartHint: LlmChartHint | undefined,
   }
 
   if (typeof payload._summary === 'string') {
-    pushSection({ path: '_summary', kind: 'summary_text', title: 'Narrative summary' })
+    pushSection({ path: '_summary', kind: 'summary_text', title: 'Answer summary' })
   }
 
   for (const key of SUMMARY_SECTION_KEYS) {

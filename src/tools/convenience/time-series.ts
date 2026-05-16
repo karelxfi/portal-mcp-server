@@ -14,7 +14,7 @@ import { detectChainType } from '../../helpers/chain.js'
 import { ActionableError, createUnsupportedChainError, createUnsupportedMetricError } from '../../helpers/errors.js'
 import { portalFetchStream, portalFetchStreamRangeVisit } from '../../helpers/fetch.js'
 import { formatResult } from '../../helpers/format.js'
-import { formatBTC, formatDuration, formatTimestamp, formatUSD } from '../../helpers/formatting.js'
+import { formatBTC, formatDuration, formatTimestamp, formatUSD } from '../../helpers/format.js'
 import { buildTimeSeriesPipesRecipe } from '../../helpers/pipes-recipe.js'
 import { buildBucketCoverage, buildBucketGapDiagnostics, buildQueryFreshness } from '../../helpers/result-metadata.js'
 import {

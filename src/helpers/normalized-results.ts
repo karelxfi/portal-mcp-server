@@ -1,4 +1,4 @@
-import { formatTimestamp } from './formatting.js'
+import { formatTimestamp } from './format.js'
 
 type RecordLike = Record<string, unknown>
 

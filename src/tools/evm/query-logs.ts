@@ -21,7 +21,7 @@ import { portalFetchRecentRecords, portalFetchStreamRange } from '../../helpers/
 import { getLogFields } from '../../helpers/field-presets.js'
 import { buildEvmLogFields, buildEvmTraceFields, buildEvmTransactionFields } from '../../helpers/fields.js'
 import { formatResult } from '../../helpers/format.js'
-import { formatTimestamp } from '../../helpers/formatting.js'
+import { formatTimestamp } from '../../helpers/format.js'
 import { normalizeEvmLogResult } from '../../helpers/normalized-results.js'
 import {
   buildPaginationInfo,

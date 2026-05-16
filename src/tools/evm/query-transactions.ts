@@ -27,7 +27,7 @@ import {
   buildEvmTransactionFields,
 } from '../../helpers/fields.js'
 import { formatResult } from '../../helpers/format.js'
-import { formatTimestamp, formatTransactionFields } from '../../helpers/formatting.js'
+import { formatTimestamp, formatTransactionFields } from '../../helpers/format.js'
 import { normalizeEvmTransactionResult } from '../../helpers/normalized-results.js'
 import {
   buildPaginationInfo,

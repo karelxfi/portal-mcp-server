@@ -8,7 +8,7 @@ import { ActionableError, createUnsupportedChainError } from '../../helpers/erro
 import { TRANSACTION_FIELD_PRESETS } from '../../helpers/field-presets.js'
 import { portalFetchRecentRecords } from '../../helpers/fetch.js'
 import { formatResult } from '../../helpers/format.js'
-import { formatTimestamp, formatTransactionFields } from '../../helpers/formatting.js'
+import { formatTimestamp, formatTransactionFields } from '../../helpers/format.js'
 import {
   normalizeBitcoinTransactionResult,
   normalizeEvmTransactionResult,

@@ -6,7 +6,7 @@ import { getBlockHead } from '../cache/datasets.js'
 import { PORTAL_URL } from '../constants/index.js'
 import { detectChainType } from './chain.js'
 import { ActionableError } from './errors.js'
-import { formatTimestamp } from './formatting.js'
+import { formatTimestamp } from './format.js'
 import { portalFetch, portalFetchStream } from './fetch.js'
 
 export type Timeframe = '1h' | '6h' | '12h' | '24h' | '3d' | '7d' | '14d' | '30d'

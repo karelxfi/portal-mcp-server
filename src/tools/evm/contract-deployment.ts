@@ -14,7 +14,7 @@ import { ActionableError, createUnsupportedChainError } from '../../helpers/erro
 import { portalFetchStreamRange } from '../../helpers/fetch.js'
 import { buildEvmTransactionFields } from '../../helpers/fields.js'
 import { formatResult } from '../../helpers/format.js'
-import { formatTimestamp } from '../../helpers/formatting.js'
+import { formatTimestamp } from '../../helpers/format.js'
 import { buildQueryCoverage, buildQueryFreshness } from '../../helpers/result-metadata.js'
 import { getTimestampWindowNotices, resolveTimeframeOrBlocks } from '../../helpers/timeframe.js'
 import { buildExecutionMetadata, buildToolDescription } from '../../helpers/tool-ux.js'

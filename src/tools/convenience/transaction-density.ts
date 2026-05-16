@@ -8,7 +8,7 @@ import { detectChainType } from '../../helpers/chain.js'
 import { createUnsupportedChainError } from '../../helpers/errors.js'
 import { portalFetchStreamRange } from '../../helpers/fetch.js'
 import { formatResult } from '../../helpers/format.js'
-import { formatTimestamp, formatNumber } from '../../helpers/formatting.js'
+import { formatTimestamp, formatNumber } from '../../helpers/format.js'
 import { buildAnalysisCoverage, buildQueryFreshness } from '../../helpers/result-metadata.js'
 import { resolveTimeframeOrBlocks, type TimestampInput } from '../../helpers/timeframe.js'
 

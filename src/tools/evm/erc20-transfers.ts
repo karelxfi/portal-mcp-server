@@ -9,7 +9,7 @@ import {
   scanBoundedBlockRange,
 } from '../../helpers/bounded-search.js'
 import { detectChainType } from '../../helpers/chain.js'
-import { formatTokenValue } from '../../helpers/conversions.js'
+import { formatTokenValue } from '../../helpers/format.js'
 import {
   type TokenSymbolResolution,
   buildTokenListLookupNotices,
@@ -21,7 +21,7 @@ import { ActionableError, createUnsupportedChainError } from '../../helpers/erro
 import { portalFetchRecentRecords, portalFetchStreamRange } from '../../helpers/fetch.js'
 import { buildEvmLogFields } from '../../helpers/fields.js'
 import { formatResult } from '../../helpers/format.js'
-import { formatTimestamp } from '../../helpers/formatting.js'
+import { formatTimestamp } from '../../helpers/format.js'
 import { normalizeErc20TransferResult } from '../../helpers/normalized-results.js'
 import {
   buildPaginationInfo,

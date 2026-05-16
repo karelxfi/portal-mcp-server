@@ -78,38 +78,103 @@ export function isFriendlyDisplayTitle(title: unknown): boolean {
   return typeof title === 'string' && title.length > 0 && !title.includes('portal_')
 }
 
+function assertRecord(value: unknown, label: string): asserts value is Record<string, any> {
+  assert(typeof value === 'object' && value !== null && !Array.isArray(value), `${label} should be an object`)
+}
+
+function assertNonEmptyString(value: unknown, label: string) {
+  assert(typeof value === 'string' && value.trim().length > 0, `${label} should be a non-empty string`)
+}
+
+function assertStringArray(value: unknown, label: string, options?: { nonEmpty?: boolean }) {
+  assert(Array.isArray(value), `${label} should be an array`)
+  if (options?.nonEmpty) {
+    assert(value.length > 0, `${label} should not be empty`)
+  }
+  assert(value.every((item) => typeof item === 'string' && item.length > 0), `${label} should contain only non-empty strings`)
+}
+
 export function assertChatSurface(parsed: any, label: string, options?: { expectNextSteps?: boolean }) {
-  assert(typeof parsed?.answer === 'string' && parsed.answer.length > 0, `${label} should include answer`)
-  assert(parsed?.display !== undefined, `${label} should include display`)
-  assert(parsed?.next_steps !== undefined, `${label} should include next_steps`)
+  const requiredTopLevelKeys = [
+    'answer',
+    'display',
+    'next_steps',
+    'investigation',
+    '_llm',
+    '_freshness',
+    '_pagination',
+    '_coverage',
+    '_ordering',
+    '_tool_contract',
+    '_execution',
+  ]
+
+  assertRecord(parsed, `${label} response`)
+  for (const key of requiredTopLevelKeys) {
+    assert(Object.prototype.hasOwnProperty.call(parsed, key), `${label} should include ${key}`)
+  }
+
+  assertNonEmptyString(parsed.answer, `${label} answer`)
+  assertRecord(parsed.display, `${label} display`)
+  assertRecord(parsed.next_steps, `${label} next_steps`)
+  assert(Array.isArray(parsed.next_steps.actions), `${label} next_steps.actions should be an array`)
   assert(isFriendlyDisplayTitle(parsed?.display?.title), `${label} display.title should be product-friendly`)
   assert(!hasLegacyWording(JSON.stringify(parsed?.display ?? {})), `${label} display should avoid legacy wording`)
   assert(!hasLegacyWording(String(parsed?.answer ?? '')), `${label} answer should avoid legacy wording`)
-  assert(parsed?._tool_contract !== undefined, `${label} should include _tool_contract`)
-  assert(parsed?._freshness !== undefined, `${label} should include _freshness`)
-  assert(parsed?._pagination !== undefined, `${label} should include _pagination`)
-  assert(parsed?._coverage !== undefined, `${label} should include _coverage`)
-  assert(parsed?._ordering !== undefined, `${label} should include _ordering`)
 
-  if (parsed?._execution !== undefined) {
-    assert(parsed?.investigation?.version === 'portal_investigation_v1', `${label} should include investigation guide`)
-    assert(
-      parsed?.investigation?.evidence?.primary_path !== undefined,
-      `${label} investigation guide should point to the primary evidence path`,
-    )
-    assert(
-      Array.isArray(parsed?.investigation?.follow_up_filters),
-      `${label} investigation guide should expose follow-up filters`,
-    )
-    assert(
-      parsed?._tool_contract?.intent === 'lookup' ||
-        parsed._execution?.range_kind !== undefined ||
-        parsed._execution?.scan_window !== undefined ||
-        parsed._execution?.timestamp !== undefined ||
-        parsed._execution?.resolution !== undefined,
-      `${label} should describe what block or time window was queried`,
-    )
+  assertRecord(parsed._tool_contract, `${label} _tool_contract`)
+  assertNonEmptyString(parsed._tool_contract.name, `${label} _tool_contract.name`)
+  assertNonEmptyString(parsed._tool_contract.intent, `${label} _tool_contract.intent`)
+  assert(Array.isArray(parsed._tool_contract.vm), `${label} _tool_contract.vm should be an array`)
+
+  assertRecord(parsed._freshness, `${label} _freshness`)
+  assertNonEmptyString(parsed._freshness.kind, `${label} _freshness.kind`)
+  assertRecord(parsed._pagination, `${label} _pagination`)
+  if (parsed._pagination.has_more !== undefined) {
+    assert(typeof parsed._pagination.has_more === 'boolean', `${label} _pagination.has_more should be boolean`)
   }
+  assertRecord(parsed._coverage, `${label} _coverage`)
+  assertNonEmptyString(parsed._coverage.kind, `${label} _coverage.kind`)
+  if (parsed._coverage.window_complete !== undefined) {
+    assert(typeof parsed._coverage.window_complete === 'boolean', `${label} _coverage.window_complete should be boolean`)
+  }
+  if (parsed._coverage.result_complete !== undefined) {
+    assert(typeof parsed._coverage.result_complete === 'boolean', `${label} _coverage.result_complete should be boolean`)
+  }
+  assertRecord(parsed._ordering, `${label} _ordering`)
+  assertNonEmptyString(parsed._ordering.kind, `${label} _ordering.kind`)
+  assertRecord(parsed._execution, `${label} _execution`)
+  assert(
+    parsed._execution.kind !== undefined ||
+      parsed._execution.range_kind !== undefined ||
+      parsed._execution.scan_window !== undefined ||
+      parsed._execution.timestamp !== undefined ||
+      parsed._execution.resolution !== undefined,
+    `${label} _execution should describe either its query window or why execution metadata is not applicable`,
+  )
+
+  assertRecord(parsed.investigation, `${label} investigation`)
+  assert(parsed.investigation.version === 'portal_investigation_v1', `${label} should include investigation guide`)
+  assertNonEmptyString(parsed.investigation.status, `${label} investigation.status`)
+  assertRecord(parsed.investigation.evidence, `${label} investigation.evidence`)
+  assertNonEmptyString(
+    parsed.investigation.evidence.primary_path,
+    `${label} investigation guide should point to the primary evidence path`,
+  )
+  assert(Array.isArray(parsed.investigation.pivots), `${label} investigation.pivots should be an array`)
+  assert(
+    Array.isArray(parsed.investigation.follow_up_filters),
+    `${label} investigation guide should expose follow-up filters`,
+  )
+  assert(Array.isArray(parsed.investigation.limitations), `${label} investigation.limitations should be an array`)
+
+  assertRecord(parsed._llm, `${label} _llm`)
+  assert(parsed._llm.version === 'portal_llm_v1', `${label} _llm.version should be portal_llm_v1`)
+  assertNonEmptyString(parsed._llm.primary_path, `${label} _llm.primary_path`)
+  assertNonEmptyString(parsed._llm.primary_kind, `${label} _llm.primary_kind`)
+  assertStringArray(parsed._llm.answer_sequence, `${label} _llm.answer_sequence`, { nonEmpty: true })
+  assert(Array.isArray(parsed._llm.sections), `${label} _llm.sections should be an array`)
+  assert(Array.isArray(parsed._llm.recommended_views), `${label} _llm.recommended_views should be an array`)
 
   if (options?.expectNextSteps) {
     assert(

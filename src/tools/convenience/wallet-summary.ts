@@ -14,7 +14,7 @@ import { ActionableError, createUnsupportedChainError } from '../../helpers/erro
 import { portalFetchRecentRecords } from '../../helpers/fetch.js'
 import { buildEvmLogFields } from '../../helpers/fields.js'
 import { formatResult, humanizeLabel } from '../../helpers/format.js'
-import { formatTimestamp, formatTokenAmount, formatTransactionFields, hexToBigInt } from '../../helpers/formatting.js'
+import { formatTimestamp, formatTokenAmount, formatTransactionFields, hexToBigInt } from '../../helpers/format.js'
 import { normalizeEvmTransactionResult } from '../../helpers/normalized-results.js'
 import { decodeCursor, encodeCursor, paginateAscendingItems } from '../../helpers/pagination.js'
 import { buildWalletPipesRecipe } from '../../helpers/pipes-recipe.js'

@@ -9,7 +9,7 @@ import { detectChainType } from '../../helpers/chain.js'
 import { createUnsupportedChainError, createUnsupportedMetricError } from '../../helpers/errors.js'
 import { portalFetchStream } from '../../helpers/fetch.js'
 import { formatResult } from '../../helpers/format.js'
-import { formatDuration, formatTimestamp } from '../../helpers/formatting.js'
+import { formatDuration, formatTimestamp } from '../../helpers/format.js'
 import { buildBucketCoverage, buildBucketGapDiagnostics, buildQueryFreshness } from '../../helpers/result-metadata.js'
 import {
   describeTimeWindowInput,

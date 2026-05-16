@@ -1,7 +1,7 @@
 import { validateBlockRange } from '../../cache/datasets.js'
 import { PORTAL_URL } from '../../constants/index.js'
 import { portalFetchStream, portalFetchStreamVisit } from '../../helpers/fetch.js'
-import { formatDuration, formatNumber, formatTimestamp } from '../../helpers/formatting.js'
+import { formatDuration, formatNumber, formatTimestamp } from '../../helpers/format.js'
 import { hashString53 } from '../../helpers/hash.js'
 import { parseTimeframeToSeconds, resolveTimeframeOrBlocks, type ResolvedBlockWindow, type TimestampInput } from '../../helpers/timeframe.js'
 

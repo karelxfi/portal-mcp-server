@@ -4,7 +4,7 @@ import { z } from 'zod'
 import { getBlockHead, resolveDataset, validateBlockRange } from '../../cache/datasets.js'
 import { buildCandlestickChart, buildOhlcTable, type ChartTooltipDescriptor } from '../../helpers/chart-metadata.js'
 import { formatResult } from '../../helpers/format.js'
-import { formatTimestamp } from '../../helpers/formatting.js'
+import { formatTimestamp } from '../../helpers/format.js'
 import { buildBucketCoverage, buildBucketGapDiagnostics, buildChronologicalPageOrdering, buildQueryFreshness } from '../../helpers/result-metadata.js'
 import { buildPaginationInfo, decodeCursor, encodeCursor } from '../../helpers/pagination.js'
 import {

@@ -6,7 +6,7 @@ import { buildTimeSeriesChart, buildTimeSeriesTable } from '../../helpers/chart-
 import { detectChainType } from '../../helpers/chain.js'
 import { createUnsupportedChainError } from '../../helpers/errors.js'
 import { formatResult } from '../../helpers/format.js'
-import { formatTimestamp, formatNumber } from '../../helpers/formatting.js'
+import { formatTimestamp, formatNumber } from '../../helpers/format.js'
 import { buildBucketCoverage, buildBucketGapDiagnostics, buildQueryFreshness } from '../../helpers/result-metadata.js'
 import { describeTimeWindowInput, parseTimeframeToSeconds } from '../../helpers/timeframe.js'
 import { computeSolanaTimeSeries } from './time-series-shared.js'

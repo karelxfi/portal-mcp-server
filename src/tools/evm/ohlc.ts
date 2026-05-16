@@ -22,7 +22,7 @@ import { createUnsupportedChainError } from '../../helpers/errors.js'
 import { portalFetchRecentRecords, portalFetchStreamRangeVisit } from '../../helpers/fetch.js'
 import { buildEvmLogFields } from '../../helpers/fields.js'
 import { formatResult } from '../../helpers/format.js'
-import { formatTimestamp } from '../../helpers/formatting.js'
+import { formatTimestamp } from '../../helpers/format.js'
 import { buildPaginationInfo, decodeCursor, encodeCursor } from '../../helpers/pagination.js'
 import {
   buildBucketCoverage,

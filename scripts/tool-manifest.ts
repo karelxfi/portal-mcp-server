@@ -9,6 +9,7 @@ const BASE_RPC_URL = 'https://mainnet.base.org'
 const PORTAL_API_URL = 'https://portal.sqd.dev'
 const BASE_UNISWAP_V4_POOL_MANAGER = '0x498581ff718922c3f8e6a244956af099b2652b2b'
 const AERODROME_SLIPSTREAM_FACTORY = '0xf8f2eb4940cfe7d13603dddd87f123820fc061ef'
+const SOLANA_TOKEN_PROGRAM_ID = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA'
 const BASE_UNISWAP_V3_TEST_POOL_CANDIDATES = [
   '0xf0125d06b76cebc2ab3831a938e07ab6988b00c9',
   '0x3c4384f3664b37a3cb5a5cb3452b4b4a3aa1256f',
@@ -309,6 +310,44 @@ async function pickAerodromeSlipstreamPool(client: Client, fallbackPool: string)
   return fallbackPool
 }
 
+async function pickRecentSolanaTokenInstructionSlot(solHead: number): Promise<number> {
+  const searchFrom = Math.max(0, solHead - 2_000)
+  const chunkSize = 25
+
+  for (let chunkTo = solHead; chunkTo >= searchFrom; chunkTo -= chunkSize) {
+    const chunkFrom = Math.max(searchFrom, chunkTo - chunkSize + 1)
+    const records = await portalStream('solana-mainnet', {
+      type: 'solana',
+      fromBlock: chunkFrom,
+      toBlock: chunkTo,
+      fields: {
+        block: { number: true },
+        instruction: {
+          transactionIndex: true,
+          instructionAddress: true,
+          programId: true,
+        },
+      },
+      instructions: [{ programId: [SOLANA_TOKEN_PROGRAM_ID] }],
+    })
+
+    for (const block of [...records].reverse()) {
+      const blockNumber =
+        typeof block.number === 'number'
+          ? block.number
+          : typeof (block.header as Record<string, unknown> | undefined)?.number === 'number'
+            ? ((block.header as Record<string, unknown>).number as number)
+            : undefined
+      const instructions = Array.isArray(block.instructions) ? block.instructions : []
+      if (blockNumber !== undefined && instructions.length > 0) {
+        return blockNumber
+      }
+    }
+  }
+
+  throw new Error('Expected at least one recent Solana token-program instruction slot')
+}
+
 export async function loadToolTestContext(client: Client): Promise<ToolTestContext> {
   const [baseHead, solHead, btcHead, hlFillsHead, hlReplicaHead] = await Promise.all([
     getHeadNumber(client, 'base-mainnet'),
@@ -326,7 +365,7 @@ export async function loadToolTestContext(client: Client): Promise<ToolTestConte
     recentV4SwapResult,
     evmTxResult,
     solTxResult,
-    solInstructionResult,
+    solInstructionSlot,
     btcTxResult,
     hlFillResult,
   ] = await Promise.all([
@@ -375,12 +414,7 @@ export async function loadToolTestContext(client: Client): Promise<ToolTestConte
       to_block: solHead,
       limit: 1,
     }),
-    callToolWithRetry(client, 'portal_solana_query_instructions', {
-      network: 'solana-mainnet',
-      from_block: solHead - 5,
-      to_block: solHead,
-      limit: 1,
-    }),
+    pickRecentSolanaTokenInstructionSlot(solHead),
     callToolWithRetry(client, 'portal_bitcoin_query_transactions', {
       network: 'bitcoin-mainnet',
       timeframe: '1h',
@@ -433,10 +467,7 @@ export async function loadToolTestContext(client: Client): Promise<ToolTestConte
   const solWallet = String(solItem?.feePayer || solItem?.sender || '')
   assert(solWallet.length > 20, 'Expected an active Solana fee payer')
 
-  const solInstructionItem = solInstructionResult.data.items?.[0] ?? {}
-  const solInstructionProgram = String(solInstructionItem.program_id || '')
-  assert(solInstructionProgram.length > 20, 'Expected an active Solana program id')
-  const solInstructionSlot = Number(solInstructionItem.block_number ?? solInstructionItem.slot_number ?? solHead)
+  const solInstructionProgram = SOLANA_TOKEN_PROGRAM_ID
   assert(Number.isFinite(solInstructionSlot), 'Expected an active Solana instruction slot')
 
   const btcItems = btcTxResult.data.items || []
@@ -1231,7 +1262,7 @@ export const TOOL_SPECS: ToolSpec[] = [
       from_block: context.solProgramFromBlock,
       to_block: context.solProgramToBlock,
       program_id: context.tokenProgram,
-      limit: 3,
+      limit: 1,
     }),
     validate: (text) => {
       const data = extractJson(text)

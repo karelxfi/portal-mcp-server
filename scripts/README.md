@@ -46,8 +46,8 @@ Runs focused negative-path checks for invalid inputs and unsupported flows. It:
 ### `npm run test:quality`
 Runs an automated response-quality audit over the full manifest. It:
 
-- checks chat-first fields like `answer`, `display`, and `next_steps`
-- enforces hard response-size and latency budgets so regressions fail CI
+- checks the full response envelope, including `answer`, `display`, `next_steps`, `investigation`, `_llm`, `_freshness`, `_pagination`, `_coverage`, `_ordering`, `_execution`, and `_tool_contract`
+- runs cold and warm passes, then enforces hard latency budgets and per-tool median/p95 response-size baselines so regressions fail CI
 - flags truncation, legacy wording, default raw-query bloat, and non-humanized labels
 - warns when a tool is drifting toward the hard budgets before it actually fails
 

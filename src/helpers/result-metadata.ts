@@ -1,4 +1,4 @@
-import { formatTimestamp } from './formatting.js'
+import { formatTimestamp } from './format.js'
 import type { BlockAtTimestampResult, ResolvedBlockWindow } from './timeframe.js'
 
 type TimestampBoundarySummary = Pick<
