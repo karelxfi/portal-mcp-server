@@ -15,6 +15,7 @@ Portal MCP v0.7.9 is focused on developer and agent ergonomics for natural block
 - **Cross-VM investigator parity** — added regression coverage for Solana program investigations, Bitcoin address-flow summaries, and Hyperliquid trader/coin questions.
 - **Unified response envelope** — all current tools now emit the same answer/display/next_steps contract plus `_freshness`, `_pagination`, `_coverage`, `_ordering`, and `_tool_contract`; duplicate `_llm` and `technical_details` payloads were removed from default responses to keep agent context smaller.
 - **Response-size budget** — `npm run test:quality` now measures response sizes against the v0.7.9 live baseline and requires at least a 30% median reduction while preserving investigation metadata.
+- **SQD-only analyst prompt** — added `portal_onchain_analyst` as a reusable MCP prompt for evidence-first investigation, tracing, and market/protocol intelligence. Social-thread, newsletter, and narrative-marketing output are intentionally out of scope.
 - **Developer discovery refresh** — updated the tool guide and HTTP catalog surface for the new `28`-tool registry (`25` public, `3` advanced/debug).
 
 ### Release hygiene

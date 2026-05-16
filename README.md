@@ -8,6 +8,7 @@ This server does not index chains itself. It validates user input, maps it onto 
 
 - `25` public tools
 - `3` advanced/debug tools
+- `1` reusable MCP prompt for SQD-only analyst behavior
 - public params use `network`
 - discovery filters use `vm`
 - no legacy tool aliases in `v0.7.9`
@@ -120,6 +121,7 @@ The server exposes a structured tool-selection guide for client builders:
 
 - MCP resource `sqd://tools` returns grouped tool metadata, examples, starting points, and integration notes.
 - MCP resource `sqd://tools/{name}` returns the guide entry for one tool, for example `sqd://tools/portal_get_time_series`.
+- MCP prompt `portal_onchain_analyst` gives clients a reusable SQD-only investigation and market/protocol analysis mode. It explicitly excludes third-party data surfaces and social-thread/newsletter narrative writing from scope.
 - HTTP `GET /tools` or `GET /tools.json` returns the live tool catalog with input schemas plus the same structured guide metadata.
 
 ## Claude Desktop
