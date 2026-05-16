@@ -165,27 +165,6 @@ async function main() {
   }
   console.log('sqd://tools/{name} OK')
 
-  // Step 4c: List and read reusable prompts
-  const promptsId = send('prompts/list')
-  const promptsResp = await readResponse(promptsId)
-  if (promptsResp.error) fail(`prompts/list error: ${JSON.stringify(promptsResp.error)}`)
-  const prompts = promptsResp.result?.prompts ?? []
-  const analystPrompt = prompts.find((prompt: any) => prompt.name === 'portal_onchain_analyst')
-  if (!analystPrompt) fail('Expected portal_onchain_analyst prompt')
-  console.log('prompts/list OK')
-
-  const analystPromptId = send('prompts/get', { name: 'portal_onchain_analyst' })
-  const analystPromptResp = await readResponse(analystPromptId)
-  if (analystPromptResp.error) fail(`prompts/get portal_onchain_analyst error: ${JSON.stringify(analystPromptResp.error)}`)
-  const analystPromptText = analystPromptResp.result?.messages?.[0]?.content?.text
-  if (!analystPromptText?.includes('Do not treat social-media copy')) {
-    fail('portal_onchain_analyst should exclude social-media narrative scope')
-  }
-  if (analystPromptText.includes('Crypto Twitter')) {
-    fail('portal_onchain_analyst should not include Crypto Twitter scope')
-  }
-  console.log('portal_onchain_analyst OK')
-
   // Step 5: Call portal_list_networks
   const dsId = send('tools/call', {
     name: 'portal_list_networks',

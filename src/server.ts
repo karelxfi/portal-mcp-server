@@ -2,7 +2,6 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 
 import { toolCallDuration, toolCallsActive, toolCallsTotal } from './metrics.js'
 import { createInvocationId, recordToolOutcome, type RuntimeRequestContext } from './observability.js'
-import { registerAllPrompts } from './prompts/index.js'
 import { registerSchemaResource } from './resources/schema.js'
 import { registerAllTools } from './tools/index.js'
 import { npmVersion } from './version.js'
@@ -83,9 +82,6 @@ export function createPortalServer(runtimeContext: RuntimeRequestContext = { tra
 
   // Register resources
   registerSchemaResource(server)
-
-  // Register prompts
-  registerAllPrompts(server)
 
   // Register all tools
   registerAllTools(server)

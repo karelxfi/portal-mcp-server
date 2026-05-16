@@ -121,7 +121,6 @@ The server exposes a structured tool-selection guide for client builders:
 
 - MCP resource `sqd://tools` returns grouped tool metadata, examples, starting points, and integration notes.
 - MCP resource `sqd://tools/{name}` returns the guide entry for one tool, for example `sqd://tools/portal_get_time_series`.
-- MCP prompt `portal_onchain_analyst` gives clients a reusable SQD-only investigation and market/protocol analysis mode. It explicitly excludes third-party data surfaces and social-thread/newsletter narrative writing from scope.
 - HTTP `GET /tools` or `GET /tools.json` returns the live tool catalog with input schemas plus the same structured guide metadata.
 
 ## Claude Desktop
