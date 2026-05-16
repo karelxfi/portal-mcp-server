@@ -18,6 +18,7 @@ Portal MCP v0.7.9 is focused on developer and agent ergonomics for natural block
 - **SQD-only analyst prompt** — added `portal_onchain_analyst` as a reusable MCP prompt for evidence-first investigation, tracing, and market/protocol intelligence. Social-thread, newsletter, and narrative-marketing output are intentionally out of scope.
 - **Natural-language time windows** — shared timestamp parsing now accepts compact and natural forms such as `past 30 minutes`, `in the past 1h`, `in last 38 mins`, `last hour`, and `30 minutes ago` across timeframe, duration, `from_timestamp`, and `to_timestamp` paths.
 - **Completeness-safe live answers** — bucketed Base, Solana, and Hyperliquid outputs now preserve continuous bucket rows in the tested windows, low-limit Solana/Hyperliquid recent queries stay bounded, and any partial analysis or preview page is disclosed in the top-level answer instead of only in metadata.
+- **Odd-window bucket alignment** — Hyperliquid time series/OHLC and EVM OHLC now align emitted bucket timestamps to the full rounded bucket span, so windows like `in last 38 mins` with `5m` intervals return populated buckets instead of empty-looking rows.
 - **Developer discovery refresh** — updated the tool guide and HTTP catalog surface for the new `28`-tool registry (`25` public, `3` advanced/debug).
 
 ### Release hygiene

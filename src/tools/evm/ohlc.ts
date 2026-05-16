@@ -1423,7 +1423,8 @@ export function registerEvmOhlcTool(server: McpServer) {
 
       if (!paginationCursor) {
         seriesEndExclusive = Math.floor(latestTimestamp / intervalSeconds) * intervalSeconds + intervalSeconds
-        seriesStartTimestamp = seriesEndExclusive - durationSeconds
+        const bucketSpanSeconds = expectedBuckets * intervalSeconds
+        seriesStartTimestamp = seriesEndExclusive - bucketSpanSeconds
       }
 
       let backfillAttempts = 0

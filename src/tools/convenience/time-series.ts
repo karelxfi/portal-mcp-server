@@ -1344,7 +1344,8 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
         })
 
         const seriesEndExclusive = Math.floor(latestTimestamp / intervalSeconds) * intervalSeconds + intervalSeconds
-        const seriesStartTimestamp = seriesEndExclusive - durationSeconds
+        const bucketSpanSeconds = expectedBuckets * intervalSeconds
+        const seriesStartTimestamp = seriesEndExclusive - bucketSpanSeconds
         const timeSeries = Array.from({ length: expectedBuckets }, (_, bucketIndex) => {
           const bucketTimestamp = seriesStartTimestamp + bucketIndex * intervalSeconds
           const bucket = buckets.get(bucketTimestamp)

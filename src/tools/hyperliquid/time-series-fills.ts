@@ -190,7 +190,8 @@ EXAMPLES:
       }
 
       const seriesEndExclusive = Math.floor(latestTimestamp / intervalSeconds) * intervalSeconds + intervalSeconds
-      const seriesStartTimestamp = seriesEndExclusive - durationSeconds
+      const bucketSpanSeconds = expectedBuckets * intervalSeconds
+      const seriesStartTimestamp = seriesEndExclusive - bucketSpanSeconds
 
       // Helper to extract metric value
       function getMetricValue(data: { fills: number; volume: number; traders: Set<number>; pnl: number; liqVolume: number }): number {

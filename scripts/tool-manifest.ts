@@ -720,7 +720,7 @@ export const TOOL_SPECS: ToolSpec[] = [
           network: 'hyperliquid-fills',
           metric: 'volume',
           interval: '5m',
-          duration: '1h',
+          duration: 'in last 38 mins',
         }),
       ])
 
@@ -761,10 +761,17 @@ export const TOOL_SPECS: ToolSpec[] = [
       })
 
       const hyperliquidData = hyperliquidResult.data
+      const hyperliquidRows = getItems(hyperliquidData)
       assert(
-        getItems(hyperliquidData).length >= 12,
-        'portal_get_time_series hyperliquid should return at least 12 item(s)',
+        hyperliquidRows.length === 8,
+        'portal_get_time_series hyperliquid should return 8 buckets for 38m at 5m granularity',
       )
+      assert(
+        hyperliquidRows.some((row: any) => Number(row.value ?? 0) > 0 || Number(row.blocks_in_bucket ?? 0) > 0),
+        'portal_get_time_series hyperliquid should not emit all-empty buckets for an active recent window',
+      )
+      assert(hyperliquidData._coverage?.expected_buckets === 8, 'Expected Hyperliquid coverage to report 8 buckets')
+      assert(hyperliquidData._coverage?.returned_buckets === 8, 'Expected Hyperliquid coverage to return all buckets')
       assert(hyperliquidData.summary?.metric === 'volume', 'Expected Hyperliquid metric summary')
       expectWindowMetadata(hyperliquidData, 'portal_get_time_series hyperliquid')
       expectPresentation(hyperliquidData, 'portal_get_time_series hyperliquid', {
@@ -1013,7 +1020,7 @@ export const TOOL_SPECS: ToolSpec[] = [
   {
     name: 'portal_evm_get_analytics',
     prompt: 'give me the big picture for Base activity',
-    args: () => ({ network: 'base', timeframe: '1h', limit: 3 }),
+    args: () => ({ network: 'base', timeframe: 'past 30 minutes', limit: 3 }),
     validate: (text) => {
       const data = extractJson(text)
       assert(Array.isArray(data.top_contracts), 'Expected top_contracts section')
@@ -1441,11 +1448,16 @@ export const TOOL_SPECS: ToolSpec[] = [
   {
     name: 'portal_hyperliquid_get_ohlc',
     prompt: 'make me BTC candles from recent Hyperliquid fills',
-    args: () => ({ network: 'hyperliquid-fills', coin: 'BTC', duration: '1h', interval: 'auto' }),
+    args: () => ({ network: 'hyperliquid-fills', coin: 'BTC', duration: 'in last 38 mins', interval: '5m' }),
     validate: (text) => {
       const data = extractJson(text)
       const candles = Array.isArray(data.ohlc) ? data.ohlc : getItems(data)
       assert(candles.length > 0, 'Expected Hyperliquid candles')
+      assert(candles.length === 8, 'Expected 8 Hyperliquid candles for 38m at 5m granularity')
+      assert(
+        candles.some((candle: any) => Number(candle.close ?? 0) > 0 || Number(candle.fill_count ?? 0) > 0),
+        'Expected Hyperliquid candles to include non-empty buckets',
+      )
       expectWindowMetadata(data, 'portal_hyperliquid_get_ohlc')
       expectGapDiagnostics(data, 'portal_hyperliquid_get_ohlc')
       expectOrdering(data, 'portal_hyperliquid_get_ohlc')
