@@ -601,11 +601,11 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
       from_timestamp: z
         .union([z.number(), z.string()])
         .optional()
-        .describe('Optional natural start time like "24h ago", ISO datetime, or Unix timestamp'),
+        .describe('Starting timestamp. Accepts Unix seconds, Unix milliseconds, ISO datetime, or relative input like "24h ago".'),
       to_timestamp: z
         .union([z.number(), z.string()])
         .optional()
-        .describe('Optional natural end time like "now", ISO datetime, or Unix timestamp'),
+        .describe('Ending timestamp. Accepts Unix seconds, Unix milliseconds, ISO datetime, or relative input like "now".'),
       compare_previous: z.boolean().optional().default(false).describe('Compare the selected window against the immediately previous window'),
       group_by: z.enum(['none', 'contract']).optional().default('none').describe('Optional grouping mode. contract is currently supported only for EVM transaction_count'),
       group_limit: z.number().optional().default(5).describe('Maximum number of contract groups when group_by=contract'),
@@ -613,7 +613,7 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
         .enum(['fast', 'deep'])
         .optional()
         .default('deep')
-        .describe('Optional execution depth. The default prioritizes a complete requested window; use fast only for an explicit quick preview.'),
+        .describe('fast = quick preview with compact scan budgets, deep = complete requested window when feasible'),
     },
     async ({ network, metric, interval, duration, address, from_timestamp, to_timestamp, compare_previous, group_by, group_limit, mode }) => {
       const queryStartTime = Date.now()

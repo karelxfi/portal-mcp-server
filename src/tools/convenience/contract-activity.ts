@@ -44,11 +44,11 @@ export function registerGetContractActivityTool(server: McpServer) {
       from_timestamp: z
         .union([z.string(), z.number()])
         .optional()
-        .describe('Natural start time like "1h ago", ISO datetime, or Unix timestamp'),
+        .describe('Starting timestamp. Accepts Unix seconds, Unix milliseconds, ISO datetime, or relative input like "1h ago".'),
       to_timestamp: z
         .union([z.string(), z.number()])
         .optional()
-        .describe('Natural end time like "now", ISO datetime, or Unix timestamp'),
+        .describe('Ending timestamp. Accepts Unix seconds, Unix milliseconds, ISO datetime, or relative input like "now".'),
       include_events: z.boolean().optional().default(true).describe('Include event log summary'),
       mode: z
         .enum(['fast', 'deep'])

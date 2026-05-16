@@ -580,11 +580,11 @@ export function registerGetWalletSummaryTool(server: McpServer) {
       from_timestamp: z
         .union([z.string(), z.number()])
         .optional()
-        .describe('Natural start time like "1h ago", ISO datetime, or Unix timestamp'),
+        .describe('Starting timestamp. Accepts Unix seconds, Unix milliseconds, ISO datetime, or relative input like "1h ago".'),
       to_timestamp: z
         .union([z.string(), z.number()])
         .optional()
-        .describe('Natural end time like "now", ISO datetime, or Unix timestamp'),
+        .describe('Ending timestamp. Accepts Unix seconds, Unix milliseconds, ISO datetime, or relative input like "now".'),
       include_tokens: z.boolean().optional().default(true).describe('Include ERC20 token transfers'),
       include_nfts: z.boolean().optional().default(false).describe('Include NFT transfers (ERC721/1155)'),
       limit_per_type: z.number().optional().default(10).describe('Max items per category (txs, tokens, nfts)'),

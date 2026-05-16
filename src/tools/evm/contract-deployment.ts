@@ -138,13 +138,13 @@ export function registerContractDeploymentTool(server: McpServer) {
         .union([z.number(), z.string()])
         .optional()
         .describe(
-          'Optional start timestamp. Accepts Unix seconds, milliseconds, ISO datetime, or relative input like "7d ago".',
+          'Starting timestamp. Accepts Unix seconds, Unix milliseconds, ISO datetime, or relative input like "7d ago".',
         ),
       to_timestamp: z
         .union([z.number(), z.string()])
         .optional()
         .describe(
-          'Optional end timestamp. Accepts Unix seconds, milliseconds, ISO datetime, or relative input like "now".',
+          'Ending timestamp. Accepts Unix seconds, Unix milliseconds, ISO datetime, or relative input like "now".',
         ),
       search_depth_blocks: z
         .number()

@@ -13,7 +13,8 @@ Portal MCP v0.7.9 is focused on developer and agent ergonomics for natural block
 - **Investigation-ready responses** — queried and summary responses now include an `investigation` guide with primary evidence paths, pivot fields, follow-up filters, and limitations so agents can trace onchain incidents without new tools.
 - **Incident prompt routing** — tool descriptions and routing tests now explicitly cover suspicious-wallet triage, stolen-token movement, hack/incident traces, and exact transaction evidence using the existing 28-tool surface.
 - **Cross-VM investigator parity** — added regression coverage for Solana program investigations, Bitcoin address-flow summaries, and Hyperliquid trader/coin questions.
-- **Answer-first contracts** — tightened response QA around `_llm.answer_sequence`, `technical_details`, queried-window metadata, human-readable token units, and suggested follow-up filters.
+- **Unified response envelope** — all current tools now emit the same answer/display/next_steps contract plus `_freshness`, `_pagination`, `_coverage`, `_ordering`, and `_tool_contract`; duplicate `_llm` and `technical_details` payloads were removed from default responses to keep agent context smaller.
+- **Response-size budget** — `npm run test:quality` now measures response sizes against the v0.7.9 live baseline and requires at least a 30% median reduction while preserving investigation metadata.
 - **Developer discovery refresh** — updated the tool guide and HTTP catalog surface for the new `28`-tool registry (`25` public, `3` advanced/debug).
 
 ### Release hygiene

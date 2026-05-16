@@ -2,7 +2,7 @@
 // Result Formatting
 // ============================================================================
 
-import { buildLlmHints, type LlmOverrides } from './llm-hints.js'
+import type { LlmOverrides } from './llm-hints.js'
 import type { PipesRecipe } from './pipes-recipe.js'
 import { getToolContract } from './tool-ux.js'
 
@@ -330,6 +330,25 @@ function buildTechnicalDetails(payload: RecordLike): RecordLike | undefined {
   return Object.keys(technicalDetails).length > 0 ? technicalDetails : undefined
 }
 
+function buildDefaultFreshness(): RecordLike {
+  return { kind: 'not_applicable' }
+}
+
+function buildDefaultPagination(): RecordLike {
+  return { has_more: false }
+}
+
+function buildDefaultCoverage(): RecordLike {
+  return {
+    kind: 'not_applicable',
+    result_complete: true,
+  }
+}
+
+function buildDefaultOrdering(): RecordLike {
+  return { kind: 'not_applicable' }
+}
+
 function inferPrimaryEvidencePath(payload: RecordLike): string | undefined {
   const table = asArray<RecordLike>(payload.tables).find((entry) => typeof entry.data_key === 'string')
   if (typeof table?.data_key === 'string') return table.data_key
@@ -339,6 +358,7 @@ function inferPrimaryEvidencePath(payload: RecordLike): string | undefined {
 
   const preferredKeys = [
     'items',
+    'matches',
     'activity.items',
     'token_transfers.items',
     'transactions.items',
@@ -478,10 +498,7 @@ function buildInvestigationGuide(payload: RecordLike): RecordLike | undefined {
   const toolContract = isRecord(payload._tool_contract) ? payload._tool_contract : undefined
   const intent = typeof toolContract?.intent === 'string' ? toolContract.intent : undefined
   const isInvestigatable =
-    ['query', 'summary', 'analytics', 'chart'].includes(intent ?? '') ||
-    payload._freshness !== undefined ||
-    payload._coverage !== undefined ||
-    payload._pagination !== undefined
+    ['query', 'summary', 'analytics', 'chart', 'lookup', 'debug'].includes(intent ?? '')
 
   if (!isInvestigatable) return undefined
 
@@ -832,18 +849,10 @@ export function formatResult(
     if (toolContract) {
       payloadRecord._tool_contract = toolContract
     }
-    if (options?.pagination) {
-      payloadRecord._pagination = options.pagination
-    }
-    if (options?.ordering !== undefined) {
-      payloadRecord._ordering = options.ordering
-    }
-    if (options?.freshness !== undefined) {
-      payloadRecord._freshness = options.freshness
-    }
-    if (options?.coverage !== undefined) {
-      payloadRecord._coverage = options.coverage
-    }
+    payloadRecord._pagination = options?.pagination ?? buildDefaultPagination()
+    payloadRecord._ordering = options?.ordering ?? buildDefaultOrdering()
+    payloadRecord._freshness = options?.freshness ?? buildDefaultFreshness()
+    payloadRecord._coverage = options?.coverage ?? buildDefaultCoverage()
     if (execution) {
       payloadRecord._execution = execution
     }
@@ -856,12 +865,11 @@ export function formatResult(
 
     const answer = buildChatAnswer(payloadRecord)
     const display = buildDisplay(payloadRecord)
-    const nextSteps = buildNextSteps(payloadRecord)
+    const nextSteps = buildNextSteps(payloadRecord) ?? { actions: [] }
     if (answer) payloadRecord.answer = answer
     if (display) payloadRecord.display = display
-    if (nextSteps) payloadRecord.next_steps = nextSteps
+    payloadRecord.next_steps = nextSteps
 
-    payloadRecord._llm = buildLlmHints(payloadRecord, options?.llm)
     if (notices.length === 1) {
       payloadRecord._notice = notices[0]
     } else if (notices.length > 1) {
@@ -873,7 +881,6 @@ export function formatResult(
       payloadRecord.investigation = investigation
     }
 
-    const technicalDetails = buildTechnicalDetails(payloadRecord)
     const orderedPayload: Record<string, unknown> = {}
 
     if (answer) {
@@ -889,10 +896,6 @@ export function formatResult(
     for (const [key, value] of Object.entries(payloadRecord)) {
       if (key.startsWith('_')) continue
       orderedPayload[key] = value
-    }
-
-    if (technicalDetails) {
-      orderedPayload.technical_details = technicalDetails
     }
 
     for (const [key, value] of Object.entries(payloadRecord)) {

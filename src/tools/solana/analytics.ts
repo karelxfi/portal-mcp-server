@@ -282,11 +282,11 @@ export function registerSolanaAnalyticsTool(server: McpServer) {
       from_timestamp: z
         .union([z.string(), z.number()])
         .optional()
-        .describe('Natural start time like "1h ago", "today 09:00", ISO datetime, or Unix timestamp'),
+        .describe('Starting timestamp. Accepts Unix seconds, Unix milliseconds, ISO datetime, or relative input like "1h ago".'),
       to_timestamp: z
         .union([z.string(), z.number()])
         .optional()
-        .describe('Natural end time like "now", ISO datetime, or Unix timestamp'),
+        .describe('Ending timestamp. Accepts Unix seconds, Unix milliseconds, ISO datetime, or relative input like "now".'),
       include_compute_units: z
         .boolean()
         .optional()

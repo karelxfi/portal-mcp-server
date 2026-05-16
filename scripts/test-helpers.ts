@@ -81,21 +81,17 @@ export function isFriendlyDisplayTitle(title: unknown): boolean {
 export function assertChatSurface(parsed: any, label: string, options?: { expectNextSteps?: boolean }) {
   assert(typeof parsed?.answer === 'string' && parsed.answer.length > 0, `${label} should include answer`)
   assert(parsed?.display !== undefined, `${label} should include display`)
+  assert(parsed?.next_steps !== undefined, `${label} should include next_steps`)
   assert(isFriendlyDisplayTitle(parsed?.display?.title), `${label} display.title should be product-friendly`)
   assert(!hasLegacyWording(JSON.stringify(parsed?.display ?? {})), `${label} display should avoid legacy wording`)
   assert(!hasLegacyWording(String(parsed?.answer ?? '')), `${label} answer should avoid legacy wording`)
-  assert(
-    Array.isArray(parsed?._llm?.answer_sequence) && parsed._llm.answer_sequence.length > 0,
-    `${label} should include answer-first _llm.answer_sequence guidance`,
-  )
+  assert(parsed?._tool_contract !== undefined, `${label} should include _tool_contract`)
+  assert(parsed?._freshness !== undefined, `${label} should include _freshness`)
+  assert(parsed?._pagination !== undefined, `${label} should include _pagination`)
+  assert(parsed?._coverage !== undefined, `${label} should include _coverage`)
+  assert(parsed?._ordering !== undefined, `${label} should include _ordering`)
 
   if (parsed?._execution !== undefined) {
-    assert(parsed?.technical_details?.execution !== undefined, `${label} should mirror _execution in technical_details`)
-  }
-
-  if (parsed?._freshness !== undefined || parsed?._coverage !== undefined) {
-    assert(parsed?._execution !== undefined, `${label} should include _execution for queried data`)
-    assert(parsed?.technical_details !== undefined, `${label} should include technical_details for queried data`)
     assert(parsed?.investigation?.version === 'portal_investigation_v1', `${label} should include investigation guide`)
     assert(
       parsed?.investigation?.evidence?.primary_path !== undefined,
@@ -106,7 +102,8 @@ export function assertChatSurface(parsed: any, label: string, options?: { expect
       `${label} investigation guide should expose follow-up filters`,
     )
     assert(
-      parsed._execution?.range_kind !== undefined ||
+      parsed?._tool_contract?.intent === 'lookup' ||
+        parsed._execution?.range_kind !== undefined ||
         parsed._execution?.scan_window !== undefined ||
         parsed._execution?.timestamp !== undefined ||
         parsed._execution?.resolution !== undefined,
@@ -115,7 +112,10 @@ export function assertChatSurface(parsed: any, label: string, options?: { expect
   }
 
   if (options?.expectNextSteps) {
-    assert(parsed?.next_steps !== undefined, `${label} should include next_steps`)
+    assert(
+      Array.isArray(parsed?.next_steps?.actions) && parsed.next_steps.actions.length > 0,
+      `${label} should include actionable next_steps`,
+    )
   }
 }
 

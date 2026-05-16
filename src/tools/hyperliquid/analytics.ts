@@ -386,11 +386,11 @@ export function registerHyperliquidAnalyticsTool(server: McpServer) {
       from_timestamp: z
         .union([z.string(), z.number()])
         .optional()
-        .describe('Natural start time like "6h ago", ISO datetime, or Unix timestamp'),
+        .describe('Starting timestamp. Accepts Unix seconds, Unix milliseconds, ISO datetime, or relative input like "6h ago".'),
       to_timestamp: z
         .union([z.string(), z.number()])
         .optional()
-        .describe('Natural end time like "now", ISO datetime, or Unix timestamp'),
+        .describe('Ending timestamp. Accepts Unix seconds, Unix milliseconds, ISO datetime, or relative input like "now".'),
       coin: z.array(z.string()).optional().describe('Filter by asset symbols (e.g., ["BTC", "ETH"])'),
       response_format: z
         .enum(['full', 'compact', 'summary'])

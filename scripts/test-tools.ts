@@ -127,39 +127,8 @@ async function main() {
           parsed?._tool_contract?.name === spec.name,
           `${spec.name} should include matching _tool_contract metadata`,
         )
-        assert(parsed?._llm?.version === 'portal_llm_v1', `${spec.name} should include portal_llm_v1 hints`)
-        assert(
-          typeof parsed?._llm?.primary_path === 'string' && parsed._llm.primary_path.length > 0,
-          `${spec.name} should include an _llm.primary_path`,
-        )
-        assert(
-          Array.isArray(parsed?._llm?.answer_sequence) && parsed._llm.answer_sequence.length > 0,
-          `${spec.name} should include an _llm.answer_sequence`,
-        )
-        if (parsed?.answer !== undefined || parsed?._summary !== undefined || parsed?._ui?.headline !== undefined) {
-          assert(
-            parsed?._llm?.headline !== undefined,
-            `${spec.name} should include an _llm.headline when summary/headline text is available`,
-          )
-        }
-        if (parsed?._freshness !== undefined || parsed?._pagination !== undefined || parsed?.chart !== undefined) {
-          assert(
-            parsed?._execution !== undefined,
-            `${spec.name} should include _execution metadata for query/chart-style responses`,
-          )
-          assert(
-            parsed?.technical_details !== undefined,
-            `${spec.name} should include technical_details when query metadata is present`,
-          )
-        }
         if (parsed?._ui !== undefined) {
           assert(parsed?._ui?.version === 'portal_ui_v1', `${spec.name} should expose the portal_ui_v1 contract`)
-          if (Array.isArray(parsed?._ui?.metric_cards) && parsed._ui.metric_cards.length > 0) {
-            assert(
-              Array.isArray(parsed?._llm?.metric_cards) && parsed._llm.metric_cards.length > 0,
-              `${spec.name} should flatten metric cards into _llm.metric_cards`,
-            )
-          }
           if (Array.isArray(parsed?._ui?.follow_up_actions) && parsed._ui.follow_up_actions.length > 0) {
             assert(
               parsed?.next_steps !== undefined,
@@ -169,10 +138,6 @@ async function main() {
         }
         if (parsed?.chart !== undefined || hasTableDescriptors) {
           assert(parsed?._ui !== undefined, `${spec.name} should include _ui when chart/table metadata is present`)
-          assert(
-            parsed?._llm?.primary_preview !== undefined,
-            `${spec.name} should include _llm.primary_preview for chart/table-style responses`,
-          )
         }
         if (parsed?.chart !== undefined) {
           assert(parsed?.chart?.tooltip !== undefined, `${spec.name} chart metadata should include tooltip guidance`)
@@ -180,16 +145,8 @@ async function main() {
             parsed?.chart?.interactions !== undefined,
             `${spec.name} chart metadata should include interaction guidance`,
           )
-          assert(
-            parsed?._llm?.chart?.data_path === parsed?.chart?.data_key,
-            `${spec.name} should align _llm.chart.data_path with chart.data_key`,
-          )
         }
         if (hasTableDescriptors) {
-          assert(
-            Array.isArray(parsed?._llm?.tables) && parsed._llm.tables.length > 0,
-            `${spec.name} should flatten table descriptors into _llm.tables`,
-          )
           parsed.tables.forEach((table: any, index: number) => {
             assert(table?.interactions !== undefined, `${spec.name} table ${index} should include interaction guidance`)
           })

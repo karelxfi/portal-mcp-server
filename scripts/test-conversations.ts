@@ -319,7 +319,7 @@ const SCENARIOS: ConversationScenario[] = [
         validate: (data) => {
           assert(Array.isArray(data.items) && data.items.length > 0, 'Solana program query should return rows')
           assert(
-            data.technical_details?.execution !== undefined,
+            data._execution !== undefined,
             'Solana program query should describe the window',
           )
         },

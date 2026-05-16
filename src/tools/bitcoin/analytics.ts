@@ -104,11 +104,11 @@ export function registerBitcoinAnalyticsTool(server: McpServer) {
       from_timestamp: z
         .union([z.string(), z.number()])
         .optional()
-        .describe('Natural start time like "6h ago", "yesterday 09:00", ISO datetime, or Unix timestamp'),
+        .describe('Starting timestamp. Accepts Unix seconds, Unix milliseconds, ISO datetime, or relative input like "6h ago".'),
       to_timestamp: z
         .union([z.string(), z.number()])
         .optional()
-        .describe('Natural end time like "now", ISO datetime, or Unix timestamp'),
+        .describe('Ending timestamp. Accepts Unix seconds, Unix milliseconds, ISO datetime, or relative input like "now".'),
       include_address_activity: z
         .boolean()
         .optional()

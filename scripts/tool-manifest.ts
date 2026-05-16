@@ -1245,7 +1245,7 @@ export const TOOL_SPECS: ToolSpec[] = [
       const items = getItems(data)
       assert(items.length > 0, 'Expected Solana program instruction rows')
       assert(
-        data.technical_details?.execution !== undefined,
+        data._execution !== undefined,
         'Expected Solana execution window metadata',
       )
       expectWindowMetadata(data, 'portal_solana_query_instructions token program')

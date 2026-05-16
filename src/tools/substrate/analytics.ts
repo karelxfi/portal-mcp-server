@@ -202,11 +202,11 @@ export function registerSubstrateAnalyticsTool(server: McpServer) {
       from_timestamp: z
         .union([z.number(), z.string()])
         .optional()
-        .describe('Natural start time like "6h ago", ISO datetime, or Unix timestamp'),
+        .describe('Starting timestamp. Accepts Unix seconds, Unix milliseconds, ISO datetime, or relative input like "6h ago".'),
       to_timestamp: z
         .union([z.number(), z.string()])
         .optional()
-        .describe('Natural end time like "now", ISO datetime, or Unix timestamp'),
+        .describe('Ending timestamp. Accepts Unix seconds, Unix milliseconds, ISO datetime, or relative input like "now".'),
       response_format: z.enum(['full', 'compact', 'summary']).optional().default('full').describe("Response format: 'summary' (headline metrics only), 'compact' (core sections), 'full' (full dashboard payload)"),
       section_limit: z.number().optional().default(10).describe('Max rows to keep in ranked event and call sections'),
     },
@@ -470,4 +470,3 @@ export function registerSubstrateAnalyticsTool(server: McpServer) {
     },
   )
 }
-

@@ -74,12 +74,8 @@ function buildOutputExcerpt(data: any) {
       : undefined,
     suggested_arguments: data.suggested_arguments,
     first_item: firstArrayItem(data),
-    technical_details: data.technical_details
-      ? {
-          execution: data.technical_details.execution,
-          coverage: data.technical_details.coverage,
-        }
-      : undefined,
+    execution: data._execution,
+    coverage: data._coverage,
   }
 }
 
@@ -147,7 +143,7 @@ const CASES: RealisticPromptCase[] = [
       assert(Array.isArray(data.items) && data.items.length > 0, 'raw transaction evidence should return rows')
       assertInvestigation(data, 'raw transaction evidence')
       assert(hasPivot(data, ['hash', 'from', 'to']), 'raw transaction evidence should expose hash or address pivots')
-      assert(data.technical_details?.execution !== undefined, 'raw transaction evidence should describe execution window')
+      assert(data._execution !== undefined, 'raw transaction evidence should describe execution window')
     },
   },
   {
