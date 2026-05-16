@@ -170,6 +170,7 @@ export async function visitHyperliquidFillBlocks({
             fromBlock: currentFrom,
             toBlock: chunkTo,
             fields: {
+              block: { number: true, timestamp: true },
               fill: fillFields,
             },
             fills: [fillFilter],

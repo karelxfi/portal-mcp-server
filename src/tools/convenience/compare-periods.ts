@@ -178,10 +178,7 @@ export async function computeWindowSeries(params: {
         value: point.value,
       }))
       const filledBuckets = timeSeries.filter((point) => point.blocks_in_bucket > 0).length
-      const windowComplete =
-        solanaResult.first_observed_timestamp !== undefined
-          ? solanaResult.first_observed_timestamp <= fromTimestamp
-          : true
+      const windowComplete = filledBuckets === solanaResult.expected_buckets
 
       return {
         summary: {
@@ -418,9 +415,7 @@ export async function computeWindowSeries(params: {
     const min = Math.min(...values)
     const max = Math.max(...values)
     const filledBuckets = buckets.filter((bucket) => bucket.blocksInBucket > 0).length
-    const windowComplete =
-      (firstObservedTimestamp === undefined || firstObservedTimestamp <= fromTimestamp) &&
-      (lastObservedTimestamp === undefined || lastObservedTimestamp >= toTimestampInclusive - intervalSeconds + 1)
+    const windowComplete = filledBuckets === expectedBuckets
 
     return {
       summary: {

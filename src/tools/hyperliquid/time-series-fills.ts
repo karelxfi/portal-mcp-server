@@ -146,8 +146,10 @@ EXAMPLES:
         toBlock: endBlock,
         fillFilter,
         fillFields,
-        maxBytes: 150 * 1024 * 1024,
-        concurrency: 3,
+        initialChunkSize: 100_000,
+        minChunkSize: 10_000,
+        maxBytes: 200 * 1024 * 1024,
+        concurrency: 6,
         onBlock: (block) => {
           const fills = block.fills || []
           for (let index = 0; index < fills.length; index += 1) {

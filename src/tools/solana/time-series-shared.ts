@@ -75,21 +75,21 @@ type BucketData = {
 }
 
 const CHUNK_SIZE_BY_METRIC: Record<SolanaTimeSeriesMetric, number> = {
-  tps: 5000,
-  transaction_count: 20000,
+  tps: 1000,
+  transaction_count: 1000,
   unique_wallets: 4000,
   avg_fee: 2500,
   success_rate: 2500,
-  slots_per_hour: 5000,
+  slots_per_hour: 1000,
 }
 
 const CONCURRENCY_BY_METRIC: Record<SolanaTimeSeriesMetric, number> = {
-  tps: 2,
-  transaction_count: 3,
+  tps: 8,
+  transaction_count: 8,
   unique_wallets: 3,
   avg_fee: 2,
   success_rate: 2,
-  slots_per_hour: 2,
+  slots_per_hour: 8,
 }
 
 const UNIT_BY_METRIC: Record<SolanaTimeSeriesMetric, string> = {

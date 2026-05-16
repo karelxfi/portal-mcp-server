@@ -1,7 +1,7 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { z } from 'zod'
 
-import { resolveDataset, validateBlockRange } from '../../cache/datasets.js'
+import { getBlockHead, resolveDataset, validateBlockRange } from '../../cache/datasets.js'
 import { buildCandlestickChart, buildOhlcTable, type ChartTooltipDescriptor } from '../../helpers/chart-metadata.js'
 import { formatResult } from '../../helpers/format.js'
 import { formatTimestamp } from '../../helpers/formatting.js'
@@ -223,8 +223,10 @@ export function registerHyperliquidOhlcTool(server: McpServer) {
           toBlock: rangeTo,
           fillFilter,
           fillFields,
-          maxBytes: 150 * 1024 * 1024,
-          concurrency: 1,
+          initialChunkSize: 100_000,
+          minChunkSize: 10_000,
+          maxBytes: 200 * 1024 * 1024,
+          concurrency: 4,
           onBlock: (block) => {
             const blockNumber = typeof block.header?.number === 'number' ? block.header.number : undefined
             const fills = sortFillsForOhlc((block.fills || []) as HyperliquidFill[])
@@ -307,10 +309,15 @@ export function registerHyperliquidOhlcTool(server: McpServer) {
           pageEndExclusive: seriesEndExclusive,
         })
       } else {
-        resolvedWindow = await resolveTimeframeOrBlocks({
-          dataset,
-          timeframe: duration,
-        })
+        const latestHead = await getBlockHead(dataset)
+        resolvedWindow = {
+          from_block: Math.max(
+            0,
+            latestHead.number - Math.ceil((durationSeconds / estimateBlockTime(dataset, 'hyperliquidFills')) * 1.25),
+          ),
+          to_block: latestHead.number,
+          range_kind: 'timeframe' as const,
+        }
         const fromBlock = resolvedWindow.from_block
 
         const validated = await validateBlockRange(

@@ -11,7 +11,7 @@ import {
   type TableValueFormat,
 } from '../../helpers/chart-metadata.js'
 import { detectChainType } from '../../helpers/chain.js'
-import { createUnsupportedChainError, createUnsupportedMetricError } from '../../helpers/errors.js'
+import { ActionableError, createUnsupportedChainError, createUnsupportedMetricError } from '../../helpers/errors.js'
 import { portalFetchStream, portalFetchStreamRangeVisit } from '../../helpers/fetch.js'
 import { formatResult } from '../../helpers/format.js'
 import { formatBTC, formatDuration, formatTimestamp, formatUSD } from '../../helpers/formatting.js'
@@ -19,6 +19,7 @@ import { buildTimeSeriesPipesRecipe } from '../../helpers/pipes-recipe.js'
 import { buildBucketCoverage, buildBucketGapDiagnostics, buildQueryFreshness } from '../../helpers/result-metadata.js'
 import {
   describeTimeWindowInput,
+  estimateBlockTime,
   getHeadTimestamp,
   parseTimeframeToSeconds,
   parseTimestampInput,
@@ -798,6 +799,16 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
           pct_change: row.previous_value === 0 ? null : Number((((row.current_value - row.previous_value) / row.previous_value) * 100).toFixed(2)),
         }))
 
+        const compareCoverage = buildBucketCoverage({
+          expectedBuckets: currentSeries.coverage.expected_buckets,
+          returnedBuckets: currentSeries.coverage.returned_buckets,
+          filledBuckets: currentSeries.coverage.filled_buckets,
+          anchor: 'timestamp_window',
+          windowComplete:
+            currentSeries.coverage.window_complete === true &&
+            previousSeries.coverage.window_complete === true,
+        })
+
         return formatResult({
           summary: {
             metric,
@@ -878,7 +889,7 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
           toolName: 'portal_get_time_series',
           notices: [...currentSeries.notices, ...previousSeries.notices],
           freshness: currentSeries.freshness,
-          coverage: currentSeries.coverage,
+          coverage: compareCoverage,
           execution: buildExecutionMetadata({
             mode,
             metric,
@@ -920,33 +931,66 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
         let firstObservedTimestamp: number | undefined
         let lastObservedTimestamp: number | undefined
         let totalTransactions = 0
+        let groupedChunkSizeReduced = false
 
-        await portalFetchStreamRangeVisit(
-          `${PORTAL_URL}/datasets/${dataset}/stream`,
-          {
-            type: 'evm',
-            fromBlock,
-            toBlock,
-            fields: {
-              block: { number: true, timestamp: true },
-              transaction: { to: true },
-            },
-            transactions: [{}],
-          },
-          {
-            onRecord: (record) => {
-              const block = record as {
-                header?: { timestamp?: number }
-                timestamp?: number
-                transactions?: Array<{ to?: string }>
+        const visitGroupedContractRange = async (
+          onRecord: (record: unknown) => void | Promise<void>,
+        ) => {
+          let currentFrom = fromBlock
+          let chunkSize = EVM_GENERIC_TIME_SERIES_CHUNK_SIZE.transaction_count ?? 1500
+
+          while (currentFrom <= toBlock) {
+            const plannedTo = Math.min(currentFrom + chunkSize - 1, toBlock)
+
+            try {
+              await portalFetchStreamRangeVisit(
+                `${PORTAL_URL}/datasets/${dataset}/stream`,
+                {
+                  type: 'evm',
+                  fromBlock: currentFrom,
+                  toBlock: plannedTo,
+                  fields: {
+                    block: { number: true, timestamp: true },
+                    transaction: { to: true },
+                  },
+                  transactions: [{}],
+                },
+                {
+                  maxBytes: 100 * 1024 * 1024,
+                  onRecord,
+                },
+              )
+              currentFrom = plannedTo + 1
+            } catch (err) {
+              const message = err instanceof Error ? err.message : String(err)
+              const shouldReduceChunkSize =
+                (message.includes('Response too large') ||
+                  message.toLowerCase().includes('timed out') ||
+                  message.toLowerCase().includes('timeout')) &&
+                chunkSize > MIN_EVM_GENERIC_CHUNK_SIZE
+
+              if (shouldReduceChunkSize) {
+                chunkSize = Math.max(MIN_EVM_GENERIC_CHUNK_SIZE, Math.floor(chunkSize / 2))
+                groupedChunkSizeReduced = true
+                continue
               }
-              const timestamp = block.header?.timestamp ?? block.timestamp
-              if (typeof timestamp !== 'number' || timestamp <= 0) return
-              if (firstObservedTimestamp === undefined || timestamp < firstObservedTimestamp) firstObservedTimestamp = timestamp
-              if (lastObservedTimestamp === undefined || timestamp > lastObservedTimestamp) lastObservedTimestamp = timestamp
-            },
-          },
-        )
+
+              throw err
+            }
+          }
+        }
+
+        await visitGroupedContractRange((record) => {
+          const block = record as {
+            header?: { timestamp?: number }
+            timestamp?: number
+            transactions?: Array<{ to?: string }>
+          }
+          const timestamp = block.header?.timestamp ?? block.timestamp
+          if (typeof timestamp !== 'number' || timestamp <= 0) return
+          if (firstObservedTimestamp === undefined || timestamp < firstObservedTimestamp) firstObservedTimestamp = timestamp
+          if (lastObservedTimestamp === undefined || timestamp > lastObservedTimestamp) lastObservedTimestamp = timestamp
+        })
 
         if (lastObservedTimestamp === undefined) {
           throw new Error('No transactions available for this time period')
@@ -959,40 +1003,25 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
           contract_counts: new Map<string, number>(),
         }))
 
-        await portalFetchStreamRangeVisit(
-          `${PORTAL_URL}/datasets/${dataset}/stream`,
-          {
-            type: 'evm',
-            fromBlock,
-            toBlock,
-            fields: {
-              block: { number: true, timestamp: true },
-              transaction: { to: true },
-            },
-            transactions: [{}],
-          },
-          {
-            onRecord: (record) => {
-              const block = record as {
-                header?: { timestamp?: number }
-                timestamp?: number
-                transactions?: Array<{ to?: string }>
-              }
-              const timestamp = block.header?.timestamp ?? block.timestamp
-              if (typeof timestamp !== 'number' || timestamp <= 0) return
-              const bucketIndex = Math.floor((timestamp - seriesStartTimestamp) / intervalSeconds)
-              if (bucketIndex < 0 || bucketIndex >= expectedBuckets) return
-              for (const tx of block.transactions || []) {
-                if (!tx.to) continue
-                const contract = tx.to.toLowerCase()
-                buckets[bucketIndex].total_transactions += 1
-                totalTransactions += 1
-                buckets[bucketIndex].contract_counts.set(contract, (buckets[bucketIndex].contract_counts.get(contract) || 0) + 1)
-                contractTotals.set(contract, (contractTotals.get(contract) || 0) + 1)
-              }
-            },
-          },
-        )
+        await visitGroupedContractRange((record) => {
+          const block = record as {
+            header?: { timestamp?: number }
+            timestamp?: number
+            transactions?: Array<{ to?: string }>
+          }
+          const timestamp = block.header?.timestamp ?? block.timestamp
+          if (typeof timestamp !== 'number' || timestamp <= 0) return
+          const bucketIndex = Math.floor((timestamp - seriesStartTimestamp) / intervalSeconds)
+          if (bucketIndex < 0 || bucketIndex >= expectedBuckets) return
+          for (const tx of block.transactions || []) {
+            if (!tx.to) continue
+            const contract = tx.to.toLowerCase()
+            buckets[bucketIndex].total_transactions += 1
+            totalTransactions += 1
+            buckets[bucketIndex].contract_counts.set(contract, (buckets[bucketIndex].contract_counts.get(contract) || 0) + 1)
+            contractTotals.set(contract, (contractTotals.get(contract) || 0) + 1)
+          }
+        })
 
         const topContracts = Array.from(contractTotals.entries())
           .map(([address, count]) => ({ address, transaction_count: count }))
@@ -1037,6 +1066,7 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
             total_transactions: totalTransactions,
             from_block: fromBlock,
             to_block: toBlock,
+            ...(groupedChunkSizeReduced ? { chunk_size_reduced: true } : {}),
           },
           chart: buildTimeSeriesChart({
             interval,
@@ -1145,6 +1175,26 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
         })
 
         const filledBuckets = solanaResult.time_series.filter((point) => point.slots_in_bucket > 0).length
+        const durationSeconds = parseTimeframeToSeconds(duration)
+        const observedCoveragePct = durationSeconds > 0
+          ? solanaResult.observed_span_seconds / durationSeconds
+          : 1
+        const hasCoverageGap = observedCoveragePct < 0.98 || filledBuckets < solanaResult.expected_buckets * 0.8
+        if (hasCoverageGap) {
+          throw new ActionableError('Solana bucket coverage was incomplete, so no time-series chart was returned.', [
+            'Use a shorter duration, such as "past 1h" or "past 6h".',
+            'Use a larger interval, such as "1h", to reduce bucket pressure.',
+            'Retry in a moment if the indexed range is moving or Portal returned sparse slot coverage.',
+          ], {
+            requested_window: describeTimeWindowInput(duration),
+            observed_coverage_pct: Math.round(observedCoveragePct * 100),
+            expected_buckets: solanaResult.expected_buckets,
+            filled_buckets: filledBuckets,
+            from_block: solanaResult.from_block,
+            to_block: solanaResult.to_block,
+          })
+        }
+        const notices: string[] = []
         const summary: any = {
           metric,
           interval,
@@ -1186,9 +1236,10 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
           isFilled: (bucket) => bucket.blocks_in_bucket > 0,
           anchor: 'latest_block',
           windowComplete:
-            solanaResult.first_observed_timestamp !== undefined
+            !hasCoverageGap &&
+            (solanaResult.first_observed_timestamp !== undefined
               ? solanaResult.first_observed_timestamp <= normalizedTimeSeries[0]?.timestamp
-              : true,
+              : true),
           ...(solanaResult.first_observed_timestamp !== undefined
             ? { firstObservedTimestamp: solanaResult.first_observed_timestamp }
             : {}),
@@ -1240,6 +1291,7 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
           resultMessage,
           {
             toolName: 'portal_get_time_series',
+            ...(notices.length > 0 ? { notices } : {}),
             freshness: buildQueryFreshness({
               finality: 'latest',
               headBlockNumber: head.number,
@@ -1252,9 +1304,10 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
               filledBuckets,
               anchor: 'latest_block',
               windowComplete:
-                solanaResult.first_observed_timestamp !== undefined
+                !hasCoverageGap &&
+                (solanaResult.first_observed_timestamp !== undefined
                   ? solanaResult.first_observed_timestamp <= normalizedTimeSeries[0]?.timestamp
-                  : true,
+                  : true),
             }),
             execution: buildExecutionMetadata({
               mode,
@@ -1286,12 +1339,27 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
       }
 
       if (isHyperliquid && ['volume', 'fill_count', 'unique_traders'].includes(metric)) {
-        const resolvedWindow = await resolveTimeframeOrBlocks({
-          dataset,
-          ...(from_timestamp !== undefined || to_timestamp !== undefined
-            ? { from_timestamp, to_timestamp }
-            : { timeframe: duration }),
-        })
+        const intervalSeconds = parseTimeframeToSeconds(interval)
+        const durationSeconds = parseTimeframeToSeconds(duration)
+        const latestHead =
+          from_timestamp !== undefined || to_timestamp !== undefined
+            ? undefined
+            : await getBlockHead(dataset)
+        const resolvedWindow = from_timestamp !== undefined || to_timestamp !== undefined
+          ? await resolveTimeframeOrBlocks({
+              dataset,
+              from_timestamp,
+              to_timestamp,
+            })
+          : {
+              from_block: Math.max(
+                0,
+                latestHead!.number -
+                  Math.ceil((durationSeconds / estimateBlockTime(dataset, 'hyperliquidFills')) * 1.25),
+              ),
+              to_block: latestHead!.number,
+              range_kind: 'timeframe' as const,
+            }
         const fromBlock = resolvedWindow.from_block
         const { validatedToBlock: toBlock, head } = await validateBlockRange(
           dataset,
@@ -1299,8 +1367,6 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
           resolvedWindow.to_block ?? Number.MAX_SAFE_INTEGER,
           false,
         )
-        const intervalSeconds = parseTimeframeToSeconds(interval)
-        const durationSeconds = parseTimeframeToSeconds(duration)
         const expectedBuckets = Math.ceil(durationSeconds / intervalSeconds)
         const buckets = new Map<number, { fills: number; volume: number; traders: Set<number> }>()
         let latestTimestamp = 0
@@ -1326,8 +1392,10 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
             sz: true,
             user: true,
           },
-          maxBytes: 150 * 1024 * 1024,
-          concurrency: 3,
+          initialChunkSize: 100_000,
+          minChunkSize: 10_000,
+          maxBytes: 200 * 1024 * 1024,
+          concurrency: 6,
           onBlock: (block) => {
             for (const fill of block.fills || []) {
               const ts = Number(fill.time || 0) > 1e12 ? Math.floor(Number(fill.time) / 1000) : Math.floor(Number(fill.time || 0))
@@ -1998,6 +2066,24 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
 
       // Detect chain head staleness (most relevant for Bitcoin/slow chains)
       const summary = cachedSeries.summary as any
+      if (cachedSeries.hasCoverageGap) {
+        throw new ActionableError('Bucket coverage was incomplete, so no time-series chart was returned.', [
+          'Use mode="deep" for a complete scan when latency is acceptable.',
+          'Use a shorter duration or a larger interval.',
+          'Retry with filters if you only need one address or contract.',
+        ], {
+          requested_window: describeTimeWindowInput(duration),
+          observed_span_seconds: cachedSeries.observedSpanSeconds,
+          observed_span_formatted: formatDuration(cachedSeries.observedSpanSeconds),
+          expected_buckets: cachedSeries.expectedBuckets,
+          filled_buckets: cachedSeries.filledBuckets,
+          from_block: cachedSeries.effectiveFromBlock,
+          to_block: toBlock,
+        })
+      }
+      const genericNotices = cachedSeries.adaptiveChunkReduced
+        ? ['Chunk size was reduced automatically to keep Portal responses within MCP limits.']
+        : []
       const resultMessage = buildTimeSeriesAnswer({
         dataset,
         metric,
@@ -2041,6 +2127,7 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
         resultMessage,
         {
           toolName: 'portal_get_time_series',
+          ...(genericNotices.length > 0 ? { notices: genericNotices } : {}),
           freshness: buildQueryFreshness({
             finality: 'latest',
             headBlockNumber: head.number,
@@ -2052,6 +2139,7 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
             returnedBuckets: cachedSeries.timeSeries.length,
             filledBuckets: cachedSeries.filledBuckets,
             anchor: 'latest_block',
+            windowComplete: !cachedSeries.hasCoverageGap,
           }),
           execution: buildExecutionMetadata({
             mode,
