@@ -32,6 +32,7 @@ const MAX_TOP_PNL = 5
 const DEFAULT_ANALYTICS_SECTION_LIMIT = 6
 const MAX_ANALYTICS_BLOCKS = 500000
 const FAST_MODE_MAX_ANALYTICS_BLOCKS = 100000
+const FAST_MODE_COMPLETE_WINDOW_BLOCKS = 250000
 const HYPERLIQUID_ANALYTICS_FAST_INITIAL_CHUNK_SIZE = 20_000
 const HYPERLIQUID_ANALYTICS_DEEP_INITIAL_CHUNK_SIZE = 40_000
 const HYPERLIQUID_ANALYTICS_CACHE_TTL_MS = 30_000
@@ -452,7 +453,12 @@ export function registerHyperliquidAnalyticsTool(server: McpServer) {
       if (coin) fillFilter.coin = coin
 
       const requestedBlockRange = endBlock - fromBlock + 1
-      const maxAnalyticsBlocks = mode === 'deep' ? MAX_ANALYTICS_BLOCKS : FAST_MODE_MAX_ANALYTICS_BLOCKS
+      const maxAnalyticsBlocks =
+        mode === 'deep'
+          ? MAX_ANALYTICS_BLOCKS
+          : requestedBlockRange <= FAST_MODE_COMPLETE_WINDOW_BLOCKS
+            ? requestedBlockRange
+            : FAST_MODE_MAX_ANALYTICS_BLOCKS
       const effectiveFrom = requestedBlockRange > maxAnalyticsBlocks
         ? endBlock - maxAnalyticsBlocks + 1
         : fromBlock

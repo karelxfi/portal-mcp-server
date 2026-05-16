@@ -190,7 +190,7 @@ export function registerQueryHyperliquidReplicaCmdsTool(server: McpServer) {
       const results = await portalFetchRecentRecords(`${PORTAL_URL}/datasets/${dataset}/stream`, query, {
         itemKeys: ['actions'],
         limit: fetchLimit,
-        chunkSize: hasFilters ? 40_000 : 10_000,
+        chunkSize: hasFilters ? 5_000 : 100,
         maxBytes: 100 * 1024 * 1024,
       })
 

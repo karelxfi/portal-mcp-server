@@ -280,7 +280,7 @@ export function registerQuerySolanaTransactionsTool(server: McpServer) {
       const results = await portalFetchRecentRecords(`${PORTAL_URL}/datasets/${dataset}/stream`, query, {
         itemKeys: ['transactions'],
         limit: fetchLimit,
-        chunkSize: hasFilters ? 500 : 100,
+        chunkSize: hasFilters ? 500 : Math.max(1, Math.min(10, limit)),
       })
 
       const allTxs = sortTransactions(results.flatMap((block: unknown) => {

@@ -401,7 +401,7 @@ export function registerQuerySolanaInstructionsTool(server: McpServer) {
       const results = await portalFetchRecentRecords(`${PORTAL_URL}/datasets/${dataset}/stream`, query, {
         itemKeys: ['instructions'],
         limit: fetchLimit,
-        chunkSize: hasFilters ? 500 : 100,
+        chunkSize: hasFilters ? 500 : Math.max(1, Math.min(2, limit)),
       })
 
       const allInstructions = sortInstructions(results.flatMap((block: unknown) => {

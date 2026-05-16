@@ -139,6 +139,37 @@ function capitalizeWord(word: string): string {
   return lower.charAt(0).toUpperCase() + lower.slice(1)
 }
 
+function collectPayloadNotices(payload: RecordLike): string[] {
+  return [
+    ...asArray<string>(payload._notices),
+    ...(typeof payload._notice === 'string' ? [payload._notice] : []),
+  ].filter((notice) => notice.trim().length > 0)
+}
+
+function makeCompletenessAwareAnswer(answer: string, payload: RecordLike): string {
+  const coverage = isRecord(payload._coverage) ? payload._coverage : undefined
+  if (coverage?.window_complete !== false && coverage?.result_complete !== false) {
+    return answer
+  }
+
+  const notice = collectPayloadNotices(payload)
+    .find((item) => /\b(partial|incomplete|coverage|analyzed\b.*\brequested|sample|truncated|shortened)\b/i.test(item))
+  const suffixes: string[] = []
+  if (coverage?.window_complete === false) {
+    if (!/\b(partial|incomplete|coverage|analyzed\b.*\brequested|only\b.*\brequested)\b/i.test(answer)) {
+      suffixes.push(`Partial window: ${notice ?? 'coverage metadata marks this window as partially analyzed.'}`)
+    }
+  }
+
+  if (coverage?.result_complete === false) {
+    if (!/\b(preview|cursor|continue|more matching|older results|limited to)\b/i.test(answer)) {
+      suffixes.push('Preview page: continue with the cursor for remaining rows.')
+    }
+  }
+
+  return suffixes.length > 0 ? `${answer} ${suffixes.join(' ')}` : answer
+}
+
 export function humanizeLabel(value: unknown): string | undefined {
   if (typeof value !== 'string') return undefined
   const trimmed = value.trim()
@@ -159,30 +190,30 @@ export function humanizeLabel(value: unknown): string | undefined {
 
 function buildChatAnswer(payload: RecordLike): string | undefined {
   if (typeof payload._summary === 'string' && payload._summary.trim()) {
-    return payload._summary.trim()
+    return makeCompletenessAwareAnswer(payload._summary.trim(), payload)
   }
 
   const headline = isRecord(payload._ui) && isRecord(payload._ui.headline) ? payload._ui.headline : undefined
   const title = typeof headline?.title === 'string' ? headline.title : undefined
   const subtitle = typeof headline?.subtitle === 'string' ? headline.subtitle : undefined
-  if (title && subtitle) return `${title}: ${subtitle}`
-  if (title) return title
-  if (subtitle) return subtitle
+  if (title && subtitle) return makeCompletenessAwareAnswer(`${title}: ${subtitle}`, payload)
+  if (title) return makeCompletenessAwareAnswer(title, payload)
+  if (subtitle) return makeCompletenessAwareAnswer(subtitle, payload)
 
   if (typeof payload.number === 'number') {
-    return `Current value: ${payload.number.toLocaleString('en-US')}.`
+    return makeCompletenessAwareAnswer(`Current value: ${payload.number.toLocaleString('en-US')}.`, payload)
   }
 
   if (typeof payload.value === 'number' || typeof payload.value === 'string') {
-    return `Current value: ${String(payload.value)}.`
+    return makeCompletenessAwareAnswer(`Current value: ${String(payload.value)}.`, payload)
   }
 
   if (isRecord(payload.head) && typeof payload.head.number === 'number') {
-    return `Current head is ${payload.head.number.toLocaleString('en-US')}.`
+    return makeCompletenessAwareAnswer(`Current head is ${payload.head.number.toLocaleString('en-US')}.`, payload)
   }
 
   if (Array.isArray(payload.items)) {
-    return `Returned ${payload.items.length.toLocaleString('en-US')} result${payload.items.length === 1 ? '' : 's'}.`
+    return makeCompletenessAwareAnswer(`Returned ${payload.items.length.toLocaleString('en-US')} result${payload.items.length === 1 ? '' : 's'}.`, payload)
   }
 
   const meta = isRecord(payload._meta) ? payload._meta : undefined
@@ -198,10 +229,10 @@ function buildChatAnswer(payload: RecordLike): string | undefined {
   const toolName = typeof toolContract?.name === 'string' ? toolContract.name : undefined
   const toolLabel = humanizeLabel(toolName?.replace(/^portal_/, ''))
   if (toolLabel && network) {
-    return `${toolLabel} for ${network}.`
+    return makeCompletenessAwareAnswer(`${toolLabel} for ${network}.`, payload)
   }
   if (toolLabel) {
-    return toolLabel
+    return makeCompletenessAwareAnswer(toolLabel, payload)
   }
 
   return undefined
@@ -863,18 +894,18 @@ export function formatResult(
       payloadRecord.pipes_handoff = options.pipes
     }
 
+    if (notices.length === 1) {
+      payloadRecord._notice = notices[0]
+    } else if (notices.length > 1) {
+      payloadRecord._notices = notices
+    }
+
     const answer = buildChatAnswer(payloadRecord)
     const display = buildDisplay(payloadRecord)
     const nextSteps = buildNextSteps(payloadRecord) ?? { actions: [] }
     if (answer) payloadRecord.answer = answer
     if (display) payloadRecord.display = display
     payloadRecord.next_steps = nextSteps
-
-    if (notices.length === 1) {
-      payloadRecord._notice = notices[0]
-    } else if (notices.length > 1) {
-      payloadRecord._notices = notices
-    }
 
     const investigation = buildInvestigationGuide(payloadRecord)
     if (investigation) {

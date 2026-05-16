@@ -76,6 +76,14 @@ function hasExplicitResponseFormat(args: Record<string, unknown>) {
   return Object.prototype.hasOwnProperty.call(args, 'response_format')
 }
 
+function answerDisclosesPartialWindow(answer: unknown) {
+  return /\b(partial|incomplete|coverage|analyzed\b.*\brequested|only\b.*\brequested)\b/i.test(String(answer ?? ''))
+}
+
+function answerDisclosesPreview(answer: unknown) {
+  return /\b(preview|cursor|continue|more matching|older results|limited to)\b/i.test(String(answer ?? ''))
+}
+
 function percentile(values: number[], p: number) {
   if (values.length === 0) return 0
   const sorted = [...values].sort((a, b) => a - b)
@@ -198,6 +206,13 @@ async function main() {
         }
         if (Array.isArray(data._notices) && data._notices.some((notice: string) => /truncated/i.test(notice))) {
           failures.push({ tool: spec.name, message: 'response emitted truncation notices' })
+        }
+
+        if (data?._coverage?.window_complete === false && !answerDisclosesPartialWindow(data.answer)) {
+          failures.push({ tool: spec.name, message: 'partial analysis/window coverage was not disclosed in answer' })
+        }
+        if (data?._coverage?.result_complete === false && !answerDisclosesPreview(data.answer)) {
+          failures.push({ tool: spec.name, message: 'preview/paginated result was not disclosed in answer' })
         }
 
         if (hasLegacyWording(JSON.stringify(data.display ?? {})) || hasLegacyWording(String(data.answer ?? ''))) {

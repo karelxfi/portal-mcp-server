@@ -130,7 +130,12 @@ async function main() {
   const oneHourWindow = await resolveTimeframeOrBlocks({ dataset, timeframe: '1h' })
 
   assert(oneHourWindow.to_block === head.number, '1h Solana window should anchor to the cached latest slot')
-  assert(oneHourWindow.from_block === exactFromBlock, '1h Solana window should use Portal timestamp lookup from the head timestamp')
+  assert(oneHourWindow.from_lookup?.resolution === 'exact', '1h Solana window should use Portal timestamp lookup from the head timestamp')
+  assert(oneHourWindow.from_lookup.timestamp === targetTimestamp, '1h Solana lookup should be anchored to the resolved head timestamp')
+  assert(
+    Math.abs(oneHourWindow.from_block - exactFromBlock) <= 50,
+    '1h Solana timestamp lookup should stay within a small live-index tolerance',
+  )
   assert(oneHourWindow.from_block < oneHourWindow.to_block, '1h Solana window should produce an ordered slot range')
   console.log(`PASS  Solana 1h window -> ${oneHourWindow.from_block}..${oneHourWindow.to_block}`)
 

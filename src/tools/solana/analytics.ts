@@ -40,7 +40,7 @@ const PROGRAM_NAMES: Record<string, string> = {
   Vote111111111111111111111111111111111111111: 'Vote Program',
 }
 
-const MAX_ANALYTICS_SLOTS = 9000
+const MAX_ANALYTICS_SLOTS = 10_000
 const INITIAL_SOLANA_ANALYTICS_CHUNK_SIZE = 3000
 const MIN_SOLANA_ANALYTICS_CHUNK_SIZE = 250
 const SOLANA_ANALYTICS_CONCURRENCY = 3
@@ -50,16 +50,16 @@ const SOLANA_PROGRAM_CONCURRENCY = 2
 const SOLANA_ANALYTICS_CACHE_TTL_MS = 30_000
 const SOLANA_ANALYTICS_CACHE_MAX_ENTRIES = 8
 const SOLANA_ANALYTICS_SLOT_BUDGET: Record<SolanaAnalyticsBudgetKey, number> = {
-  '5m': 750,
-  '15m': 2250,
-  '1h': 9000,
-  '6h': 9000,
+  '5m': 1_000,
+  '15m': 2_500,
+  '1h': 10_000,
+  '6h': 10_000,
 }
 const SOLANA_ANALYTICS_FAST_SLOT_BUDGET: Record<SolanaAnalyticsBudgetKey, number> = {
-  '5m': 750,
-  '15m': 2250,
-  '1h': 4500,
-  '6h': 6000,
+  '5m': 1_000,
+  '15m': 2_500,
+  '1h': 10_000,
+  '6h': 10_000,
 }
 const SOLANA_ANALYTICS_CHUNK_SIZE: Record<SolanaAnalyticsBudgetKey, number> = {
   '5m': 500,
