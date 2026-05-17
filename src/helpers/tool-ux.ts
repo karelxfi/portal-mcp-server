@@ -459,6 +459,10 @@ const TOOL_DEFINITIONS: Record<string, ToolDefinition> = {
     vm: ['evm'],
     result_kind: 'list',
     normalized_output: true,
+    first_choice_for: [
+      'NFT or ERC721 mint lookups such as latest pass minted, token ID, and mint transaction hash',
+      'contract event questions where the user needs exact event evidence rather than wallet or transaction summaries',
+    ],
     summary:
       'Query raw EVM logs with address/topic filters, common event aliases, earliest/latest scanning, and optional inline decoding.',
     when_to_use: [
@@ -466,6 +470,7 @@ const TOOL_DEFINITIONS: Record<string, ToolDefinition> = {
       'You want decoded log hints while still keeping the raw log shape available.',
       'You want the first or last matching event in a bounded block/time window.',
       'You want common event names such as transfer, approval, swap, mint, or burn instead of remembering topic0 hashes.',
+      'You need the latest ERC721/pass mint in a bounded deployment/recent window: filter Transfer events with topic1 as the zero address, use scan_order=latest, limit=1, and decode=true to expose decoded_log.decoded.token_id plus transaction_hash.',
     ],
     avoid_when: ['You only want token transfers, which are easier with the token-transfer tool.'],
     examples: [
@@ -487,6 +492,21 @@ const TOOL_DEFINITIONS: Record<string, ToolDefinition> = {
           token_symbols: ['USDC'],
           event: 'transfer',
           scan_order: 'earliest',
+          limit: 1,
+        },
+      },
+      {
+        label: 'Latest ERC721/pass mint ID and tx hash',
+        input: {
+          network: 'base-mainnet',
+          from_block: 46020000,
+          to_block: 46100000,
+          addresses: ['0xE4E70FdF2Fc1147a7f35c4c5de88E6BeA63eeAfA'],
+          event: 'transfer',
+          topic1: ['0x0000000000000000000000000000000000000000000000000000000000000000'],
+          scan_order: 'latest',
+          decode: true,
+          include_transaction: true,
           limit: 1,
         },
       },

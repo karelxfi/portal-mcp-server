@@ -41,6 +41,13 @@ const EXTRA_ROUTING_CASES: RoutingEvalCase[] = [
     max_rank: 2,
     source: 'extra',
   },
+  {
+    prompt:
+      "DSQDAccessPass is deployed on Base mainnet at 0xE4E70FdF2Fc1147a7f35c4c5de88E6BeA63eeAfA. Using SQD Portal, find out what's the ID of the latest pass minted and give me the tx hash as well.",
+    expected: 'portal_evm_query_logs',
+    max_rank: 1,
+    source: 'extra',
+  },
   { prompt: 'just show me token transfers for usdc on base, not all logs', expected: 'portal_evm_query_token_transfers', max_rank: 1, source: 'extra' },
   { prompt: 'investigate this suspicious wallet on base and show the evidence trail', expected: 'portal_get_wallet_summary', max_rank: 1, source: 'extra' },
   { prompt: 'trace suspicious usdc movement on base after a hack', expected: 'portal_evm_query_token_transfers', max_rank: 1, source: 'extra' },

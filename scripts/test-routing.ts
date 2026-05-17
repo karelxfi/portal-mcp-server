@@ -150,6 +150,10 @@ const TOKEN_SYNONYMS: Record<string, string[]> = {
   chain: ['network', 'name'],
   commands: ['actions', 'cancels', 'orders', 'replica'],
   current: ['head', 'latest'],
+  deploy: ['deployed', 'deployment', 'deployer'],
+  deployed: ['deploy', 'deployment', 'deployer'],
+  deployer: ['deploy', 'deployed', 'deployment'],
+  deployment: ['deploy', 'deployed', 'deployer'],
   doing: ['activity', 'summary'],
   eth: ['ethereum'],
   events: ['event', 'logs', 'transfers'],
@@ -160,17 +164,23 @@ const TOKEN_SYNONYMS: Record<string, string[]> = {
   happening: ['activity', 'recent'],
   healthy: ['analytics', 'health', 'snapshot'],
   hottest: ['active', 'top', 'trending'],
+  id: ['identifier', 'token_id'],
   indexed: ['fresh', 'network'],
   instructions: ['instruction', 'program'],
   instruction: ['instructions', 'program'],
   latest: ['current', 'head', 'recent'],
   logs: ['event', 'events', 'log'],
+  mint: ['event', 'logs', 'minted', 'nft', 'transfer'],
+  minted: ['event', 'logs', 'mint', 'nft', 'transfer'],
+  minting: ['event', 'logs', 'mint', 'nft', 'transfer'],
   moved: ['transfer', 'transfers'],
   move: ['transfer', 'transfers'],
   most: ['top', 'volume'],
   name: ['network'],
+  nft: ['erc721', 'token', 'token_id'],
   order: ['orders', 'replica'],
   orders: ['command', 'commands', 'replica'],
+  pass: ['erc721', 'nft', 'token', 'token_id'],
   picture: ['analytics', 'overview', 'summary'],
   plot: ['chart', 'graph', 'series'],
   recent: ['activity', 'latest'],
@@ -183,6 +193,8 @@ const TOKEN_SYNONYMS: Record<string, string[]> = {
   trade: ['fill', 'fills', 'trades'],
   transfers: ['token', 'transfer'],
   transfer: ['event', 'token', 'transfers'],
+  type: ['transaction', 'tx'],
+  tx: ['hash', 'transaction'],
   wallet: ['account', 'address'],
   crime: ['forensic', 'investigate', 'investigation', 'suspicious'],
   evidence: ['forensic', 'investigation', 'proof'],
@@ -443,6 +455,21 @@ function scoreTool(
     promptTokens.includes('first') &&
     promptTokens.some((token) => ['event', 'events', 'log', 'logs', 'transfer', 'transfers'].includes(token)) &&
     (vmHints.has('evm') || promptTokens.includes('contract') || /\bemitted by\b/.test(promptLower))
+  const evmNftMintPrompt =
+    vmHints.has('evm') &&
+    promptTokens.some((token) => ['mint', 'minted', 'minting'].includes(token)) &&
+    promptTokens.some((token) => ['erc721', 'id', 'nft', 'pass', 'token', 'token_id'].includes(token)) &&
+    (promptTokens.some((token) => ['hash', 'latest', 'last', 'newest', 'transaction', 'tx'].includes(token)) ||
+      /\btx hash\b/.test(promptLower))
+  const contractDeploymentPrompt =
+    vmHints.has('evm') &&
+    !evmNftMintPrompt &&
+    promptTokens.some((token) => ['deploy', 'deployed', 'deployer', 'deployment'].includes(token)) &&
+    promptTokens.some((token) => ['contract', 'transaction', 'tx', 'who'].includes(token))
+  const transactionTypePrompt =
+    vmHints.has('evm') &&
+    promptTokens.some((token) => ['transaction', 'tx'].includes(token)) &&
+    promptTokens.includes('type')
   const tokenTransferOnlyPrompt =
     vmHints.has('evm') &&
     (/\btoken transfers?\b/.test(promptLower) ||
@@ -531,9 +558,31 @@ function scoreTool(
     score += profile.name.startsWith('portal_substrate_') ? -14 : 0
   }
 
+  if (evmNftMintPrompt) {
+    score += profile.name === 'portal_evm_query_logs' ? 90 : 0
+    score += profile.name === 'portal_evm_query_token_transfers' ? -24 : 0
+    score += profile.name === 'portal_evm_query_transactions' ? -10 : 0
+    score += profile.name === 'portal_get_wallet_summary' ? -18 : 0
+    score += profile.name === 'portal_get_recent_activity' ? -18 : 0
+    score += profile.name === 'portal_resolve_entity' ? -18 : 0
+  }
+
+  if (contractDeploymentPrompt) {
+    score += profile.name === 'portal_evm_get_contract_deployment' ? 70 : 0
+    score += profile.name === 'portal_evm_query_logs' ? -35 : 0
+    score += profile.name === 'portal_get_recent_activity' ? -12 : 0
+    score += profile.name === 'portal_evm_get_contract_activity' ? -12 : 0
+  }
+
+  if (transactionTypePrompt) {
+    score += profile.name === 'portal_evm_query_transactions' ? 60 : 0
+    score += profile.name === 'portal_evm_query_logs' ? -35 : 0
+    score += profile.name === 'portal_evm_get_contract_deployment' ? -12 : 0
+  }
+
   if (tokenTransferOnlyPrompt) {
-    score += profile.name === 'portal_evm_query_token_transfers' ? 24 : 0
-    score += profile.name === 'portal_evm_query_logs' ? -8 : 0
+    score += profile.name === 'portal_evm_query_token_transfers' ? 90 : 0
+    score += profile.name === 'portal_evm_query_logs' ? -80 : 0
   }
 
   if (walletInvestigationPrompt) {

@@ -15,7 +15,7 @@ import {
   type TokenListLookupMetadata,
   resolveTokenSymbolsForQuery,
 } from '../../helpers/entity-resolution.js'
-import { createUnsupportedChainError } from '../../helpers/errors.js'
+import { ActionableError, createUnsupportedChainError } from '../../helpers/errors.js'
 import { resolveEventTopic0 } from '../../helpers/evm-aliases.js'
 import { portalFetchRecentRecords, portalFetchStreamRange } from '../../helpers/fetch.js'
 import { getLogFields } from '../../helpers/field-presets.js'
@@ -48,6 +48,8 @@ import { decodeLog } from '../utilities/decode-logs.js'
 // ============================================================================
 // Tool: Query Logs (EVM)
 // ============================================================================
+
+const MAX_COMPLETE_FILTERED_LATEST_SCAN_BLOCKS = 100_000
 
 function flattenLogsWithBlockContext(results: unknown[]) {
   return results.flatMap((block: unknown) => {
@@ -164,6 +166,48 @@ function sortLogs(items: EvmLogItem[]) {
       String(right.transactionHash ?? right.tx_hash ?? ''),
     )
   })
+}
+
+function hasTopicFilter(topics: string[] | undefined): boolean {
+  return Array.isArray(topics) && topics.length > 0
+}
+
+function getRecentLogChunkSize(blockRange: number, hasFilters: boolean): number {
+  if (!hasFilters) return 100
+  return Math.min(100_000, Math.max(5_000, Math.ceil(blockRange / 100)))
+}
+
+function getSelectiveLatestLogChunkSize(blockRange: number): number {
+  return Math.min(2_000_000, Math.max(1, blockRange))
+}
+
+function shouldUseCompleteFilteredLatestScan({
+  scanOrder,
+  blockRange,
+  limit,
+  addressFilters,
+  topic0,
+  topic1,
+  topic2,
+  topic3,
+}: {
+  scanOrder: 'earliest' | 'latest'
+  blockRange: number
+  limit: number
+  addressFilters: string[] | undefined
+  topic0: string[]
+  topic1?: string[]
+  topic2?: string[]
+  topic3?: string[]
+}): boolean {
+  return (
+    scanOrder === 'latest' &&
+    blockRange > 10_000 &&
+    limit <= 25 &&
+    !!addressFilters?.length &&
+    topic0.length > 0 &&
+    (hasTopicFilter(topic1) || hasTopicFilter(topic2) || hasTopicFilter(topic3))
+  )
 }
 
 async function fetchLogsByScanOrder({
@@ -400,7 +444,16 @@ export function registerQueryLogsTool(server: McpServer) {
       })
 
       // Resolve timeframe or use explicit blocks
-      const resolvedBlocks = paginationCursor
+      const openEndedLatestBlockWindow =
+        !paginationCursor &&
+        !timeframe &&
+        from_timestamp === undefined &&
+        to_timestamp === undefined &&
+        from_block !== undefined &&
+        to_block === undefined &&
+        scan_order === 'latest'
+
+      let resolvedBlocks = paginationCursor
         ? {
             from_block: paginationCursor.window_from_block,
             to_block: paginationCursor.window_to_block,
@@ -420,6 +473,12 @@ export function registerQueryLogsTool(server: McpServer) {
             from_timestamp,
             to_timestamp,
           })
+      if (openEndedLatestBlockWindow) {
+        resolvedBlocks = {
+          ...resolvedBlocks,
+          to_block: Number.MAX_SAFE_INTEGER,
+        }
+      }
       const resolvedFromBlock = resolvedBlocks.from_block
       const resolvedToBlock = resolvedBlocks.to_block
 
@@ -455,11 +514,18 @@ export function registerQueryLogsTool(server: McpServer) {
         resolvedToBlock ?? Number.MAX_SAFE_INTEGER,
         finalized_only,
       )
+      if (openEndedLatestBlockWindow) {
+        resolvedBlocks = {
+          ...resolvedBlocks,
+          to_block: endBlock,
+        }
+      }
       const pageToBlock = paginationCursor?.page_to_block ?? endBlock
       const includeL2 = isL2Chain(dataset)
 
       // Validate query size to prevent crashes
       const blockRange = pageToBlock - resolvedFromBlock
+      const inclusiveBlockRange = Math.max(0, blockRange + 1)
       const hasFilters = !!(addressFilters || normalizedTopic0.length > 0 || topic1 || topic2 || topic3)
 
       const validation = validateQuerySize({
@@ -521,15 +587,49 @@ export function registerQueryLogsTool(server: McpServer) {
       const cursorSkip = paginationCursor?.skip_inclusive_block ?? 0
       const fetchLimit = limit + cursorSkip + 1
       const portalUrl = `${PORTAL_URL}/datasets/${dataset}/stream`
+      const completeFilteredLatestScan = shouldUseCompleteFilteredLatestScan({
+        scanOrder: scan_order,
+        blockRange: inclusiveBlockRange,
+        limit,
+        addressFilters,
+        topic0: normalizedTopic0,
+        topic1,
+        topic2,
+        topic3,
+      })
+      if (completeFilteredLatestScan && inclusiveBlockRange > MAX_COMPLETE_FILTERED_LATEST_SCAN_BLOCKS) {
+        throw new ActionableError(
+          'Complete latest event search is too broad for a synchronous Portal MCP response.',
+          [
+            'Provide a bounded window with timeframe, from_timestamp/to_timestamp, or from_block/to_block.',
+            'For NFT/pass mint questions, first find or provide the contract deployment block, then retry from that block.',
+            'If you only need recent mints, use a recent timeframe such as 6h, 24h, 7d, or 30d.',
+          ],
+          {
+            network: dataset,
+            requested_from_block: resolvedFromBlock,
+            requested_to_block: pageToBlock,
+            requested_blocks: inclusiveBlockRange,
+            max_complete_scan_blocks: MAX_COMPLETE_FILTERED_LATEST_SCAN_BLOCKS,
+            addresses: addressFilters,
+            topic0: normalizedTopic0,
+            ...(topic1 ? { topic1 } : {}),
+            ...(topic2 ? { topic2 } : {}),
+            ...(topic3 ? { topic3 } : {}),
+          },
+        )
+      }
       const scanResult =
-        scan_order === 'earliest'
+        scan_order === 'earliest' || completeFilteredLatestScan
           ? await fetchLogsByScanOrder({
               url: portalUrl,
               query,
               fromBlock: resolvedFromBlock,
               toBlock: pageToBlock,
               limit,
-              chunkSize: hasFilters ? 500 : 100,
+              chunkSize: completeFilteredLatestScan
+                ? getSelectiveLatestLogChunkSize(inclusiveBlockRange)
+                : getRecentLogChunkSize(inclusiveBlockRange, hasFilters),
               scanOrder: scan_order,
             })
           : undefined
@@ -538,7 +638,7 @@ export function registerQueryLogsTool(server: McpServer) {
         : await portalFetchRecentRecords(portalUrl, query, {
             itemKeys: ['logs'],
             limit: fetchLimit,
-            chunkSize: hasFilters ? 500 : 100,
+            chunkSize: getRecentLogChunkSize(inclusiveBlockRange, hasFilters),
           })
 
       const allLogs = scanResult ? scanResult.items : sortLogs(flattenLogsWithBlockContext(results) as EvmLogItem[])
@@ -629,10 +729,22 @@ export function registerQueryLogsTool(server: McpServer) {
         ...buildTokenResolutionNotices(tokenSymbolResolutions, unresolvedTokenSymbols),
         ...buildTokenListLookupNotices(tokenSymbolLookup),
       ]
+      if (openEndedLatestBlockWindow) {
+        notices.push('Open-ended from_block was resolved through the latest indexed head for scan_order=latest.')
+      }
+      if (completeFilteredLatestScan) {
+        notices.push(
+          'Used a complete filtered latest scan strategy: scan backward from the indexed head with large chunks until the latest match is proven or the requested window is exhausted.',
+        )
+      }
       if (nextCursor) notices.push('Older results are available via _pagination.next_cursor.')
-      if (scanResult && page.hasMore)
+      if (scanResult && page.hasMore && scan_order === 'earliest')
         notices.push(
           `More matching logs exist in the scanned ${scanResult.scannedFromBlock}-${scanResult.scannedToBlock} block slice; narrow filters or reduce limit pressure before expanding the window.`,
+        )
+      if (scanResult && page.hasMore && scan_order === 'latest')
+        notices.push(
+          `Older matching logs also exist in the scanned ${scanResult.scannedFromBlock}-${scanResult.scannedToBlock} block slice; the returned rows are the latest matches by block/log index.`,
         )
       const boundedSearchNotice = scanResult ? buildBoundedSearchNotice(scanResult, 'EVM log scan') : undefined
       if (boundedSearchNotice) notices.push(boundedSearchNotice)
@@ -682,6 +794,12 @@ export function registerQueryLogsTool(server: McpServer) {
             notes: [
               token_symbols && token_symbols.length > 0
                 ? 'token_symbols were resolved from open token-list data and merged into addresses.'
+                : undefined,
+              openEndedLatestBlockWindow
+                ? 'Open-ended from_block searched through the latest indexed head because scan_order=latest.'
+                : undefined,
+              completeFilteredLatestScan
+                ? 'Complete filtered latest scan used large reverse chunks to avoid tiny chunk walks on sparse mint/event searches.'
                 : undefined,
               include_transaction || include_transaction_traces || include_transaction_logs
                 ? 'Parent transaction context was requested for matching logs.'
