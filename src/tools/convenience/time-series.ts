@@ -619,7 +619,7 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
         .string()
         .optional()
         .default(DEFAULT_TIME_SERIES_DURATION)
-        .describe('Total time period to analyze. Defaults to "6h" for fast interactive UX. Explicit longer windows like "24h" or "7d" are supported but can take longer. Accepts compact durations like "30m" or natural phrases like "past 30 minutes".'),
+        .describe('Total time period to analyze. Defaults to "6h" for interactive use. Explicit longer windows like "24h" or "7d" are supported but can take longer. Accepts compact durations like "30m" or natural phrases like "past 30 minutes".'),
       address: z
         .string()
         .optional()
@@ -639,7 +639,7 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
         .enum(['fast', 'deep'])
         .optional()
         .default('deep')
-        .describe('fast = quick preview with compact scan budgets, deep = complete requested window when feasible'),
+        .describe('Execution depth. Defaults to complete requested-window analysis; the optional fast value is only for explicitly bounded previews.'),
     },
     async ({ network, metric, interval, duration, address, from_timestamp, to_timestamp, compare_previous, group_by, group_limit, mode }) => {
       const queryStartTime = Date.now()
@@ -774,10 +774,10 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
             pct_change: previousPoint.value === 0 ? null : Number((((point.value - previousPoint.value) / previousPoint.value) * 100).toFixed(2)),
           }
         })
-        const maxDeltaBuckets = 160
+        const maxDeltaBuckets = mode === 'deep' ? Number.POSITIVE_INFINITY : 160
         const trimmedBucketDeltas = bucketDeltas.length > maxDeltaBuckets ? bucketDeltas.slice(-maxDeltaBuckets) : bucketDeltas
         if (bucketDeltas.length > trimmedBucketDeltas.length) {
-          notices.push(`Bucket deltas trimmed to the most recent ${maxDeltaBuckets} buckets to keep the response compact. Use mode="deep" for the full window.`)
+          notices.push(`Bucket deltas trimmed to the most recent ${maxDeltaBuckets} buckets because the caller requested a bounded preview.`)
         }
         const maxSeriesBuckets = mode === 'deep' ? Number.POSITIVE_INFINITY : 160
         const currentSeriesRows =
@@ -789,7 +789,7 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
             ? previousSeries.timeSeries.slice(-maxSeriesBuckets)
             : previousSeries.timeSeries
         if (currentSeriesRows.length < currentSeries.timeSeries.length) {
-          notices.push(`Current and previous series trimmed to the most recent ${maxSeriesBuckets} buckets to keep the response compact. Use mode="deep" for the full aligned series.`)
+          notices.push(`Current and previous series trimmed to the most recent ${maxSeriesBuckets} buckets because the caller requested a bounded preview.`)
         }
         const summaryRows = [
           {
@@ -2120,7 +2120,6 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
       const summary = cachedSeries.summary as any
       if (cachedSeries.hasCoverageGap) {
         throw new ActionableError('Bucket coverage was incomplete, so no time-series chart was returned.', [
-          'Use mode="deep" for a complete scan when latency is acceptable.',
           'Use a shorter duration or a larger interval.',
           'Retry with filters if you only need one address or contract.',
         ], {

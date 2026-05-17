@@ -53,8 +53,8 @@ export function registerGetContractActivityTool(server: McpServer) {
       mode: z
         .enum(['fast', 'deep'])
         .optional()
-        .default('fast')
-        .describe('fast = recent preview with capped scan size, deep = scan the full requested window'),
+        .default('deep')
+        .describe('Execution depth. Defaults to complete requested-window analysis; the optional fast value is only for explicitly bounded previews.'),
     },
     async ({ network, contract_address, timeframe, from_timestamp, to_timestamp, include_events, mode }) => {
       const queryStartTime = Date.now()
@@ -119,7 +119,7 @@ export function registerGetContractActivityTool(server: McpServer) {
         if (requestedRange > FAST_MODE_BLOCK_CAP) {
           fromBlock = Math.max(fromBlock, toBlock - FAST_MODE_BLOCK_CAP + 1)
           notices.push(
-            `Fast mode analyzed the most recent ${FAST_MODE_BLOCK_CAP.toLocaleString()} blocks in the requested window for better responsiveness.`,
+            `Analyzed the most recent ${FAST_MODE_BLOCK_CAP.toLocaleString()} blocks in the requested window because the caller requested a bounded preview.`,
           )
         }
       }

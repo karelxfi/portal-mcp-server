@@ -908,7 +908,7 @@ export function registerEvmOhlcTool(server: McpServer) {
         .optional()
         .default('deep')
         .describe(
-          'Execution mode. fast favors a quicker preview with lighter backfill; deep works harder to fill the full requested window.',
+          'Execution depth. Defaults to complete requested-window analysis; the optional fast value is only for explicitly bounded previews.',
         ),
       price_in: z
         .enum(['auto', 'token0', 'token1'])
@@ -1599,7 +1599,7 @@ export function registerEvmOhlcTool(server: McpServer) {
       }
       if (mode === 'fast') {
         notices.push(
-          'fast mode prioritizes a quicker preview with lighter historical backfill. Switch to deep if you want the tool to work harder on filling the full window.',
+          'Bounded preview requested: the tool used lighter historical backfill than the default complete-window path.',
         )
       }
       if (isReserveSyncSource(source as EvmOhlcSource)) {
@@ -1686,29 +1686,16 @@ export function registerEvmOhlcTool(server: McpServer) {
         })
       }
 
-      if (mode === 'deep' && (chunksFetched >= 3 || backfillAttempts > 0)) {
-        recommendedNextSteps.push(
-          'If you mainly need a fast preview chart, rerun with mode=fast to reduce extra backfill work.',
-        )
-        querySuggestions.push({
-          label: 'Retry in fast mode',
-          reason: 'Fast mode uses lighter backfill and shallower v4 metadata lookups for quicker previews.',
-          input: {
-            mode: 'fast',
-          },
-        })
-      }
-
       if (
         mode === 'fast' &&
         (!gapDiagnostics.window_complete || gapDiagnostics.coverage_gap_likely_bucket_count > 0 || backfillAttempts > 0)
       ) {
         recommendedNextSteps.push(
-          'Rerun in deep mode if you want the tool to spend more effort filling likely gaps near the start of the requested window.',
+          'Rerun without the bounded preview override to spend more effort filling likely gaps near the start of the requested window.',
         )
         querySuggestions.push({
-          label: 'Retry in deep mode',
-          reason: 'Deep mode expands backfill further when the quick preview still looks partial.',
+          label: 'Retry complete-window analysis',
+          reason: 'Complete-window analysis expands backfill further when the bounded preview still looks partial.',
           input: {
             mode: 'deep',
           },
@@ -2100,7 +2087,7 @@ export function registerEvmOhlcTool(server: McpServer) {
             to_block: endBlock,
             range_kind: resolvedWindow.range_kind,
             notes: [
-              `Execution mode: ${mode}.`,
+              `Execution depth: ${mode === 'fast' ? 'bounded_preview' : 'complete_window'}.`,
               `Price source: ${source}.`,
               ...(normalizedPoolId ? [`Pool id: ${normalizedPoolId}.`] : []),
               `Source family: ${sourceFamily}; price method: ${priceMethod}.`,

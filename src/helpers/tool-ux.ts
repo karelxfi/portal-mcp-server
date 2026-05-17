@@ -42,6 +42,12 @@ export type ToolGuideEntry = ToolDefinition
 export type ToolExecutionMetadataInput = {
   mode?: string
   response_format?: string
+  result_scope?: string
+  estimated_runtime_class?: string
+  estimated_scan_blocks?: number
+  requested_blocks?: number
+  analyzed_blocks?: number
+  recommended_window?: string
   scan_order?: string
   order_by?: string
   range_kind?: string
@@ -208,26 +214,27 @@ const TOOL_DEFINITIONS: Record<string, ToolDefinition> = {
     normalized_output: true,
     first_choice_for: [
       'one-call wallet analysis across supported VMs',
-      'suspicious wallet triage before drilling into raw transaction, transfer, instruction, or fill evidence',
+      'suspicious wallet triage, fund-flow direction, counterparties, and next evidence pivots before drilling into raw records',
     ],
     summary:
-      'Summarize wallet activity with shared overview, activity, assets, evidence pivots, and follow-up filters across supported networks.',
+      'Summarize wallet activity and fund flow with shared overview, asset movement, counterparties, evidence pivots, and follow-up filters across supported networks.',
     when_to_use: [
-      'You want a single high-level answer about what one wallet has been doing.',
-      'You want a fast preview before drilling into raw transactions or fills.',
+      'You want a single high-level answer about what one wallet has been doing and where value appears to move.',
+      'You want inbound/outbound flow, top counterparties, largest movements, and exact next pivots before drilling into raw transactions or fills.',
       'The user asks to investigate a suspicious wallet, stolen-funds path, exploit counterparty, or incident address.',
     ],
     avoid_when: ['You need every raw record with full chain-specific fields and no summarization.'],
     examples: [
-      { label: 'Fast EVM wallet summary', input: { network: 'base-mainnet', address: '0xabc...', timeframe: '24h' } },
+      { label: 'EVM wallet fund-flow triage', input: { network: 'base-mainnet', address: '0xabc...', timeframe: '24h' } },
       {
-        label: 'Deep Solana wallet summary',
-        input: { network: 'solana-mainnet', address: 'Vote111...', timeframe: '6h', mode: 'deep' },
+        label: 'Solana wallet activity and fee flow',
+        input: { network: 'solana-mainnet', address: 'Vote111...', timeframe: '6h' },
       },
     ],
     supports: {
       pagination: true,
       modes: ['fast', 'deep'],
+      response_formats: ['full', 'compact', 'summary'],
       time_inputs: ['blocks', 'timeframe', 'timestamps'],
     },
   },
@@ -244,7 +251,7 @@ const TOOL_DEFINITIONS: Record<string, ToolDefinition> = {
       'Build simple activity charts and other time-series views across supported VMs, including compare-previous windows and grouped EVM contract trends.',
     when_to_use: [
       'You want chart-ready metric buckets over time.',
-      'You want a simple activity chart for a network, defaulting to a fast 6h interactive window unless a longer window is explicitly requested.',
+      'You want a simple activity chart for a network, defaulting to a 6h interactive window unless a longer window is explicitly requested.',
       'You want to compare the current period to the previous period.',
     ],
     avoid_when: [
@@ -621,7 +628,7 @@ const TOOL_DEFINITIONS: Record<string, ToolDefinition> = {
     ],
     examples: [
       {
-        label: 'Fast contract snapshot',
+        label: 'Contract activity snapshot',
         input: { network: 'base-mainnet', contract_address: '0xabc...', timeframe: '24h' },
       },
     ],
@@ -680,7 +687,6 @@ const TOOL_DEFINITIONS: Record<string, ToolDefinition> = {
           pool_address: '0x<pool-address>',
           duration: '1h',
           interval: '5m',
-          mode: 'fast',
           price_in: 'auto',
           include_recent_trades: true,
         },
@@ -693,7 +699,6 @@ const TOOL_DEFINITIONS: Record<string, ToolDefinition> = {
           pool_address: '0x<pool-address>',
           duration: '1h',
           interval: '5m',
-          mode: 'deep',
           price_in: 'auto',
         },
       },
@@ -705,7 +710,6 @@ const TOOL_DEFINITIONS: Record<string, ToolDefinition> = {
           pool_id: '0x<pool-id>',
           duration: '1h',
           interval: '5m',
-          mode: 'deep',
           price_in: 'auto',
           include_recent_trades: true,
         },
@@ -718,7 +722,6 @@ const TOOL_DEFINITIONS: Record<string, ToolDefinition> = {
           pool_address: '0x<pool-address>',
           duration: '1h',
           interval: '5m',
-          mode: 'fast',
           price_in: 'token1',
         },
       },
@@ -804,12 +807,12 @@ const TOOL_DEFINITIONS: Record<string, ToolDefinition> = {
     summary: 'Get the big picture for Solana throughput, fees, wallet activity, and optional top-program usage.',
     when_to_use: [
       'You want the big picture for Solana right now.',
-      'You want a quick health snapshot for Solana.',
+      'You want a network health snapshot for Solana.',
       'You want throughput, fee, success-rate, or top-program analytics rather than raw records.',
     ],
     avoid_when: ['You want chart buckets or raw transaction/instruction records.'],
     examples: [
-      { label: 'Fast Solana snapshot', input: { network: 'solana-mainnet', timeframe: '1h' } },
+      { label: 'Solana network snapshot', input: { network: 'solana-mainnet', timeframe: '1h' } },
       { label: 'Include top programs', input: { network: 'solana-mainnet', timeframe: '1h', include_programs: true } },
     ],
     supports: {
@@ -861,7 +864,7 @@ const TOOL_DEFINITIONS: Record<string, ToolDefinition> = {
       'You care about block cadence, fees, SegWit/Taproot adoption, or activity metrics.',
     ],
     avoid_when: ['You need raw transactions rather than network analytics.'],
-    examples: [{ label: 'Fast Bitcoin snapshot', input: { network: 'bitcoin-mainnet', timeframe: '1h' } }],
+    examples: [{ label: 'Bitcoin network snapshot', input: { network: 'bitcoin-mainnet', timeframe: '1h' } }],
     supports: {
       modes: ['fast', 'deep'],
       response_formats: ['full', 'compact', 'summary'],
@@ -907,7 +910,7 @@ const TOOL_DEFINITIONS: Record<string, ToolDefinition> = {
     ],
     avoid_when: ['You need individual fill records or OHLC candles.'],
     examples: [
-      { label: 'Fast Hyperliquid snapshot', input: { network: 'hyperliquid-fills', timeframe: '1h' } },
+      { label: 'Hyperliquid fill snapshot', input: { network: 'hyperliquid-fills', timeframe: '1h' } },
       { label: 'Who traded the most?', input: { network: 'hyperliquid-fills', timeframe: '1h' } },
     ],
     supports: {
@@ -1100,6 +1103,22 @@ export function buildExecutionMetadata(input: ToolExecutionMetadataInput): Recor
 
   if (input.mode) metadata.mode = input.mode
   if (input.response_format) metadata.response_format = input.response_format
+  if (input.result_scope) metadata.result_scope = input.result_scope
+  if (
+    input.estimated_runtime_class ||
+    input.estimated_scan_blocks !== undefined ||
+    input.requested_blocks !== undefined ||
+    input.analyzed_blocks !== undefined ||
+    input.recommended_window
+  ) {
+    metadata.scan_estimate = {
+      ...(input.estimated_runtime_class ? { runtime_class: input.estimated_runtime_class } : {}),
+      ...(input.estimated_scan_blocks !== undefined ? { estimated_scan_blocks: input.estimated_scan_blocks } : {}),
+      ...(input.requested_blocks !== undefined ? { requested_blocks: input.requested_blocks } : {}),
+      ...(input.analyzed_blocks !== undefined ? { analyzed_blocks: input.analyzed_blocks } : {}),
+      ...(input.recommended_window ? { recommended_window: input.recommended_window } : {}),
+    }
+  }
   if (input.scan_order) metadata.scan_order = input.scan_order
   if (input.order_by) metadata.order_by = input.order_by
   if (input.metric) metadata.metric = input.metric

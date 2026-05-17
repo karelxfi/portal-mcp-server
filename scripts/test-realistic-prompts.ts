@@ -89,11 +89,12 @@ const CASES: RealisticPromptCase[] = [
       network: 'base',
       address: context.evmWallet,
       timeframe: '24h',
-      mode: 'fast',
       limit_per_type: 3,
     }),
     validate: (data) => {
       assert(data.overview?.vm === 'evm', 'wallet triage should resolve the wallet as EVM')
+      assert(data.fund_flow?.summary !== undefined, 'wallet triage should expose fund_flow summary')
+      assert(Array.isArray(data.fund_flow?.largest_movements), 'wallet triage should expose largest movements')
       assertInvestigation(data, 'wallet triage')
       assert(
         data.investigation.follow_up_filters.length > 0,

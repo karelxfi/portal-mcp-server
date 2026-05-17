@@ -281,12 +281,12 @@ export function registerSolanaAnalyticsTool(server: McpServer) {
       timeframe: z
         .string()
         .optional()
-        .describe("Time range. Accepts compact durations like '15m' or natural phrases like 'past 30 minutes'. Optional; defaults depend on mode."),
+        .describe("Time range. Accepts compact durations like '15m' or natural phrases like 'past 30 minutes'. Optional; defaults to a 1h analysis window."),
       mode: z
         .enum(['fast', 'deep'])
         .optional()
-        .default('fast')
-        .describe("fast = lighter snapshot with smaller scan budgets, deep = larger scan budgets for fuller coverage"),
+        .default('deep')
+        .describe('Execution depth. Defaults to complete requested-window analysis; the optional fast value is only for explicitly bounded previews.'),
       from_timestamp: z
         .union([z.string(), z.number()])
         .optional()
@@ -680,9 +680,9 @@ export function registerSolanaAnalyticsTool(server: McpServer) {
 
         const notices =
           requestedSlots > slotsAnalyzed
-            ? [`${mode === 'fast' ? 'Fast' : 'Deep'} mode analyzed ${slotsAnalyzed} of ${requestedSlots} requested slots to keep the snapshot responsive.`]
+            ? [`Analyzed ${slotsAnalyzed} of ${requestedSlots} requested slots because the requested window exceeds the current Solana analytics scan budget.`]
             : mode === 'fast' && !timeframe
-              ? ['Fast snapshot mode defaults to a 5-minute Solana window for better UX.']
+              ? ['Bounded preview requests default to a 5-minute Solana window.']
               : undefined
         if (chunksFetched > 1) {
           response._chunks_fetched = chunksFetched

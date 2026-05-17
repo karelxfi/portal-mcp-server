@@ -242,8 +242,8 @@ function validateCatalogSemantics(tools: any[], failures: QualityWarning[]) {
       if (!Array.isArray(enumValues) || enumValues.join(',') !== 'fast,deep') {
         failures.push({ tool: tool.name, message: 'mode should expose the shared fast/deep enum' })
       }
-      if (!/fast.*deep|deep.*fast/i.test(description)) {
-        failures.push({ tool: tool.name, message: 'mode should describe the shared fast/deep semantics' })
+      if (!/fast.*deep|deep.*fast|complete requested-window|bounded preview/i.test(description)) {
+        failures.push({ tool: tool.name, message: 'mode should describe complete-window or bounded-preview semantics' })
       }
     }
   }

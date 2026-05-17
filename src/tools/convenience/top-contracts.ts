@@ -96,8 +96,8 @@ export function registerGetTopContractsTool(server: McpServer) {
       mode: z
         .enum(['fast', 'deep'])
         .optional()
-        .default('fast')
-        .describe('fast = cap very large windows for responsiveness, deep = scan the full requested window'),
+        .default('deep')
+        .describe('Execution depth. Defaults to complete requested-window analysis; the optional fast value is only for explicitly bounded previews.'),
       cursor: z.string().optional().describe('Continuation cursor from a previous response'),
     },
     async ({ network, num_blocks, timeframe, from_timestamp, to_timestamp, limit, include_details, mode, cursor }) => {
@@ -352,7 +352,9 @@ export function registerGetTopContractsTool(server: McpServer) {
         notices.push('Large activity windows were automatically scanned in smaller block chunks to stay within Portal response limits.')
       }
       if (cachedScan.analyzedFromBlock !== requestedFromBlock) {
-        notices.push(`Fast mode analyzed the most recent ${FAST_EVM_ANALYTICS_BLOCK_CAP.toLocaleString()} blocks in the requested window.`)
+        notices.push(
+          `Analyzed the most recent ${FAST_EVM_ANALYTICS_BLOCK_CAP.toLocaleString()} blocks in the requested window because the caller requested a bounded preview.`,
+        )
       }
       if (hasMore) {
         notices.push(`Showing ranked contracts ${currentOffset + 1}-${currentOffset + pageItems.length}. Call the same tool again with _pagination.next_cursor to load more.`)

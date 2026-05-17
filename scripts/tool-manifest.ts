@@ -667,6 +667,9 @@ export const TOOL_SPECS: ToolSpec[] = [
       expectKey(text, 'overview', 'portal_get_wallet_summary evm')
       assert(data.overview?.vm === 'evm', 'Expected EVM wallet overview')
       assert(Array.isArray(data.activity?.items), 'Expected activity items on EVM wallet summary')
+      assert(data.fund_flow?.summary !== undefined, 'Expected wallet fund_flow summary')
+      assert(Array.isArray(data.fund_flow?.asset_flows), 'Expected wallet asset flow rows')
+      assert(Array.isArray(data.fund_flow?.largest_movements), 'Expected wallet largest movement rows')
       assert(data.pipes_handoff?.version === 'pipes_recipe_v1', 'Expected wallet summary Pipes handoff')
       expectWindowMetadata(data, 'portal_get_wallet_summary evm')
     },
@@ -692,16 +695,19 @@ export const TOOL_SPECS: ToolSpec[] = [
       const solanaData = solanaResult.data
       assert(solanaData.overview?.vm === 'solana', 'Expected Solana wallet overview')
       assert(solanaData.solana?.fee_summary !== undefined, 'Expected Solana-specific fee summary')
+      assert(solanaData.fund_flow?.summary !== undefined, 'Expected Solana fund_flow summary')
       expectWindowMetadata(solanaData, 'portal_get_wallet_summary solana')
 
       const bitcoinData = bitcoinResult.data
       assert(bitcoinData.overview?.vm === 'bitcoin', 'Expected Bitcoin wallet overview')
       assert(bitcoinData.bitcoin?.outputs_count !== undefined, 'Expected Bitcoin-specific counts')
+      assert(bitcoinData.fund_flow?.summary !== undefined, 'Expected Bitcoin fund_flow summary')
       expectWindowMetadata(bitcoinData, 'portal_get_wallet_summary bitcoin')
 
       const hyperliquidData = hyperliquidResult.data
       assert(hyperliquidData.overview?.vm === 'hyperliquid', 'Expected Hyperliquid wallet overview')
       assert(hyperliquidData.hyperliquid?.fee_summary !== undefined, 'Expected Hyperliquid fee summary')
+      assert(hyperliquidData.fund_flow?.summary !== undefined, 'Expected Hyperliquid fund_flow summary')
       expectWindowMetadata(hyperliquidData, 'portal_get_wallet_summary hyperliquid')
     },
   },

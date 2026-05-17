@@ -8,7 +8,6 @@ This server does not index chains itself. It validates user input, maps it onto 
 
 - `25` public tools
 - `3` advanced/debug tools
-- `1` reusable MCP prompt for SQD-only analyst behavior
 - public params use `network`
 - discovery filters use `vm`
 - no legacy tool aliases in `v0.7.9`
@@ -18,6 +17,8 @@ Raw query tools default to compact responses. Ask for `response_format: "full"` 
 Entity questions can use `portal_resolve_entity` first. It resolves EVM token symbols/addresses, EVM contract aliases, pool identifiers, protocol names, and Hyperliquid coin names into query-ready filters while keeping ambiguous matches explicit.
 
 Token symbol resolution and token metadata come from open token-list data, not baked-in token address constants. Token-list fetch outcomes, cache events, stale-cache fallback, and unsupported networks are exposed through Prometheus metrics.
+
+Wallet questions should start with `portal_get_wallet_summary`. It returns `fund_flow` by default, including inbound/outbound movement, asset flows, counterparties, largest observed movements, and next evidence pivots before raw-tool drill-down.
 
 ## Tool groups
 

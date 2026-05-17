@@ -97,8 +97,8 @@ export function registerBitcoinAnalyticsTool(server: McpServer) {
       mode: z
         .enum(['fast', 'deep'])
         .optional()
-        .default('fast')
-        .describe('fast = lighter preview with a smaller scan cap, deep = analyze a larger Bitcoin window'),
+        .default('deep')
+        .describe('Execution depth. Defaults to complete requested-window analysis; the optional fast value is only for explicitly bounded previews.'),
       from_block: z.number().optional().describe('Starting block number (use this OR timeframe)'),
       to_block: z.number().optional().describe('Ending block number'),
       from_timestamp: z
@@ -439,7 +439,7 @@ export function registerBitcoinAnalyticsTool(server: McpServer) {
 
       const notices =
         requestedBlocks > maxBlocks
-          ? [`${mode === 'fast' ? 'Fast' : 'Deep'} mode analyzed ${numBlocks} of ${requestedBlocks} requested blocks to keep the snapshot responsive.`]
+          ? [`Analyzed ${numBlocks} of ${requestedBlocks} requested blocks because the requested window exceeds the current Bitcoin analytics scan budget.`]
           : undefined
       const formattedResponse = formatBitcoinAnalyticsResponse(response, response_format as ResponseFormat)
       const message = response_format === 'summary'

@@ -543,9 +543,9 @@ function scoreTool(
   }
 
   if (tokenTraceInvestigationPrompt) {
-    score += profile.name === 'portal_evm_query_token_transfers' ? 78 : 0
+    score += profile.name === 'portal_evm_query_token_transfers' ? 110 : 0
     score += profile.name === 'portal_evm_query_logs' ? 6 : 0
-    score += profile.name === 'portal_get_wallet_summary' ? -42 : 0
+    score += profile.name === 'portal_get_wallet_summary' ? -80 : 0
     score += profile.name === 'portal_get_recent_activity' ? -8 : 0
   }
 

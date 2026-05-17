@@ -196,7 +196,11 @@ export function registerSubstrateAnalyticsTool(server: McpServer) {
     {
       network: z.string().default('polkadot').describe('Substrate network name (default: polkadot)'),
       timeframe: z.string().optional().describe("Time range like '1h', '6h', or '24h'. Default: '1h'"),
-      mode: z.enum(['fast', 'deep']).optional().default('fast').describe('fast = cap the scanned block window for responsiveness, deep = analyze a larger recent window'),
+      mode: z
+        .enum(['fast', 'deep'])
+        .optional()
+        .default('deep')
+        .describe('Execution depth. Defaults to complete requested-window analysis; the optional fast value is only for explicitly bounded previews.'),
       from_block: z.number().optional().describe('Starting block number (use this OR timeframe)'),
       to_block: z.number().optional().describe('Ending block number'),
       from_timestamp: z
@@ -256,7 +260,9 @@ export function registerSubstrateAnalyticsTool(server: McpServer) {
       const sampled = effectiveFrom > requestedFromBlock
       const notices = [SUBSTRATE_INDEXING_NOTICE]
       if (sampled) {
-        notices.push(`Requested ${requestedBlocks.toLocaleString()} blocks, so ${mode} mode analyzed the most recent ${maxBlocks.toLocaleString()} blocks.`)
+        notices.push(
+          `Requested ${requestedBlocks.toLocaleString()} blocks; analyzed the most recent ${maxBlocks.toLocaleString()} because the requested window exceeds the current Substrate analytics scan budget.`,
+        )
       }
 
       const eventCounts = new Map<string, number>()
@@ -420,7 +426,7 @@ export function registerSubstrateAnalyticsTool(server: McpServer) {
           llm: {
             answer_sequence: ['overview', 'activity.total_events', 'activity.total_calls', 'extrinsics.total_extrinsics', 'top_events', 'top_calls'],
             parser_notes: [
-              'overview gives the actual analyzed window; check sampled to see whether fast/deep mode capped the requested range.',
+              'overview gives the actual analyzed window; check sampled to see whether the requested range exceeded the scan budget.',
               'top_events and top_calls are already ranked descending by count, so rank 1 is the most frequent item in the selected window.',
             ],
           },

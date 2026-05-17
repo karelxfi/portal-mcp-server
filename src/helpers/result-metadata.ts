@@ -255,10 +255,11 @@ export function buildSectionCoverage(params: {
   windowToBlock: number
   hasMore: boolean
   sections: Record<string, { returned: number; has_more: boolean }>
+  windowComplete?: boolean
 }): SectionCoverage {
   return {
     kind: 'section_window',
-    window_complete: true,
+    window_complete: params.windowComplete ?? true,
     result_complete: !params.hasMore,
     continuation: params.hasMore ? 'cursor' : 'none',
     window_from_block: params.windowFromBlock,

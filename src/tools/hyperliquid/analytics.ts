@@ -382,8 +382,8 @@ export function registerHyperliquidAnalyticsTool(server: McpServer) {
       mode: z
         .enum(['fast', 'deep'])
         .optional()
-        .default('fast')
-        .describe('fast = lighter scan budget, deep = fuller Hyperliquid window analysis'),
+        .default('deep')
+        .describe('Execution depth. Defaults to complete requested-window analysis; the optional fast value is only for explicitly bounded previews.'),
       from_timestamp: z
         .union([z.string(), z.number()])
         .optional()
@@ -778,7 +778,7 @@ export function registerHyperliquidAnalyticsTool(server: McpServer) {
 
         const notices =
           effectiveFrom > fromBlock
-            ? [`${mode === 'fast' ? 'Fast' : 'Deep'} mode analyzed the most recent ${maxAnalyticsBlocks.toLocaleString()} blocks for performance.`]
+            ? [`Analyzed the most recent ${maxAnalyticsBlocks.toLocaleString()} blocks because the requested window exceeds the current Hyperliquid analytics scan budget.`]
             : undefined
         if (chunksFetched > 1) response._chunks_fetched = chunksFetched
         if (chunkSizeReduced) response._chunk_size_reduced = true
