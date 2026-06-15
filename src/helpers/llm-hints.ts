@@ -138,6 +138,9 @@ export interface PortalLlmHints {
       label: string
       intent: UiFollowUpAction['intent']
       target?: string
+      executable: boolean
+      tool?: string
+      cursor_path?: string
     }>
   }
   parser_notes?: string[]
@@ -731,8 +734,9 @@ export function buildLlmHints(payload: RecordLike, overrides?: LlmOverrides): Po
   const normalizedFields = inferNormalizedFields(payload, primaryPath, normalizedOutput)
   const parserNotes = buildParserNotes(payload, normalizedOutput, llmMetricCards, chartHint, llmTableHints, overrides)
   const llmParserNotes = compactHints ? parserNotes?.slice(0, 3) : parserNotes
-  const followUpActions = asArray<UiFollowUpAction>(ui?.follow_up_actions)
-  const llmFollowUpActions = compactHints ? followUpActions.slice(0, 2) : followUpActions.slice(0, 5)
+  const nextSteps = isRecord(payload.next_steps) ? payload.next_steps : undefined
+  const followUpActions = asArray<UiFollowUpAction>(nextSteps?.actions ?? ui?.follow_up_actions)
+  const llmFollowUpActions = compactHints ? followUpActions.slice(0, 2) : followUpActions.slice(0, 6)
 
   return {
     version: 'portal_llm_v1',
@@ -759,6 +763,9 @@ export function buildLlmHints(payload: RecordLike, overrides?: LlmOverrides): Po
                     label: action.label,
                     intent: action.intent,
                     ...(action.target ? { target: action.target } : {}),
+                    executable: action.executable === true,
+                    ...(action.executable === true && action.tool ? { tool: action.tool } : {}),
+                    ...(action.cursor_path ? { cursor_path: action.cursor_path } : {}),
                   })),
                 }
               : {}),

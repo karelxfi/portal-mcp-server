@@ -1,5 +1,5 @@
 import { randomUUID, timingSafeEqual } from 'node:crypto'
-import { type IncomingMessage, createServer } from 'node:http'
+import { type IncomingMessage, type ServerResponse, createServer } from 'node:http'
 
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import { z } from 'zod'
@@ -87,6 +87,7 @@ function buildToolCatalog(): { entries: ToolCatalogEntry[]; generatedAt: string;
 const PORT = Number(process.env.PORT) || 3000
 const METRICS_PUBLIC = process.env.METRICS_PUBLIC === 'true'
 const METRICS_BEARER_TOKEN = process.env.METRICS_BEARER_TOKEN
+const MCP_HTTP_BEARER_TOKEN = process.env.MCP_HTTP_BEARER_TOKEN
 
 function readHeader(req: IncomingMessage, name: string): string | undefined {
   const value = req.headers[name]
@@ -112,6 +113,33 @@ function isMetricsAuthorized(req: IncomingMessage): boolean {
   if (!METRICS_BEARER_TOKEN) return false
   const token = readBearerToken(req)
   return Boolean(token && safeEqual(token, METRICS_BEARER_TOKEN))
+}
+
+function isMcpPostAuthorized(req: IncomingMessage): boolean {
+  if (!MCP_HTTP_BEARER_TOKEN) return true
+  const token = readBearerToken(req)
+  return Boolean(token && safeEqual(token, MCP_HTTP_BEARER_TOKEN))
+}
+
+function writeJsonRpcError(
+  res: ServerResponse,
+  status: number,
+  code: number,
+  message: string,
+  headers: Record<string, string> = {},
+) {
+  res.writeHead(status, {
+    'Content-Type': 'application/json',
+    'Cache-Control': 'no-store',
+    ...headers,
+  })
+  res.end(
+    JSON.stringify({
+      jsonrpc: '2.0',
+      error: { code, message },
+      id: null,
+    }),
+  )
 }
 
 const server = createServer(async (req, res) => {
@@ -206,6 +234,13 @@ const server = createServer(async (req, res) => {
   // quick-tunnel prompts commonly use that path.
   if (url.pathname === '/' || url.pathname === '/mcp') {
     if (req.method === 'POST') {
+      if (!isMcpPostAuthorized(req)) {
+        writeJsonRpcError(res, 401, -32001, 'Unauthorized.', {
+          'WWW-Authenticate': 'Bearer realm="mcp"',
+        })
+        return
+      }
+
       try {
         clientRequestsTotal.inc({
           transport: 'http',

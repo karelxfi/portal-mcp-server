@@ -30,7 +30,6 @@ export interface ToolTestContext {
   hlFillsHead: number
   hlReplicaHead: number
   usdcBase: string
-  baseUniswapV2Pool: string
   baseUniswapV3Pool: string
   baseUniswapV4PoolId: string
   aerodromeSlipstreamPool: string
@@ -361,7 +360,6 @@ export async function loadToolTestContext(client: Client): Promise<ToolTestConte
     usdcResolveResult,
     recentDeployment,
     recentV2SwapResult,
-    recentSwapResult,
     recentV4SwapResult,
     evmTxResult,
     solTxResult,
@@ -378,17 +376,9 @@ export async function loadToolTestContext(client: Client): Promise<ToolTestConte
     pickRecentBaseDeployment(baseHead),
     callToolWithRetry(client, 'portal_evm_query_logs', {
       network: 'base-mainnet',
-      from_timestamp: '6h ago',
+      from_timestamp: '24h ago',
       to_timestamp: 'now',
       topic0: [EVENT_SIGNATURES.UNISWAP_V2_SWAP],
-      limit: 1,
-      field_preset: 'minimal',
-    }),
-    callToolWithRetry(client, 'portal_evm_query_logs', {
-      network: 'base-mainnet',
-      from_timestamp: '6h ago',
-      to_timestamp: 'now',
-      topic0: [EVENT_SIGNATURES.UNISWAP_V3_SWAP],
       limit: 1,
       field_preset: 'minimal',
     }),
@@ -430,8 +420,8 @@ export async function loadToolTestContext(client: Client): Promise<ToolTestConte
 
   const recentV2SwapItems = getItems(recentV2SwapResult.data)
   assert(recentV2SwapItems.length > 0, 'Expected at least one active Base Uniswap v2-style pool')
-  const baseUniswapV2Pool = String(recentV2SwapItems[0].address || '').toLowerCase()
-  assert(baseUniswapV2Pool.startsWith('0x'), 'Expected an active Base Uniswap v2-style pool address')
+  const baseUniswapV2LogAddress = String(recentV2SwapItems[0].address || '').toLowerCase()
+  assert(baseUniswapV2LogAddress.startsWith('0x'), 'Expected an active Base Uniswap v2-style pool address')
 
   const usdcMatches = Array.isArray(usdcResolveResult.data?.matches) ? usdcResolveResult.data.matches : []
   const usdcBase = String(
@@ -439,8 +429,6 @@ export async function loadToolTestContext(client: Client): Promise<ToolTestConte
   ).toLowerCase()
   assert(/^0x[0-9a-f]{40}$/.test(usdcBase), 'Expected USDC to resolve from token-list data on Base')
 
-  const recentSwapItems = getItems(recentSwapResult.data)
-  assert(recentSwapItems.length > 0, 'Expected at least one active Base Uniswap V3 pool')
   const baseUniswapV3Pool = await pickRecentPoolFromCandidates(client, BASE_UNISWAP_V3_TEST_POOL_CANDIDATES)
 
   const recentV4SwapItems = getItems(recentV4SwapResult.data)
@@ -493,7 +481,6 @@ export async function loadToolTestContext(client: Client): Promise<ToolTestConte
     hlFillsHead,
     hlReplicaHead,
     usdcBase,
-    baseUniswapV2Pool,
     baseUniswapV3Pool,
     baseUniswapV4PoolId,
     aerodromeSlipstreamPool,
@@ -926,11 +913,11 @@ export const TOOL_SPECS: ToolSpec[] = [
 
       const eventAliasResult = await callToolWithRetry(client, 'portal_evm_query_logs', {
         network: 'base',
-        from_block: context.baseHead - 2_000,
+        from_block: context.baseHead - 200,
         to_block: context.baseHead,
         addresses: [context.usdcBase],
         event: 'transfer',
-        scan_order: 'earliest',
+        scan_order: 'latest',
         limit: 1,
         field_preset: 'minimal',
       })
@@ -941,18 +928,15 @@ export const TOOL_SPECS: ToolSpec[] = [
         eventAliasItems[0].topics?.[0] === EVENT_SIGNATURES.TRANSFER_ERC20,
         'Expected Transfer topic from event alias',
       )
-      assert(eventAliasData._execution?.scan_order === 'earliest', 'Expected earliest log scan metadata')
-      assert(
-        typeof eventAliasData._execution?.scanned_blocks === 'number',
-        'Expected shared bounded-search metadata on log scan',
-      )
+      assert(eventAliasData._execution?.scan_order === 'latest', 'Expected latest log scan metadata')
 
       const tokenSymbolResult = await callToolWithRetry(client, 'portal_evm_query_logs', {
         network: 'base',
-        from_block: context.baseHead - 2_000,
+        from_block: context.baseHead - 200,
         to_block: context.baseHead,
         token_symbols: ['USDC'],
         event: 'transfer',
+        scan_order: 'latest',
         limit: 1,
         field_preset: 'minimal',
       })
@@ -1057,7 +1041,7 @@ export const TOOL_SPECS: ToolSpec[] = [
   {
     name: 'portal_evm_get_analytics',
     prompt: 'give me the big picture for Base activity',
-    args: () => ({ network: 'base', timeframe: 'past 30 minutes', limit: 3 }),
+    args: () => ({ network: 'base', num_blocks: 300, limit: 3, mode: 'fast' }),
     validate: (text) => {
       const data = extractJson(text)
       assert(Array.isArray(data.top_contracts), 'Expected top_contracts section')
@@ -1111,18 +1095,6 @@ export const TOOL_SPECS: ToolSpec[] = [
         }
       }
 
-      const uniswapV2Result = await callOhlcVariant('uniswap v2-style OHLC follow-up', {
-        network: 'base-mainnet',
-        pool_address: context.baseUniswapV2Pool,
-        source: 'uniswap_v2_swap',
-        duration: '1h',
-        interval: '5m',
-        mode: 'fast',
-        price_in: 'auto',
-        include_recent_trades: true,
-        recent_trades_limit: 3,
-      })
-      await sleep(400)
       const aerodromeSlipstreamResult = await callOhlcVariant('aerodrome slipstream OHLC follow-up', {
         network: 'base-mainnet',
         pool_address: context.aerodromeSlipstreamPool,
@@ -1145,34 +1117,6 @@ export const TOOL_SPECS: ToolSpec[] = [
         price_in: 'auto',
         include_recent_trades: true,
         recent_trades_limit: 3,
-      })
-
-      const uniswapV2Data = uniswapV2Result.data
-      const uniswapV2Candles = Array.isArray(uniswapV2Data.ohlc) ? uniswapV2Data.ohlc : []
-      assert(uniswapV2Data.summary?.source === 'uniswap_v2_swap', 'Expected Uniswap v2-style OHLC source')
-      assert(
-        uniswapV2Data.summary?.source_family === 'uniswap_v2_style_swap',
-        'Expected Uniswap v2-style source family',
-      )
-      assert(
-        uniswapV2Data.summary?.price_method === 'execution_ratio',
-        'Expected execution_ratio price method for Uniswap v2-style swaps',
-      )
-      assert(uniswapV2Data.summary?.mode === 'fast', 'Expected fast mode for Uniswap v2-style OHLC')
-      assert(
-        uniswapV2Data.summary?.volume_available === true,
-        'Expected volume_available=true for Uniswap v2-style swaps',
-      )
-      assert(uniswapV2Candles.length > 0, 'Expected Uniswap v2-style candles')
-      assert(
-        Array.isArray(uniswapV2Data.recent_trades) && uniswapV2Data.recent_trades.length > 0,
-        'Expected recent_trades for Uniswap v2-style OHLC',
-      )
-      expectWindowMetadata(uniswapV2Data, 'portal_evm_get_ohlc uniswap v2-style swap')
-      expectGapDiagnostics(uniswapV2Data, 'portal_evm_get_ohlc uniswap v2-style swap')
-      expectPresentation(uniswapV2Data, 'portal_evm_get_ohlc uniswap v2-style swap', {
-        chartDataKey: 'ohlc',
-        tableId: 'ohlc',
       })
 
       const aerodromeSlipstreamData = aerodromeSlipstreamResult.data

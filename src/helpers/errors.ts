@@ -2,31 +2,256 @@
 // Error Handling with Actionable Messages
 // ============================================================================
 
-export class ActionableError extends Error {
-  constructor(
-    message: string,
-    public suggestions: string[],
-    public context?: Record<string, unknown>,
-  ) {
-    // Build the full message including suggestions
-    const parts = [message]
+const REDACTED_VALUE = '[REDACTED]'
+const MAX_CONTEXT_ARRAY_ITEMS = 10
+const MAX_CONTEXT_DEPTH = 4
+const MAX_CONTEXT_STRING_LENGTH = 1000
 
-    if (suggestions.length > 0) {
+const AUTHORIZATION_FIELD_NAMES = new Set([
+  'authorization',
+  'proxy_authorization',
+  'auth',
+  'bearer',
+  'token',
+  'api_key',
+  'apikey',
+  'x_api_key',
+  'secret',
+  'client_secret',
+  'password',
+  'passwd',
+  'cookie',
+  'set_cookie',
+  'access_token',
+  'refresh_token',
+  'id_token',
+])
+
+function normalizeContextKey(key: string): string {
+  return key
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+}
+
+function isAuthorizationLikeKey(key: string): boolean {
+  const normalized = normalizeContextKey(key)
+  if (AUTHORIZATION_FIELD_NAMES.has(normalized)) {
+    return true
+  }
+
+  return /(^|_)(authorization|proxy_authorization|auth|bearer|api_key|apikey|secret|client_secret|password|passwd|cookie|set_cookie|access_token|refresh_token|id_token)($|_)/.test(
+    normalized,
+  )
+}
+
+function stripQueryString(value: string): string {
+  const queryIndex = value.indexOf('?')
+  if (queryIndex === -1) return value
+
+  const hashIndex = value.indexOf('#', queryIndex)
+  return `${value.slice(0, queryIndex)}${hashIndex === -1 ? '' : value.slice(hashIndex)}`
+}
+
+function sanitizeUrl(value: string): string {
+  const stripped = stripQueryString(value)
+  if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(stripped)) {
+    return stripped
+  }
+
+  try {
+    const url = new URL(stripped)
+    url.username = ''
+    url.password = ''
+    url.search = ''
+    return url.toString()
+  } catch {
+    return stripped
+  }
+}
+
+export function sanitizeText(value: string): string {
+  return value
+    .replace(/Bearer\s+[A-Za-z0-9._~+/\-=]+/gi, `Bearer ${REDACTED_VALUE}`)
+    .replace(
+      /\b(authorization|proxy-authorization|x-api-key|api[_-]?key|access[_-]?token|refresh[_-]?token|id[_-]?token|client[_-]?secret|password|secret|token)\s*[:=]\s*["']?[^"',\s}\]]+/gi,
+      (_match, key: string) => `${key}: ${REDACTED_VALUE}`,
+    )
+    .replace(/https?:\/\/[^\s"',)]+/gi, (match) => sanitizeUrl(match))
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value))
+}
+
+function truncateContextString(value: string): string {
+  const sanitized = sanitizeText(value)
+  if (sanitized.length <= MAX_CONTEXT_STRING_LENGTH) {
+    return sanitized
+  }
+  return `${sanitized.slice(0, MAX_CONTEXT_STRING_LENGTH - 1)}…`
+}
+
+function summarizeArray(value: unknown[], depth: number): unknown[] | Record<string, unknown> {
+  if (value.length <= MAX_CONTEXT_ARRAY_ITEMS) {
+    return value
+      .map((entry) => sanitizeContextValue(entry, undefined, depth + 1))
+      .filter((entry) => entry !== undefined)
+  }
+
+  return {
+    type: 'array',
+    length: value.length,
+    sample: value.slice(0, 2).map((entry) => sanitizeContextValue(entry, undefined, depth + 1)),
+  }
+}
+
+function summarizeQueryBody(query: unknown): Record<string, unknown> {
+  if (Array.isArray(query)) {
+    return { type: 'array', length: query.length }
+  }
+
+  if (!isRecord(query)) {
+    return { type: typeof query }
+  }
+
+  const visibleKeys = Object.keys(query)
+    .filter((key) => !isAuthorizationLikeKey(key))
+    .sort()
+  const summary: Record<string, unknown> = {
+    type: typeof query.type === 'string' ? sanitizeText(query.type) : 'object',
+    top_level_keys: visibleKeys,
+  }
+
+  for (const key of ['fromBlock', 'toBlock', 'from_block', 'to_block', 'fromTimestamp', 'toTimestamp']) {
+    const value = query[key]
+    if (typeof value === 'number' || typeof value === 'string') {
+      summary[key] = value
+    }
+  }
+
+  for (const key of ['logs', 'transactions', 'traces', 'stateDiffs', 'calls', 'events', 'instructions', 'inputs', 'outputs']) {
+    const value = query[key]
+    if (Array.isArray(value)) {
+      summary[`${key}_count`] = value.length
+    }
+  }
+
+  if (isRecord(query.fields)) {
+    summary.field_groups = Object.keys(query.fields)
+      .filter((key) => !isAuthorizationLikeKey(key))
+      .sort()
+  }
+
+  try {
+    summary.approx_bytes = JSON.stringify(query).length
+  } catch {
+    // Circular input is not expected for Portal requests, but keep the
+    // sanitizer total and non-throwing for defensive error handling.
+  }
+
+  return summary
+}
+
+function sanitizeContextValue(value: unknown, key: string | undefined, depth: number): unknown {
+  if (key && isAuthorizationLikeKey(key)) {
+    return REDACTED_VALUE
+  }
+
+  const normalizedKey = key ? normalizeContextKey(key) : ''
+  if (normalizedKey === 'query' || normalizedKey === 'body' || normalizedKey === 'request_body' || normalizedKey === 'payload') {
+    return summarizeQueryBody(value)
+  }
+
+  if (typeof value === 'string') {
+    const sanitized = normalizedKey.includes('url') || normalizedKey === 'uri' || normalizedKey === 'endpoint' ? sanitizeUrl(value) : value
+    return truncateContextString(sanitized)
+  }
+
+  if (typeof value === 'number' || typeof value === 'boolean' || value === null) {
+    return value
+  }
+
+  if (typeof value === 'bigint') {
+    return value.toString()
+  }
+
+  if (value instanceof Date) {
+    return value.toISOString()
+  }
+
+  if (Array.isArray(value)) {
+    return summarizeArray(value, depth)
+  }
+
+  if (isRecord(value)) {
+    if (depth >= MAX_CONTEXT_DEPTH) {
+      return {
+        type: 'object',
+        keys: Object.keys(value)
+          .filter((nestedKey) => !isAuthorizationLikeKey(nestedKey))
+          .slice(0, 20),
+        truncated: true,
+      }
+    }
+
+    const sanitized: Record<string, unknown> = {}
+    for (const [nestedKey, nestedValue] of Object.entries(value)) {
+      const sanitizedValue = sanitizeContextValue(nestedValue, nestedKey, depth + 1)
+      if (sanitizedValue !== undefined) {
+        sanitized[nestedKey] = sanitizedValue
+      }
+    }
+    return sanitized
+  }
+
+  return undefined
+}
+
+export function sanitizeErrorContext(context?: Record<string, unknown>): Record<string, unknown> | undefined {
+  if (!context) return undefined
+
+  const sanitized: Record<string, unknown> = {}
+  for (const [key, value] of Object.entries(context)) {
+    const sanitizedValue = sanitizeContextValue(value, key, 0)
+    if (sanitizedValue !== undefined) {
+      sanitized[key] = sanitizedValue
+    }
+  }
+
+  return Object.keys(sanitized).length > 0 ? sanitized : undefined
+}
+
+export class ActionableError extends Error {
+  public suggestions: string[]
+  public context?: Record<string, unknown>
+
+  constructor(message: string, suggestions: string[], context?: Record<string, unknown>) {
+    const sanitizedMessage = sanitizeText(message)
+    const sanitizedSuggestions = suggestions.map((suggestion) => sanitizeText(suggestion))
+    const sanitizedContext = sanitizeErrorContext(context)
+
+    // Build the full message including suggestions
+    const parts = [sanitizedMessage]
+
+    if (sanitizedSuggestions.length > 0) {
       parts.push('\n\nSuggestions:')
-      suggestions.forEach((suggestion, i) => {
+      sanitizedSuggestions.forEach((suggestion, i) => {
         parts.push(`  ${i + 1}. ${suggestion}`)
       })
     }
 
-    if (context && Object.keys(context).length > 0) {
+    if (sanitizedContext && Object.keys(sanitizedContext).length > 0) {
       parts.push('\n\nContext:')
-      Object.entries(context).forEach(([key, value]) => {
+      Object.entries(sanitizedContext).forEach(([key, value]) => {
         parts.push(`  ${key}: ${JSON.stringify(value)}`)
       })
     }
 
     super(parts.join('\n'))
     this.name = 'ActionableError'
+    this.suggestions = sanitizedSuggestions
+    this.context = sanitizedContext
   }
 }
 

@@ -8,7 +8,7 @@ Portal MCP v0.7.9 is focused on developer and agent ergonomics for natural block
 - **Entity resolver** — added `portal_resolve_entity` so clients can resolve EVM token symbols/addresses, EVM contract aliases, pool identifiers, DeFi protocol names, and Hyperliquid coin names before building deterministic filters.
 - **Token-list backed symbols** — `portal_evm_query_logs` and `portal_evm_query_token_transfers` now accept `token_symbols`; `portal_evm_query_transactions` accepts `from_token_symbols` and `to_token_symbols`, resolving them through open token-list data instead of hardcoded token address constants.
 - **Token metadata cleanup** — removed baked-in common token and pool metadata from runtime helpers. Token decimals, symbols, and names now come from token-list lookups where available, with explicit fallback and stale-cache notices.
-- **Token-list observability** — added Prometheus counters for token-list fetch outcomes, cache events, stale-cache use, and unsupported token-list networks.
+- **Token-list diagnostics** — token-list fetch outcomes, cache behavior, stale-cache use, and unsupported token-list networks are now easier to inspect during operations.
 - **Shared bounded search** — EVM logs, ERC20 transfers, transaction scans, and contract deployment lookup now share bounded block-scan metadata and partial-window notices.
 - **Investigation-ready responses** — queried and summary responses now include an `investigation` guide with primary evidence paths, pivot fields, follow-up filters, and limitations so agents can trace onchain incidents without new tools.
 - **Incident prompt routing** — tool descriptions and routing tests now explicitly cover suspicious-wallet triage, stolen-token movement, hack/incident traces, and exact transaction evidence using the existing 28-tool surface.
@@ -24,10 +24,19 @@ Portal MCP v0.7.9 is focused on developer and agent ergonomics for natural block
 - **ERC721 mint lookup hardening** — `portal_evm_query_logs` now guides latest pass/NFT mint prompts to Transfer-from-zero filters, decodes ERC721 token IDs from `topic3`, returns the parent tx hash in decoded output, and refuses unbounded historical mint scans instead of timing out or returning incomplete zero-result answers.
 - **Developer discovery refresh** — updated the tool guide and HTTP catalog surface for the new `28`-tool registry (`25` public, `3` advanced/debug).
 
-### Release hygiene
-- Reviewed the large v0.7.9 diff before tagging. The pre-hardening snapshot was `22 files, 2631 insertions, 1248 deletions`; `git diff -w --stat` still showed `2045 insertions, 662 deletions`, so the churn is not only whitespace.
-- The largest tracked churn remains in `wallet-summary.ts`, `ohlc.ts`, and `query-transactions.ts`; it is accepted for v0.7.9 because those files also carry the release behavior changes and are covered by the live manifest/quality suites.
-- Keep ignored local directories such as `.preview/`, `output/`, and `web-analytics-starter-kit/` out of the release unless they become intentional artifacts.
+### Factual UX and safety hardening
+- **Estimated-window provenance** — relative timeframe fallbacks now carry machine-readable estimated block-window provenance in `_freshness.estimated_timeframe`, plus user-facing notices when timestamp lookup was unsupported or unavailable.
+- **Coverage honesty** — bounded contract-activity previews now distinguish requested and analyzed block bounds and mark partial windows as incomplete instead of presenting fast-mode scans as full-window analysis.
+- **HTTP MCP protection** — deployments can set `MCP_HTTP_BEARER_TOKEN` to require bearer auth for `POST /` and `POST /mcp`; `/health` and read-only `/tools` remain public.
+- **Redacted errors** — actionable errors now strip URL query strings, redact authorization-like fields, and summarize Portal query bodies instead of echoing full request material.
+- **Signed cursors** — pagination cursors are HMAC-signed and revalidated on decode, so edited or unsigned cursors fail with actionable guidance.
+- **Structured tool results** — tools now return the unified envelope in MCP `structuredContent` while keeping an equivalent compact JSON text fallback for older clients.
+- **Executable next steps** — safe pagination follow-ups now identify executable tool calls with explicit cursor arguments; descriptive suggestions are marked non-executable.
+- **Limit schema cleanup** — Solana transaction, Bitcoin transaction, and Hyperliquid fill limits are capped at 200, and EVM transaction/log descriptions now match their actual 200-item caps.
+
+### Release packaging
+- **Smaller npm package** — the published tarball is limited to the runtime build, README, changelog, license, and package metadata.
+- **Package-content check** — the release gate now verifies that source, test, plan, workflow, dashboard, lockfile, and local tooling artifacts stay out of the npm package.
 
 ## [0.7.8] - 2026-05-07
 
@@ -41,7 +50,7 @@ Portal MCP v0.7.8 is focused on query correctness, faster analytics, and release
 - **Compact continuation UX** — improved next-step and pagination metadata so clients can continue older result pages without reverse-engineering cursors.
 - **OHLC metadata improvements** — seeded known pool/token metadata for common Uniswap and Base pools so candle outputs can infer human-readable prices more often.
 - **HTTP introspection** — added `/tools` and `/tools.json` catalog endpoints plus `/mcp` as an HTTP alias, with unknown routes returning fast JSON 404s.
-- **Observability fixes** — canonicalized dataset metric labels, protected `/metrics` behind bearer auth by default, added dashboard long-window Loki panels, and added an HTTP metrics smoke test so Grafana data gaps are caught before release.
+- **HTTP operations fixes** — canonicalized dataset labels, protected optional operational endpoints by default, and added an HTTP smoke test for deployment-facing endpoints.
 - **Real-time timestamp windows** — relative timeframes now anchor to the latest indexed block or slot timestamp and use Portal timestamp lookup on real-time datasets, including Solana and Hyperliquid fills windows.
 - **Release-note discipline** — release scripts now require a hand-written changelog entry before tagging instead of dumping raw commit subjects into `CHANGELOG.md`.
 

@@ -199,11 +199,11 @@ const SCENARIOS: ConversationScenario[] = [
         tool: 'portal_evm_query_logs',
         args: (context) => ({
           network: 'base',
-          from_block: context.baseHead - 2_000,
+          from_block: context.baseHead - 200,
           to_block: context.baseHead,
           addresses: [context.usdcBase],
           event: 'transfer',
-          scan_order: 'earliest',
+          scan_order: 'latest',
           limit: 1,
           field_preset: 'minimal',
         }),
@@ -212,7 +212,7 @@ const SCENARIOS: ConversationScenario[] = [
             Array.isArray(data.items) && data.items.length === 1,
             'Event alias query should return one Transfer log',
           )
-          assert(data._execution?.scan_order === 'earliest', 'Event alias query should preserve earliest scan metadata')
+          assert(data._execution?.scan_order === 'latest', 'Event alias query should preserve latest scan metadata')
         },
       },
       {

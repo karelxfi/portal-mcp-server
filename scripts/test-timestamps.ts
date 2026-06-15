@@ -2,7 +2,9 @@
 
 import { getBlockHead } from '../dist/cache/datasets.js'
 import { getDatasets } from '../dist/cache/datasets.js'
+import { buildQueryFreshness } from '../dist/helpers/result-metadata.js'
 import {
+  getTimestampWindowNotices,
   getHeadTimestamp,
   parseTimeframeToSeconds,
   parseTimestampInput,
@@ -115,10 +117,43 @@ function assertNaturalLanguageTimeInputs() {
   console.log('PASS  natural-language time inputs -> past 30 minutes / in the past 1h / in last 38 mins')
 }
 
+async function assertEstimatedTimeframeProvenance() {
+  const dataset = 'hyperliquid-replica-cmds'
+  const window = await resolveTimeframeOrBlocks({ dataset, timeframe: '5m' })
+  const estimated = window.estimated_timeframe
+
+  assert(estimated?.resolution === 'estimated', 'Unsupported timestamp endpoint windows should expose estimated timeframe provenance')
+  assert(estimated.dataset === dataset, 'Estimated timeframe provenance should include dataset')
+  assert(estimated.from_block === window.from_block, 'Estimated timeframe provenance should include from_block')
+  assert(estimated.to_block === window.to_block, 'Estimated timeframe provenance should include to_block')
+  assert(estimated.estimated_block_time_seconds === 0.083, 'Estimated timeframe provenance should include the block-time estimate')
+  assert(estimated.reason === 'timestamp_endpoint_unsupported', 'Estimated timeframe provenance should explain why estimation was used')
+
+  const freshness = buildQueryFreshness({
+    finality: 'latest',
+    headBlockNumber: window.to_block,
+    windowToBlock: window.to_block,
+    resolvedWindow: window,
+  })
+  assert(
+    freshness.estimated_timeframe?.reason === 'timestamp_endpoint_unsupported',
+    'Query freshness should preserve estimated timeframe provenance',
+  )
+
+  const notices = getTimestampWindowNotices(window)
+  assert(
+    notices.some((notice) => /timeframe block window was estimated/i.test(notice)),
+    'Estimated timeframe windows should produce an estimation notice',
+  )
+
+  console.log(`PASS  estimated timeframe provenance -> ${window.from_block}..${window.to_block} (${estimated.reason})`)
+}
+
 async function main() {
   console.log('Starting timestamp resolver QA...\n')
 
   assertNaturalLanguageTimeInputs()
+  await assertEstimatedTimeframeProvenance()
 
   const dataset = 'solana-mainnet'
   const head = await getBlockHead(dataset)

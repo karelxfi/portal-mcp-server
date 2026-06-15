@@ -1,5 +1,9 @@
 #!/usr/bin/env tsx
 
+import { Buffer } from 'node:buffer'
+
+import { ActionableError, parsePortalError, sanitizeErrorContext, sanitizeText } from '../src/helpers/errors.ts'
+import { encodeCursor } from '../src/helpers/pagination.ts'
 import {
   assert,
   assertErrorQuality,
@@ -15,6 +19,18 @@ type NegativeCase = {
   args: Record<string, unknown>
   expect: (text: string) => void
 }
+
+const TAMPERED_CURSOR = tamperCursorPayload(
+  encodeCursor({
+    tool: 'portal_get_recent_activity',
+    dataset: 'base-mainnet',
+    request: { limit: 5 },
+    window_from_block: 1,
+    window_to_block: 100,
+    page_to_block: 100,
+    skip_inclusive_block: 1,
+  }),
+)
 
 const CASES: NegativeCase[] = [
   {
@@ -59,9 +75,94 @@ const CASES: NegativeCase[] = [
       assert(/Invalid pagination cursor/i.test(text), 'Invalid cursor should be called out clearly')
     },
   },
+  {
+    name: 'Tampered pagination cursor',
+    tool: 'portal_get_recent_activity',
+    args: { cursor: TAMPERED_CURSOR },
+    expect: (text) => {
+      assert(/Invalid pagination cursor/i.test(text), 'Tampered cursor should be rejected clearly')
+    },
+  },
 ]
 
+function tamperCursorPayload(cursor: string): string {
+  const [payload, signature] = cursor.split('.')
+  assert(Boolean(payload && signature), 'Generated cursor should be signed')
+  const parsed = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'))
+  parsed.dataset = 'ethereum-mainnet'
+  const tamperedPayload = Buffer.from(JSON.stringify(parsed), 'utf8').toString('base64url')
+  return `${tamperedPayload}.${signature}`
+}
+
+function assertNoSecretText(text: string, label: string) {
+  for (const secret of [
+    'super-secret',
+    'bad-bearer',
+    'nested-secret',
+    'header-secret',
+    'body-secret',
+    'access-secret',
+    'message-secret',
+    'message-bearer',
+    'tip-secret',
+  ]) {
+    assert(!text.includes(secret), `${label} should not expose ${secret}`)
+  }
+}
+
+function runRedactionAssertions() {
+  const sensitiveContext = {
+    url: 'https://portal.sqd.dev/datasets/base-mainnet/stream?api_key=super-secret&limit=10',
+    authorization: 'Bearer bad-bearer',
+    headers: {
+      Authorization: 'Bearer nested-secret',
+      'x-api-key': 'header-secret',
+    },
+    query: {
+      type: 'evm',
+      fromBlock: 1,
+      toBlock: 2,
+      logs: [{ address: ['0xabc'], topics: ['0xdef'] }],
+      fields: { logs: { address: true, data: true } },
+      api_key: 'body-secret',
+      access_token: 'access-secret',
+    },
+  }
+
+  const actionable = new ActionableError(
+    'Request failed for https://example.test/path?token=message-secret with Authorization: Bearer message-bearer',
+    ['Retry without token=tip-secret'],
+    sensitiveContext,
+  )
+  assertNoSecretText(actionable.message, 'ActionableError message')
+  assert(actionable.message.includes('https://portal.sqd.dev/datasets/base-mainnet/stream'), 'Sanitized context should keep URL path')
+  assert(!actionable.message.includes('?api_key='), 'Sanitized context should remove URL query strings')
+  assert(actionable.message.includes('"logs_count":1'), 'Sanitized context should summarize query array counts')
+  assert(!actionable.message.includes('0xabc'), 'Sanitized context should not embed full query JSON')
+
+  const parsed = parsePortalError(
+    400,
+    'invalid api_key=body-secret for https://portal.sqd.dev/datasets/base-mainnet/stream?token=super-secret',
+    sensitiveContext,
+  )
+  assertNoSecretText(parsed.message, 'parsePortalError message')
+
+  const sanitizedContext = sanitizeErrorContext(sensitiveContext)
+  assert(sanitizedContext?.authorization === '[REDACTED]', 'Authorization context should be redacted')
+  assert(JSON.stringify(sanitizedContext?.query).includes('"logs_count":1'), 'Query context should be summarized')
+
+  const sanitizedUserQuery = sanitizeText(
+    'show https://example.test/path?access_token=access-secret with Authorization: Bearer message-bearer',
+  )
+  assertNoSecretText(sanitizedUserQuery, 'sanitizeText')
+  assert(!sanitizedUserQuery.includes('?access_token='), 'sanitizeText should remove URL query strings')
+
+  console.log('PASS  Error context and telemetry text redaction')
+}
+
 async function main() {
+  runRedactionAssertions()
+
   const connected = await connectTestClient('negative-test')
   const { client } = connected
 

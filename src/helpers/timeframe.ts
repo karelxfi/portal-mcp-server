@@ -83,12 +83,22 @@ export interface BlockAtTimestampResult extends ParsedTimestampInput {
   estimated_block_time_seconds?: number
 }
 
+export type EstimatedTimeframeResolution = {
+  resolution: 'estimated'
+  dataset: string
+  from_block: number
+  to_block: number
+  estimated_block_time_seconds: number
+  reason: 'timestamp_endpoint_unsupported' | 'timestamp_endpoint_down' | 'timestamp_endpoint_unavailable'
+}
+
 export interface ResolvedBlockWindow {
   from_block: number
   to_block: number
   range_kind: 'timeframe' | 'block_range' | 'timestamp_range'
   from_lookup?: BlockAtTimestampResult
   to_lookup?: BlockAtTimestampResult
+  estimated_timeframe?: EstimatedTimeframeResolution
 }
 
 export function estimateBlockTime(dataset: string, chainType: string): number {
@@ -99,12 +109,27 @@ export function estimateBlockTime(dataset: string, chainType: string): number {
   return BLOCK_TIME_ESTIMATES[chainType] ?? 12
 }
 
-function estimateFromBlock(latestBlock: number, seconds: number, dataset: string, chainType: string) {
+function estimateFromBlock(
+  latestBlock: number,
+  seconds: number,
+  dataset: string,
+  chainType: string,
+  reason: EstimatedTimeframeResolution['reason'],
+) {
   const blockTime = estimateBlockTime(dataset, chainType)
   const blockCount = Math.floor(seconds / blockTime)
+  const fromBlock = Math.max(0, latestBlock - blockCount + 1)
   return {
-    from_block: Math.max(0, latestBlock - blockCount + 1),
+    from_block: fromBlock,
     to_block: latestBlock,
+    estimated_timeframe: {
+      resolution: 'estimated' as const,
+      dataset,
+      from_block: fromBlock,
+      to_block: latestBlock,
+      estimated_block_time_seconds: blockTime,
+      reason,
+    },
   }
 }
 
@@ -586,13 +611,15 @@ export async function resolveTimeframeOrBlocks(params: {
     const chainType = detectChainType(dataset)
     const seconds = parseTimeframeToSeconds(timeframe)
 
-    const useEstimation =
-      chainType === 'hyperliquidReplicaCmds' ||
-      isTimestampEndpointDown(dataset)
+    const estimationReason = chainType === 'hyperliquidReplicaCmds'
+      ? 'timestamp_endpoint_unsupported'
+      : isTimestampEndpointDown(dataset)
+        ? 'timestamp_endpoint_down'
+        : undefined
 
-    if (useEstimation) {
+    if (estimationReason) {
       return {
-        ...estimateFromBlock(latestBlock, seconds, dataset, chainType),
+        ...estimateFromBlock(latestBlock, seconds, dataset, chainType, estimationReason),
         range_kind: 'timeframe',
       }
     }
@@ -625,7 +652,7 @@ export async function resolveTimeframeOrBlocks(params: {
       // Cache the failure so subsequent calls skip straight to estimation
       markTimestampEndpointDown(dataset)
       return {
-        ...estimateFromBlock(latestBlock, seconds, dataset, chainType),
+        ...estimateFromBlock(latestBlock, seconds, dataset, chainType, 'timestamp_endpoint_unavailable'),
         range_kind: 'timeframe',
       }
     }
@@ -682,6 +709,18 @@ export function getTimestampWindowNotices(window: unknown): string[] {
   const typedWindow = (window && typeof window === 'object' ? window : {}) as {
     from_lookup?: BlockAtTimestampResult
     to_lookup?: BlockAtTimestampResult
+    estimated_timeframe?: EstimatedTimeframeResolution
+  }
+
+  if (typedWindow.estimated_timeframe?.resolution === 'estimated') {
+    const reason = {
+      timestamp_endpoint_unsupported: 'the timestamp endpoint is not supported for this network',
+      timestamp_endpoint_down: 'the timestamp endpoint was recently unavailable for this network',
+      timestamp_endpoint_unavailable: 'the exact timestamp lookup failed for this network',
+    }[typedWindow.estimated_timeframe.reason]
+    notices.push(
+      `The timeframe block window was estimated as blocks ${typedWindow.estimated_timeframe.from_block}-${typedWindow.estimated_timeframe.to_block} using a ${typedWindow.estimated_timeframe.estimated_block_time_seconds}s block-time estimate because ${reason}.`,
+    )
   }
 
   if (typedWindow.from_lookup?.resolution === 'estimated') {

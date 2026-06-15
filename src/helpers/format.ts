@@ -2,10 +2,12 @@
 // Result Formatting
 // ============================================================================
 
+import { Buffer } from 'node:buffer'
 import type { LlmOverrides } from './llm-hints.js'
 import { buildLlmHints } from './llm-hints.js'
 import type { PipesRecipe } from './pipes-recipe.js'
 import { getToolContract } from './tool-ux.js'
+import type { UiFollowUpAction } from './ui-metadata.js'
 
 const MAX_RESPONSE_LENGTH = 50_000 // 50KB - keeps responses within MCP client context limits
 
@@ -41,6 +43,23 @@ export interface ResponseMetadata {
 }
 
 type RecordLike = Record<string, unknown>
+type FormattedTextContent = { type: 'text'; text: string }
+
+export interface FormattedToolResult {
+  [key: string]: unknown
+  content: FormattedTextContent[]
+  structuredContent?: Record<string, unknown>
+}
+
+type FollowUpActionEnvelope = {
+  label: string
+  intent?: UiFollowUpAction['intent'] | string
+  target?: string
+  executable: boolean
+  tool?: string
+  arguments?: Record<string, unknown>
+  cursor_path?: string
+}
 
 const DISPLAY_NAME_OVERRIDES: Record<string, string> = {
   'base-mainnet': 'Base',
@@ -128,6 +147,110 @@ function getByPath(value: unknown, path?: string): unknown {
   }
 
   return current
+}
+
+function isSafeExecutableArgumentValue(value: unknown): boolean {
+  if (typeof value === 'string') {
+    return !/\bhttps?:\/\//i.test(value)
+  }
+
+  if (Array.isArray(value)) {
+    return value.every((entry) => isSafeExecutableArgumentValue(entry))
+  }
+
+  if (isRecord(value)) {
+    return Object.entries(value).every(([key, entry]) => {
+      if (/secret|token|api[_-]?key|authorization|password|cookie|url/i.test(key)) {
+        return false
+      }
+      return isSafeExecutableArgumentValue(entry)
+    })
+  }
+
+  return true
+}
+
+function getSafeExecutableArguments(value: unknown): RecordLike | undefined {
+  if (!isRecord(value)) return undefined
+  try {
+    if (JSON.stringify(value).length > 8_000) return undefined
+  } catch {
+    return undefined
+  }
+  if (!isSafeExecutableArgumentValue(value)) return undefined
+  return value
+}
+
+function isSafeCursorValue(value: string): boolean {
+  return /^[A-Za-z0-9_.-]+$/.test(value) && value.length <= 20_000
+}
+
+function decodeCursorTool(cursor: string): string | undefined {
+  if (!isSafeCursorValue(cursor)) return undefined
+  const [payload] = cursor.split('.')
+  if (!payload || !/^[A-Za-z0-9_-]+$/.test(payload)) return undefined
+
+  try {
+    const decoded = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')) as unknown
+    return isRecord(decoded) && typeof decoded.tool === 'string' ? decoded.tool : undefined
+  } catch {
+    return undefined
+  }
+}
+
+function buildExecutableContinuationAction(pagination: RecordLike | undefined, toolName: string | undefined): FollowUpActionEnvelope | undefined {
+  const nextCursor = typeof pagination?.next_cursor === 'string' ? pagination.next_cursor : undefined
+  if (!nextCursor || !toolName) return undefined
+
+  const cursorTool = decodeCursorTool(nextCursor)
+  if (cursorTool !== toolName) return undefined
+
+  return {
+    label: 'Load older results',
+    intent: 'continue',
+    target: '_pagination.next_cursor',
+    executable: true,
+    tool: toolName,
+    arguments: { cursor: nextCursor },
+    cursor_path: '_pagination.next_cursor',
+  }
+}
+
+function isPaginationContinueAction(action: FollowUpActionEnvelope): boolean {
+  return action.intent === 'continue'
+    && (action.target === '_pagination.next_cursor' || action.cursor_path === '_pagination.next_cursor')
+}
+
+function normalizeFollowUpAction(action: RecordLike): FollowUpActionEnvelope {
+  const safeArguments = getSafeExecutableArguments(action.arguments)
+  const executable = action.executable === true && typeof action.tool === 'string' && safeArguments !== undefined
+
+  return {
+    label: typeof action.label === 'string' && action.label.trim() ? action.label : 'Continue',
+    ...(typeof action.intent === 'string' ? { intent: action.intent } : {}),
+    ...(typeof action.target === 'string' ? { target: action.target } : {}),
+    executable,
+    ...(executable ? { tool: action.tool as string, arguments: safeArguments } : {}),
+    ...(typeof action.cursor_path === 'string' ? { cursor_path: action.cursor_path } : {}),
+  }
+}
+
+function withContinuationExecutableMetadata(
+  action: FollowUpActionEnvelope,
+  executableAction: FollowUpActionEnvelope | undefined,
+): FollowUpActionEnvelope {
+  if (!isPaginationContinueAction(action)) {
+    return action
+  }
+
+  return {
+    ...action,
+    target: action.target ?? '_pagination.next_cursor',
+    cursor_path: action.cursor_path ?? '_pagination.next_cursor',
+    executable: executableAction?.executable === true,
+    ...(executableAction?.executable === true && executableAction.tool ? { tool: executableAction.tool } : {}),
+    ...(executableAction?.executable === true && executableAction.arguments ? { arguments: executableAction.arguments } : {}),
+  }
 }
 
 function capitalizeWord(word: string): string {
@@ -613,16 +736,13 @@ function buildDisplay(payload: RecordLike): RecordLike | undefined {
 function buildNextSteps(payload: RecordLike): RecordLike | undefined {
   const ui = isRecord(payload._ui) ? payload._ui : undefined
   const pipesHandoff = isRecord(payload.pipes_handoff) ? payload.pipes_handoff : undefined
-  const actions = asArray<RecordLike>(ui?.follow_up_actions)
-    .slice(0, 6)
-    .map((action) => ({
-      label: typeof action.label === 'string' ? action.label : 'Continue',
-      ...(typeof action.intent === 'string' ? { intent: action.intent } : {}),
-      ...(typeof action.target === 'string' ? { target: action.target } : {}),
-    }))
-
   const pagination = isRecord(payload._pagination) ? payload._pagination : undefined
+  const toolContract = isRecord(payload._tool_contract) ? payload._tool_contract : undefined
+  const toolName = typeof toolContract?.name === 'string' ? toolContract.name : undefined
   const hasContinuation = typeof pagination?.next_cursor === 'string'
+  const executableContinuation = buildExecutableContinuationAction(pagination, toolName)
+  const actions = asArray<RecordLike>(ui?.follow_up_actions)
+    .map((action) => withContinuationExecutableMetadata(normalizeFollowUpAction(action), executableContinuation))
   const hasExplicitContinueAction = actions.some((action) => action.intent === 'continue')
 
   if (hasContinuation && !hasExplicitContinueAction) {
@@ -630,6 +750,10 @@ function buildNextSteps(payload: RecordLike): RecordLike | undefined {
       label: 'Load older results',
       intent: 'continue',
       target: '_pagination.next_cursor',
+      executable: executableContinuation?.executable === true,
+      ...(executableContinuation?.tool ? { tool: executableContinuation.tool } : {}),
+      ...(executableContinuation?.arguments ? { arguments: executableContinuation.arguments } : {}),
+      cursor_path: '_pagination.next_cursor',
     })
   }
 
@@ -638,7 +762,7 @@ function buildNextSteps(payload: RecordLike): RecordLike | undefined {
   }
 
   return {
-    actions,
+    actions: actions.slice(0, 6),
     ...(hasContinuation
       ? {
           continuation: {
@@ -1121,7 +1245,7 @@ export function formatResult(
   data: unknown,
   message?: string,
   options?: FormatOptions,
-): { content: Array<{ type: 'text'; text: string }> } {
+): FormattedToolResult {
   const maxItems = options?.maxItems
 
   let dataToFormat = data
@@ -1300,7 +1424,19 @@ export function formatResult(
     }
   }
 
-  return { content: [{ type: 'text', text: jsonString }] }
+  try {
+    const structuredContent = JSON.parse(jsonString) as Record<string, unknown>
+
+    return {
+      // The structured payload is the primary rich result. Keep the text
+      // fallback as equivalent JSON, but compact it so compatibility does not
+      // double the response-size cost of executable metadata.
+      content: [{ type: 'text', text: JSON.stringify(structuredContent) }],
+      structuredContent,
+    }
+  } catch {
+    return { content: [{ type: 'text', text: jsonString }] }
+  }
 }
 
 /**
@@ -1310,6 +1446,6 @@ export function formatResultWithLimit(
   data: unknown,
   message: string,
   limit: number,
-): { content: Array<{ type: 'text'; text: string }> } {
+): FormattedToolResult {
   return formatResult(data, message, { maxItems: limit, warnOnTruncation: true })
 }

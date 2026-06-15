@@ -654,7 +654,7 @@ export function registerQueryTransactionsTool(server: McpServer) {
         .max(200)
         .optional()
         .default(20)
-        .describe('Max transactions (default: 20, max: 1000). Note: Lower default for MCP to reduce context usage.'),
+        .describe('Max transactions (default: 20, max: 200). Note: Lower default for MCP to reduce context usage.'),
       field_preset: z
         .enum(['minimal', 'standard', 'full'])
         .optional()

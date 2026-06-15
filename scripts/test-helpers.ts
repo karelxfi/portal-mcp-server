@@ -13,6 +13,8 @@ export type ToolCallResult = {
   result: any
   text: string
   data?: any
+  structuredContent?: Record<string, any>
+  dataSource?: 'structuredContent' | 'text'
   isError: boolean
   elapsedMs: number
   attempts: number
@@ -52,6 +54,22 @@ export function sleep(ms: number) {
 
 export function getText(result: any): string {
   return result?.content?.map((entry: any) => entry?.text || '').join('\n') || ''
+}
+
+export function getStructuredContent(result: any): Record<string, any> | undefined {
+  const structuredContent = result?.structuredContent
+  return typeof structuredContent === 'object' && structuredContent !== null && !Array.isArray(structuredContent)
+    ? structuredContent
+    : undefined
+}
+
+export function parseToolResultData(result: any): { data: any; source: 'structuredContent' | 'text' } {
+  const structuredContent = getStructuredContent(result)
+  if (structuredContent) {
+    return { data: structuredContent, source: 'structuredContent' }
+  }
+
+  return { data: extractJson(getText(result)), source: 'text' }
 }
 
 export function extractJson(text: string): any {
@@ -94,6 +112,39 @@ function assertStringArray(value: unknown, label: string, options?: { nonEmpty?:
   assert(value.every((item) => typeof item === 'string' && item.length > 0), `${label} should contain only non-empty strings`)
 }
 
+function assertSafeExecutableArguments(value: unknown, label: string) {
+  assertRecord(value, label)
+  const text = JSON.stringify(value)
+  assert(!/\bhttps?:\/\//i.test(text), `${label} should not contain raw URLs`)
+  assert(!/"[^"]*(secret|token|api[_-]?key|authorization|password|cookie|url)[^"]*"\s*:/i.test(text), `${label} should not expose secret-like argument keys`)
+}
+
+function assertFollowUpActions(value: unknown, label: string, options?: { requireExecutableArguments?: boolean }) {
+  assert(Array.isArray(value), `${label} should be an array`)
+  assert(value.length <= 6, `${label} should include at most 6 actions`)
+
+  value.forEach((action, index) => {
+    assertRecord(action, `${label}[${index}]`)
+    assertNonEmptyString(action.label, `${label}[${index}].label`)
+    assert(typeof action.executable === 'boolean', `${label}[${index}].executable should be boolean`)
+
+    if (action.executable) {
+      assertNonEmptyString(action.tool, `${label}[${index}].tool`)
+      if (options?.requireExecutableArguments ?? true) {
+        assertSafeExecutableArguments(action.arguments, `${label}[${index}].arguments`)
+      } else if (action.arguments !== undefined) {
+        assertSafeExecutableArguments(action.arguments, `${label}[${index}].arguments`)
+      }
+      if (action.cursor_path !== undefined) {
+        assertNonEmptyString(action.cursor_path, `${label}[${index}].cursor_path`)
+      }
+    } else {
+      assert(action.tool === undefined, `${label}[${index}] should omit tool when not executable`)
+      assert(action.arguments === undefined, `${label}[${index}] should omit arguments when not executable`)
+    }
+  })
+}
+
 export function assertChatSurface(parsed: any, label: string, options?: { expectNextSteps?: boolean }) {
   const requiredTopLevelKeys = [
     'answer',
@@ -117,7 +168,7 @@ export function assertChatSurface(parsed: any, label: string, options?: { expect
   assertNonEmptyString(parsed.answer, `${label} answer`)
   assertRecord(parsed.display, `${label} display`)
   assertRecord(parsed.next_steps, `${label} next_steps`)
-  assert(Array.isArray(parsed.next_steps.actions), `${label} next_steps.actions should be an array`)
+  assertFollowUpActions(parsed.next_steps.actions, `${label} next_steps.actions`)
   assert(isFriendlyDisplayTitle(parsed?.display?.title), `${label} display.title should be product-friendly`)
   assert(!hasLegacyWording(JSON.stringify(parsed?.display ?? {})), `${label} display should avoid legacy wording`)
   assert(!hasLegacyWording(String(parsed?.answer ?? '')), `${label} answer should avoid legacy wording`)
@@ -175,6 +226,11 @@ export function assertChatSurface(parsed: any, label: string, options?: { expect
   assertStringArray(parsed._llm.answer_sequence, `${label} _llm.answer_sequence`, { nonEmpty: true })
   assert(Array.isArray(parsed._llm.sections), `${label} _llm.sections should be an array`)
   assert(Array.isArray(parsed._llm.recommended_views), `${label} _llm.recommended_views should be an array`)
+  if (parsed._llm.follow_up?.actions !== undefined) {
+    assertFollowUpActions(parsed._llm.follow_up.actions, `${label} _llm.follow_up.actions`, {
+      requireExecutableArguments: false,
+    })
+  }
 
   if (options?.expectNextSteps) {
     assert(
@@ -242,12 +298,15 @@ export async function callToolWithRetry(
         continue
       }
 
-      const data = !isError && options?.parseJson !== false ? extractJson(text) : undefined
+      const structuredContent = getStructuredContent(result)
+      const parsedData = !isError && options?.parseJson !== false ? parseToolResultData(result) : undefined
 
       return {
         result,
         text,
-        data,
+        data: parsedData?.data,
+        structuredContent,
+        dataSource: parsedData?.source,
         isError,
         elapsedMs,
         attempts: attempt,

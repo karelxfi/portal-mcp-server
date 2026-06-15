@@ -10,8 +10,13 @@ import { portalFetchStreamRangeVisit } from '../../helpers/fetch.js'
 import { buildEvmLogFields } from '../../helpers/fields.js'
 import { formatResult } from '../../helpers/format.js'
 import { hashString53 } from '../../helpers/hash.js'
-import { buildQueryFreshness } from '../../helpers/result-metadata.js'
-import { resolveTimeframeOrBlocks, type TimestampInput } from '../../helpers/timeframe.js'
+import { buildAnalysisCoverage, buildQueryFreshness } from '../../helpers/result-metadata.js'
+import {
+  getTimestampWindowNotices,
+  resolveTimeframeOrBlocks,
+  type ResolvedBlockWindow,
+  type TimestampInput,
+} from '../../helpers/timeframe.js'
 import { buildExecutionMetadata, buildToolDescription } from '../../helpers/tool-ux.js'
 import { normalizeEvmAddress } from '../../helpers/validation.js'
 
@@ -81,7 +86,7 @@ export function registerGetContractActivityTool(server: McpServer) {
       let fromBlock: number
       let toBlock: number
       const isBlockCount = /^\d+$/.test(timeframe)
-      let resolvedWindow: { range_kind: string; from_lookup?: never; to_lookup?: never } | Awaited<ReturnType<typeof resolveTimeframeOrBlocks>>
+      let resolvedWindow: ResolvedBlockWindow
       const head = await getBlockHead(dataset)
       let windowDescription = timeframe
 
@@ -90,6 +95,8 @@ export function registerGetContractActivityTool(server: McpServer) {
         toBlock = head.number
         fromBlock = Math.max(0, toBlock - blockRange)
         resolvedWindow = {
+          from_block: fromBlock,
+          to_block: toBlock,
           range_kind: 'block_range',
         }
       } else {
@@ -112,23 +119,27 @@ export function registerGetContractActivityTool(server: McpServer) {
         }
       }
 
-      const notices: string[] = []
+      const notices: string[] = getTimestampWindowNotices(resolvedWindow)
       const requestedFromBlock = fromBlock
+      const requestedToBlock = toBlock
       if (mode === 'fast') {
         const requestedRange = toBlock - fromBlock + 1
         if (requestedRange > FAST_MODE_BLOCK_CAP) {
           fromBlock = Math.max(fromBlock, toBlock - FAST_MODE_BLOCK_CAP + 1)
           notices.push(
-            `Analyzed the most recent ${FAST_MODE_BLOCK_CAP.toLocaleString()} blocks in the requested window because the caller requested a bounded preview.`,
+            `Analyzed only blocks ${fromBlock}-${toBlock} of the requested ${requestedFromBlock}-${requestedToBlock} window because the caller requested a bounded preview.`,
           )
         }
       }
+      const analyzedFromBlock = fromBlock
+      const analyzedToBlock = toBlock
+      const windowComplete = analyzedFromBlock <= requestedFromBlock && analyzedToBlock >= requestedToBlock
 
       // Query 1: Transactions to contract (standard preset — no input hex bloat)
       const txQuery = {
         type: 'evm',
-        fromBlock,
-        toBlock,
+        fromBlock: analyzedFromBlock,
+        toBlock: analyzedToBlock,
         fields: {
           block: { number: true, timestamp: true },
           transaction: { ...TRANSACTION_FIELD_PRESETS.standard.transaction },
@@ -166,8 +177,8 @@ export function registerGetContractActivityTool(server: McpServer) {
       if (include_events) {
         const eventsQuery = {
           type: 'evm',
-          fromBlock,
-          toBlock,
+          fromBlock: analyzedFromBlock,
+          toBlock: analyzedToBlock,
           fields: {
             block: { number: true, timestamp: true },
             log: buildEvmLogFields(),
@@ -194,8 +205,9 @@ export function registerGetContractActivityTool(server: McpServer) {
         contract_address: normalizedContract,
         timeframe: {
           from_block: requestedFromBlock,
-          to_block: toBlock,
-          analyzed_from_block: fromBlock,
+          to_block: requestedToBlock,
+          analyzed_from_block: analyzedFromBlock,
+          analyzed_to_block: analyzedToBlock,
           description: windowDescription,
         },
         mode,
@@ -216,38 +228,54 @@ export function registerGetContractActivityTool(server: McpServer) {
 
       return formatResult(
         summary,
-        `Contract ${normalizedContract}: ${totalTransactions} interactions from ${uniqueCallerHashes.size} unique callers, ${totalEvents} events`,
+        [
+          `Contract ${normalizedContract}: ${totalTransactions} interactions from ${uniqueCallerHashes.size} unique callers, ${totalEvents} events`,
+          ...(!windowComplete
+            ? [
+                `Partial fast-mode coverage: analyzed blocks ${analyzedFromBlock}-${analyzedToBlock} of requested ${requestedFromBlock}-${requestedToBlock}.`,
+              ]
+            : []),
+          ...(resolvedWindow.estimated_timeframe
+            ? ['Timeframe block bounds were estimated from block-time metadata.']
+            : []),
+        ].join(' '),
         {
           toolName: 'portal_evm_get_contract_activity',
           notices,
           freshness: buildQueryFreshness({
             finality: 'latest',
             headBlockNumber: head.number,
-            windowToBlock: toBlock,
+            windowToBlock: requestedToBlock,
             resolvedWindow,
           }),
-          coverage: {
-            kind: 'block_window',
-            window_complete: true,
-            result_complete: true,
-            continuation: 'none',
-            window_from_block: requestedFromBlock,
-            window_to_block: toBlock,
-            page_to_block: toBlock,
-            returned_items: totalTransactions,
-          },
+          coverage: buildAnalysisCoverage({
+            windowFromBlock: requestedFromBlock,
+            windowToBlock: requestedToBlock,
+            analyzedFromBlock,
+            analyzedToBlock,
+          }),
           execution: buildExecutionMetadata({
             mode,
-            from_block: fromBlock,
-            to_block: toBlock,
+            result_scope: windowComplete ? 'complete_window' : 'partial_window',
+            requested_blocks: Math.max(0, requestedToBlock - requestedFromBlock + 1),
+            analyzed_blocks: Math.max(0, analyzedToBlock - analyzedFromBlock + 1),
+            estimated_scan_blocks: Math.max(0, analyzedToBlock - analyzedFromBlock + 1),
+            from_block: analyzedFromBlock,
+            to_block: analyzedToBlock,
             range_kind: resolvedWindow.range_kind,
             notes: [include_events ? 'Event summaries were included.' : 'Event summaries were disabled.'],
           }),
           metadata: {
             network: dataset,
             dataset,
-            from_block: fromBlock,
-            to_block: toBlock,
+            from_block: analyzedFromBlock,
+            to_block: analyzedToBlock,
+            ...(!windowComplete
+              ? {
+                  requested_from_block: requestedFromBlock,
+                  requested_to_block: requestedToBlock,
+                }
+              : {}),
             query_start_time: queryStartTime,
           },
         },

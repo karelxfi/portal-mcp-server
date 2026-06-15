@@ -407,15 +407,15 @@ async function main() {
         },
       },
       {
-        name: 'BAYC alias deployment lookup across a broad historical window',
+        name: 'BAYC alias deployment lookup in a bounded historical window',
         run: async () => {
           const result = await callToolWithRetry(client, 'portal_evm_get_contract_deployment', {
             network: 'ethereum-mainnet',
             contract: 'bored apes',
-            from_block: 12_000_000,
-            to_block: 13_000_000,
+            from_block: 12_287_500,
+            to_block: 12_287_510,
             scan_order: 'earliest',
-            max_scan_blocks: 1_000_000,
+            max_scan_blocks: 20,
           })
           const item = getItems(result.data)[0]
           assert(

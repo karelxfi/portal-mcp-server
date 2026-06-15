@@ -1,8 +1,12 @@
 import { Buffer } from 'node:buffer'
+import { createHmac, timingSafeEqual } from 'node:crypto'
 
 import { ActionableError } from './errors.js'
 
 const CURSOR_VERSION = 1
+// Production deployments should set MCP_CURSOR_SECRET. The fallback is
+// deterministic only so local dev/tests can continue cursors across restarts.
+const LOCAL_DEV_CURSOR_SECRET = 'sqd-portal-mcp-local-dev-cursor-secret-v1'
 
 type CursorPayload = {
   version?: number
@@ -41,30 +45,113 @@ export interface OffsetPageCursor<TRequest extends Record<string, unknown>> {
   offset: number
 }
 
+function getCursorSecret(): string {
+  const configured = process.env.MCP_CURSOR_SECRET?.trim()
+  return configured || LOCAL_DEV_CURSOR_SECRET
+}
+
+function signCursorPayload(payload: string): string {
+  return createHmac('sha256', getCursorSecret()).update(payload).digest('base64url')
+}
+
+function safeEqual(left: string, right: string): boolean {
+  const leftBytes = Buffer.from(left)
+  const rightBytes = Buffer.from(right)
+  return leftBytes.length === rightBytes.length && timingSafeEqual(leftBytes, rightBytes)
+}
+
+function assertCursorObject(value: unknown): asserts value is CursorPayload {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('Cursor payload must be an object')
+  }
+}
+
+function assertStringField(payload: Record<string, unknown>, key: string): void {
+  if (typeof payload[key] !== 'string' || String(payload[key]).length === 0) {
+    throw new Error(`Cursor field '${key}' must be a non-empty string`)
+  }
+}
+
+function assertRecordField(payload: Record<string, unknown>, key: string): void {
+  const value = payload[key]
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error(`Cursor field '${key}' must be an object`)
+  }
+}
+
+function assertIntegerField(payload: Record<string, unknown>, key: string, min: number): void {
+  const value = payload[key]
+  if (!Number.isSafeInteger(value) || (value as number) < min) {
+    throw new Error(`Cursor field '${key}' must be a safe integer >= ${min}`)
+  }
+}
+
+function decodeSignedCursorPayload(cursor: string): string {
+  const parts = cursor.split('.')
+  if (parts.length !== 2 || !parts[0] || !parts[1]) {
+    throw new Error('Cursor is unsigned or malformed')
+  }
+
+  const [payload, signature] = parts
+  const expectedSignature = signCursorPayload(payload)
+  if (!safeEqual(signature, expectedSignature)) {
+    throw new Error('Cursor signature is invalid')
+  }
+
+  return payload
+}
+
+function validateBaseCursorPayload(parsed: CursorPayload, expectedTool: string): void {
+  if (parsed.version !== CURSOR_VERSION) {
+    throw new Error(`Unsupported cursor version: ${String(parsed.version)}`)
+  }
+
+  if (typeof parsed.tool !== 'string') {
+    throw new Error("Cursor field 'tool' must be a string")
+  }
+
+  if (parsed.tool !== expectedTool) {
+    throw new Error(`Cursor is for ${String(parsed.tool ?? 'another tool')}, not ${expectedTool}`)
+  }
+}
+
+function validateRecentPageCursorPayload(payload: Record<string, unknown>): void {
+  assertStringField(payload, 'dataset')
+  assertRecordField(payload, 'request')
+  assertIntegerField(payload, 'window_from_block', 0)
+  assertIntegerField(payload, 'window_to_block', 0)
+  assertIntegerField(payload, 'page_to_block', 0)
+  assertIntegerField(payload, 'skip_inclusive_block', 0)
+
+  if ((payload.window_from_block as number) > (payload.window_to_block as number)) {
+    throw new Error("Cursor field 'window_from_block' must be <= 'window_to_block'")
+  }
+}
+
+function validateOffsetPageCursorPayload(payload: Record<string, unknown>): void {
+  assertStringField(payload, 'dataset')
+  assertRecordField(payload, 'request')
+  assertIntegerField(payload, 'offset', 0)
+}
+
 export function encodeCursor(payload: Record<string, unknown>): string {
-  return Buffer.from(
+  const encodedPayload = Buffer.from(
     JSON.stringify({
       version: CURSOR_VERSION,
       ...payload,
     }),
     'utf8',
   ).toString('base64url')
+
+  return `${encodedPayload}.${signCursorPayload(encodedPayload)}`
 }
 
 export function decodeCursor<T extends CursorPayload>(cursor: string, expectedTool: string): T {
   try {
-    const parsed = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8')) as T
-    if (!parsed || typeof parsed !== 'object') {
-      throw new Error('Cursor payload must be an object')
-    }
-
-    if ((parsed.version ?? CURSOR_VERSION) !== CURSOR_VERSION) {
-      throw new Error(`Unsupported cursor version: ${String(parsed.version)}`)
-    }
-
-    if (parsed.tool !== expectedTool) {
-      throw new Error(`Cursor is for ${String(parsed.tool ?? 'another tool')}, not ${expectedTool}`)
-    }
+    const encodedPayload = decodeSignedCursorPayload(cursor)
+    const parsed = JSON.parse(Buffer.from(encodedPayload, 'base64url').toString('utf8')) as T
+    assertCursorObject(parsed)
+    validateBaseCursorPayload(parsed, expectedTool)
 
     return parsed
   } catch (error) {
@@ -160,7 +247,9 @@ export function decodeRecentPageCursor<TRequest extends Record<string, unknown>>
   cursor: string,
   expectedTool: string,
 ): RecentPageCursor<TRequest> {
-  return decodeCursor<RecentPageCursor<TRequest>>(cursor, expectedTool)
+  const decoded = decodeCursor<RecentPageCursor<TRequest>>(cursor, expectedTool)
+  validateRecentPageCursorPayload(decoded)
+  return decoded
 }
 
 export function encodeRecentPageCursor<TRequest extends Record<string, unknown>>(
@@ -191,7 +280,9 @@ export function decodeOffsetPageCursor<TRequest extends Record<string, unknown>>
   cursor: string,
   expectedTool: string,
 ): OffsetPageCursor<TRequest> {
-  return decodeCursor<OffsetPageCursor<TRequest>>(cursor, expectedTool)
+  const decoded = decodeCursor<OffsetPageCursor<TRequest>>(cursor, expectedTool)
+  validateOffsetPageCursorPayload(decoded)
+  return decoded
 }
 
 export function encodeOffsetPageCursor<TRequest extends Record<string, unknown>>(

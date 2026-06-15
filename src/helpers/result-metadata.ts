@@ -1,5 +1,5 @@
 import { formatTimestamp } from './format.js'
-import type { BlockAtTimestampResult, ResolvedBlockWindow } from './timeframe.js'
+import type { BlockAtTimestampResult, EstimatedTimeframeResolution, ResolvedBlockWindow } from './timeframe.js'
 
 type TimestampBoundarySummary = Pick<
   BlockAtTimestampResult,
@@ -17,6 +17,7 @@ export interface QueryFreshness {
     from?: TimestampBoundarySummary
     to?: TimestampBoundarySummary
   }
+  estimated_timeframe?: EstimatedTimeframeResolution
 }
 
 export interface QueryCoverage {
@@ -129,6 +130,7 @@ export function buildQueryFreshness(params: {
     range_kind: string
     from_lookup?: BlockAtTimestampResult
     to_lookup?: BlockAtTimestampResult
+    estimated_timeframe?: EstimatedTimeframeResolution
   }
 }): QueryFreshness {
   const { finality, headBlockNumber, windowToBlock, resolvedWindow } = params
@@ -160,6 +162,7 @@ export function buildQueryFreshness(params: {
     window_to_block: windowToBlock,
     lag_blocks: Math.max(0, headBlockNumber - windowToBlock),
     ...(Object.keys(timestampBounds).length > 0 ? { timestamp_bounds: timestampBounds } : {}),
+    ...(resolvedWindow.estimated_timeframe ? { estimated_timeframe: resolvedWindow.estimated_timeframe } : {}),
   }
 }
 

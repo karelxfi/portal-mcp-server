@@ -66,6 +66,10 @@ export interface UiFollowUpAction {
   label: string
   intent: 'continue' | 'show_raw' | 'compare_previous' | 'zoom_in' | 'drilldown'
   target?: string
+  executable?: boolean
+  tool?: string
+  arguments?: Record<string, unknown>
+  cursor_path?: string
 }
 
 export interface PortalUiSpec {

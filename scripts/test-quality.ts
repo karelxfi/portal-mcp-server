@@ -12,6 +12,7 @@ import {
   closeTestClient,
   connectTestClient,
   hasLegacyWording,
+  parseToolResultData,
   printSection,
   truncateText,
 } from './test-helpers.ts'
@@ -249,6 +250,70 @@ function validateCatalogSemantics(tools: any[], failures: QualityWarning[]) {
   }
 }
 
+function validateTextFallbackParsing() {
+  const fallback = parseToolResultData({
+    content: [
+      {
+        type: 'text',
+        text: JSON.stringify({ answer: 'Fallback response', display: { title: 'Fallback' } }),
+      },
+    ],
+  })
+
+  assert(fallback.source === 'text', 'Text-only tool results should parse through the fallback path')
+  assert(fallback.data.answer === 'Fallback response', 'Text fallback should parse JSON response content')
+}
+
+async function validateContractActivityFastModeCoverage(params: {
+  client: Client
+  context: Awaited<ReturnType<typeof loadToolTestContext>>
+  failures: QualityWarning[]
+}) {
+  const { client, context, failures } = params
+
+  try {
+    const result = await callToolWithRetry(client, 'portal_evm_get_contract_activity', {
+      network: 'base',
+      contract_address: context.baseUniswapV3Pool,
+      timeframe: '10000',
+      mode: 'fast',
+      include_events: false,
+    })
+
+    assert(!result.isError, 'portal_evm_get_contract_activity fast-mode coverage probe should succeed')
+    const data = result.data
+    assert(data?._coverage?.window_complete === false, 'fast-mode contract activity should mark trimmed window coverage incomplete')
+    assert(data?._coverage?.result_complete === true, 'fast-mode contract activity should keep result_complete about pagination/caps')
+    assert(data?._coverage?.continuation === 'none', 'fast-mode contract activity should not invent a continuation cursor')
+    assert(
+      typeof data?._coverage?.analyzed_from_block === 'number' &&
+        data._coverage.analyzed_from_block > data._coverage.window_from_block,
+      'fast-mode contract activity should expose analyzed_from_block after trimming',
+    )
+    assert(
+      data?._coverage?.analyzed_to_block === data?._coverage?.window_to_block,
+      'fast-mode contract activity should expose analyzed_to_block at the requested window end',
+    )
+    assert(data?._execution?.result_scope === 'partial_window', 'fast-mode contract activity should expose partial_window execution scope')
+    assert(
+      data?._execution?.scan_estimate?.requested_blocks > data?._execution?.scan_estimate?.analyzed_blocks,
+      'fast-mode contract activity should report requested versus analyzed block counts',
+    )
+    assert(
+      answerDisclosesPartialWindow(data?.answer) ||
+        (Array.isArray(data?._notices) && data._notices.some((notice: string) => answerDisclosesPartialWindow(notice))),
+      'fast-mode contract activity should disclose partial window coverage in answer or notices',
+    )
+
+    console.log(`PASS  portal_evm_get_contract_activity fast coverage [${result.elapsedMs}ms ${classifySpeed(result.elapsedMs)}]`)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    failures.push({ tool: 'portal_evm_get_contract_activity', message: `fast-mode coverage probe: ${message.slice(0, 320)}` })
+    console.log('FAIL  portal_evm_get_contract_activity fast coverage')
+    console.log(`      ${truncateText(message, 8)}`)
+  }
+}
+
 async function runQualityPass(params: {
   client: Client
   context: Awaited<ReturnType<typeof loadToolTestContext>>
@@ -283,6 +348,12 @@ async function runQualityPass(params: {
       }
 
       const data = result.data
+      assert(result.dataSource === 'structuredContent', `${spec.name} ${pass} should prefer structuredContent`)
+      assert(result.structuredContent !== undefined, `${spec.name} ${pass} should emit structuredContent`)
+      assert(
+        JSON.stringify(result.structuredContent) === JSON.stringify(parseToolResultData({ content: result.result.content }).data),
+        `${spec.name} ${pass} structuredContent should match JSON text fallback envelope`,
+      )
       responseSizes.push({ tool: spec.name, pass, chars: result.text.length })
       assertChatSurface(data, `${spec.name} ${pass} quality audit`, {
         expectNextSteps: Array.isArray(data?._ui?.follow_up_actions) && data._ui.follow_up_actions.length > 0,
@@ -364,10 +435,12 @@ async function main() {
     const responseSizes: ResponseSizeSample[] = []
 
     printSection(`Quality audit for ${TOOL_SPECS.length} tools`)
+    validateTextFallbackParsing()
     validateCatalogSemantics(tools, failures)
 
     await runQualityPass({ client, context, pass: 'cold', warnings, failures, responseSizes })
     await runQualityPass({ client, context, pass: 'warm', warnings, failures, responseSizes })
+    await validateContractActivityFastModeCoverage({ client, context, failures })
 
     validateResponseSizeBaseline(responseSizes, baseline, failures)
 
