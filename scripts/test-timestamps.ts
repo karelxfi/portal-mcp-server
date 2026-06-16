@@ -2,7 +2,16 @@
 
 import { getBlockHead } from '../dist/cache/datasets.js'
 import { getDatasets } from '../dist/cache/datasets.js'
-import { getHeadTimestamp, resolveBlockAtTimestamp, resolveTimeframeOrBlocks, timestampToBlock } from '../dist/helpers/timeframe.js'
+import { buildQueryFreshness } from '../dist/helpers/result-metadata.js'
+import {
+  getTimestampWindowNotices,
+  getHeadTimestamp,
+  parseTimeframeToSeconds,
+  parseTimestampInput,
+  resolveBlockAtTimestamp,
+  resolveTimeframeOrBlocks,
+  timestampToBlock,
+} from '../dist/helpers/timeframe.js'
 
 const REALTIME_MATRIX_CONCURRENCY = 5
 
@@ -82,8 +91,69 @@ async function assertHyperliquidFillsExactTimestampLookup() {
   console.log(`PASS  Hyperliquid fills 5m window -> ${fiveMinuteWindow.from_block}..${fiveMinuteWindow.to_block} (exact)`)
 }
 
+function assertNaturalLanguageTimeInputs() {
+  const now = 1_778_923_600
+  const cases: Array<[string, number]> = [
+    ['30m', 1_800],
+    ['past 30 minutes', 1_800],
+    ['in the past 1h', 3_600],
+    ['in last 38 mins', 2_280],
+    ['last hour', 3_600],
+    ['over the previous 2 weeks', 1_209_600],
+    ['30 minutes ago', 1_800],
+  ]
+
+  for (const [input, seconds] of cases) {
+    assert(parseTimeframeToSeconds(input) === seconds, `${input} should parse as ${seconds} seconds`)
+
+    const parsed = parseTimestampInput(input, now)
+    assert(parsed.timestamp === now - seconds, `${input} should resolve to now minus ${seconds} seconds`)
+    assert(parsed.source === 'relative', `${input} should be classified as a relative timestamp`)
+  }
+
+  assert(parseTimestampInput('last hour', now).normalized_input === '1h ago', 'last hour should normalize to 1h ago')
+  assert(parseTimestampInput('in last 38 mins', now).normalized_input === '38m ago', 'in last 38 mins should normalize to 38m ago')
+
+  console.log('PASS  natural-language time inputs -> past 30 minutes / in the past 1h / in last 38 mins')
+}
+
+async function assertEstimatedTimeframeProvenance() {
+  const dataset = 'hyperliquid-replica-cmds'
+  const window = await resolveTimeframeOrBlocks({ dataset, timeframe: '5m' })
+  const estimated = window.estimated_timeframe
+
+  assert(estimated?.resolution === 'estimated', 'Unsupported timestamp endpoint windows should expose estimated timeframe provenance')
+  assert(estimated.dataset === dataset, 'Estimated timeframe provenance should include dataset')
+  assert(estimated.from_block === window.from_block, 'Estimated timeframe provenance should include from_block')
+  assert(estimated.to_block === window.to_block, 'Estimated timeframe provenance should include to_block')
+  assert(estimated.estimated_block_time_seconds === 0.083, 'Estimated timeframe provenance should include the block-time estimate')
+  assert(estimated.reason === 'timestamp_endpoint_unsupported', 'Estimated timeframe provenance should explain why estimation was used')
+
+  const freshness = buildQueryFreshness({
+    finality: 'latest',
+    headBlockNumber: window.to_block,
+    windowToBlock: window.to_block,
+    resolvedWindow: window,
+  })
+  assert(
+    freshness.estimated_timeframe?.reason === 'timestamp_endpoint_unsupported',
+    'Query freshness should preserve estimated timeframe provenance',
+  )
+
+  const notices = getTimestampWindowNotices(window)
+  assert(
+    notices.some((notice) => /timeframe block window was estimated/i.test(notice)),
+    'Estimated timeframe windows should produce an estimation notice',
+  )
+
+  console.log(`PASS  estimated timeframe provenance -> ${window.from_block}..${window.to_block} (${estimated.reason})`)
+}
+
 async function main() {
   console.log('Starting timestamp resolver QA...\n')
+
+  assertNaturalLanguageTimeInputs()
+  await assertEstimatedTimeframeProvenance()
 
   const dataset = 'solana-mainnet'
   const head = await getBlockHead(dataset)
@@ -95,7 +165,12 @@ async function main() {
   const oneHourWindow = await resolveTimeframeOrBlocks({ dataset, timeframe: '1h' })
 
   assert(oneHourWindow.to_block === head.number, '1h Solana window should anchor to the cached latest slot')
-  assert(oneHourWindow.from_block === exactFromBlock, '1h Solana window should use Portal timestamp lookup from the head timestamp')
+  assert(oneHourWindow.from_lookup?.resolution === 'exact', '1h Solana window should use Portal timestamp lookup from the head timestamp')
+  assert(oneHourWindow.from_lookup.timestamp === targetTimestamp, '1h Solana lookup should be anchored to the resolved head timestamp')
+  assert(
+    Math.abs(oneHourWindow.from_block - exactFromBlock) <= 50,
+    '1h Solana timestamp lookup should stay within a small live-index tolerance',
+  )
   assert(oneHourWindow.from_block < oneHourWindow.to_block, '1h Solana window should produce an ordered slot range')
   console.log(`PASS  Solana 1h window -> ${oneHourWindow.from_block}..${oneHourWindow.to_block}`)
 

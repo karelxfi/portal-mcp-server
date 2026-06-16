@@ -17,6 +17,7 @@ import {
   buildSolanaTokenBalanceFields,
   buildSolanaTransactionFields,
 } from '../helpers/fields.js'
+import { type ToolGuideEntry, getToolGuideEntries, getToolGuideEntry } from '../helpers/tool-ux.js'
 import type { BlockHead, DatasetMetadata } from '../types/index.js'
 import { npmVersion } from '../version.js'
 
@@ -24,7 +25,136 @@ import { npmVersion } from '../version.js'
 // MCP Resources
 // ============================================================================
 
+function groupToolsByCategory(tools: ToolGuideEntry[]) {
+  return tools.reduce<Record<string, string[]>>((groups, tool) => {
+    groups[tool.category] ??= []
+    groups[tool.category].push(tool.name)
+    return groups
+  }, {})
+}
+
+function buildDeveloperToolGuide() {
+  const tools = getToolGuideEntries()
+  const publicTools = tools.filter((tool) => tool.audience === 'public')
+  const advancedTools = tools.filter((tool) => tool.audience === 'advanced')
+
+  return {
+    description: 'Developer-facing guide for selecting SQD Portal MCP tools and starting from common workflows.',
+    version: npmVersion,
+    counts: {
+      tools: tools.length,
+      public: publicTools.length,
+      advanced: advancedTools.length,
+    },
+    recommended_starting_points: [
+      {
+        job: 'Find the right network name or VM family',
+        tool: 'portal_list_networks',
+        reason:
+          'Use this before any query when a user says "Base", "Polkadot", "Hyperliquid", or another fuzzy chain name.',
+      },
+      {
+        job: 'Check whether a network is indexed and fresh',
+        tool: 'portal_get_network_info',
+        reason: 'Use this before debugging missing data or stale-looking results.',
+      },
+      {
+        job: 'Resolve user-facing entity names before querying',
+        tool: 'portal_resolve_entity',
+        reason:
+          'Use this when a user says a token symbol, contract alias, pool identifier, protocol name, or Hyperliquid coin name and you need explicit filters.',
+      },
+      {
+        job: 'Show recent activity without manual block math',
+        tool: 'portal_get_recent_activity',
+        reason: 'Best first tool for broad "what happened recently?" prompts across supported VMs.',
+      },
+      {
+        job: 'Summarize a wallet before drilling into raw records',
+        tool: 'portal_get_wallet_summary',
+        reason: 'Returns a cross-chain overview, recent activity, counterparties, and chain-specific sections.',
+      },
+      {
+        job: 'Build chart-ready buckets or period comparisons',
+        tool: 'portal_get_time_series',
+        reason: 'Use when the developer or model needs time-series, grouped trend, or compare-previous output.',
+      },
+    ],
+    common_question_routes: [
+      {
+        ask: 'Investigate this wallet or suspicious address',
+        start_with: 'portal_get_wallet_summary',
+        then_use: ['portal_evm_query_transactions', 'portal_evm_query_token_transfers', 'portal_solana_query_transactions', 'portal_hyperliquid_query_fills'],
+        reason: 'Wallet summary returns fund_flow, counterparties, largest movements, and investigation pivots before raw record drill-down.',
+      },
+      {
+        ask: 'Trace USDC or token outflows',
+        start_with: 'portal_resolve_entity',
+        then_use: ['portal_evm_query_token_transfers', 'portal_get_wallet_summary'],
+        reason: 'Resolve the token symbol first, then query exact transfer evidence and summarize the sender or recipient wallet.',
+      },
+      {
+        ask: 'Explain why network or contract activity spiked',
+        start_with: 'portal_get_time_series',
+        then_use: ['portal_evm_query_logs', 'portal_evm_query_transactions', 'portal_evm_get_contract_activity'],
+        reason: 'Use complete buckets to find the spike, then pivot into exact logs, transactions, or contract activity.',
+      },
+      {
+        ask: 'What did this contract do recently?',
+        start_with: 'portal_evm_get_contract_activity',
+        then_use: ['portal_evm_query_logs', 'portal_evm_query_transactions'],
+        reason: 'Contract activity gives the overview; raw logs and transactions provide exact evidence rows.',
+      },
+    ],
+    integration_notes: [
+      'Prefer public tools for normal agent flows; advanced tools are for debugging Portal coverage or exact block resolution.',
+      'Use network parameters in public APIs. Raw Portal dataset names are resolved internally.',
+      'Most query tools support timeframe or timestamp inputs, so clients rarely need to calculate block ranges themselves.',
+      'Use portal_resolve_entity or token_symbols on supported EVM tools instead of hardcoding entity identifiers in client code.',
+      'Raw query tools default to compact output. Use response_format: "full" only when the caller needs chain-specific raw fields.',
+      'Wallet investigations should start from fund_flow and investigation.pivots, then use raw tools only for evidence drill-down.',
+      'For chartable responses, read chart and tables metadata before inferring visual structure from raw arrays.',
+    ],
+    categories: groupToolsByCategory(tools),
+    tools,
+  }
+}
+
 export function registerSchemaResource(server: McpServer) {
+  server.resource('tool-guide', 'sqd://tools', async (uri) => {
+    return {
+      contents: [
+        {
+          uri: uri.href,
+          mimeType: 'application/json',
+          text: JSON.stringify(buildDeveloperToolGuide(), null, 2),
+        },
+      ],
+    }
+  })
+
+  server.resource(
+    'tool-guide-entry',
+    new ResourceTemplate('sqd://tools/{name}', { list: undefined }),
+    async (uri, { name }) => {
+      const toolName = Array.isArray(name) ? name[0] : name
+      const tool = getToolGuideEntry(toolName)
+      if (!tool) {
+        throw new Error(`Unknown Portal MCP tool "${toolName}". Read sqd://tools for the current tool guide.`)
+      }
+
+      return {
+        contents: [
+          {
+            uri: uri.href,
+            mimeType: 'application/json',
+            text: JSON.stringify(tool, null, 2),
+          },
+        ],
+      }
+    },
+  )
+
   // Resource: List all datasets
   server.resource('datasets', 'sqd://datasets', async (uri) => {
     const datasets = await getDatasets()

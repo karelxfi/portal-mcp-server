@@ -1,6 +1,5 @@
 #!/usr/bin/env tsx
 
-import { loadToolTestContext } from './tool-manifest.ts'
 import {
   assert,
   assertChatSurface,
@@ -10,6 +9,7 @@ import {
   connectTestClient,
   printSection,
 } from './test-helpers.ts'
+import { loadToolTestContext } from './tool-manifest.ts'
 
 type ConversationStep = {
   user: string
@@ -32,7 +32,10 @@ const SCENARIOS: ConversationScenario[] = [
         tool: 'portal_list_networks',
         args: () => ({ query: 'base', limit: 5 }),
         validate: (data) => {
-          assert(Array.isArray(data.items) && data.items.some((item: any) => item.network === 'base-mainnet'), 'Base discovery should include base-mainnet')
+          assert(
+            Array.isArray(data.items) && data.items.some((item: any) => item.network === 'base-mainnet'),
+            'Base discovery should include base-mainnet',
+          )
         },
       },
       {
@@ -57,8 +60,14 @@ const SCENARIOS: ConversationScenario[] = [
         tool: 'portal_get_time_series',
         args: () => ({ network: 'base', metric: 'transaction_count', duration: '1h', interval: '5m' }),
         validate: (data) => {
-          assert(Array.isArray(data.time_series) && data.time_series.length >= 12, 'Time series should return chart buckets')
-          assert(typeof data.answer === 'string' && data.answer.includes('Base'), 'Time series should include a concise natural-language answer')
+          assert(
+            Array.isArray(data.time_series) && data.time_series.length >= 12,
+            'Time series should return chart buckets',
+          )
+          assert(
+            typeof data.answer === 'string' && data.answer.includes('Base'),
+            'Time series should include a concise natural-language answer',
+          )
         },
       },
     ],
@@ -81,7 +90,10 @@ const SCENARIOS: ConversationScenario[] = [
         }),
         validate: (data) => {
           assert(data.display?.focus, 'OHLC should expose a user-facing focus label')
-          assert(data.next_steps?.actions?.some((action: any) => action.label === 'Show recent trades'), 'OHLC should offer recent-trade follow-up')
+          assert(
+            data.next_steps?.actions?.some((action: any) => action.label === 'Show recent trades'),
+            'OHLC should offer recent-trade follow-up',
+          )
           assert(Array.isArray(data.recent_trades), 'OHLC should include recent trades')
         },
       },
@@ -115,12 +127,44 @@ const SCENARIOS: ConversationScenario[] = [
         validate: (data) => {
           assert(data.overview?.vm === 'evm', 'Wallet summary should resolve EVM wallet')
           assert(data.next_steps?.actions?.length > 0, 'Wallet summary should expose next steps')
+          assert(data.investigation?.version === 'portal_investigation_v1', 'Wallet summary should include investigation guide')
+          assert(
+            Array.isArray(data.investigation?.follow_up_filters) && data.investigation.follow_up_filters.length > 0,
+            'Wallet summary should suggest follow-up filters',
+          )
+        },
+      },
+      {
+        user: 'trace suspicious USDC movement on Base and give me evidence pivots',
+        tool: 'portal_evm_query_token_transfers',
+        args: (context) => ({
+          network: 'base',
+          from_block: context.baseHead - 2_000,
+          to_block: context.baseHead,
+          token_symbols: ['USDC'],
+          include_token_info: true,
+          limit: 2,
+        }),
+        validate: (data) => {
+          assert(Array.isArray(data.items) && data.items.length > 0, 'Suspicious token trace should return transfer rows')
+          assert(
+            data.investigation?.pivots?.some((pivot: any) =>
+              ['from', 'to', 'token_address', 'transaction_hash'].includes(String(pivot.field)),
+            ),
+            'Suspicious token trace should expose transfer pivots',
+          )
         },
       },
       {
         user: 'now show me the raw recent transactions too',
         tool: 'portal_evm_query_transactions',
-        args: (context) => ({ network: 'base', from_block: context.baseHead - 150, to_block: context.baseHead, limit: 5, field_preset: 'minimal' }),
+        args: (context) => ({
+          network: 'base',
+          from_block: context.baseHead - 150,
+          to_block: context.baseHead,
+          limit: 5,
+          field_preset: 'minimal',
+        }),
         validate: (data) => {
           assert(Array.isArray(data.items) && data.items.length === 5, 'Raw tx follow-up should return rows')
         },
@@ -143,7 +187,10 @@ const SCENARIOS: ConversationScenario[] = [
           field_preset: 'minimal',
         }),
         validate: (data) => {
-          assert(data.items?.[0]?.hash === '0x851bad0415758075a1eb86776749c829b866d43179c57c3e4a4b9359a0358231', 'EIP-2930 lookup should return the known first type 0x1 tx')
+          assert(
+            data.items?.[0]?.hash === '0x851bad0415758075a1eb86776749c829b866d43179c57c3e4a4b9359a0358231',
+            'EIP-2930 lookup should return the known first type 0x1 tx',
+          )
           assert(data._execution?.scan_order === 'earliest', 'EIP-2930 lookup should scan earliest first')
         },
       },
@@ -152,17 +199,20 @@ const SCENARIOS: ConversationScenario[] = [
         tool: 'portal_evm_query_logs',
         args: (context) => ({
           network: 'base',
-          from_block: context.baseHead - 2_000,
+          from_block: context.baseHead - 200,
           to_block: context.baseHead,
           addresses: [context.usdcBase],
           event: 'transfer',
-          scan_order: 'earliest',
+          scan_order: 'latest',
           limit: 1,
           field_preset: 'minimal',
         }),
         validate: (data) => {
-          assert(Array.isArray(data.items) && data.items.length === 1, 'Event alias query should return one Transfer log')
-          assert(data._execution?.scan_order === 'earliest', 'Event alias query should preserve earliest scan metadata')
+          assert(
+            Array.isArray(data.items) && data.items.length === 1,
+            'Event alias query should return one Transfer log',
+          )
+          assert(data._execution?.scan_order === 'latest', 'Event alias query should preserve latest scan metadata')
         },
       },
       {
@@ -176,7 +226,10 @@ const SCENARIOS: ConversationScenario[] = [
           scan_order: 'earliest',
         }),
         validate: (data) => {
-          assert(data.items?.[0]?.deployed_contract_address, 'Deployment lookup should return deployed contract address')
+          assert(
+            data.items?.[0]?.deployed_contract_address,
+            'Deployment lookup should return deployed contract address',
+          )
           assert(data.items?.[0]?.transaction_hash, 'Deployment lookup should return parent transaction hash')
           assert(data.items?.[0]?.deployer, 'Deployment lookup should return deployer')
         },
@@ -188,7 +241,7 @@ const SCENARIOS: ConversationScenario[] = [
           network: 'base',
           from_block: context.baseHead - 5_000,
           to_block: context.baseHead,
-          to_addresses: [context.usdcBase],
+          to_token_symbols: ['USDC'],
           method: 'transfer',
           order_by: 'gas_used_desc',
           scan_order: 'latest',
@@ -198,7 +251,10 @@ const SCENARIOS: ConversationScenario[] = [
         }),
         validate: (data) => {
           assert(Array.isArray(data.items) && data.items.length > 0, 'Ranked transaction query should return rows')
-          assert(data._execution?.order_by === 'gas_used_desc', 'Ranked transaction query should expose order_by metadata')
+          assert(
+            data._execution?.order_by === 'gas_used_desc',
+            'Ranked transaction query should expose order_by metadata',
+          )
         },
       },
     ],
@@ -206,6 +262,15 @@ const SCENARIOS: ConversationScenario[] = [
   {
     name: 'Hyperliquid User',
     steps: [
+      {
+        user: 'normalize bitcoin for hyperliquid and then use it as a coin filter',
+        tool: 'portal_resolve_entity',
+        args: () => ({ kind: 'hyperliquid_coin', query: 'bitcoin', limit: 3 }),
+        validate: (data) => {
+          assert(data.matches?.[0]?.coin === 'BTC', 'Hyperliquid coin resolver should normalize bitcoin to BTC')
+          assert(data.suggested_arguments?.coin?.includes('BTC'), 'Resolver should suggest Hyperliquid coin filters')
+        },
+      },
       {
         user: 'who traded the most on hyperliquid lately',
         tool: 'portal_hyperliquid_get_analytics',
@@ -221,6 +286,51 @@ const SCENARIOS: ConversationScenario[] = [
         validate: (data) => {
           assert(Array.isArray(data.candles) || Array.isArray(data.ohlc), 'Hyperliquid OHLC should return candles')
           assert(data.next_steps?.actions?.length > 0, 'Hyperliquid OHLC should expose next steps')
+        },
+      },
+      {
+        user: 'show me raw BTC fills too',
+        tool: 'portal_hyperliquid_query_fills',
+        args: () => ({ network: 'hyperliquid-fills', timeframe: '1h', coin: ['BTC'], limit: 2 }),
+        validate: (data) => {
+          assert(Array.isArray(data.items) && data.items.length > 0, 'Hyperliquid BTC fill query should return rows')
+          assert(
+            data.items.every((item: any) => String(item.coin || '').toUpperCase() === 'BTC'),
+            'Hyperliquid BTC fill query should preserve coin filter',
+          )
+        },
+      },
+    ],
+  },
+  {
+    name: 'Non-EVM Investigator',
+    steps: [
+      {
+        user: 'show me solana program instructions and keep transaction context',
+        tool: 'portal_solana_query_instructions',
+        args: (context) => ({
+          network: 'solana-mainnet',
+          from_block: context.solProgramFromBlock,
+          to_block: context.solProgramToBlock,
+          program_id: context.tokenProgram,
+          include_transaction: true,
+          limit: 2,
+        }),
+        validate: (data) => {
+          assert(Array.isArray(data.items) && data.items.length > 0, 'Solana program query should return rows')
+          assert(
+            data._execution !== undefined,
+            'Solana program query should describe the window',
+          )
+        },
+      },
+      {
+        user: 'what happened around this bitcoin address recently',
+        tool: 'portal_get_wallet_summary',
+        args: (context) => ({ network: 'bitcoin-mainnet', address: context.btcAddress, timeframe: '24h' }),
+        validate: (data) => {
+          assert(data.overview?.vm === 'bitcoin', 'Bitcoin address flow should use the Bitcoin wallet summary path')
+          assert(data.bitcoin?.outputs_count !== undefined, 'Bitcoin address flow should include output counts')
         },
       },
     ],
@@ -249,8 +359,14 @@ async function main() {
 
           assert(!result.isError, `${scenario.name} step '${step.user}' should not error`)
           assertChatSurface(data, `${scenario.name} -> ${step.tool}`)
-          assert(!String(data.display?.title || '').includes('portal_'), `${scenario.name} display title should stay product-friendly`)
-          assert(!String(data.display?.network || '').includes('-mainnet'), `${scenario.name} display network should stay humanized`)
+          assert(
+            !String(data.display?.title || '').includes('portal_'),
+            `${scenario.name} display title should stay product-friendly`,
+          )
+          assert(
+            !String(data.display?.network || '').includes('-mainnet'),
+            `${scenario.name} display network should stay humanized`,
+          )
 
           if (step.validate) {
             step.validate(data)

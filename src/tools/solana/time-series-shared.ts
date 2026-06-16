@@ -1,7 +1,7 @@
 import { validateBlockRange } from '../../cache/datasets.js'
 import { PORTAL_URL } from '../../constants/index.js'
 import { portalFetchStream, portalFetchStreamVisit } from '../../helpers/fetch.js'
-import { formatDuration, formatNumber, formatTimestamp } from '../../helpers/formatting.js'
+import { formatDuration, formatNumber, formatTimestamp } from '../../helpers/format.js'
 import { hashString53 } from '../../helpers/hash.js'
 import { parseTimeframeToSeconds, resolveTimeframeOrBlocks, type ResolvedBlockWindow, type TimestampInput } from '../../helpers/timeframe.js'
 
@@ -52,7 +52,7 @@ interface ComputeSolanaTimeSeriesOptions {
   dataset: string
   metric: SolanaTimeSeriesMetric
   interval: '5m' | '15m' | '1h' | '6h' | '1d'
-  duration: '1h' | '6h' | '24h' | '7d'
+  duration: string
   trimIncompleteLastBucket?: boolean
   from_timestamp?: TimestampInput
   to_timestamp?: TimestampInput
@@ -75,21 +75,21 @@ type BucketData = {
 }
 
 const CHUNK_SIZE_BY_METRIC: Record<SolanaTimeSeriesMetric, number> = {
-  tps: 5000,
-  transaction_count: 20000,
+  tps: 1000,
+  transaction_count: 1000,
   unique_wallets: 4000,
   avg_fee: 2500,
   success_rate: 2500,
-  slots_per_hour: 5000,
+  slots_per_hour: 1000,
 }
 
 const CONCURRENCY_BY_METRIC: Record<SolanaTimeSeriesMetric, number> = {
-  tps: 2,
-  transaction_count: 3,
+  tps: 8,
+  transaction_count: 8,
   unique_wallets: 3,
   avg_fee: 2,
   success_rate: 2,
-  slots_per_hour: 2,
+  slots_per_hour: 8,
 }
 
 const UNIT_BY_METRIC: Record<SolanaTimeSeriesMetric, string> = {

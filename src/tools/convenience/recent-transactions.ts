@@ -8,7 +8,7 @@ import { ActionableError, createUnsupportedChainError } from '../../helpers/erro
 import { TRANSACTION_FIELD_PRESETS } from '../../helpers/field-presets.js'
 import { portalFetchRecentRecords } from '../../helpers/fetch.js'
 import { formatResult } from '../../helpers/format.js'
-import { formatTimestamp, formatTransactionFields } from '../../helpers/formatting.js'
+import { formatTimestamp, formatTransactionFields } from '../../helpers/format.js'
 import {
   normalizeBitcoinTransactionResult,
   normalizeEvmTransactionResult,
@@ -17,7 +17,7 @@ import {
 } from '../../helpers/normalized-results.js'
 import { buildPaginationInfo, decodeCursor, encodeCursor, paginateAscendingItems } from '../../helpers/pagination.js'
 import { buildChronologicalPageOrdering, buildQueryCoverage, buildQueryFreshness } from '../../helpers/result-metadata.js'
-import { getTimestampWindowNotices, resolveTimeframeOrBlocks, type ResolvedBlockWindow, type TimestampInput } from '../../helpers/timeframe.js'
+import { describeTimeWindowInput, getTimestampWindowNotices, resolveTimeframeOrBlocks, type ResolvedBlockWindow, type TimestampInput } from '../../helpers/timeframe.js'
 import { buildExecutionMetadata, buildToolDescription } from '../../helpers/tool-ux.js'
 import { getQueryExamples, getValidationNotices, normalizeAddresses, validateQuerySize } from '../../helpers/validation.js'
 import { fetchRecentHyperliquidFillBlocks } from '../hyperliquid/fill-stream.js'
@@ -124,7 +124,7 @@ function sortRecentTransactions(items: RecentTransactionItem[]): RecentTransacti
 }
 
 function describeRecentWindow(rangeLabel: string) {
-  return rangeLabel.includes('->') ? rangeLabel : (/^\d+$/.test(rangeLabel) ? `last ${rangeLabel} blocks` : `last ${rangeLabel}`)
+  return rangeLabel.includes('->') ? rangeLabel : (/^\d+$/.test(rangeLabel) ? `last ${rangeLabel} blocks` : describeTimeWindowInput(rangeLabel))
 }
 
 function buildRecentMessage(prefix: string, rangeLabel: string, hasMore: boolean, limit: number) {

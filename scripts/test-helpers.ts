@@ -13,6 +13,8 @@ export type ToolCallResult = {
   result: any
   text: string
   data?: any
+  structuredContent?: Record<string, any>
+  dataSource?: 'structuredContent' | 'text'
   isError: boolean
   elapsedMs: number
   attempts: number
@@ -54,6 +56,22 @@ export function getText(result: any): string {
   return result?.content?.map((entry: any) => entry?.text || '').join('\n') || ''
 }
 
+export function getStructuredContent(result: any): Record<string, any> | undefined {
+  const structuredContent = result?.structuredContent
+  return typeof structuredContent === 'object' && structuredContent !== null && !Array.isArray(structuredContent)
+    ? structuredContent
+    : undefined
+}
+
+export function parseToolResultData(result: any): { data: any; source: 'structuredContent' | 'text' } {
+  const structuredContent = getStructuredContent(result)
+  if (structuredContent) {
+    return { data: structuredContent, source: 'structuredContent' }
+  }
+
+  return { data: extractJson(getText(result)), source: 'text' }
+}
+
 export function extractJson(text: string): any {
   const jsonStart = text.search(/[\[{]/)
   if (jsonStart === -1) {
@@ -78,15 +96,147 @@ export function isFriendlyDisplayTitle(title: unknown): boolean {
   return typeof title === 'string' && title.length > 0 && !title.includes('portal_')
 }
 
+function assertRecord(value: unknown, label: string): asserts value is Record<string, any> {
+  assert(typeof value === 'object' && value !== null && !Array.isArray(value), `${label} should be an object`)
+}
+
+function assertNonEmptyString(value: unknown, label: string) {
+  assert(typeof value === 'string' && value.trim().length > 0, `${label} should be a non-empty string`)
+}
+
+function assertStringArray(value: unknown, label: string, options?: { nonEmpty?: boolean }) {
+  assert(Array.isArray(value), `${label} should be an array`)
+  if (options?.nonEmpty) {
+    assert(value.length > 0, `${label} should not be empty`)
+  }
+  assert(value.every((item) => typeof item === 'string' && item.length > 0), `${label} should contain only non-empty strings`)
+}
+
+function assertSafeExecutableArguments(value: unknown, label: string) {
+  assertRecord(value, label)
+  const text = JSON.stringify(value)
+  assert(!/\bhttps?:\/\//i.test(text), `${label} should not contain raw URLs`)
+  assert(!/"[^"]*(secret|token|api[_-]?key|authorization|password|cookie|url)[^"]*"\s*:/i.test(text), `${label} should not expose secret-like argument keys`)
+}
+
+function assertFollowUpActions(value: unknown, label: string, options?: { requireExecutableArguments?: boolean }) {
+  assert(Array.isArray(value), `${label} should be an array`)
+  assert(value.length <= 6, `${label} should include at most 6 actions`)
+
+  value.forEach((action, index) => {
+    assertRecord(action, `${label}[${index}]`)
+    assertNonEmptyString(action.label, `${label}[${index}].label`)
+    assert(typeof action.executable === 'boolean', `${label}[${index}].executable should be boolean`)
+
+    if (action.executable) {
+      assertNonEmptyString(action.tool, `${label}[${index}].tool`)
+      if (options?.requireExecutableArguments ?? true) {
+        assertSafeExecutableArguments(action.arguments, `${label}[${index}].arguments`)
+      } else if (action.arguments !== undefined) {
+        assertSafeExecutableArguments(action.arguments, `${label}[${index}].arguments`)
+      }
+      if (action.cursor_path !== undefined) {
+        assertNonEmptyString(action.cursor_path, `${label}[${index}].cursor_path`)
+      }
+    } else {
+      assert(action.tool === undefined, `${label}[${index}] should omit tool when not executable`)
+      assert(action.arguments === undefined, `${label}[${index}] should omit arguments when not executable`)
+    }
+  })
+}
+
 export function assertChatSurface(parsed: any, label: string, options?: { expectNextSteps?: boolean }) {
-  assert(typeof parsed?.answer === 'string' && parsed.answer.length > 0, `${label} should include answer`)
-  assert(parsed?.display !== undefined, `${label} should include display`)
+  const requiredTopLevelKeys = [
+    'answer',
+    'display',
+    'next_steps',
+    'investigation',
+    '_llm',
+    '_freshness',
+    '_pagination',
+    '_coverage',
+    '_ordering',
+    '_tool_contract',
+    '_execution',
+  ]
+
+  assertRecord(parsed, `${label} response`)
+  for (const key of requiredTopLevelKeys) {
+    assert(Object.prototype.hasOwnProperty.call(parsed, key), `${label} should include ${key}`)
+  }
+
+  assertNonEmptyString(parsed.answer, `${label} answer`)
+  assertRecord(parsed.display, `${label} display`)
+  assertRecord(parsed.next_steps, `${label} next_steps`)
+  assertFollowUpActions(parsed.next_steps.actions, `${label} next_steps.actions`)
   assert(isFriendlyDisplayTitle(parsed?.display?.title), `${label} display.title should be product-friendly`)
   assert(!hasLegacyWording(JSON.stringify(parsed?.display ?? {})), `${label} display should avoid legacy wording`)
   assert(!hasLegacyWording(String(parsed?.answer ?? '')), `${label} answer should avoid legacy wording`)
 
+  assertRecord(parsed._tool_contract, `${label} _tool_contract`)
+  assertNonEmptyString(parsed._tool_contract.name, `${label} _tool_contract.name`)
+  assertNonEmptyString(parsed._tool_contract.intent, `${label} _tool_contract.intent`)
+  assert(Array.isArray(parsed._tool_contract.vm), `${label} _tool_contract.vm should be an array`)
+
+  assertRecord(parsed._freshness, `${label} _freshness`)
+  assertNonEmptyString(parsed._freshness.kind, `${label} _freshness.kind`)
+  assertRecord(parsed._pagination, `${label} _pagination`)
+  if (parsed._pagination.has_more !== undefined) {
+    assert(typeof parsed._pagination.has_more === 'boolean', `${label} _pagination.has_more should be boolean`)
+  }
+  assertRecord(parsed._coverage, `${label} _coverage`)
+  assertNonEmptyString(parsed._coverage.kind, `${label} _coverage.kind`)
+  if (parsed._coverage.window_complete !== undefined) {
+    assert(typeof parsed._coverage.window_complete === 'boolean', `${label} _coverage.window_complete should be boolean`)
+  }
+  if (parsed._coverage.result_complete !== undefined) {
+    assert(typeof parsed._coverage.result_complete === 'boolean', `${label} _coverage.result_complete should be boolean`)
+  }
+  assertRecord(parsed._ordering, `${label} _ordering`)
+  assertNonEmptyString(parsed._ordering.kind, `${label} _ordering.kind`)
+  assertRecord(parsed._execution, `${label} _execution`)
+  assert(
+    parsed._execution.kind !== undefined ||
+      parsed._execution.range_kind !== undefined ||
+      parsed._execution.scan_window !== undefined ||
+      parsed._execution.timestamp !== undefined ||
+      parsed._execution.resolution !== undefined,
+    `${label} _execution should describe either its query window or why execution metadata is not applicable`,
+  )
+
+  assertRecord(parsed.investigation, `${label} investigation`)
+  assert(parsed.investigation.version === 'portal_investigation_v1', `${label} should include investigation guide`)
+  assertNonEmptyString(parsed.investigation.status, `${label} investigation.status`)
+  assertRecord(parsed.investigation.evidence, `${label} investigation.evidence`)
+  assertNonEmptyString(
+    parsed.investigation.evidence.primary_path,
+    `${label} investigation guide should point to the primary evidence path`,
+  )
+  assert(Array.isArray(parsed.investigation.pivots), `${label} investigation.pivots should be an array`)
+  assert(
+    Array.isArray(parsed.investigation.follow_up_filters),
+    `${label} investigation guide should expose follow-up filters`,
+  )
+  assert(Array.isArray(parsed.investigation.limitations), `${label} investigation.limitations should be an array`)
+
+  assertRecord(parsed._llm, `${label} _llm`)
+  assert(parsed._llm.version === 'portal_llm_v1', `${label} _llm.version should be portal_llm_v1`)
+  assertNonEmptyString(parsed._llm.primary_path, `${label} _llm.primary_path`)
+  assertNonEmptyString(parsed._llm.primary_kind, `${label} _llm.primary_kind`)
+  assertStringArray(parsed._llm.answer_sequence, `${label} _llm.answer_sequence`, { nonEmpty: true })
+  assert(Array.isArray(parsed._llm.sections), `${label} _llm.sections should be an array`)
+  assert(Array.isArray(parsed._llm.recommended_views), `${label} _llm.recommended_views should be an array`)
+  if (parsed._llm.follow_up?.actions !== undefined) {
+    assertFollowUpActions(parsed._llm.follow_up.actions, `${label} _llm.follow_up.actions`, {
+      requireExecutableArguments: false,
+    })
+  }
+
   if (options?.expectNextSteps) {
-    assert(parsed?.next_steps !== undefined, `${label} should include next_steps`)
+    assert(
+      Array.isArray(parsed?.next_steps?.actions) && parsed.next_steps.actions.length > 0,
+      `${label} should include actionable next_steps`,
+    )
   }
 }
 
@@ -148,12 +298,15 @@ export async function callToolWithRetry(
         continue
       }
 
-      const data = !isError && options?.parseJson !== false ? extractJson(text) : undefined
+      const structuredContent = getStructuredContent(result)
+      const parsedData = !isError && options?.parseJson !== false ? parseToolResultData(result) : undefined
 
       return {
         result,
         text,
-        data,
+        data: parsedData?.data,
+        structuredContent,
+        dataSource: parsedData?.source,
         isError,
         elapsedMs,
         attempts: attempt,

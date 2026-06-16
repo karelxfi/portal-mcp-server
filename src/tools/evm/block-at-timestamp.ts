@@ -58,13 +58,17 @@ export function registerBlockAtTimestampTool(server: McpServer) {
             result_complete: true,
             resolution: result.resolution,
           },
-          execution: buildExecutionMetadata({
-            notes: [
-              result.resolution === 'estimated'
-                ? 'Resolved near the indexed head using the latest known block timestamp.'
-                : 'Resolved directly against indexed timestamp data.',
-            ],
-          }),
+          execution: {
+            ...buildExecutionMetadata({
+              notes: [
+                result.resolution === 'estimated'
+                  ? 'Resolved near the indexed head using the latest known block timestamp.'
+                  : 'Resolved directly against indexed timestamp data.',
+              ],
+            }),
+            timestamp: result.timestamp,
+            resolution: result.resolution,
+          },
           metadata: {
             network: dataset,
           },

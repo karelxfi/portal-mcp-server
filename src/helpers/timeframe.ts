@@ -6,7 +6,7 @@ import { getBlockHead } from '../cache/datasets.js'
 import { PORTAL_URL } from '../constants/index.js'
 import { detectChainType } from './chain.js'
 import { ActionableError } from './errors.js'
-import { formatTimestamp } from './formatting.js'
+import { formatTimestamp } from './format.js'
 import { portalFetch, portalFetchStream } from './fetch.js'
 
 export type Timeframe = '1h' | '6h' | '12h' | '24h' | '3d' | '7d' | '14d' | '30d'
@@ -83,12 +83,22 @@ export interface BlockAtTimestampResult extends ParsedTimestampInput {
   estimated_block_time_seconds?: number
 }
 
+export type EstimatedTimeframeResolution = {
+  resolution: 'estimated'
+  dataset: string
+  from_block: number
+  to_block: number
+  estimated_block_time_seconds: number
+  reason: 'timestamp_endpoint_unsupported' | 'timestamp_endpoint_down' | 'timestamp_endpoint_unavailable'
+}
+
 export interface ResolvedBlockWindow {
   from_block: number
   to_block: number
   range_kind: 'timeframe' | 'block_range' | 'timestamp_range'
   from_lookup?: BlockAtTimestampResult
   to_lookup?: BlockAtTimestampResult
+  estimated_timeframe?: EstimatedTimeframeResolution
 }
 
 export function estimateBlockTime(dataset: string, chainType: string): number {
@@ -99,12 +109,27 @@ export function estimateBlockTime(dataset: string, chainType: string): number {
   return BLOCK_TIME_ESTIMATES[chainType] ?? 12
 }
 
-function estimateFromBlock(latestBlock: number, seconds: number, dataset: string, chainType: string) {
+function estimateFromBlock(
+  latestBlock: number,
+  seconds: number,
+  dataset: string,
+  chainType: string,
+  reason: EstimatedTimeframeResolution['reason'],
+) {
   const blockTime = estimateBlockTime(dataset, chainType)
   const blockCount = Math.floor(seconds / blockTime)
+  const fromBlock = Math.max(0, latestBlock - blockCount + 1)
   return {
-    from_block: Math.max(0, latestBlock - blockCount + 1),
+    from_block: fromBlock,
     to_block: latestBlock,
+    estimated_timeframe: {
+      resolution: 'estimated' as const,
+      dataset,
+      from_block: fromBlock,
+      to_block: latestBlock,
+      estimated_block_time_seconds: blockTime,
+      reason,
+    },
   }
 }
 
@@ -144,23 +169,140 @@ function markTimestampEndpointUp(dataset: string): void {
  * Parse timeframe string to seconds
  */
 export function parseTimeframeToSeconds(timeframe: string): number {
-  const match = timeframe.match(/^(\d+)([mhd])$/)
-  if (!match) {
-    throw new Error(`Invalid timeframe format: ${timeframe}. Use format like "1h", "24h", "7d"`)
+  const parsed = parseNaturalDuration(timeframe)
+  if (!parsed) {
+    throw new Error(
+      `Invalid timeframe format: ${timeframe}. Use compact durations like "30m", "1h", "24h", or natural phrases like "past 30 minutes", "in the past 1h", or "in last 38 mins".`,
+    )
   }
 
-  const value = parseInt(match[1])
-  const unit = match[2]
+  return parsed.seconds
+}
 
-  switch (unit) {
-    case 'm':
-      return value * 60
-    case 'h':
-      return value * 3600
-    case 'd':
-      return value * 86400
+type ParsedDuration = {
+  seconds: number
+  canonical: string
+}
+
+type DurationUnitInfo = {
+  seconds: number
+  canonical: 's' | 'm' | 'h' | 'd' | 'w' | 'mo' | 'y'
+}
+
+const DURATION_UNITS: Record<string, DurationUnitInfo> = {
+  s: { seconds: 1, canonical: 's' },
+  sec: { seconds: 1, canonical: 's' },
+  secs: { seconds: 1, canonical: 's' },
+  second: { seconds: 1, canonical: 's' },
+  seconds: { seconds: 1, canonical: 's' },
+  m: { seconds: 60, canonical: 'm' },
+  min: { seconds: 60, canonical: 'm' },
+  mins: { seconds: 60, canonical: 'm' },
+  minute: { seconds: 60, canonical: 'm' },
+  minutes: { seconds: 60, canonical: 'm' },
+  h: { seconds: 3600, canonical: 'h' },
+  hr: { seconds: 3600, canonical: 'h' },
+  hrs: { seconds: 3600, canonical: 'h' },
+  hour: { seconds: 3600, canonical: 'h' },
+  hours: { seconds: 3600, canonical: 'h' },
+  d: { seconds: 86400, canonical: 'd' },
+  day: { seconds: 86400, canonical: 'd' },
+  days: { seconds: 86400, canonical: 'd' },
+  w: { seconds: 604800, canonical: 'w' },
+  wk: { seconds: 604800, canonical: 'w' },
+  wks: { seconds: 604800, canonical: 'w' },
+  week: { seconds: 604800, canonical: 'w' },
+  weeks: { seconds: 604800, canonical: 'w' },
+  mo: { seconds: 2592000, canonical: 'mo' },
+  mos: { seconds: 2592000, canonical: 'mo' },
+  month: { seconds: 2592000, canonical: 'mo' },
+  months: { seconds: 2592000, canonical: 'mo' },
+  y: { seconds: 31536000, canonical: 'y' },
+  yr: { seconds: 31536000, canonical: 'y' },
+  yrs: { seconds: 31536000, canonical: 'y' },
+  year: { seconds: 31536000, canonical: 'y' },
+  years: { seconds: 31536000, canonical: 'y' },
+}
+
+function normalizeDurationText(input: string): string {
+  return input
+    .trim()
+    .toLowerCase()
+    .replace(/[,_]/g, ' ')
+    .replace(/[–—]/g, '-')
+    .replace(/\s+/g, ' ')
+    .replace(/\.$/, '')
+}
+
+function getDurationExpression(input: string): string {
+  let normalized = normalizeDurationText(input)
+
+  const rangeMatch = normalized.match(
+    /\b(?:past|last|previous)\s+((?:\d+(?:\.\d+)?|a|an|one|half)(?:\s+an?)?\s*[a-z.]+|[a-z.]+)\b/,
+  )
+  if (rangeMatch) {
+    return rangeMatch[1]
+  }
+
+  normalized = normalized
+    .replace(/\s+ago$/, '')
+    .replace(/^(?:for|over|during|within)\s+(?:the\s+)?/, '')
+    .replace(/^the\s+/, '')
+
+  return normalized
+}
+
+function parseDurationValue(valueText: string): number {
+  switch (valueText) {
+    case 'a':
+    case 'an':
+    case 'one':
+      return 1
+    case 'half':
+      return 0.5
     default:
-      throw new Error(`Invalid timeframe unit: ${unit}`)
+      return Number(valueText)
+  }
+}
+
+function formatCanonicalDuration(seconds: number, fallbackUnit: DurationUnitInfo['canonical']): string {
+  const units: Array<[DurationUnitInfo['canonical'], number]> = [
+    ['y', 31536000],
+    ['mo', 2592000],
+    ['w', 604800],
+    ['d', 86400],
+    ['h', 3600],
+    ['m', 60],
+    ['s', 1],
+  ]
+
+  const exact = units.find(([, unitSeconds]) => seconds % unitSeconds === 0)
+  if (exact) return `${seconds / exact[1]}${exact[0]}`
+
+  const fallbackSeconds = Object.values(DURATION_UNITS).find((unit) => unit.canonical === fallbackUnit)?.seconds ?? 1
+  const value = seconds / fallbackSeconds
+  return `${Number.isInteger(value) ? value : Number(value.toFixed(2))}${fallbackUnit}`
+}
+
+function parseNaturalDuration(input: string): ParsedDuration | undefined {
+  const expression = getDurationExpression(input)
+  const durationMatch = expression.match(
+    /^(?:(\d+(?:\.\d+)?)|(a|an|one|half))?(?:\s+an?)?\s*(s|secs?|seconds?|m|mins?|minutes?|h|hrs?|hours?|d|days?|w|wks?|weeks?|mo|mos|months?|y|yrs?|years?)\.?$/,
+  )
+  if (!durationMatch) {
+    return undefined
+  }
+
+  const value = parseDurationValue(durationMatch[1] ?? durationMatch[2] ?? '1')
+  const unit = DURATION_UNITS[durationMatch[3]]
+  if (!Number.isFinite(value) || value <= 0 || !unit) {
+    return undefined
+  }
+
+  const seconds = Math.max(1, Math.round(value * unit.seconds))
+  return {
+    seconds,
+    canonical: formatCanonicalDuration(seconds, unit.canonical),
   }
 }
 
@@ -306,25 +448,15 @@ function parseRelativeTimestamp(input: string, nowUnix: number): ParsedTimestamp
     }
   }
 
-  const relativeMatch = normalized.match(/^(\d+)\s*([smhdw])(?:\s+ago)?$/)
-  if (!relativeMatch) {
+  const duration = parseNaturalDuration(normalized)
+  if (!duration) {
     return undefined
   }
 
-  const value = parseInt(relativeMatch[1], 10)
-  const unit = relativeMatch[2]
-  const secondsPerUnit: Record<string, number> = {
-    s: 1,
-    m: 60,
-    h: 3600,
-    d: 86400,
-    w: 604800,
-  }
-
   return {
-    timestamp: Math.max(0, nowUnix - value * secondsPerUnit[unit]),
+    timestamp: Math.max(0, nowUnix - duration.seconds),
     source: 'relative',
-    normalized_input: `${value}${unit} ago`,
+    normalized_input: `${duration.canonical} ago`,
   }
 }
 
@@ -371,8 +503,26 @@ export function parseTimestampInput(input: string | number, nowUnix: number = Ma
   }
 
   throw new Error(
-    `Invalid timestamp input: ${trimmed}. Use Unix seconds, Unix milliseconds, ISO datetime, or relative input like "1h ago".`,
+    `Invalid timestamp input: ${trimmed}. Use Unix seconds, Unix milliseconds, ISO datetime, or relative input like "1h ago", "past 30 minutes", "in the past 1h", or "in last 38 mins".`,
   )
+}
+
+export function describeTimeWindowInput(input: string): string {
+  const trimmed = input.trim()
+  const normalized = trimmed.toLowerCase().replace(/\s+/g, ' ')
+
+  const inPastMatch = normalized.match(/^in\s+(?:the\s+)?past\s+(.+)$/)
+  if (inPastMatch) return `the past ${inPastMatch[1]}`
+
+  const inLastMatch = normalized.match(/^in\s+last\s+(.+)$/)
+  if (inLastMatch) return `the last ${inLastMatch[1]}`
+
+  const inPreviousMatch = normalized.match(/^in\s+(?:the\s+)?previous\s+(.+)$/)
+  if (inPreviousMatch) return `the previous ${inPreviousMatch[1]}`
+
+  if (/^(?:past|last|previous)\s+/.test(normalized)) return `the ${trimmed}`
+
+  return `last ${trimmed}`
 }
 
 export async function resolveBlockAtTimestamp(dataset: string, input: string | number): Promise<BlockAtTimestampResult> {
@@ -441,9 +591,9 @@ export async function resolveTimeframeOrBlocks(params: {
     throw new ActionableError(
       "Use either timeframe, block numbers, or timestamps for the query window.",
       [
-        "Use timeframe for relative presets like '1h' or '7d'.",
+        "Use timeframe for relative presets like '1h', 'past 30 minutes', or 'in last 38 mins'.",
         "Use from_block/to_block for exact block windows.",
-        "Use from_timestamp/to_timestamp for natural time windows like '1h ago' or ISO datetimes.",
+        "Use from_timestamp/to_timestamp for natural time windows like '1h ago', 'past 30 minutes', or ISO datetimes.",
       ],
       {
         timeframe,
@@ -461,13 +611,15 @@ export async function resolveTimeframeOrBlocks(params: {
     const chainType = detectChainType(dataset)
     const seconds = parseTimeframeToSeconds(timeframe)
 
-    const useEstimation =
-      chainType === 'hyperliquidReplicaCmds' ||
-      isTimestampEndpointDown(dataset)
+    const estimationReason = chainType === 'hyperliquidReplicaCmds'
+      ? 'timestamp_endpoint_unsupported'
+      : isTimestampEndpointDown(dataset)
+        ? 'timestamp_endpoint_down'
+        : undefined
 
-    if (useEstimation) {
+    if (estimationReason) {
       return {
-        ...estimateFromBlock(latestBlock, seconds, dataset, chainType),
+        ...estimateFromBlock(latestBlock, seconds, dataset, chainType, estimationReason),
         range_kind: 'timeframe',
       }
     }
@@ -500,7 +652,7 @@ export async function resolveTimeframeOrBlocks(params: {
       // Cache the failure so subsequent calls skip straight to estimation
       markTimestampEndpointDown(dataset)
       return {
-        ...estimateFromBlock(latestBlock, seconds, dataset, chainType),
+        ...estimateFromBlock(latestBlock, seconds, dataset, chainType, 'timestamp_endpoint_unavailable'),
         range_kind: 'timeframe',
       }
     }
@@ -557,6 +709,18 @@ export function getTimestampWindowNotices(window: unknown): string[] {
   const typedWindow = (window && typeof window === 'object' ? window : {}) as {
     from_lookup?: BlockAtTimestampResult
     to_lookup?: BlockAtTimestampResult
+    estimated_timeframe?: EstimatedTimeframeResolution
+  }
+
+  if (typedWindow.estimated_timeframe?.resolution === 'estimated') {
+    const reason = {
+      timestamp_endpoint_unsupported: 'the timestamp endpoint is not supported for this network',
+      timestamp_endpoint_down: 'the timestamp endpoint was recently unavailable for this network',
+      timestamp_endpoint_unavailable: 'the exact timestamp lookup failed for this network',
+    }[typedWindow.estimated_timeframe.reason]
+    notices.push(
+      `The timeframe block window was estimated as blocks ${typedWindow.estimated_timeframe.from_block}-${typedWindow.estimated_timeframe.to_block} using a ${typedWindow.estimated_timeframe.estimated_block_time_seconds}s block-time estimate because ${reason}.`,
+    )
   }
 
   if (typedWindow.from_lookup?.resolution === 'estimated') {
@@ -595,6 +759,9 @@ TIMEFRAME EXAMPLES:
   - "24h" = last 24 hours
   - "7d" = last 7 days
   - "1h" = last hour
+  - "past 30 minutes" = last 30 minutes
+  - "in the past 1h" = last hour
+  - "in last 38 mins" = last 38 minutes
 
-Supported: 1h, 6h, 12h, 24h, 3d, 7d, 14d, 30d`
+Supported: compact forms like 30m/1h/7d and natural phrases like "past 30 minutes", "last hour", and "in last 38 mins"`
 }

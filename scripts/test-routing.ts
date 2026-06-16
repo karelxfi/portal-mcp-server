@@ -4,9 +4,9 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 
 import { getToolContract } from '../src/helpers/tool-ux.ts'
-import { LEGACY_TOOL_NAMES } from './tool-manifest.ts'
 import { ROUTING_EVAL_CASES } from './routing-manifest.ts'
 import { assert } from './test-helpers.ts'
+import { LEGACY_TOOL_NAMES } from './tool-manifest.ts'
 
 type ListedTool = {
   name: string
@@ -99,9 +99,43 @@ const EVM_NETWORK_HINTS = new Set([
 ])
 
 const DEBUG_HINTS = new Set(['advanced', 'debug', 'direct', 'directly', 'exact', 'exactly', 'manual', 'raw'])
-const CHART_HINTS = new Set(['bucket', 'buckets', 'candle', 'candles', 'chart', 'graph', 'ohlc', 'plot', 'series', 'trend', 'trends'])
-const SUMMARY_HINTS = new Set(['analytics', 'big', 'health', 'healthy', 'overview', 'picture', 'snapshot', 'summarize', 'summary'])
-const RAW_HINTS = new Set(['event', 'events', 'fills', 'instruction', 'instructions', 'log', 'logs', 'query', 'raw', 'transaction', 'transactions'])
+const CHART_HINTS = new Set([
+  'bucket',
+  'buckets',
+  'candle',
+  'candles',
+  'chart',
+  'graph',
+  'ohlc',
+  'plot',
+  'series',
+  'trend',
+  'trends',
+])
+const SUMMARY_HINTS = new Set([
+  'analytics',
+  'big',
+  'health',
+  'healthy',
+  'overview',
+  'picture',
+  'snapshot',
+  'summarize',
+  'summary',
+])
+const RAW_HINTS = new Set([
+  'event',
+  'events',
+  'fills',
+  'instruction',
+  'instructions',
+  'log',
+  'logs',
+  'query',
+  'raw',
+  'transaction',
+  'transactions',
+])
 
 const TOKEN_SYNONYMS: Record<string, string[]> = {
   account: ['address', 'wallet'],
@@ -116,6 +150,10 @@ const TOKEN_SYNONYMS: Record<string, string[]> = {
   chain: ['network', 'name'],
   commands: ['actions', 'cancels', 'orders', 'replica'],
   current: ['head', 'latest'],
+  deploy: ['deployed', 'deployment', 'deployer'],
+  deployed: ['deploy', 'deployment', 'deployer'],
+  deployer: ['deploy', 'deployed', 'deployment'],
+  deployment: ['deploy', 'deployed', 'deployer'],
   doing: ['activity', 'summary'],
   eth: ['ethereum'],
   events: ['event', 'logs', 'transfers'],
@@ -126,17 +164,23 @@ const TOKEN_SYNONYMS: Record<string, string[]> = {
   happening: ['activity', 'recent'],
   healthy: ['analytics', 'health', 'snapshot'],
   hottest: ['active', 'top', 'trending'],
+  id: ['identifier', 'token_id'],
   indexed: ['fresh', 'network'],
   instructions: ['instruction', 'program'],
   instruction: ['instructions', 'program'],
   latest: ['current', 'head', 'recent'],
   logs: ['event', 'events', 'log'],
+  mint: ['event', 'logs', 'minted', 'nft', 'transfer'],
+  minted: ['event', 'logs', 'mint', 'nft', 'transfer'],
+  minting: ['event', 'logs', 'mint', 'nft', 'transfer'],
   moved: ['transfer', 'transfers'],
   move: ['transfer', 'transfers'],
   most: ['top', 'volume'],
   name: ['network'],
+  nft: ['erc721', 'token', 'token_id'],
   order: ['orders', 'replica'],
   orders: ['command', 'commands', 'replica'],
+  pass: ['erc721', 'nft', 'token', 'token_id'],
   picture: ['analytics', 'overview', 'summary'],
   plot: ['chart', 'graph', 'series'],
   recent: ['activity', 'latest'],
@@ -149,7 +193,16 @@ const TOKEN_SYNONYMS: Record<string, string[]> = {
   trade: ['fill', 'fills', 'trades'],
   transfers: ['token', 'transfer'],
   transfer: ['event', 'token', 'transfers'],
+  type: ['transaction', 'tx'],
+  tx: ['hash', 'transaction'],
   wallet: ['account', 'address'],
+  crime: ['forensic', 'investigate', 'investigation', 'suspicious'],
+  evidence: ['forensic', 'investigation', 'proof'],
+  hack: ['exploit', 'incident', 'stolen', 'suspicious'],
+  investigate: ['evidence', 'forensic', 'investigation', 'suspicious'],
+  investigation: ['evidence', 'forensic', 'investigate', 'suspicious'],
+  suspicious: ['evidence', 'forensic', 'investigate', 'investigation'],
+  stolen: ['exploit', 'hack', 'suspicious'],
 }
 
 function baseTokens(text: string): string[] {
@@ -322,7 +375,11 @@ function inferVmHints(prompt: string, tokens: string[]): Set<string> {
   if (tokens.includes('solana')) hints.add('solana')
   if (tokens.includes('hyperliquid')) hints.add('hyperliquid')
   if (tokens.includes('bitcoin') || (tokens.includes('btc') && !tokens.includes('hyperliquid'))) hints.add('bitcoin')
-  if (tokens.some((token) => EVM_NETWORK_HINTS.has(token)) || normalizedPrompt.includes(' base ') || normalizedPrompt.startsWith('base ')) {
+  if (
+    tokens.some((token) => EVM_NETWORK_HINTS.has(token)) ||
+    normalizedPrompt.includes(' base ') ||
+    normalizedPrompt.startsWith('base ')
+  ) {
     hints.add('evm')
   }
 
@@ -363,36 +420,79 @@ function scoreTool(
   const latestHeadPrompt = promptTokens.some((token) => ['current', 'head', 'latest'].includes(token))
   const blockPrompt = promptTokens.some((token) => ['block', 'blocks', 'height', 'slot', 'slots'].includes(token))
   const timestampResolvePrompt =
-    promptTokens.includes('timestamp') && promptTokens.some((token) => ['block', 'height', 'match', 'matches'].includes(token))
+    promptTokens.includes('timestamp') &&
+    promptTokens.some((token) => ['block', 'height', 'match', 'matches'].includes(token))
   const simpleHeadPrompt =
-    !debugPrompt
-    && !timestampResolvePrompt
-    && (
-      /\bwhat(?:'s| is)? (?:the )?(?:current |latest )?(?:head|block|slot|height)\b/.test(promptLower)
-      || (/\bright now\b/.test(promptLower) && blockPrompt)
-      || (/\bcurrent\b/.test(promptLower) && blockPrompt)
-    )
+    !debugPrompt &&
+    !timestampResolvePrompt &&
+    (/\bwhat(?:'s| is)? (?:the )?(?:current |latest )?(?:head|block|slot|height)\b/.test(promptLower) ||
+      (/\bright now\b/.test(promptLower) && blockPrompt) ||
+      (/\bcurrent\b/.test(promptLower) && blockPrompt))
   const traderPrompt = promptTokens.some((token) => ['most', 'top', 'trader', 'traders', 'volume'].includes(token))
   const namingPrompt = promptTokens.some((token) => ['alias', 'call', 'chain', 'name', 'network'].includes(token))
   const hyperliquidPrompt = promptTokens.includes('hyperliquid')
+  const hyperliquidFillsPrompt =
+    hyperliquidPrompt &&
+    promptTokens.some((token) => ['fill', 'fills', 'trade', 'trades'].includes(token)) &&
+    !chartPrompt &&
+    !summaryPrompt
+  const investigationPrompt = promptTokens.some((token) =>
+    ['crime', 'evidence', 'exploit', 'forensic', 'hack', 'incident', 'investigate', 'investigation', 'stolen', 'suspicious', 'trace'].includes(token),
+  )
+  const walletInvestigationPrompt =
+    investigationPrompt && promptTokens.some((token) => ['account', 'address', 'wallet'].includes(token))
+  const tokenTraceInvestigationPrompt =
+    investigationPrompt && promptTokens.some((token) => ['asset', 'movement', 'token', 'transfer', 'transfers', 'usdc'].includes(token))
+  const rawTransactionInvestigationPrompt =
+    investigationPrompt && promptTokens.some((token) => ['exact', 'raw', 'transaction', 'transactions', 'tx', 'txs'].includes(token))
   const gasRankedTransactionPrompt =
-    promptTokens.includes('gas')
-    && promptTokens.some((token) => ['biggest', 'largest', 'rank', 'ranked', 'top', 'used'].includes(token))
-    && promptTokens.some((token) => ['call', 'calls', 'transaction', 'transactions', 'transfer', 'transfers', 'tx', 'txs'].includes(token))
-  const firstEvmEventPrompt =
-    promptTokens.includes('first')
-    && promptTokens.some((token) => ['event', 'events', 'log', 'logs', 'transfer', 'transfers'].includes(token))
-    && (
-      vmHints.has('evm')
-      || promptTokens.includes('contract')
-      || /\bemitted by\b/.test(promptLower)
+    promptTokens.includes('gas') &&
+    promptTokens.some((token) => ['biggest', 'largest', 'rank', 'ranked', 'top', 'used'].includes(token)) &&
+    promptTokens.some((token) =>
+      ['call', 'calls', 'transaction', 'transactions', 'transfer', 'transfers', 'tx', 'txs'].includes(token),
     )
+  const firstEvmEventPrompt =
+    promptTokens.includes('first') &&
+    promptTokens.some((token) => ['event', 'events', 'log', 'logs', 'transfer', 'transfers'].includes(token)) &&
+    (vmHints.has('evm') || promptTokens.includes('contract') || /\bemitted by\b/.test(promptLower))
+  const evmNftMintPrompt =
+    vmHints.has('evm') &&
+    promptTokens.some((token) => ['mint', 'minted', 'minting'].includes(token)) &&
+    promptTokens.some((token) => ['erc721', 'id', 'nft', 'pass', 'token', 'token_id'].includes(token)) &&
+    (promptTokens.some((token) => ['hash', 'latest', 'last', 'newest', 'transaction', 'tx'].includes(token)) ||
+      /\btx hash\b/.test(promptLower))
+  const contractDeploymentPrompt =
+    vmHints.has('evm') &&
+    !evmNftMintPrompt &&
+    promptTokens.some((token) => ['deploy', 'deployed', 'deployer', 'deployment'].includes(token)) &&
+    promptTokens.some((token) => ['contract', 'transaction', 'tx', 'who'].includes(token))
+  const transactionTypePrompt =
+    vmHints.has('evm') &&
+    promptTokens.some((token) => ['transaction', 'tx'].includes(token)) &&
+    promptTokens.includes('type')
   const tokenTransferOnlyPrompt =
-    vmHints.has('evm')
-    && (
-      /\btoken transfers?\b/.test(promptLower)
-      || /\busdc transfers?\b/.test(promptLower)
-      || /\bnot all logs?\b/.test(promptLower)
+    vmHints.has('evm') &&
+    (/\btoken transfers?\b/.test(promptLower) ||
+      /\busdc transfers?\b/.test(promptLower) ||
+      /\bnot all logs?\b/.test(promptLower))
+  const entityResolvePrompt =
+    promptTokens.some((token) => ['address', 'coin', 'contract', 'identifier', 'mean', 'protocol', 'resolve', 'slug', 'symbol', 'ticker', 'token'].includes(token)) &&
+    promptTokens.some((token) => ['apes', 'bayc', 'bitcoin', 'bored', 'btc', 'dai', 'hyperliquid', 'pool', 'uniswap', 'usdc', 'weth'].includes(token)) &&
+    !promptTokens.some((token) =>
+      [
+        'event',
+        'events',
+        'log',
+        'logs',
+        'move',
+        'moved',
+        'transfer',
+        'transfers',
+        'transaction',
+        'transactions',
+        'tx',
+        'txs',
+      ].includes(token),
     )
 
   if (profile.audience === 'advanced') {
@@ -458,9 +558,58 @@ function scoreTool(
     score += profile.name.startsWith('portal_substrate_') ? -14 : 0
   }
 
+  if (evmNftMintPrompt) {
+    score += profile.name === 'portal_evm_query_logs' ? 90 : 0
+    score += profile.name === 'portal_evm_query_token_transfers' ? -24 : 0
+    score += profile.name === 'portal_evm_query_transactions' ? -10 : 0
+    score += profile.name === 'portal_get_wallet_summary' ? -18 : 0
+    score += profile.name === 'portal_get_recent_activity' ? -18 : 0
+    score += profile.name === 'portal_resolve_entity' ? -18 : 0
+  }
+
+  if (contractDeploymentPrompt) {
+    score += profile.name === 'portal_evm_get_contract_deployment' ? 70 : 0
+    score += profile.name === 'portal_evm_query_logs' ? -35 : 0
+    score += profile.name === 'portal_get_recent_activity' ? -12 : 0
+    score += profile.name === 'portal_evm_get_contract_activity' ? -12 : 0
+  }
+
+  if (transactionTypePrompt) {
+    score += profile.name === 'portal_evm_query_transactions' ? 60 : 0
+    score += profile.name === 'portal_evm_query_logs' ? -35 : 0
+    score += profile.name === 'portal_evm_get_contract_deployment' ? -12 : 0
+  }
+
   if (tokenTransferOnlyPrompt) {
-    score += profile.name === 'portal_evm_query_token_transfers' ? 24 : 0
-    score += profile.name === 'portal_evm_query_logs' ? -8 : 0
+    score += profile.name === 'portal_evm_query_token_transfers' ? 90 : 0
+    score += profile.name === 'portal_evm_query_logs' ? -80 : 0
+  }
+
+  if (walletInvestigationPrompt) {
+    score += profile.name === 'portal_get_wallet_summary' ? 36 : 0
+    score += profile.name === 'portal_get_recent_activity' ? 4 : 0
+    score += profile.name.startsWith('portal_debug_') ? -16 : 0
+  }
+
+  if (tokenTraceInvestigationPrompt) {
+    score += profile.name === 'portal_evm_query_token_transfers' ? 110 : 0
+    score += profile.name === 'portal_evm_query_logs' ? 6 : 0
+    score += profile.name === 'portal_get_wallet_summary' ? -80 : 0
+    score += profile.name === 'portal_get_recent_activity' ? -8 : 0
+  }
+
+  if (rawTransactionInvestigationPrompt) {
+    score += profile.name === 'portal_evm_query_transactions' ? 32 : 0
+    score += profile.name === 'portal_evm_query_token_transfers' ? -10 : 0
+    score += profile.name.startsWith('portal_debug_') ? -10 : 0
+  }
+
+  if (entityResolvePrompt) {
+    score += profile.name === 'portal_resolve_entity' ? 48 : 0
+    score += profile.name === 'portal_evm_get_contract_deployment' ? -24 : 0
+    score += profile.name === 'portal_evm_get_contract_activity' ? -12 : 0
+  } else if (profile.name === 'portal_resolve_entity') {
+    score -= 8
   }
 
   if (namingPrompt) {
@@ -479,10 +628,20 @@ function scoreTool(
     score += profile.name === 'portal_hyperliquid_query_fills' ? -8 : 0
   }
 
+  if (hyperliquidFillsPrompt) {
+    score += profile.name === 'portal_hyperliquid_query_fills' ? 42 : 0
+    score += profile.name === 'portal_get_recent_activity' ? -14 : 0
+  }
+
   return score
 }
 
-function rankTools(prompt: string, profiles: ToolProfile[], tokenIdf: Map<string, number>, phraseIdf: Map<string, number>): RankedTool[] {
+function rankTools(
+  prompt: string,
+  profiles: ToolProfile[],
+  tokenIdf: Map<string, number>,
+  phraseIdf: Map<string, number>,
+): RankedTool[] {
   const promptTokens = expandTokens(baseTokens(prompt))
   const promptPhrases = buildPhrases(baseTokens(prompt))
 
@@ -495,7 +654,7 @@ function rankTools(prompt: string, profiles: ToolProfile[], tokenIdf: Map<string
 }
 
 async function main() {
-  console.log(`Routing-eval: ranking ${ROUTING_EVAL_CASES.length} naive prompts against the live 27-tool catalog...\n`)
+  console.log(`Routing-eval: ranking ${ROUTING_EVAL_CASES.length} naive prompts against the live 28-tool catalog...\n`)
 
   const transport = new StdioClientTransport({ command: 'node', args: ['dist/index.js'] })
   const client = new Client({ name: 'routing-eval', version: '1.0.0' })
@@ -504,7 +663,7 @@ async function main() {
   const { tools } = await client.listTools()
   const actualNames = new Set(tools.map((tool) => tool.name))
   const legacyStillExposed = LEGACY_TOOL_NAMES.filter((name) => actualNames.has(name))
-  assert(tools.length === 27, `Expected exactly 27 tools, got ${tools.length}`)
+  assert(tools.length === 28, `Expected exactly 28 tools, got ${tools.length}`)
   assert(legacyStillExposed.length === 0, `Legacy tool names are still exposed: ${legacyStillExposed.join(', ')}`)
 
   const listedTools = tools.map((tool) => ({ name: tool.name, description: tool.description ?? '' }))

@@ -5,7 +5,7 @@ These scripts all use the shared manifest in `scripts/tool-manifest.ts`, which k
 ## Available scripts
 
 ### `npm test`
-Builds the server, starts it over stdio, and runs a fast smoke test over the core discovery tools.
+Builds the server, starts it over stdio, verifies developer guide resources, and runs a fast smoke test over the core discovery tools.
 
 ### `npm run test:tools`
 Runs the full live tool suite against the current MCP server. It:
@@ -29,20 +29,33 @@ Runs multi-step user journeys that behave more like an AI chat session than isol
 - checks that `answer`, `display`, and `next_steps` stay useful across the conversation
 - catches places where a tool works technically but still feels awkward in chat
 
+### `npm run test:realistic-prompts`
+Runs skeptical, user-style prompts for the v0.7.9 investigation features. It:
+
+- maps messy incident-response prompts to the intended existing tool
+- calls the live MCP server and validates the returned artifact, not only routing rank
+- checks `investigation` evidence paths, pivots, limitations, and deterministic resolver suggestions
+
 ### `npm run test:negative`
 Runs focused negative-path checks for invalid inputs and unsupported flows. It:
 
 - verifies errors stay actionable and free of stack traces
 - checks that common mistakes fail with clear recovery guidance
+- verifies redaction of synthetic secret-like strings and rejection of tampered signed cursors
 - protects the “stupid-proof” experience for LLMs and end users
 
 ### `npm run test:quality`
 Runs an automated response-quality audit over the full manifest. It:
 
-- checks chat-first fields like `answer`, `display`, and `next_steps`
-- enforces hard response-size and latency budgets so regressions fail CI
+- checks the full response envelope, including `answer`, `display`, `next_steps`, `investigation`, `_llm`, `_freshness`, `_pagination`, `_coverage`, `_ordering`, `_execution`, and `_tool_contract`
+- verifies every successful tool result emits `structuredContent` matching the compact JSON text fallback
+- checks executable versus descriptive follow-up actions and safe pagination continuation metadata
+- runs cold and warm passes, then enforces hard latency budgets and per-tool median/p95 response-size baselines so regressions fail CI
 - flags truncation, legacy wording, default raw-query bloat, and non-humanized labels
 - warns when a tool is drifting toward the hard budgets before it actually fails
+
+### `npm run test:package`
+Runs `npm pack --dry-run` and verifies the published tarball contains only runtime essentials. It fails if source, test, plan, workflow, dashboard, lockfile, or local tooling artifacts are included.
 
 ### `npm run test:timestamps`
 Runs focused timestamp resolver QA. It:
@@ -52,30 +65,25 @@ Runs focused timestamp resolver QA. It:
 - confirms `"now"` timestamp requests gracefully estimate from the indexed head when hotblocks reject wall-clock now
 - checks every `real_time: true` dataset from Portal's live dataset catalog can read the latest block timestamp and produce a `1h` window
 
-### `npm run test:observability`
-Runs focused HTTP observability QA. It:
-
-- boots the HTTP server and performs a real MCP tool call
-- verifies anonymous `/metrics` access is blocked and bearer auth works
-- verifies `/metrics` emits canonical tool, client, Portal, and dataset series
-- validates that the Grafana dashboard's Prometheus queries reference metric names the server actually emits
-
 ### `npm run test:all`
 Runs the full live matrix:
 
 - build
 - smoke
 - tools
+- EVM investigator
 - routing
 - substrate
 - timestamps
-- observability
+- HTTP mode
 - conversations
+- realistic prompts
 - negative paths
 - quality audit
+- package contents
 
 ### `npm run test:ci`
-Alias for the full CI verification entrypoint. Today it runs the same matrix as `test:all`, including the quality-and-budget gate.
+Alias for the full CI verification entrypoint. Today it runs the same matrix as `test:all`, including the quality-and-budget gate and package-content check.
 
 ### `npm run test:substrate`
 Runs a focused live QA pass for Substrate readiness. It:
@@ -98,9 +106,11 @@ When tool names or recommended arguments change:
 2. Re-run `npm run test:tools`
 3. Re-run `npm run test:routing`
 4. Re-run `npm run test:conversations`
-5. Re-run `npm run test:negative`
-6. Re-run `npm run test:quality`
-7. Re-run `npx tsx scripts/data-quality-test.ts` for a quick qualitative review
+5. Re-run `npm run test:realistic-prompts`
+6. Re-run `npm run test:negative`
+7. Re-run `npm run test:quality`
+8. Re-run `npm run test:package`
+9. Re-run `npx tsx scripts/data-quality-test.ts` for a quick qualitative review
 
 ## Why the manifest exists
 

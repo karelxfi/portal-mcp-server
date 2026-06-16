@@ -8,9 +8,9 @@ import { detectChainType } from '../../helpers/chain.js'
 import { createUnsupportedChainError } from '../../helpers/errors.js'
 import { portalFetchStreamRange } from '../../helpers/fetch.js'
 import { formatResult } from '../../helpers/format.js'
-import { formatDuration, formatTimestamp } from '../../helpers/formatting.js'
+import { formatDuration, formatTimestamp } from '../../helpers/format.js'
 import { buildBucketCoverage, buildBucketGapDiagnostics, buildQueryFreshness } from '../../helpers/result-metadata.js'
-import { parseTimeframeToSeconds, resolveTimeframeOrBlocks } from '../../helpers/timeframe.js'
+import { describeTimeWindowInput, parseTimeframeToSeconds, resolveTimeframeOrBlocks } from '../../helpers/timeframe.js'
 
 // ============================================================================
 // Tool: Bitcoin Time Series
@@ -50,7 +50,9 @@ EXAMPLES:
           'Metric to chart. transaction_count/avg_block_size/avg_block_time use only tx data (fast). fee_per_block/output_value/unique_addresses need input/output queries (slower).',
         ),
       interval: z.enum(['1h', '6h', '1d']).describe('Time bucket interval'),
-      duration: z.enum(['6h', '24h', '7d', '30d']).describe('Total time period to analyze'),
+      duration: z
+        .string()
+        .describe('Total time period to analyze. Accepts compact durations like "6h" or natural phrases like "past 30 minutes".'),
     },
     async ({ dataset, metric, interval, duration }) => {
       const queryStartTime = Date.now()
@@ -431,7 +433,7 @@ EXAMPLES:
           gap_diagnostics: gapDiagnostics,
           time_series: timeSeries,
         },
-        `Bitcoin ${metric} over ${duration} in ${interval} intervals. ${timeSeries.length} data points. Avg: ${avg.toFixed(2)} ${unit}, Min: ${min.toFixed(2)} ${unit}, Max: ${max.toFixed(2)} ${unit}`,
+        `Bitcoin ${metric} over ${describeTimeWindowInput(duration)} in ${interval} intervals. ${timeSeries.length} data points. Avg: ${avg.toFixed(2)} ${unit}, Min: ${min.toFixed(2)} ${unit}, Max: ${max.toFixed(2)} ${unit}`,
         {
           notices,
           freshness: buildQueryFreshness({

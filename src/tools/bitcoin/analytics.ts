@@ -7,7 +7,7 @@ import { detectChainType } from '../../helpers/chain.js'
 import { createUnsupportedChainError } from '../../helpers/errors.js'
 import { portalFetchStreamRange } from '../../helpers/fetch.js'
 import { formatResult } from '../../helpers/format.js'
-import { formatNumber, formatBTC, formatPct, formatDuration } from '../../helpers/formatting.js'
+import { formatNumber, formatBTC, formatPct, formatDuration } from '../../helpers/format.js'
 import { buildAnalysisCoverage, buildQueryFreshness } from '../../helpers/result-metadata.js'
 import type { ResponseFormat } from '../../helpers/response-modes.js'
 import { buildPercentileSummary } from '../../helpers/statistics.js'
@@ -97,18 +97,18 @@ export function registerBitcoinAnalyticsTool(server: McpServer) {
       mode: z
         .enum(['fast', 'deep'])
         .optional()
-        .default('fast')
-        .describe('fast = lighter preview with a smaller scan cap, deep = analyze a larger Bitcoin window'),
+        .default('deep')
+        .describe('Execution depth. Defaults to complete requested-window analysis; the optional fast value is only for explicitly bounded previews.'),
       from_block: z.number().optional().describe('Starting block number (use this OR timeframe)'),
       to_block: z.number().optional().describe('Ending block number'),
       from_timestamp: z
         .union([z.string(), z.number()])
         .optional()
-        .describe('Natural start time like "6h ago", "yesterday 09:00", ISO datetime, or Unix timestamp'),
+        .describe('Starting timestamp. Accepts Unix seconds, Unix milliseconds, ISO datetime, or relative input like "6h ago".'),
       to_timestamp: z
         .union([z.string(), z.number()])
         .optional()
-        .describe('Natural end time like "now", ISO datetime, or Unix timestamp'),
+        .describe('Ending timestamp. Accepts Unix seconds, Unix milliseconds, ISO datetime, or relative input like "now".'),
       include_address_activity: z
         .boolean()
         .optional()
@@ -439,7 +439,7 @@ export function registerBitcoinAnalyticsTool(server: McpServer) {
 
       const notices =
         requestedBlocks > maxBlocks
-          ? [`${mode === 'fast' ? 'Fast' : 'Deep'} mode analyzed ${numBlocks} of ${requestedBlocks} requested blocks to keep the snapshot responsive.`]
+          ? [`Analyzed ${numBlocks} of ${requestedBlocks} requested blocks because the requested window exceeds the current Bitcoin analytics scan budget.`]
           : undefined
       const formattedResponse = formatBitcoinAnalyticsResponse(response, response_format as ResponseFormat)
       const message = response_format === 'summary'

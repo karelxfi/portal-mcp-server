@@ -5,7 +5,7 @@ import { resolveDataset, validateBlockRange } from '../../cache/datasets.js'
 import { buildTableDescriptor } from '../../helpers/chart-metadata.js'
 import { ActionableError } from '../../helpers/errors.js'
 import { formatResult } from '../../helpers/format.js'
-import { formatUSD, formatNumber, formatPct, shortenAddress } from '../../helpers/formatting.js'
+import { formatUSD, formatNumber, formatPct, shortenAddress } from '../../helpers/format.js'
 import { hashString53 } from '../../helpers/hash.js'
 import { buildPaginationInfo, decodeCursor, encodeCursor } from '../../helpers/pagination.js'
 import { buildAnalysisCoverage, buildQueryFreshness } from '../../helpers/result-metadata.js'
@@ -32,6 +32,7 @@ const MAX_TOP_PNL = 5
 const DEFAULT_ANALYTICS_SECTION_LIMIT = 6
 const MAX_ANALYTICS_BLOCKS = 500000
 const FAST_MODE_MAX_ANALYTICS_BLOCKS = 100000
+const FAST_MODE_COMPLETE_WINDOW_BLOCKS = 250000
 const HYPERLIQUID_ANALYTICS_FAST_INITIAL_CHUNK_SIZE = 20_000
 const HYPERLIQUID_ANALYTICS_DEEP_INITIAL_CHUNK_SIZE = 40_000
 const HYPERLIQUID_ANALYTICS_CACHE_TTL_MS = 30_000
@@ -381,16 +382,16 @@ export function registerHyperliquidAnalyticsTool(server: McpServer) {
       mode: z
         .enum(['fast', 'deep'])
         .optional()
-        .default('fast')
-        .describe('fast = lighter scan budget, deep = fuller Hyperliquid window analysis'),
+        .default('deep')
+        .describe('Execution depth. Defaults to complete requested-window analysis; the optional fast value is only for explicitly bounded previews.'),
       from_timestamp: z
         .union([z.string(), z.number()])
         .optional()
-        .describe('Natural start time like "6h ago", ISO datetime, or Unix timestamp'),
+        .describe('Starting timestamp. Accepts Unix seconds, Unix milliseconds, ISO datetime, or relative input like "6h ago".'),
       to_timestamp: z
         .union([z.string(), z.number()])
         .optional()
-        .describe('Natural end time like "now", ISO datetime, or Unix timestamp'),
+        .describe('Ending timestamp. Accepts Unix seconds, Unix milliseconds, ISO datetime, or relative input like "now".'),
       coin: z.array(z.string()).optional().describe('Filter by asset symbols (e.g., ["BTC", "ETH"])'),
       response_format: z
         .enum(['full', 'compact', 'summary'])
@@ -452,7 +453,12 @@ export function registerHyperliquidAnalyticsTool(server: McpServer) {
       if (coin) fillFilter.coin = coin
 
       const requestedBlockRange = endBlock - fromBlock + 1
-      const maxAnalyticsBlocks = mode === 'deep' ? MAX_ANALYTICS_BLOCKS : FAST_MODE_MAX_ANALYTICS_BLOCKS
+      const maxAnalyticsBlocks =
+        mode === 'deep'
+          ? MAX_ANALYTICS_BLOCKS
+          : requestedBlockRange <= FAST_MODE_COMPLETE_WINDOW_BLOCKS
+            ? requestedBlockRange
+            : FAST_MODE_MAX_ANALYTICS_BLOCKS
       const effectiveFrom = requestedBlockRange > maxAnalyticsBlocks
         ? endBlock - maxAnalyticsBlocks + 1
         : fromBlock
@@ -772,7 +778,7 @@ export function registerHyperliquidAnalyticsTool(server: McpServer) {
 
         const notices =
           effectiveFrom > fromBlock
-            ? [`${mode === 'fast' ? 'Fast' : 'Deep'} mode analyzed the most recent ${maxAnalyticsBlocks.toLocaleString()} blocks for performance.`]
+            ? [`Analyzed the most recent ${maxAnalyticsBlocks.toLocaleString()} blocks because the requested window exceeds the current Hyperliquid analytics scan budget.`]
             : undefined
         if (chunksFetched > 1) response._chunks_fetched = chunksFetched
         if (chunkSizeReduced) response._chunk_size_reduced = true

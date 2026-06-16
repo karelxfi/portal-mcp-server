@@ -1,13 +1,13 @@
-import { createServer, type IncomingMessage } from 'node:http'
 import { randomUUID, timingSafeEqual } from 'node:crypto'
+import { type IncomingMessage, type ServerResponse, createServer } from 'node:http'
 
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import { z } from 'zod'
 import { zodToJsonSchema } from 'zod-to-json-schema'
 
-import { clientRequestsTotal } from './metrics.js'
+import { type ToolGuideEntry, getToolGuideEntry } from './helpers/tool-ux.js'
+import { clientRequestsTotal, register } from './metrics.js'
 import { getObservabilityStatus } from './observability.js'
-import { register } from './metrics.js'
 import { createPortalServer } from './server.js'
 import { npmVersion } from './version.js'
 
@@ -27,17 +27,26 @@ type ToolCatalogEntry = {
   title?: string
   description?: string
   inputSchema?: unknown
+  guide?: ToolGuideEntry
 }
 
-let catalogCache: { entries: ToolCatalogEntry[]; generatedAt: string } | null = null
+let catalogCache: { entries: ToolCatalogEntry[]; generatedAt: string; groups: Record<string, string[]> } | null = null
 
-function buildToolCatalog(): { entries: ToolCatalogEntry[]; generatedAt: string } {
+function groupToolCatalog(entries: ToolCatalogEntry[]) {
+  return entries.reduce<Record<string, string[]>>((groups, entry) => {
+    const category = entry.guide?.category ?? 'unknown'
+    groups[category] ??= []
+    groups[category].push(entry.name)
+    return groups
+  }, {})
+}
+
+function buildToolCatalog(): { entries: ToolCatalogEntry[]; generatedAt: string; groups: Record<string, string[]> } {
   if (catalogCache) return catalogCache
 
   // Spin up a throwaway server purely to walk its registered-tool table.
   // No transport is connected, so nothing actually runs.
   const probe = createPortalServer({ transport: 'http' })
-  // biome-ignore lint: SDK exposes _registeredTools as the same source tools/list reads from
   const registry = (probe as unknown as { _registeredTools: Record<string, any> })._registeredTools ?? {}
 
   const entries: ToolCatalogEntry[] = Object.entries(registry)
@@ -46,6 +55,8 @@ function buildToolCatalog(): { entries: ToolCatalogEntry[]; generatedAt: string 
       const entry: ToolCatalogEntry = { name }
       if (typeof tool.title === 'string') entry.title = tool.title
       if (typeof tool.description === 'string') entry.description = tool.description
+      const guide = getToolGuideEntry(name)
+      if (guide) entry.guide = guide
       if (tool.inputSchema) {
         try {
           // tool.inputSchema is either a zod object or a plain props record
@@ -64,7 +75,7 @@ function buildToolCatalog(): { entries: ToolCatalogEntry[]; generatedAt: string 
     })
     .sort((a, b) => a.name.localeCompare(b.name))
 
-  catalogCache = { entries, generatedAt: new Date().toISOString() }
+  catalogCache = { entries, generatedAt: new Date().toISOString(), groups: groupToolCatalog(entries) }
   // The probe server is unreferenced after this; let it be GC'd.
   return catalogCache
 }
@@ -76,6 +87,7 @@ function buildToolCatalog(): { entries: ToolCatalogEntry[]; generatedAt: string 
 const PORT = Number(process.env.PORT) || 3000
 const METRICS_PUBLIC = process.env.METRICS_PUBLIC === 'true'
 const METRICS_BEARER_TOKEN = process.env.METRICS_BEARER_TOKEN
+const MCP_HTTP_BEARER_TOKEN = process.env.MCP_HTTP_BEARER_TOKEN
 
 function readHeader(req: IncomingMessage, name: string): string | undefined {
   const value = req.headers[name]
@@ -103,20 +115,41 @@ function isMetricsAuthorized(req: IncomingMessage): boolean {
   return Boolean(token && safeEqual(token, METRICS_BEARER_TOKEN))
 }
 
+function isMcpPostAuthorized(req: IncomingMessage): boolean {
+  if (!MCP_HTTP_BEARER_TOKEN) return true
+  const token = readBearerToken(req)
+  return Boolean(token && safeEqual(token, MCP_HTTP_BEARER_TOKEN))
+}
+
+function writeJsonRpcError(
+  res: ServerResponse,
+  status: number,
+  code: number,
+  message: string,
+  headers: Record<string, string> = {},
+) {
+  res.writeHead(status, {
+    'Content-Type': 'application/json',
+    'Cache-Control': 'no-store',
+    ...headers,
+  })
+  res.end(
+    JSON.stringify({
+      jsonrpc: '2.0',
+      error: { code, message },
+      id: null,
+    }),
+  )
+}
+
 const server = createServer(async (req, res) => {
   const url = new URL(req.url ?? '/', `http://localhost:${PORT}`)
   const requestId = readHeader(req, 'x-request-id') || randomUUID()
   res.setHeader('x-request-id', requestId)
 
   const userAgent = readHeader(req, 'user-agent')
-  const clientName =
-    readHeader(req, 'x-mcp-client-name')
-    || readHeader(req, 'x-client-name')
-    || 'unknown'
-  const clientVersion =
-    readHeader(req, 'x-mcp-client-version')
-    || readHeader(req, 'x-client-version')
-    || 'unknown'
+  const clientName = readHeader(req, 'x-mcp-client-name') || readHeader(req, 'x-client-name') || 'unknown'
+  const clientVersion = readHeader(req, 'x-mcp-client-version') || readHeader(req, 'x-client-version') || 'unknown'
 
   // Health check endpoint
   // NOTE: Do not expose PORTAL_URL here — it may contain a sensitive token
@@ -185,6 +218,9 @@ const server = createServer(async (req, res) => {
           version: npmVersion,
           generated_at: catalog.generatedAt,
           tool_count: catalog.entries.length,
+          public_tool_count: catalog.entries.filter((entry) => entry.guide?.audience === 'public').length,
+          advanced_tool_count: catalog.entries.filter((entry) => entry.guide?.audience === 'advanced').length,
+          groups: catalog.groups,
           tools: catalog.entries,
         },
         null,
@@ -198,6 +234,13 @@ const server = createServer(async (req, res) => {
   // quick-tunnel prompts commonly use that path.
   if (url.pathname === '/' || url.pathname === '/mcp') {
     if (req.method === 'POST') {
+      if (!isMcpPostAuthorized(req)) {
+        writeJsonRpcError(res, 401, -32001, 'Unauthorized.', {
+          'WWW-Authenticate': 'Bearer realm="mcp"',
+        })
+        return
+      }
+
       try {
         clientRequestsTotal.inc({
           transport: 'http',

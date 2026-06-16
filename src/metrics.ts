@@ -81,6 +81,27 @@ export const portalRequestsTotal = new Counter({
   registers: [register],
 })
 
+export const tokenListRequestsTotal = new Counter({
+  name: 'mcp_token_list_requests_total',
+  help: 'Total number of external token-list fetch attempts by source, chain, and outcome',
+  labelNames: ['source', 'chain', 'status'] as const,
+  registers: [register],
+})
+
+export const tokenListCacheEventsTotal = new Counter({
+  name: 'mcp_token_list_cache_events_total',
+  help: 'Total number of token-list cache events by source and chain',
+  labelNames: ['source', 'chain', 'event'] as const,
+  registers: [register],
+})
+
+export const tokenListUnsupportedNetworksTotal = new Counter({
+  name: 'mcp_token_list_unsupported_networks_total',
+  help: 'Total number of token-list resolution attempts for unsupported datasets',
+  labelNames: ['dataset'] as const,
+  registers: [register],
+})
+
 // --- Dataset Metrics ---
 
 export const datasetQueriesTotal = new Counter({

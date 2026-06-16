@@ -1,13 +1,18 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { z } from 'zod'
 
-import { resolveDataset, validateBlockRange } from '../../cache/datasets.js'
+import { getBlockHead, resolveDataset, validateBlockRange } from '../../cache/datasets.js'
 import { buildCandlestickChart, buildOhlcTable, type ChartTooltipDescriptor } from '../../helpers/chart-metadata.js'
 import { formatResult } from '../../helpers/format.js'
-import { formatTimestamp } from '../../helpers/formatting.js'
+import { formatTimestamp } from '../../helpers/format.js'
 import { buildBucketCoverage, buildBucketGapDiagnostics, buildChronologicalPageOrdering, buildQueryFreshness } from '../../helpers/result-metadata.js'
 import { buildPaginationInfo, decodeCursor, encodeCursor } from '../../helpers/pagination.js'
-import { estimateBlockTime, parseTimeframeToSeconds, resolveTimeframeOrBlocks } from '../../helpers/timeframe.js'
+import {
+  describeTimeWindowInput,
+  estimateBlockTime,
+  parseTimeframeToSeconds,
+  resolveTimeframeOrBlocks,
+} from '../../helpers/timeframe.js'
 import { buildExecutionMetadata, buildToolDescription } from '../../helpers/tool-ux.js'
 import { buildChartPanel, buildMetricCard, buildPortalUi, buildTablePanel } from '../../helpers/ui-metadata.js'
 import { visitHyperliquidFillBlocks } from './fill-stream.js'
@@ -40,7 +45,7 @@ type HyperliquidOhlcCursor = {
   request: {
     coin: string
     interval: OhlcIntervalInput
-    duration: OhlcDuration
+    duration: string
     user?: string
   }
   window_start_timestamp: number
@@ -116,12 +121,19 @@ function getOrCreateBucket(
   return bucket
 }
 
-function resolveOhlcInterval(duration: OhlcDuration, requestedInterval: OhlcIntervalInput): OhlcInterval {
-  if (requestedInterval === 'auto') {
-    return AUTO_INTERVAL_BY_DURATION[duration]
-  }
+function resolveOhlcInterval(duration: string, requestedInterval: OhlcIntervalInput): OhlcInterval {
+  if (requestedInterval !== 'auto') return requestedInterval
 
-  return requestedInterval
+  const presetInterval = AUTO_INTERVAL_BY_DURATION[duration as OhlcDuration]
+  if (presetInterval) return presetInterval
+
+  const durationSeconds = parseTimeframeToSeconds(duration)
+  if (durationSeconds <= 3600) return '5m'
+  if (durationSeconds <= 21600) return '15m'
+  if (durationSeconds <= 43200) return '30m'
+  if (durationSeconds <= 86400) return '1h'
+  if (durationSeconds <= 604800) return '6h'
+  return '1d'
 }
 
 export function registerHyperliquidOhlcTool(server: McpServer) {
@@ -141,10 +153,10 @@ export function registerHyperliquidOhlcTool(server: McpServer) {
         .default('auto')
         .describe('Candle interval. Use auto for chart-friendly defaults: 1h→5m, 6h→15m, 12h→30m, 24h→1h.'),
       duration: z
-        .enum(['1h', '6h', '12h', '24h', '7d', '30d'])
+        .string()
         .optional()
         .default('1h')
-        .describe('How much recent trading history to cover'),
+        .describe('How much recent trading history to cover. Accepts compact durations like "1h" or natural phrases like "past 30 minutes".'),
       user: z.string().optional().describe('Optional trader wallet address (0x-prefixed, lowercase)'),
       cursor: z.string().optional().describe('Continuation cursor from a previous candle page'),
     },
@@ -171,7 +183,7 @@ export function registerHyperliquidOhlcTool(server: McpServer) {
         throw new Error('coin is required unless you are continuing with cursor')
       }
 
-      const resolvedInterval = resolveOhlcInterval(duration as OhlcDuration, interval as OhlcIntervalInput)
+      const resolvedInterval = resolveOhlcInterval(duration, interval as OhlcIntervalInput)
 
       const intervalSeconds = parseTimeframeToSeconds(resolvedInterval)
       const durationSeconds = parseTimeframeToSeconds(duration)
@@ -211,8 +223,10 @@ export function registerHyperliquidOhlcTool(server: McpServer) {
           toBlock: rangeTo,
           fillFilter,
           fillFields,
-          maxBytes: 150 * 1024 * 1024,
-          concurrency: 1,
+          initialChunkSize: 100_000,
+          minChunkSize: 10_000,
+          maxBytes: 200 * 1024 * 1024,
+          concurrency: 4,
           onBlock: (block) => {
             const blockNumber = typeof block.header?.number === 'number' ? block.header.number : undefined
             const fills = sortFillsForOhlc((block.fills || []) as HyperliquidFill[])
@@ -295,10 +309,15 @@ export function registerHyperliquidOhlcTool(server: McpServer) {
           pageEndExclusive: seriesEndExclusive,
         })
       } else {
-        resolvedWindow = await resolveTimeframeOrBlocks({
-          dataset,
-          timeframe: duration,
-        })
+        const latestHead = await getBlockHead(dataset)
+        resolvedWindow = {
+          from_block: Math.max(
+            0,
+            latestHead.number - Math.ceil((durationSeconds / estimateBlockTime(dataset, 'hyperliquidFills')) * 1.25),
+          ),
+          to_block: latestHead.number,
+          range_kind: 'timeframe' as const,
+        }
         const fromBlock = resolvedWindow.from_block
 
         const validated = await validateBlockRange(
@@ -320,7 +339,8 @@ export function registerHyperliquidOhlcTool(server: McpServer) {
 
       if (!paginationCursor) {
         seriesEndExclusive = Math.floor(latestTimestamp / intervalSeconds) * intervalSeconds + intervalSeconds
-        seriesStartTimestamp = seriesEndExclusive - durationSeconds
+        const bucketSpanSeconds = expectedBuckets * intervalSeconds
+        seriesStartTimestamp = seriesEndExclusive - bucketSpanSeconds
       }
 
       let backfillAttempts = 0
@@ -432,6 +452,7 @@ export function registerHyperliquidOhlcTool(server: McpServer) {
         windowToBlock: endBlock,
         resolvedWindow,
       })
+      const durationLabel = describeTimeWindowInput(duration)
 
       const chartTooltip: ChartTooltipDescriptor = {
         mode: 'axis',
@@ -457,7 +478,7 @@ export function registerHyperliquidOhlcTool(server: McpServer) {
         design_intent: 'market_terminal',
         headline: {
           title: `${coin} Hyperliquid candles`,
-          subtitle: `${resolvedInterval} candles over ${duration}${user ? ` for ${user.toLowerCase()}` : ''}`,
+          subtitle: `${resolvedInterval} candles over ${durationLabel}${user ? ` for ${user.toLowerCase()}` : ''}`,
         },
         metric_cards: [
           buildMetricCard({ id: 'last_close', label: 'Last close', value_path: 'summary.series_close', format: 'decimal', emphasis: 'primary' }),
@@ -517,7 +538,7 @@ export function registerHyperliquidOhlcTool(server: McpServer) {
           gap_diagnostics: gapDiagnostics,
           ohlc,
         },
-        `Built ${resolvedInterval} ${coin} Hyperliquid candles over ${duration}. ${filledBuckets}/${ohlc.length} buckets contain trades.`,
+        `Built ${resolvedInterval} ${coin} Hyperliquid candles over ${durationLabel}. ${filledBuckets}/${ohlc.length} buckets contain trades.`,
         {
           toolName: 'portal_hyperliquid_get_ohlc',
           ...(nextCursor ? { notices: ['Older candles are available via _pagination.next_cursor.'] } : {}),

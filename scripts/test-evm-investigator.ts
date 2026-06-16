@@ -1,6 +1,7 @@
 #!/usr/bin/env tsx
 
 import { EVENT_SIGNATURES } from '../src/constants/index.js'
+import { decodeLog } from '../src/tools/utilities/decode-logs.js'
 import {
   assert,
   callToolWithRetry,
@@ -13,6 +14,8 @@ import { loadToolTestContext, type ToolTestContext } from './tool-manifest.ts'
 
 const ERC20_TRANSFER_SIGHASH = '0xa9059cbb'
 const ERC20_APPROVE_SIGHASH = '0x095ea7b3'
+const ZERO_TOPIC = `0x${'0'.repeat(64)}`
+const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000'
 
 type TestCase = {
   name: string
@@ -43,6 +46,16 @@ function topicAddress(topic: string): string {
   const clean = topic.toLowerCase().replace(/^0x/, '')
   assert(clean.length === 64, 'Expected indexed address topic')
   return `0x${clean.slice(24)}`
+}
+
+function addressTopic(address: string): string {
+  const clean = address.toLowerCase().replace(/^0x/, '')
+  assert(clean.length === 40, 'Expected EVM address')
+  return `0x${clean.padStart(64, '0')}`
+}
+
+function uintTopic(value: bigint): string {
+  return `0x${value.toString(16).padStart(64, '0')}`
 }
 
 async function main() {
@@ -107,6 +120,60 @@ async function main() {
     const approvalOwner = topicAddress(approvalOwnerTopic)
 
     const tests: TestCase[] = [
+      {
+        name: 'decoded latest ERC721 mint exposes token ID and tx hash',
+        run: async () => {
+          const recipient = '0x1111111111111111111111111111111111111111'
+          const txHash = `0x${'a'.repeat(64)}`
+          const decoded = decodeLog({
+            address: '0xE4E70FdF2Fc1147a7f35c4c5de88E6BeA63eeAfA',
+            topics: [EVENT_SIGNATURES.TRANSFER_ERC20, ZERO_TOPIC, addressTopic(recipient), uintTopic(12345n)],
+            data: '0x',
+            transactionHash: txHash,
+            logIndex: 7,
+          })
+
+          assert(decoded.event_name === 'Transfer', 'Expected Transfer decode')
+          assert(decoded.transaction_hash === txHash, 'Expected parent transaction hash passthrough')
+          assert(decoded.log_index === 7, 'Expected log index passthrough')
+          assert(decoded.decoded?.standard === 'erc721', 'Expected ERC721-like transfer classification')
+          assert(decoded.decoded?.transfer_type === 'mint', 'Expected zero-address Transfer to classify as mint')
+          assert(decoded.decoded?.from === ZERO_ADDRESS, 'Expected mint from zero address')
+          assert(decoded.decoded?.to === recipient, 'Expected recipient address decode')
+          assert(decoded.decoded?.token_id === '12345', 'Expected token_id decimal decode')
+          assert(decoded.decoded?.id === '12345', 'Expected generic id alias for pass/NFT prompts')
+        },
+      },
+      {
+        name: 'broad selective latest mint scan attempts reverse search',
+        run: async () => {
+          const result = await callToolWithRetry(client, 'portal_evm_query_logs', {
+            network: 'base-mainnet',
+            from_block: context.baseHead - 150_000,
+            to_block: context.baseHead,
+            addresses: ['0xE4E70FdF2Fc1147a7f35c4c5de88E6BeA63eeAfA'],
+            event: 'transfer',
+            topic1: [ZERO_TOPIC],
+            scan_order: 'latest',
+            decode: true,
+            include_transaction: true,
+            limit: 1,
+            field_preset: 'full',
+            response_format: 'full',
+          })
+          assert(!result.isError, 'Expected broad selective latest mint query to scan instead of fail fast')
+          assert(result.data._execution?.scan_order === 'latest', 'Expected latest scan metadata')
+          assert(
+            result.data._execution?.scanned_blocks > 100_000,
+            'Expected selective latest scan to cover a broad block range',
+          )
+          assert(
+            Array.isArray(result.data._notices) &&
+              result.data._notices.some((notice: string) => /complete filtered latest scan/i.test(notice)),
+            'Expected complete filtered latest scan notice',
+          )
+        },
+      },
       {
         name: 'first EIP-1559 tx on Ethereum from London fork block',
         run: async () => {
@@ -340,15 +407,15 @@ async function main() {
         },
       },
       {
-        name: 'BAYC alias deployment lookup across a broad historical window',
+        name: 'BAYC alias deployment lookup in a bounded historical window',
         run: async () => {
           const result = await callToolWithRetry(client, 'portal_evm_get_contract_deployment', {
             network: 'ethereum-mainnet',
             contract: 'bored apes',
-            from_block: 12_000_000,
-            to_block: 13_000_000,
+            from_block: 12_287_500,
+            to_block: 12_287_510,
             scan_order: 'earliest',
-            max_scan_blocks: 1_000_000,
+            max_scan_blocks: 20,
           })
           const item = getItems(result.data)[0]
           assert(

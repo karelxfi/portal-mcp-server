@@ -129,7 +129,7 @@ export function registerQuerySolanaTransactionsTool(server: McpServer) {
         .optional()
         .default(false)
         .describe('Include block rewards (validator staking rewards). Filter by pubkey using mentions_account.'),
-      limit: z.number().optional().default(50).describe('Max transactions'),
+      limit: z.number().int().min(1).max(200).optional().default(50).describe('Max transactions to return (default: 50, max: 200)'),
       response_format: z.enum(['full', 'compact', 'summary']).optional().describe("Response format: defaults to 'compact' for chat-friendly output, or stays 'full' when inline instruction, balance, log, or reward context is requested. Use 'summary' for aggregate stats."),
       cursor: z.string().optional().describe('Continuation cursor from a previous response'),
     },
@@ -280,7 +280,7 @@ export function registerQuerySolanaTransactionsTool(server: McpServer) {
       const results = await portalFetchRecentRecords(`${PORTAL_URL}/datasets/${dataset}/stream`, query, {
         itemKeys: ['transactions'],
         limit: fetchLimit,
-        chunkSize: hasFilters ? 500 : 100,
+        chunkSize: hasFilters ? 500 : Math.max(1, Math.min(10, limit)),
       })
 
       const allTxs = sortTransactions(results.flatMap((block: unknown) => {

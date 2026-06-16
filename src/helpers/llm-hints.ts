@@ -10,7 +10,16 @@ import type { PortalUiSpec, UiFollowUpAction, UiMetricCard, UiPanel } from './ui
 type RecordLike = Record<string, unknown>
 
 const SUMMARY_SECTION_KEYS = ['summary', 'overview', 'activity', 'assets', 'market_context', 'guidance', 'evm', 'solana', 'bitcoin', 'hyperliquid', 'liquidations']
-const RESERVED_TOP_LEVEL_KEYS = new Set(['chart', 'tables', 'gap_diagnostics', 'answer', 'display', 'next_steps', 'technical_details'])
+const RESERVED_TOP_LEVEL_KEYS = new Set([
+  'chart',
+  'tables',
+  'gap_diagnostics',
+  'answer',
+  'display',
+  'next_steps',
+  'investigation',
+  'technical_details',
+])
 const NORMALIZED_ALIAS_KEYS = [
   'chain_kind',
   'record_type',
@@ -129,6 +138,9 @@ export interface PortalLlmHints {
       label: string
       intent: UiFollowUpAction['intent']
       target?: string
+      executable: boolean
+      tool?: string
+      cursor_path?: string
     }>
   }
   parser_notes?: string[]
@@ -353,7 +365,7 @@ function buildSections(payload: RecordLike, chartHint: LlmChartHint | undefined,
   }
 
   if (typeof payload._summary === 'string') {
-    pushSection({ path: '_summary', kind: 'summary_text', title: 'Narrative summary' })
+    pushSection({ path: '_summary', kind: 'summary_text', title: 'Answer summary' })
   }
 
   for (const key of SUMMARY_SECTION_KEYS) {
@@ -722,8 +734,9 @@ export function buildLlmHints(payload: RecordLike, overrides?: LlmOverrides): Po
   const normalizedFields = inferNormalizedFields(payload, primaryPath, normalizedOutput)
   const parserNotes = buildParserNotes(payload, normalizedOutput, llmMetricCards, chartHint, llmTableHints, overrides)
   const llmParserNotes = compactHints ? parserNotes?.slice(0, 3) : parserNotes
-  const followUpActions = asArray<UiFollowUpAction>(ui?.follow_up_actions)
-  const llmFollowUpActions = compactHints ? followUpActions.slice(0, 2) : followUpActions.slice(0, 5)
+  const nextSteps = isRecord(payload.next_steps) ? payload.next_steps : undefined
+  const followUpActions = asArray<UiFollowUpAction>(nextSteps?.actions ?? ui?.follow_up_actions)
+  const llmFollowUpActions = compactHints ? followUpActions.slice(0, 2) : followUpActions.slice(0, 6)
 
   return {
     version: 'portal_llm_v1',
@@ -750,6 +763,9 @@ export function buildLlmHints(payload: RecordLike, overrides?: LlmOverrides): Po
                     label: action.label,
                     intent: action.intent,
                     ...(action.target ? { target: action.target } : {}),
+                    executable: action.executable === true,
+                    ...(action.executable === true && action.tool ? { tool: action.tool } : {}),
+                    ...(action.cursor_path ? { cursor_path: action.cursor_path } : {}),
                   })),
                 }
               : {}),

@@ -3,19 +3,39 @@ import { z } from 'zod'
 
 import { resolveDataset, validateBlockRange } from '../../cache/datasets.js'
 import { PORTAL_URL } from '../../constants/index.js'
+import {
+  buildBoundedSearchExecution,
+  buildBoundedSearchNotice,
+  scanBoundedBlockRange,
+} from '../../helpers/bounded-search.js'
 import { detectChainType, isL2Chain } from '../../helpers/chain.js'
+import {
+  type TokenSymbolResolution,
+  buildTokenListLookupNotices,
+  type TokenListLookupMetadata,
+  resolveTokenSymbolsForQuery,
+} from '../../helpers/entity-resolution.js'
 import { createUnsupportedChainError } from '../../helpers/errors.js'
 import { resolveEventTopic0 } from '../../helpers/evm-aliases.js'
 import { portalFetchRecentRecords, portalFetchStreamRange } from '../../helpers/fetch.js'
 import { getLogFields } from '../../helpers/field-presets.js'
-import { normalizeEvmLogResult } from '../../helpers/normalized-results.js'
-import { buildPaginationInfo, decodeRecentPageCursor, encodeRecentPageCursor, paginateAscendingItems } from '../../helpers/pagination.js'
 import { buildEvmLogFields, buildEvmTraceFields, buildEvmTransactionFields } from '../../helpers/fields.js'
 import { formatResult } from '../../helpers/format.js'
-import { formatTimestamp } from '../../helpers/formatting.js'
-import { buildChronologicalPageOrdering, buildQueryCoverage, buildQueryFreshness } from '../../helpers/result-metadata.js'
+import { formatTimestamp } from '../../helpers/format.js'
+import { normalizeEvmLogResult } from '../../helpers/normalized-results.js'
+import {
+  buildPaginationInfo,
+  decodeRecentPageCursor,
+  encodeRecentPageCursor,
+  paginateAscendingItems,
+} from '../../helpers/pagination.js'
 import { type ResponseFormat, applyResponseFormat, resolveDefaultResponseFormat } from '../../helpers/response-modes.js'
-import { getTimestampWindowNotices, type TimestampInput, resolveTimeframeOrBlocks } from '../../helpers/timeframe.js'
+import {
+  buildChronologicalPageOrdering,
+  buildQueryCoverage,
+  buildQueryFreshness,
+} from '../../helpers/result-metadata.js'
+import { type TimestampInput, getTimestampWindowNotices, resolveTimeframeOrBlocks } from '../../helpers/timeframe.js'
 import { buildExecutionMetadata, buildToolDescription } from '../../helpers/tool-ux.js'
 import {
   getQueryExamples,
@@ -66,6 +86,8 @@ type QueryLogsRequest = {
   limit: number
   finalized_only: boolean
   addresses?: string[]
+  token_symbols?: string[]
+  max_token_symbol_matches?: number
   event?: string | string[]
   topic0?: string[]
   topic1?: string[]
@@ -101,6 +123,28 @@ function getBlockNumber(log: EvmLogItem): number | undefined {
   return typeof log.block_number === 'number' ? log.block_number : undefined
 }
 
+const uniqueStrings = (values: string[]) => Array.from(new Set(values))
+
+function buildTokenResolutionNotices(resolutions: TokenSymbolResolution[], unresolvedSymbols: string[]) {
+  const notices: string[] = []
+  if (unresolvedSymbols.length > 0) {
+    notices.push(`No token-list match found for symbol(s): ${unresolvedSymbols.join(', ')}.`)
+  }
+  for (const resolution of resolutions) {
+    if (resolution.matches.length > 1) {
+      notices.push(
+        `Token symbol ${resolution.symbol} resolved to ${resolution.matches.length} token-list matches; all selected addresses were included. Use addresses for a single deterministic contract.`,
+      )
+    }
+    if (resolution.truncated) {
+      notices.push(
+        `Token symbol ${resolution.symbol} had more matches than max_token_symbol_matches; results were capped.`,
+      )
+    }
+  }
+  return notices
+}
+
 function getLogIndex(log: EvmLogItem): number {
   const value = typeof log.logIndex === 'number' ? log.logIndex : typeof log.log_index === 'number' ? log.log_index : 0
   return value
@@ -116,8 +160,52 @@ function sortLogs(items: EvmLogItem[]) {
     const rightIndex = getLogIndex(right)
     if (leftIndex !== rightIndex) return leftIndex - rightIndex
 
-    return String(left.transactionHash ?? left.tx_hash ?? '').localeCompare(String(right.transactionHash ?? right.tx_hash ?? ''))
+    return String(left.transactionHash ?? left.tx_hash ?? '').localeCompare(
+      String(right.transactionHash ?? right.tx_hash ?? ''),
+    )
   })
+}
+
+function hasTopicFilter(topics: string[] | undefined): boolean {
+  return Array.isArray(topics) && topics.length > 0
+}
+
+function getRecentLogChunkSize(blockRange: number, hasFilters: boolean): number {
+  if (!hasFilters) return 100
+  return Math.min(100_000, Math.max(5_000, Math.ceil(blockRange / 100)))
+}
+
+function getSelectiveLatestLogChunkSize(blockRange: number): number {
+  return Math.min(2_000_000, Math.max(1, blockRange))
+}
+
+function shouldUseCompleteFilteredLatestScan({
+  scanOrder,
+  blockRange,
+  limit,
+  addressFilters,
+  topic0,
+  topic1,
+  topic2,
+  topic3,
+}: {
+  scanOrder: 'earliest' | 'latest'
+  blockRange: number
+  limit: number
+  addressFilters: string[] | undefined
+  topic0: string[]
+  topic1?: string[]
+  topic2?: string[]
+  topic3?: string[]
+}): boolean {
+  return (
+    scanOrder === 'latest' &&
+    blockRange > 10_000 &&
+    limit <= 25 &&
+    !!addressFilters?.length &&
+    topic0.length > 0 &&
+    (hasTopicFilter(topic1) || hasTopicFilter(topic2) || hasTopicFilter(topic3))
+  )
 }
 
 async function fetchLogsByScanOrder({
@@ -137,32 +225,29 @@ async function fetchLogsByScanOrder({
   chunkSize: number
   scanOrder: 'earliest' | 'latest'
 }) {
-  const collected: EvmLogItem[] = []
   const targetCount = limit + 1
-  let scannedFromBlock = scanOrder === 'earliest' ? fromBlock : toBlock
-  let scannedToBlock = scanOrder === 'earliest' ? fromBlock : toBlock
-
-  if (scanOrder === 'earliest') {
-    for (let chunkFrom = fromBlock; chunkFrom <= toBlock && collected.length < targetCount; chunkFrom += chunkSize) {
-      const chunkTo = Math.min(toBlock, chunkFrom + chunkSize - 1)
-      scannedToBlock = chunkTo
-      const records = await portalFetchStreamRange(url, { ...query, fromBlock: chunkFrom, toBlock: chunkTo })
-      collected.push(...sortLogs(flattenLogsWithBlockContext(records) as EvmLogItem[]))
-    }
-  } else {
-    for (let chunkTo = toBlock; chunkTo >= fromBlock && collected.length < targetCount; chunkTo -= chunkSize) {
-      const chunkFrom = Math.max(fromBlock, chunkTo - chunkSize + 1)
-      scannedFromBlock = chunkFrom
-      const records = await portalFetchStreamRange(url, { ...query, fromBlock: chunkFrom, toBlock: chunkTo })
-      collected.push(...sortLogs(flattenLogsWithBlockContext(records) as EvmLogItem[]).reverse())
-    }
-  }
+  const scan = await scanBoundedBlockRange<EvmLogItem>({
+    fromBlock,
+    toBlock,
+    chunkSize,
+    scanOrder,
+    shouldContinue: (state) => state.items.length < targetCount,
+    fetchChunk: async (chunk) => {
+      const records = await portalFetchStreamRange(url, {
+        ...query,
+        fromBlock: chunk.fromBlock,
+        toBlock: chunk.toBlock,
+      })
+      const logs = sortLogs(flattenLogsWithBlockContext(records) as EvmLogItem[])
+      return scanOrder === 'latest' ? logs.reverse() : logs
+    },
+  })
+  const collected = scan.items
 
   return {
+    ...scan,
     items: sortLogs(collected.slice(0, limit)),
     hasMore: collected.length > limit,
-    scannedFromBlock,
-    scannedToBlock,
   }
 }
 
@@ -188,11 +273,15 @@ export function registerQueryLogsTool(server: McpServer) {
       from_timestamp: z
         .union([z.number(), z.string()])
         .optional()
-        .describe('Starting timestamp. Accepts Unix seconds, Unix milliseconds, ISO datetime, or relative input like "1h ago".'),
+        .describe(
+          'Starting timestamp. Accepts Unix seconds, Unix milliseconds, ISO datetime, or relative input like "1h ago".',
+        ),
       to_timestamp: z
         .union([z.number(), z.string()])
         .optional()
-        .describe('Ending timestamp. Accepts Unix seconds, Unix milliseconds, ISO datetime, or relative input like "now".'),
+        .describe(
+          'Ending timestamp. Accepts Unix seconds, Unix milliseconds, ISO datetime, or relative input like "now".',
+        ),
       finalized_only: z.boolean().optional().default(false).describe('Only query finalized blocks'),
       addresses: z
         .array(z.string())
@@ -200,10 +289,25 @@ export function registerQueryLogsTool(server: McpServer) {
         .describe(
           "Contract addresses to filter (e.g., ['0xUSDC...', '0xDAI...']). IMPORTANT: Always include this or topics for fast queries.",
         ),
+      token_symbols: z
+        .array(z.string())
+        .optional()
+        .describe('Token symbols to resolve via open token-list data and merge into addresses, e.g. ["USDC"].'),
+      max_token_symbol_matches: z
+        .number()
+        .min(1)
+        .max(20)
+        .optional()
+        .default(5)
+        .describe(
+          'Maximum token-list matches to include per token symbol. Use addresses for deterministic single-contract filters.',
+        ),
       event: z
         .union([z.string(), z.array(z.string())])
         .optional()
-        .describe('Common event alias or topic0 hash. Examples: "transfer", "approval", "swap", "sync", "deposit", "withdrawal". Merges with topic0.'),
+        .describe(
+          'Common event alias or topic0 hash. Examples: "transfer", "approval", "swap", "sync", "deposit", "withdrawal". Merges with topic0.',
+        ),
       topic0: z
         .array(z.string())
         .optional()
@@ -229,7 +333,7 @@ export function registerQueryLogsTool(server: McpServer) {
         .max(200)
         .optional()
         .default(20)
-        .describe('Max logs to return (default: 20, max: 1000). Note: Lower default for MCP to reduce context usage.'),
+        .describe('Max logs to return (default: 20, max: 200). Note: Lower default for MCP to reduce context usage.'),
       field_preset: z
         .enum(['minimal', 'standard', 'full'])
         .optional()
@@ -254,7 +358,11 @@ export function registerQueryLogsTool(server: McpServer) {
         .optional()
         .default(false)
         .describe('Include all logs from parent transactions'),
-      decode: z.boolean().optional().default(false).describe('Decode known log signatures inline when topics/data are available'),
+      decode: z
+        .boolean()
+        .optional()
+        .default(false)
+        .describe('Decode known log signatures inline when topics/data are available'),
       cursor: z.string().optional().describe('Continuation cursor from a previous response'),
     },
     async ({
@@ -266,6 +374,8 @@ export function registerQueryLogsTool(server: McpServer) {
       to_timestamp,
       finalized_only,
       addresses,
+      token_symbols,
+      max_token_symbol_matches,
       event,
       topic0,
       topic1,
@@ -312,6 +422,8 @@ export function registerQueryLogsTool(server: McpServer) {
         limit = paginationCursor.request.limit
         finalized_only = paginationCursor.request.finalized_only
         addresses = paginationCursor.request.addresses
+        token_symbols = paginationCursor.request.token_symbols
+        max_token_symbol_matches = paginationCursor.request.max_token_symbol_matches ?? 5
         event = paginationCursor.request.event
         topic0 = paginationCursor.request.topic0
         topic1 = paginationCursor.request.topic1
@@ -330,12 +442,22 @@ export function registerQueryLogsTool(server: McpServer) {
       })
 
       // Resolve timeframe or use explicit blocks
-      const resolvedBlocks = paginationCursor
+      const openEndedLatestBlockWindow =
+        !paginationCursor &&
+        !timeframe &&
+        from_timestamp === undefined &&
+        to_timestamp === undefined &&
+        from_block !== undefined &&
+        to_block === undefined &&
+        scan_order === 'latest'
+
+      let resolvedBlocks = paginationCursor
         ? {
             from_block: paginationCursor.window_from_block,
             to_block: paginationCursor.window_to_block,
             range_kind:
-              paginationCursor.request.from_timestamp !== undefined || paginationCursor.request.to_timestamp !== undefined
+              paginationCursor.request.from_timestamp !== undefined ||
+              paginationCursor.request.to_timestamp !== undefined
                 ? 'timestamp_range'
                 : paginationCursor.request.timeframe
                   ? 'timeframe'
@@ -349,23 +471,60 @@ export function registerQueryLogsTool(server: McpServer) {
             from_timestamp,
             to_timestamp,
           })
+      if (openEndedLatestBlockWindow) {
+        resolvedBlocks = {
+          ...resolvedBlocks,
+          to_block: Number.MAX_SAFE_INTEGER,
+        }
+      }
       const resolvedFromBlock = resolvedBlocks.from_block
       const resolvedToBlock = resolvedBlocks.to_block
 
-      const normalizedAddresses = normalizeAddresses(addresses, chainType)
-      const normalizedTopic0 = Array.from(new Set([...(topic0 ?? []), ...resolveEventTopic0(event)].map((value) => value.toLowerCase())))
+      const normalizedAddressFilters = normalizeAddresses(addresses, chainType) ?? []
+      let tokenSymbolResolutions: TokenSymbolResolution[] = []
+      let unresolvedTokenSymbols: string[] = []
+      let resolvedTokenSymbolAddresses: string[] = []
+      let tokenSymbolLookup: TokenListLookupMetadata | undefined
+      if (!paginationCursor && token_symbols && token_symbols.length > 0) {
+        const resolvedSymbols = await resolveTokenSymbolsForQuery({
+          dataset,
+          symbols: token_symbols,
+          maxMatchesPerSymbol: max_token_symbol_matches,
+        })
+        tokenSymbolResolutions = resolvedSymbols.resolutions
+        unresolvedTokenSymbols = resolvedSymbols.unresolved_symbols
+        resolvedTokenSymbolAddresses = resolvedSymbols.addresses
+        tokenSymbolLookup = resolvedSymbols.lookup
+        if (resolvedTokenSymbolAddresses.length === 0 && normalizedAddressFilters.length === 0) {
+          throw new Error(
+            `No token-list matches found for token_symbols: ${token_symbols.join(', ')}. Use portal_resolve_entity to inspect matches or pass addresses directly.`,
+          )
+        }
+      }
+      const normalizedAddresses = uniqueStrings([...normalizedAddressFilters, ...resolvedTokenSymbolAddresses])
+      const addressFilters = normalizedAddresses.length > 0 ? normalizedAddresses : undefined
+      const normalizedTopic0 = Array.from(
+        new Set([...(topic0 ?? []), ...resolveEventTopic0(event)].map((value) => value.toLowerCase())),
+      )
       const { validatedToBlock: endBlock, head } = await validateBlockRange(
         dataset,
         resolvedFromBlock,
         resolvedToBlock ?? Number.MAX_SAFE_INTEGER,
         finalized_only,
       )
+      if (openEndedLatestBlockWindow) {
+        resolvedBlocks = {
+          ...resolvedBlocks,
+          to_block: endBlock,
+        }
+      }
       const pageToBlock = paginationCursor?.page_to_block ?? endBlock
       const includeL2 = isL2Chain(dataset)
 
       // Validate query size to prevent crashes
       const blockRange = pageToBlock - resolvedFromBlock
-      const hasFilters = !!(normalizedAddresses || normalizedTopic0.length > 0 || topic1 || topic2 || topic3)
+      const inclusiveBlockRange = Math.max(0, blockRange + 1)
+      const hasFilters = !!(addressFilters || normalizedTopic0.length > 0 || topic1 || topic2 || topic3)
 
       const validation = validateQuerySize({
         blockRange,
@@ -381,7 +540,7 @@ export function registerQueryLogsTool(server: McpServer) {
       }
 
       const logFilter: Record<string, unknown> = {}
-      if (normalizedAddresses) logFilter.address = normalizedAddresses
+      if (addressFilters) logFilter.address = addressFilters
       if (normalizedTopic0.length > 0) logFilter.topic0 = normalizedTopic0
       if (topic1) logFilter.topic1 = topic1
       if (topic2) logFilter.topic2 = topic2
@@ -426,23 +585,36 @@ export function registerQueryLogsTool(server: McpServer) {
       const cursorSkip = paginationCursor?.skip_inclusive_block ?? 0
       const fetchLimit = limit + cursorSkip + 1
       const portalUrl = `${PORTAL_URL}/datasets/${dataset}/stream`
-      const scanResult = scan_order === 'earliest'
-        ? await fetchLogsByScanOrder({
-            url: portalUrl,
-            query,
-            fromBlock: resolvedFromBlock,
-            toBlock: pageToBlock,
-            limit,
-            chunkSize: hasFilters ? 500 : 100,
-            scanOrder: scan_order,
-          })
-        : undefined
+      const completeFilteredLatestScan = shouldUseCompleteFilteredLatestScan({
+        scanOrder: scan_order,
+        blockRange: inclusiveBlockRange,
+        limit,
+        addressFilters,
+        topic0: normalizedTopic0,
+        topic1,
+        topic2,
+        topic3,
+      })
+      const scanResult =
+        scan_order === 'earliest' || completeFilteredLatestScan
+          ? await fetchLogsByScanOrder({
+              url: portalUrl,
+              query,
+              fromBlock: resolvedFromBlock,
+              toBlock: pageToBlock,
+              limit,
+              chunkSize: completeFilteredLatestScan
+                ? getSelectiveLatestLogChunkSize(inclusiveBlockRange)
+                : getRecentLogChunkSize(inclusiveBlockRange, hasFilters),
+              scanOrder: scan_order,
+            })
+          : undefined
       const results = scanResult
         ? []
         : await portalFetchRecentRecords(portalUrl, query, {
             itemKeys: ['logs'],
             limit: fetchLimit,
-            chunkSize: hasFilters ? 500 : 100,
+            chunkSize: getRecentLogChunkSize(inclusiveBlockRange, hasFilters),
           })
 
       const allLogs = scanResult ? scanResult.items : sortLogs(flattenLogsWithBlockContext(results) as EvmLogItem[])
@@ -463,41 +635,46 @@ export function registerQueryLogsTool(server: McpServer) {
                 }
               : undefined,
           )
-      const nextCursor = !scanResult && page.hasMore && page.nextBoundary
-        ? encodeRecentPageCursor<QueryLogsRequest>({
-            tool: 'portal_evm_query_logs',
-            dataset,
-            request: {
-              ...(timeframe ? { timeframe } : {}),
-              ...(from_timestamp !== undefined ? { from_timestamp } : {}),
-              ...(to_timestamp !== undefined ? { to_timestamp } : {}),
-              limit,
-              finalized_only,
-              ...(normalizedAddresses ? { addresses: normalizedAddresses } : {}),
-              ...(event ? { event } : {}),
-              ...(normalizedTopic0.length > 0 ? { topic0: normalizedTopic0 } : {}),
-              ...(topic1 ? { topic1 } : {}),
-              ...(topic2 ? { topic2 } : {}),
-              ...(topic3 ? { topic3 } : {}),
-              scan_order,
-              field_preset,
-              response_format: effectiveResponseFormat,
-              include_transaction,
-              include_transaction_traces,
-              include_transaction_logs,
-              ...(decode ? { decode } : {}),
-            },
-            window_from_block: resolvedFromBlock,
-            window_to_block: endBlock,
-            page_to_block: page.nextBoundary.page_to_block,
-            skip_inclusive_block: page.nextBoundary.skip_inclusive_block,
-          })
-        : undefined
+      const nextCursor =
+        !scanResult && page.hasMore && page.nextBoundary
+          ? encodeRecentPageCursor<QueryLogsRequest>({
+              tool: 'portal_evm_query_logs',
+              dataset,
+              request: {
+                ...(timeframe ? { timeframe } : {}),
+                ...(from_timestamp !== undefined ? { from_timestamp } : {}),
+                ...(to_timestamp !== undefined ? { to_timestamp } : {}),
+                limit,
+                finalized_only,
+                ...(addressFilters ? { addresses: addressFilters } : {}),
+                ...(token_symbols ? { token_symbols } : {}),
+                ...(max_token_symbol_matches !== undefined ? { max_token_symbol_matches } : {}),
+                ...(event ? { event } : {}),
+                ...(normalizedTopic0.length > 0 ? { topic0: normalizedTopic0 } : {}),
+                ...(topic1 ? { topic1 } : {}),
+                ...(topic2 ? { topic2 } : {}),
+                ...(topic3 ? { topic3 } : {}),
+                scan_order,
+                field_preset,
+                response_format: effectiveResponseFormat,
+                include_transaction,
+                include_transaction_traces,
+                include_transaction_logs,
+                ...(decode ? { decode } : {}),
+              },
+              window_from_block: resolvedFromBlock,
+              window_to_block: endBlock,
+              page_to_block: page.nextBoundary.page_to_block,
+              skip_inclusive_block: page.nextBoundary.skip_inclusive_block,
+            })
+          : undefined
 
       // Apply response format (summary/compact/full)
       const decodedItems = decode
         ? page.pageItems.map((item) => {
-            const topics = Array.isArray(item.topics) ? item.topics.filter((value): value is string => typeof value === 'string') : []
+            const topics = Array.isArray(item.topics)
+              ? item.topics.filter((value): value is string => typeof value === 'string')
+              : []
             const data = typeof item.data === 'string' ? item.data : '0x'
             return {
               ...item,
@@ -505,16 +682,48 @@ export function registerQueryLogsTool(server: McpServer) {
                 address: String(item.address ?? ''),
                 topics,
                 data,
-                transactionHash: typeof item.transactionHash === 'string' ? item.transactionHash : typeof item.tx_hash === 'string' ? item.tx_hash : undefined,
-                logIndex: typeof item.logIndex === 'number' ? item.logIndex : typeof item.log_index === 'number' ? item.log_index : undefined,
+                transactionHash:
+                  typeof item.transactionHash === 'string'
+                    ? item.transactionHash
+                    : typeof item.tx_hash === 'string'
+                      ? item.tx_hash
+                      : undefined,
+                logIndex:
+                  typeof item.logIndex === 'number'
+                    ? item.logIndex
+                    : typeof item.log_index === 'number'
+                      ? item.log_index
+                      : undefined,
               }),
             }
           })
         : page.pageItems
       const formattedData = applyResponseFormat(decodedItems, effectiveResponseFormat, 'logs')
-      const notices = [...getTimestampWindowNotices(resolvedBlocks), ...getValidationNotices(validation)]
+      const notices = [
+        ...getTimestampWindowNotices(resolvedBlocks),
+        ...getValidationNotices(validation),
+        ...buildTokenResolutionNotices(tokenSymbolResolutions, unresolvedTokenSymbols),
+        ...buildTokenListLookupNotices(tokenSymbolLookup),
+      ]
+      if (openEndedLatestBlockWindow) {
+        notices.push('Open-ended from_block was resolved through the latest indexed head for scan_order=latest.')
+      }
+      if (completeFilteredLatestScan) {
+        notices.push(
+          'Used a complete filtered latest scan strategy: scan backward from the indexed head with large chunks until the latest match is proven or the requested window is exhausted.',
+        )
+      }
       if (nextCursor) notices.push('Older results are available via _pagination.next_cursor.')
-      if (scanResult && page.hasMore) notices.push(`More matching logs may exist outside the scanned ${scanResult.scannedFromBlock}-${scanResult.scannedToBlock} block slice.`)
+      if (scanResult && page.hasMore && scan_order === 'earliest')
+        notices.push(
+          `More matching logs exist in the scanned ${scanResult.scannedFromBlock}-${scanResult.scannedToBlock} block slice; narrow filters or reduce limit pressure before expanding the window.`,
+        )
+      if (scanResult && page.hasMore && scan_order === 'latest')
+        notices.push(
+          `Older matching logs also exist in the scanned ${scanResult.scannedFromBlock}-${scanResult.scannedToBlock} block slice; the returned rows are the latest matches by block/log index.`,
+        )
+      const boundedSearchNotice = scanResult ? buildBoundedSearchNotice(scanResult, 'EVM log scan') : undefined
+      if (boundedSearchNotice) notices.push(boundedSearchNotice)
       const freshness = buildQueryFreshness({
         finality: finalized_only ? 'finalized' : 'latest',
         headBlockNumber: head.number,
@@ -547,23 +756,35 @@ export function registerQueryLogsTool(server: McpServer) {
         }),
         freshness,
         coverage,
-        execution: buildExecutionMetadata({
-          response_format: effectiveResponseFormat,
-          finalized_only,
-          limit,
-          from_block: resolvedFromBlock,
-          to_block: endBlock,
-          page_to_block: pageToBlock,
-          scan_order,
-          range_kind: resolvedBlocks.range_kind,
-          decode,
-          notes: [
-            include_transaction || include_transaction_traces || include_transaction_logs
-              ? 'Parent transaction context was requested for matching logs.'
-              : `Using ${field_preset} field preset.`,
-          ],
-          normalized_output: true,
-        }),
+        execution: {
+          ...buildExecutionMetadata({
+            response_format: effectiveResponseFormat,
+            finalized_only,
+            limit,
+            from_block: resolvedFromBlock,
+            to_block: endBlock,
+            page_to_block: pageToBlock,
+            scan_order,
+            range_kind: resolvedBlocks.range_kind,
+            decode,
+            notes: [
+              token_symbols && token_symbols.length > 0
+                ? 'token_symbols were resolved from open token-list data and merged into addresses.'
+                : undefined,
+              openEndedLatestBlockWindow
+                ? 'Open-ended from_block searched through the latest indexed head because scan_order=latest.'
+                : undefined,
+              completeFilteredLatestScan
+                ? 'Complete filtered latest scan used large reverse chunks to avoid tiny chunk walks on sparse mint/event searches.'
+                : undefined,
+              include_transaction || include_transaction_traces || include_transaction_logs
+                ? 'Parent transaction context was requested for matching logs.'
+                : `Using ${field_preset} field preset.`,
+            ].filter((note): note is string => Boolean(note)),
+            normalized_output: true,
+          }),
+          ...(scanResult ? buildBoundedSearchExecution(scanResult) : {}),
+        },
         metadata: {
           network: dataset,
           dataset,

@@ -7,8 +7,13 @@ import { setTimeout as sleep } from 'node:timers/promises'
 const PORT = 3197
 const BASE_URL = `http://localhost:${PORT}`
 const METRICS_TOKEN = 'test-metrics-token'
+const MCP_TOKEN = 'test-mcp-token'
+const OBS_USER_QUERY_SECRET = 'obs-user-query-secret'
+const OBS_USER_QUERY_BEARER = 'obs-user-query-bearer'
+const OBS_USER_QUERY = `show https://example.test/path?access_token=${OBS_USER_QUERY_SECRET} with Authorization: Bearer ${OBS_USER_QUERY_BEARER}`
 
 let child: ChildProcessWithoutNullStreams | undefined
+const stderrChunks: string[] = []
 
 function assert(condition: boolean, message: string) {
   if (!condition) {
@@ -45,8 +50,10 @@ async function postRpc(id: number, method: string, params: Record<string, unknow
     headers: {
       'Content-Type': 'application/json',
       Accept: 'application/json, text/event-stream',
+      Authorization: `Bearer ${MCP_TOKEN}`,
       'x-mcp-client-name': 'metrics-smoke',
       'x-mcp-client-version': '1.0.0',
+      'x-mcp-user-query': OBS_USER_QUERY,
     },
     body: JSON.stringify({ jsonrpc: '2.0', id, method, params }),
   })
@@ -55,6 +62,42 @@ async function postRpc(id: number, method: string, params: Record<string, unknow
   const parsed = parseSseJson(text)
   assert(!parsed.error, `RPC ${method} returned JSON-RPC error: ${JSON.stringify(parsed.error)}`)
   return parsed
+}
+
+async function assertMcpHttpAuth() {
+  const health = await fetch(`${BASE_URL}/health`)
+  assert(health.ok, `Public /health should stay reachable, got ${health.status}`)
+
+  const tools = await fetch(`${BASE_URL}/tools`)
+  assert(tools.ok, `Public /tools should stay reachable, got ${tools.status}`)
+
+  const missingAuth = await fetch(`${BASE_URL}/mcp`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'application/json, text/event-stream',
+    },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 900, method: 'tools/list', params: {} }),
+  })
+  const missingAuthText = await missingAuth.text()
+  assert(missingAuth.status === 401, `Anonymous MCP POST should be blocked, got ${missingAuth.status}`)
+  const missingAuthJson = JSON.parse(missingAuthText)
+  assert(missingAuthJson?.jsonrpc === '2.0', 'Unauthorized MCP response should be JSON-RPC compatible')
+  assert(missingAuthJson?.error?.message === 'Unauthorized.', 'Unauthorized MCP response should use a generic message')
+
+  const badToken = 'wrong-mcp-token-that-must-not-echo'
+  const badAuth = await fetch(`${BASE_URL}/`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'application/json, text/event-stream',
+      Authorization: `Bearer ${badToken}`,
+    },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 901, method: 'tools/list', params: {} }),
+  })
+  const badAuthText = await badAuth.text()
+  assert(badAuth.status === 401, `Bad-token MCP POST should be blocked, got ${badAuth.status}`)
+  assert(!badAuthText.includes(badToken), 'Unauthorized MCP response should not echo bearer tokens')
 }
 
 function getHelpMetricNames(metricsText: string): Set<string> {
@@ -96,17 +139,41 @@ async function assertDashboardMetricNames(metricsText: string) {
   assert(missing.size === 0, `Grafana dashboard references unknown Prometheus metrics: ${Array.from(missing).join(', ')}`)
 }
 
+function assertUserQueryRedacted() {
+  const stderrText = stderrChunks.join('')
+  assert(stderrText.includes('"user_query"'), 'JSON runtime logs should include captured user_query when enabled')
+  assert(!stderrText.includes(OBS_USER_QUERY_SECRET), 'Captured user_query should not expose URL query secrets')
+  assert(!stderrText.includes(OBS_USER_QUERY_BEARER), 'Captured user_query should not expose bearer secrets')
+  assert(!stderrText.includes('?access_token='), 'Captured user_query should strip URL query strings')
+  assert(stderrText.includes('https://example.test/path'), 'Captured user_query should retain the non-sensitive URL path')
+  assert(stderrText.includes('[REDACTED]'), 'Captured user_query should mark redacted sensitive content')
+}
+
 async function main() {
-  console.log('Starting observability QA...\n')
+  console.log('Starting HTTP runtime QA...\n')
 
   child = spawn('node', ['dist/http.js'], {
     cwd: process.cwd(),
-    env: { ...process.env, PORT: String(PORT), METRICS_BEARER_TOKEN: METRICS_TOKEN },
+    env: {
+      ...process.env,
+      PORT: String(PORT),
+      METRICS_BEARER_TOKEN: METRICS_TOKEN,
+      MCP_HTTP_BEARER_TOKEN: MCP_TOKEN,
+      OBS_CAPTURE_USER_QUERY: 'true',
+      OBS_LOG_JSON: 'true',
+    },
     stdio: ['pipe', 'pipe', 'pipe'],
   })
-  child.stderr.on('data', (chunk) => process.stderr.write(chunk))
+  child.stderr.on('data', (chunk) => {
+    const text = chunk.toString()
+    stderrChunks.push(text)
+    if (!text.includes('"event":"mcp_tool_call"')) {
+      process.stderr.write(chunk)
+    }
+  })
 
   await waitForHealth()
+  await assertMcpHttpAuth()
   await postRpc(1, 'initialize', {
     protocolVersion: '2024-11-05',
     capabilities: {},
@@ -115,6 +182,10 @@ async function main() {
   await postRpc(2, 'tools/call', {
     name: 'portal_get_head',
     arguments: { network: 'base' },
+  })
+  await postRpc(3, 'tools/call', {
+    name: 'portal_resolve_entity',
+    arguments: { network: 'base-mainnet', kind: 'token', query: 'USDC', limit: 3 },
   })
 
   const anonymousMetrics = await fetch(`${BASE_URL}/metrics`)
@@ -132,18 +203,23 @@ async function main() {
   assert(metricsText.includes('mcp_dataset_queries_total{dataset="base-mainnet",vm="evm"}'), 'Dataset metrics should use canonical network and vm labels')
   assert(!metricsText.includes('mcp_dataset_queries_total{dataset="base-mainnet"}'), 'Dataset metrics should not emit unlabeled vm series')
   assert(!metricsText.includes('mcp_dataset_queries_total{dataset="base",vm="evm"}'), 'Dataset metrics should not use network aliases for successful calls')
+  assert(metricsText.includes('mcp_token_list_requests_total{source="coingecko_token_list",chain="base",status="success"'), 'Metrics should count token-list fetch success')
+  assert(metricsText.includes('mcp_token_list_cache_events_total{source="coingecko_token_list",chain="base",event="'), 'Metrics should expose token-list cache events')
 
+  assertUserQueryRedacted()
   await assertDashboardMetricNames(metricsText)
 
+  console.log('PASS  MCP POST bearer auth blocks anonymous/bad tokens while keeping /health and /tools public')
+  console.log('PASS  OBS_CAPTURE_USER_QUERY emits sanitized user_query text')
   console.log('PASS  /metrics blocks anonymous access and accepts bearer auth')
-  console.log('PASS  /metrics emits canonical tool, client, Portal, and dataset series')
+  console.log('PASS  /metrics emits canonical tool, client, Portal, dataset, and token-list series')
   console.log('PASS  Grafana dashboard Prometheus metric names match emitted metrics')
-  console.log('\nObservability QA passed')
+  console.log('\nHTTP runtime QA passed')
 }
 
 main()
   .catch((error) => {
-    console.error('Observability QA failed:', error)
+    console.error('HTTP runtime QA failed:', error)
     process.exitCode = 1
   })
   .finally(() => {

@@ -1,6 +1,6 @@
 import { datasetQueriesTotal, observabilityExportsTotal, toolErrorsTotal, toolIntentCallsTotal, toolResponseSizeBytes, userQueryCapturedTotal } from './metrics.js'
 import { detectChainType } from './helpers/chain.js'
-import { ActionableError } from './helpers/errors.js'
+import { ActionableError, sanitizeText } from './helpers/errors.js'
 import { getToolContract } from './helpers/tool-ux.js'
 import { npmVersion } from './version.js'
 
@@ -181,6 +181,9 @@ function summarizeArgs(args: Record<string, unknown>): Record<string, unknown> {
   const countedArrayKeys = [
     'addresses',
     'token_addresses',
+    'token_symbols',
+    'from_token_symbols',
+    'to_token_symbols',
     'program_id',
     'account',
     'coin',
@@ -266,7 +269,7 @@ function maybeWarnObservabilityExport(error: unknown) {
   const now = Date.now()
   if (now - lastObservabilityExportErrorAt < 60_000) return
   lastObservabilityExportErrorAt = now
-  const message = error instanceof Error ? error.message : String(error)
+  const message = sanitizeText(error instanceof Error ? error.message : String(error))
   console.error(`[observability] failed to export telemetry: ${truncateText(message, 220)}`)
 }
 
@@ -355,6 +358,7 @@ export function recordToolOutcome(params: {
   const mode =
     (typeof args.mode === 'string' ? args.mode : undefined)
     ?? extractExecutionField(payload, 'mode')
+  const sanitizedUserQuery = runtime.userQuery ? sanitizeText(runtime.userQuery) : undefined
 
   if (network) {
     datasetQueriesTotal.inc({ dataset: network, vm })
@@ -380,7 +384,7 @@ export function recordToolOutcome(params: {
     })
   }
 
-  if (OBS_CAPTURE_USER_QUERY && runtime.userQuery) {
+  if (OBS_CAPTURE_USER_QUERY && sanitizedUserQuery) {
     userQueryCapturedTotal.inc({
       transport: runtime.transport,
       client_name: runtime.clientName || 'unknown',
@@ -410,12 +414,12 @@ export function recordToolOutcome(params: {
     ...(responseFormat ? { response_format: responseFormat } : {}),
     ...(mode ? { mode } : {}),
     args_summary: summarizeArgs(args),
-    ...(OBS_CAPTURE_USER_QUERY && runtime.userQuery ? { user_query: truncateText(runtime.userQuery, 400) } : {}),
+    ...(OBS_CAPTURE_USER_QUERY && sanitizedUserQuery ? { user_query: truncateText(sanitizedUserQuery, 400) } : {}),
     ...(error
       ? {
           error: {
             type: classifyErrorType(error),
-            message: truncateText(error instanceof Error ? error.message : String(error), 280),
+            message: truncateText(sanitizeText(error instanceof Error ? error.message : String(error)), 280),
             actionable: error instanceof ActionableError,
           },
         }

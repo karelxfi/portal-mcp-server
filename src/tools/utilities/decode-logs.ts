@@ -16,6 +16,61 @@ import { normalizeAddresses } from '../../helpers/validation.js'
 
 type EventInput = { name: string; indexed: boolean }
 
+const ADDRESS_INPUT_NAMES = new Set([
+  'from',
+  'to',
+  'owner',
+  'spender',
+  'operator',
+  'sender',
+  'recipient',
+  'dst',
+  'src',
+])
+
+const NUMERIC_INPUT_NAMES = new Set([
+  'value',
+  'wad',
+  'id',
+  'amount0',
+  'amount1',
+  'amount0In',
+  'amount1In',
+  'amount0Out',
+  'amount1Out',
+  'reserve0',
+  'reserve1',
+  'liquidity',
+  'sqrtPriceX96',
+  'amount',
+  'tokenId',
+])
+
+const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000'
+
+function normalizeTopic(topic: string | undefined): string {
+  return typeof topic === 'string' ? topic.toLowerCase() : ''
+}
+
+function decodeIndexedAddress(topic: string | undefined): string {
+  const clean = normalizeTopic(topic).replace(/^0x/, '').padStart(64, '0')
+  return `0x${clean.slice(-40)}`
+}
+
+function decodeTopicUint(topic: string | undefined): string {
+  const normalized = normalizeTopic(topic)
+  if (!normalized) return '0'
+  try {
+    return BigInt(normalized).toString()
+  } catch {
+    return normalized
+  }
+}
+
+function isErc721LikeTransfer(topic0: string, topics: string[]): boolean {
+  return topic0 === EVENT_SIGNATURES.TRANSFER_ERC20 && topics.length >= 4
+}
+
 const KNOWN_EVENTS: Record<string, { name: string; inputs: EventInput[] }> = {
   // ERC20 - Transfer(address indexed from, address indexed to, uint256 value)
   '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef': {
@@ -189,7 +244,31 @@ export function decodeLog(log: {
   transaction_hash?: string
   log_index?: number
 } {
-  const topic0 = log.topics[0]
+  const topic0 = normalizeTopic(log.topics[0])
+
+  if (isErc721LikeTransfer(topic0, log.topics)) {
+    const from = decodeIndexedAddress(log.topics[1])
+    const to = decodeIndexedAddress(log.topics[2])
+    const tokenId = decodeTopicUint(log.topics[3])
+    const transferType = from === ZERO_ADDRESS ? 'mint' : to === ZERO_ADDRESS ? 'burn' : 'transfer'
+
+    return {
+      address: log.address,
+      event_name: 'Transfer',
+      decoded: {
+        standard: 'erc721',
+        transfer_type: transferType,
+        from,
+        to,
+        token_id: tokenId,
+        tokenId,
+        id: tokenId,
+      },
+      transaction_hash: log.transactionHash,
+      log_index: log.logIndex,
+    }
+  }
+
   const eventInfo = KNOWN_EVENTS[topic0]
 
   if (!eventInfo) {
@@ -215,21 +294,12 @@ export function decodeLog(log: {
     if (topicIndex >= log.topics.length) break
 
     const topic = log.topics[topicIndex]
-    // For addresses, extract last 40 chars
-    if (
-      input.name === 'from' ||
-      input.name === 'to' ||
-      input.name === 'owner' ||
-      input.name === 'spender' ||
-      input.name === 'operator' ||
-      input.name === 'sender' ||
-      input.name === 'recipient' ||
-      input.name === 'dst' ||
-      input.name === 'src'
-    ) {
-      decoded[input.name] = '0x' + topic.slice(-40)
+    if (ADDRESS_INPUT_NAMES.has(input.name)) {
+      decoded[input.name] = decodeIndexedAddress(topic)
+    } else if (NUMERIC_INPUT_NAMES.has(input.name)) {
+      decoded[input.name] = decodeTopicUint(topic)
     } else {
-      decoded[input.name] = topic
+      decoded[input.name] = normalizeTopic(topic)
     }
     topicIndex++
   }
@@ -244,23 +314,7 @@ export function decodeLog(log: {
       const rawHex = '0x' + chunks[i]
 
       // Convert numeric values to decimal strings for readability
-      if (
-        input.name === 'value' ||
-        input.name === 'wad' ||
-        input.name === 'id' ||
-        input.name === 'amount0' ||
-        input.name === 'amount1' ||
-        input.name === 'amount0In' ||
-        input.name === 'amount1In' ||
-        input.name === 'amount0Out' ||
-        input.name === 'amount1Out' ||
-        input.name === 'reserve0' ||
-        input.name === 'reserve1' ||
-        input.name === 'liquidity' ||
-        input.name === 'sqrtPriceX96' ||
-        input.name === 'amount' ||
-        input.name === 'tokenId'
-      ) {
+      if (NUMERIC_INPUT_NAMES.has(input.name)) {
         try {
           decoded[input.name] = BigInt(rawHex).toString()
         } catch {

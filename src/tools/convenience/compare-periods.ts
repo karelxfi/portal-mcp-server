@@ -9,9 +9,10 @@ import { detectChainType } from '../../helpers/chain.js'
 import { createUnsupportedChainError, createUnsupportedMetricError } from '../../helpers/errors.js'
 import { portalFetchStream } from '../../helpers/fetch.js'
 import { formatResult } from '../../helpers/format.js'
-import { formatDuration, formatTimestamp } from '../../helpers/formatting.js'
+import { formatDuration, formatTimestamp } from '../../helpers/format.js'
 import { buildBucketCoverage, buildBucketGapDiagnostics, buildQueryFreshness } from '../../helpers/result-metadata.js'
 import {
+  describeTimeWindowInput,
   getHeadTimestamp,
   getTimestampWindowNotices,
   parseTimeframeToSeconds,
@@ -132,7 +133,7 @@ export async function computeWindowSeries(params: {
   dataset: string
   metric: CompareMetric
   interval: '5m' | '15m' | '1h' | '6h' | '1d'
-  duration: '1h' | '6h' | '24h' | '7d' | '30d'
+  duration: string
   address?: string
   fromTimestamp: number
   toTimestampInclusive: number
@@ -164,7 +165,7 @@ export async function computeWindowSeries(params: {
         dataset,
         metric: metric === 'unique_addresses' ? 'unique_wallets' : 'transaction_count',
         interval,
-        duration: duration as '1h' | '6h' | '24h' | '7d',
+        duration,
         trimIncompleteLastBucket: false,
         resolved_window: resolvedWindow,
       })
@@ -177,10 +178,7 @@ export async function computeWindowSeries(params: {
         value: point.value,
       }))
       const filledBuckets = timeSeries.filter((point) => point.blocks_in_bucket > 0).length
-      const windowComplete =
-        solanaResult.first_observed_timestamp !== undefined
-          ? solanaResult.first_observed_timestamp <= fromTimestamp
-          : true
+      const windowComplete = filledBuckets === solanaResult.expected_buckets
 
       return {
         summary: {
@@ -417,9 +415,7 @@ export async function computeWindowSeries(params: {
     const min = Math.min(...values)
     const max = Math.max(...values)
     const filledBuckets = buckets.filter((bucket) => bucket.blocksInBucket > 0).length
-    const windowComplete =
-      (firstObservedTimestamp === undefined || firstObservedTimestamp <= fromTimestamp) &&
-      (lastObservedTimestamp === undefined || lastObservedTimestamp >= toTimestampInclusive - intervalSeconds + 1)
+    const windowComplete = filledBuckets === expectedBuckets
 
     return {
       summary: {
@@ -497,7 +493,9 @@ export function registerComparePeriodsTool(server: McpServer) {
         .enum(['transaction_count', 'avg_gas_price', 'gas_used', 'block_utilization', 'unique_addresses'])
         .describe('Metric to compare across adjacent time windows'),
       interval: z.enum(['5m', '15m', '1h', '6h', '1d']).describe('Time bucket interval'),
-      duration: z.enum(['1h', '6h', '24h', '7d', '30d']).describe('Duration for each period window'),
+      duration: z
+        .string()
+        .describe('Duration for each period window. Accepts compact durations like "1h" or natural phrases like "past 30 minutes".'),
       address: z.string().optional().describe('Optional EVM contract address filter for contract-specific comparisons'),
       to_timestamp: z
         .union([z.number(), z.string()])
@@ -736,7 +734,7 @@ export function registerComparePeriodsTool(server: McpServer) {
             previous: previousSeries.gapDiagnostics,
           },
         },
-        `Compared ${metric} across the current and previous ${duration} windows. Current total: ${currentTotal.toLocaleString()}, previous total: ${previousTotal.toLocaleString()}.`,
+        `Compared ${metric} across the current window and previous matching window (${describeTimeWindowInput(duration)}). Current total: ${currentTotal.toLocaleString()}, previous total: ${previousTotal.toLocaleString()}.`,
         {
           ...(notices.length > 0 ? { notices } : {}),
           freshness: {

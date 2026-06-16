@@ -8,9 +8,15 @@ import { detectChainType } from '../../helpers/chain.js'
 import { createUnsupportedChainError } from '../../helpers/errors.js'
 import { portalFetchStreamRangeVisit } from '../../helpers/fetch.js'
 import { formatResult } from '../../helpers/format.js'
-import { formatTimestamp } from '../../helpers/formatting.js'
+import { formatTimestamp } from '../../helpers/format.js'
 import { buildBucketCoverage, buildBucketGapDiagnostics, buildQueryFreshness } from '../../helpers/result-metadata.js'
-import { getTimestampWindowNotices, parseTimeframeToSeconds, type TimestampInput, resolveTimeframeOrBlocks } from '../../helpers/timeframe.js'
+import {
+  describeTimeWindowInput,
+  getTimestampWindowNotices,
+  parseTimeframeToSeconds,
+  type TimestampInput,
+  resolveTimeframeOrBlocks,
+} from '../../helpers/timeframe.js'
 
 type TrendPoint = {
   bucket_index: number
@@ -42,7 +48,9 @@ export function registerGetTopContractTrendsTool(server: McpServer) {
     {
       dataset: z.string().describe("Dataset name (supports short names: 'ethereum', 'base', 'optimism', etc.)"),
       interval: z.enum(['5m', '15m', '1h', '6h', '1d']).describe('Time bucket interval'),
-      duration: z.enum(['1h', '6h', '24h', '7d', '30d']).describe('Total time period to analyze'),
+      duration: z
+        .string()
+        .describe('Total time period to analyze. Accepts compact durations like "1h" or natural phrases like "past 30 minutes".'),
       limit: z.number().max(10).optional().default(5).describe('Number of top contracts to track in the trend output'),
       from_timestamp: z
         .union([z.number(), z.string()])
@@ -279,7 +287,7 @@ export function registerGetTopContractTrendsTool(server: McpServer) {
           top_contracts: topContracts,
           time_series: timeSeries,
         },
-        `Tracked ${topContracts.length} top contracts over ${duration} in ${interval} buckets across ${totalTransactions.toLocaleString()} transactions.`,
+        `Tracked ${topContracts.length} top contracts over ${describeTimeWindowInput(duration)} in ${interval} buckets across ${totalTransactions.toLocaleString()} transactions.`,
         {
           ...(notices.length > 0 ? { notices } : {}),
           freshness: buildQueryFreshness({

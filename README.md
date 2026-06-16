@@ -6,13 +6,19 @@ This server does not index chains itself. It validates user input, maps it onto 
 
 ## Current public surface
 
-- `24` public tools
+- `25` public tools
 - `3` advanced/debug tools
 - public params use `network`
 - discovery filters use `vm`
-- no legacy tool aliases in `v0.7.7`
+- no legacy tool aliases in `v0.7.9`
 
 Raw query tools default to compact responses. Ask for `response_format: "full"` only when you need the larger payload.
+
+Entity questions can use `portal_resolve_entity` first. It resolves EVM token symbols/addresses, EVM contract aliases, pool identifiers, protocol names, and Hyperliquid coin names into query-ready filters while keeping ambiguous matches explicit.
+
+Token symbol resolution and token metadata come from open token-list data, not baked-in token address constants. Responses include explicit notices when token-list data is unavailable, stale, or unsupported for a network.
+
+Wallet questions should start with `portal_get_wallet_summary`. It returns `fund_flow` by default, including inbound/outbound movement, asset flows, counterparties, largest observed movements, and next evidence pivots before raw-tool drill-down.
 
 ## Tool groups
 
@@ -20,6 +26,7 @@ Discovery:
 - `portal_list_networks`
 - `portal_get_network_info`
 - `portal_get_head`
+- `portal_resolve_entity`
 
 Cross-chain convenience:
 - `portal_get_recent_activity`
@@ -71,12 +78,20 @@ Substrate support is currently historical only. It does not have a real-time tai
 
 ## Response shape
 
-Most tools return a normal result body plus shared metadata such as:
+Most tools return the same envelope in MCP `structuredContent` and in a compact JSON text fallback for older clients. The envelope contains a normal result body plus shared metadata such as:
 
+- `answer`
+- `display`
+- `next_steps`
+- `investigation`
 - `_freshness`
 - `_coverage`
 - `_pagination`
 - `_ordering`
+
+`investigation` is a compact evidence guide for agents: it identifies the primary result path, bounded window, useful pivot fields such as addresses or transaction hashes, follow-up filters, and limitations before a result is treated as complete.
+
+When a response uses estimated, partial, sampled, capped, or paginated data, the top-level answer and metadata disclose it. Safe pagination follow-ups include executable tool-call metadata with explicit cursor arguments; suggestions that cannot be reconstructed safely are marked non-executable.
 
 Chart-oriented tools also return chart and table descriptors so MCP clients or LLMs can render them without reverse-engineering the payload.
 
@@ -103,6 +118,14 @@ HTTP:
 npm run start:http
 ```
 
+## Developer discovery
+
+The server exposes a structured tool-selection guide for client builders:
+
+- MCP resource `sqd://tools` returns grouped tool metadata, examples, starting points, and integration notes.
+- MCP resource `sqd://tools/{name}` returns the guide entry for one tool, for example `sqd://tools/portal_get_time_series`.
+- HTTP `GET /tools` or `GET /tools.json` returns the live tool catalog with input schemas plus the same structured guide metadata.
+
 ## Claude Desktop
 
 Add an entry like this to `claude_desktop_config.json`:
@@ -123,32 +146,22 @@ Add an entry like this to `claude_desktop_config.json`:
 - If you do not know the exact network name, start with `portal_list_networks`.
 - If you need recent indexed state, use `portal_get_network_info` or `portal_get_head` first.
 - If the question is broad, start with `portal_get_recent_activity`, `portal_get_wallet_summary`, or `portal_get_time_series` before dropping to raw queries.
+- Time windows accept compact and natural wording such as `30m`, `past 30 minutes`, `in the past 1h`, `in last 38 mins`, `last hour`, or `30 minutes ago`.
 - Use `portal_evm_get_ohlc` and `portal_hyperliquid_get_ohlc` only when you actually need candle-shaped output.
 - For large or exploratory queries, prefer `response_format: "compact"` unless you need the full record shape.
 
-## Observability
+## HTTP Deployment Notes
 
-HTTP mode exposes health state at `/health`. Prometheus metrics are available at `/metrics`, but the endpoint is private by default:
+HTTP mode exposes health state at `/health` and read-only tool discovery at `/tools` and `/tools.json`.
 
-- Set `METRICS_BEARER_TOKEN` and scrape with `Authorization: Bearer <token>`.
-- Set `METRICS_PUBLIC=true` only for local/dev environments where public metrics are intentional.
-- If neither variable is set, `/metrics` returns `404`.
-
-The bundled Grafana dashboard is at `grafana/portal-mcp-dashboard.json`. It uses:
-
-- Prometheus for live `/metrics` scrape data such as request rates, active calls, latency, and response sizes.
-- Loki for long-window tool-call history. Configure `GRAFANA_LOKI_URL` plus either `GRAFANA_LOKI_TOKEN` or `GRAFANA_LOKI_USERNAME`/`GRAFANA_LOKI_PASSWORD` to push structured tool events.
+- Set `MCP_HTTP_BEARER_TOKEN` to require `Authorization: Bearer <token>` for `POST /` and `POST /mcp`.
+- `/health` and read-only `GET /tools` / `GET /tools.json` remain public.
+- Set `MCP_CURSOR_SECRET` in production so pagination cursors are signed with a deployment-specific secret. Local development uses a deterministic fallback for convenience.
 
 Useful environment variables:
 
-- `OBS_SERVICE_NAME` (default `sqd-portal-mcp`)
-- `OBS_ENV` (default `NODE_ENV` or `production`)
-- `OBS_LOG_JSON=true` to emit structured events to stderr
-- `OBS_CAPTURE_USER_QUERY=true` to include forwarded `x-mcp-user-query` text in telemetry
-- `METRICS_BEARER_TOKEN` to protect `/metrics`
-- `METRICS_PUBLIC=true` to deliberately expose `/metrics` without auth
-
-For 30-day Grafana windows, Prometheus must scrape `/metrics` continuously with matching retention, or the Loki event panels must be backed by configured log export. In-process Prometheus counters cannot backfill history by themselves.
+- `MCP_HTTP_BEARER_TOKEN` to protect HTTP MCP POSTs
+- `MCP_CURSOR_SECRET` to sign pagination cursors
 
 ## Tests
 
@@ -158,7 +171,6 @@ npm run test:tools
 npm run test:routing
 npm run test:substrate
 npm run test:timestamps
-npm run test:observability
 npm run test:conversations
 npm run test:negative
 npm run test:quality

@@ -1,3 +1,5 @@
+import { getTokenMetadataMapForDataset } from './entity-resolution.js'
+
 /**
  * Value Enrichment Helpers
  *
@@ -102,24 +104,18 @@ export function enrichTransfers(transfers: any[], tokenInfoMap?: Map<string, Tok
  */
 export async function fetchTokenInfo(dataset: string, addresses: string[]): Promise<Map<string, TokenInfo>> {
   const tokenMap = new Map<string, TokenInfo>()
-
-  // TODO: Implement actual Portal API call to get token metadata
-  // For now, return common tokens for testing
-  const commonTokens: Record<string, TokenInfo> = {
-    '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913': { symbol: 'USDC', decimals: 6, name: 'USD Coin' },
-    '0x4200000000000000000000000000000000000006': { symbol: 'WETH', decimals: 18, name: 'Wrapped Ether' },
-    '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2': { symbol: 'WETH', decimals: 18, name: 'Wrapped Ether' },
-    '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48': { symbol: 'USDC', decimals: 6, name: 'USD Coin' },
-    '0xdac17f958d2ee523a2206206994597c13d831ec7': { symbol: 'USDT', decimals: 6, name: 'Tether USD' },
-    '0x6b175474e89094c44da98b954eedeac495271d0f': { symbol: 'DAI', decimals: 18, name: 'Dai Stablecoin' },
-  }
+  const tokenListMetadata = await getTokenMetadataMapForDataset(dataset).catch(() => new Map<string, TokenInfo>())
 
   for (const addr of addresses) {
     const normalized = addr.toLowerCase()
-    if (commonTokens[normalized]) {
-      tokenMap.set(normalized, commonTokens[normalized])
+    const tokenInfo = tokenListMetadata.get(normalized)
+    if (tokenInfo) {
+      tokenMap.set(normalized, {
+        symbol: tokenInfo.symbol,
+        decimals: tokenInfo.decimals,
+        name: tokenInfo.name,
+      })
     } else {
-      // Default to 18 decimals for unknown tokens
       tokenMap.set(normalized, { decimals: 18 })
     }
   }

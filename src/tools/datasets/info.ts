@@ -5,7 +5,7 @@ import { getBlockHead, getChainType, getDatasets, isL2Chain, resolveDataset } fr
 import { PORTAL_URL } from '../../constants/index.js'
 import { portalFetch, portalFetchStream } from '../../helpers/fetch.js'
 import { formatResult, humanizeLabel } from '../../helpers/format.js'
-import { formatDuration, formatTimestamp } from '../../helpers/formatting.js'
+import { formatDuration, formatTimestamp } from '../../helpers/format.js'
 import { buildToolDescription } from '../../helpers/tool-ux.js'
 import type { BlockHead, DatasetMetadata } from '../../types/index.js'
 

@@ -8,12 +8,15 @@
 //
 
 import { createCache } from './cache-manager.js'
+import { tokenListCacheEventsTotal, tokenListRequestsTotal } from '../metrics.js'
 
 const CACHE_TTL = 5 * 60 * 1000 // 5 minutes
 
 // Managed cache with automatic cleanup to prevent memory leaks
 // Max 500 entries for external API data (token lists can be large)
 const cache = createCache<unknown>(CACHE_TTL, 500)
+const tokenListCache = createCache<TokenListCacheRecord>(CACHE_TTL, 50)
+const staleTokenLists = new Map<string, TokenListCacheRecord>()
 
 /**
  * Simple cache wrapper for external API calls
@@ -48,6 +51,20 @@ interface CoinGeckoTokenList {
   tokens: CoinGeckoToken[]
 }
 
+type TokenListCacheRecord = {
+  tokens: CoinGeckoToken[]
+  fetchedAt: number
+}
+
+export interface CoinGeckoTokenListResult {
+  source: 'coingecko_token_list'
+  chain: string
+  tokens: CoinGeckoToken[]
+  cache_status: 'fresh' | 'stale'
+  fetched_at: number
+  age_ms: number
+}
+
 const COINGECKO_TOKEN_LISTS: Record<string, string> = {
   ethereum: 'https://tokens.coingecko.com/ethereum/all.json',
   base: 'https://tokens.coingecko.com/base/all.json',
@@ -58,18 +75,42 @@ const COINGECKO_TOKEN_LISTS: Record<string, string> = {
   bsc: 'https://tokens.coingecko.com/binance-smart-chain/all.json',
 }
 
+function buildTokenListResult(chain: string, record: TokenListCacheRecord, cacheStatus: 'fresh' | 'stale') {
+  return {
+    source: 'coingecko_token_list' as const,
+    chain,
+    tokens: record.tokens,
+    cache_status: cacheStatus,
+    fetched_at: record.fetchedAt,
+    age_ms: Math.max(0, Date.now() - record.fetchedAt),
+  }
+}
+
 /**
  * Get token list for a chain from CoinGecko
  */
-export async function getCoinGeckoTokenList(chain: string): Promise<CoinGeckoToken[]> {
-  const url = COINGECKO_TOKEN_LISTS[chain.toLowerCase()]
+export async function getCoinGeckoTokenListWithStatus(chain: string): Promise<CoinGeckoTokenListResult> {
+  const normalizedChain = chain.toLowerCase()
+  const source = 'coingecko_token_list'
+  const url = COINGECKO_TOKEN_LISTS[normalizedChain]
   if (!url) {
+    tokenListRequestsTotal.inc({ source, chain: normalizedChain, status: 'unsupported' })
     throw new Error(
       `No CoinGecko token list available for chain: ${chain}. Available: ${Object.keys(COINGECKO_TOKEN_LISTS).join(', ')}`,
     )
   }
 
-  return withCache(`coingecko:${chain}`, CACHE_TTL, async () => {
+  const cacheKey = `coingecko:${normalizedChain}`
+  const cached = tokenListCache.get(cacheKey)
+  if (cached) {
+    tokenListCacheEventsTotal.inc({ source, chain: normalizedChain, event: 'hit' })
+    return buildTokenListResult(normalizedChain, cached, 'fresh')
+  }
+
+  tokenListCacheEventsTotal.inc({ source, chain: normalizedChain, event: 'miss' })
+
+  try {
+    tokenListRequestsTotal.inc({ source, chain: normalizedChain, status: 'attempt' })
     const response = await fetch(url, {
       headers: { Accept: 'application/json' },
     })
@@ -79,8 +120,27 @@ export async function getCoinGeckoTokenList(chain: string): Promise<CoinGeckoTok
     }
 
     const data = (await response.json()) as CoinGeckoTokenList
-    return data.tokens
-  })
+    const record = { tokens: data.tokens, fetchedAt: Date.now() }
+    tokenListCache.set(cacheKey, record)
+    staleTokenLists.set(cacheKey, record)
+    tokenListRequestsTotal.inc({ source, chain: normalizedChain, status: 'success' })
+    tokenListCacheEventsTotal.inc({ source, chain: normalizedChain, event: 'store' })
+    return buildTokenListResult(normalizedChain, record, 'fresh')
+  } catch (error) {
+    tokenListRequestsTotal.inc({ source, chain: normalizedChain, status: 'error' })
+    const stale = staleTokenLists.get(cacheKey)
+    if (stale) {
+      tokenListCacheEventsTotal.inc({ source, chain: normalizedChain, event: 'stale_hit' })
+      return buildTokenListResult(normalizedChain, stale, 'stale')
+    }
+    tokenListCacheEventsTotal.inc({ source, chain: normalizedChain, event: 'stale_miss' })
+    throw error
+  }
+}
+
+export async function getCoinGeckoTokenList(chain: string): Promise<CoinGeckoToken[]> {
+  const result = await getCoinGeckoTokenListWithStatus(chain)
+  return result.tokens
 }
 
 /**

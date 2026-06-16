@@ -232,8 +232,9 @@ const SOLANA_MAXIMUM_RANGES = {
 export function validateSolanaQuerySize(options: SolanaQueryValidationOptions): QueryValidationResult {
   const { slotRange, hasFilters, queryType, limit } = options
   const maximum = hasFilters ? SOLANA_MAXIMUM_RANGES[queryType].filtered : SOLANA_MAXIMUM_RANGES[queryType].unfiltered
+  const hasLowLimit = limit <= 100
 
-  if (slotRange > maximum) {
+  if (slotRange > maximum && !hasLowLimit) {
     return {
       valid: false,
       error: `Query too large (${slotRange.toLocaleString()} slots${hasFilters ? '' : ' unfiltered'}). ` +
@@ -242,7 +243,7 @@ export function validateSolanaQuerySize(options: SolanaQueryValidationOptions): 
     }
   }
 
-  if (limit <= 100 && slotRange > Math.max(5, Math.floor(maximum / 2))) {
+  if (hasLowLimit && slotRange > Math.max(5, Math.floor(maximum / 2))) {
     return {
       valid: true,
       warning: `Large Solana range (${slotRange.toLocaleString()} slots). Results are capped by limit=${limit}, but the query may still be heavy.`,

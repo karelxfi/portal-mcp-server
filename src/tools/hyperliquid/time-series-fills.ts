@@ -4,10 +4,10 @@ import { z } from 'zod'
 import { resolveDataset, validateBlockRange } from '../../cache/datasets.js'
 import { buildTimeSeriesChart, buildTimeSeriesTable, type TableValueFormat } from '../../helpers/chart-metadata.js'
 import { formatResult } from '../../helpers/format.js'
-import { formatTimestamp } from '../../helpers/formatting.js'
+import { formatTimestamp } from '../../helpers/format.js'
 import { hashString53 } from '../../helpers/hash.js'
 import { buildBucketCoverage, buildBucketGapDiagnostics, buildQueryFreshness } from '../../helpers/result-metadata.js'
-import { parseTimeframeToSeconds, resolveTimeframeOrBlocks } from '../../helpers/timeframe.js'
+import { describeTimeWindowInput, parseTimeframeToSeconds, resolveTimeframeOrBlocks } from '../../helpers/timeframe.js'
 import { visitHyperliquidFillBlocks } from './fill-stream.js'
 
 // ============================================================================
@@ -49,7 +49,9 @@ EXAMPLES:
           "Metric: 'fill_count', 'volume' (notional USD), 'unique_traders', 'realized_pnl' (closed PnL USD), 'liquidation_volume' (liquidated notional USD)",
         ),
       interval: z.enum(['5m', '15m', '1h', '6h', '1d']).describe('Time bucket interval'),
-      duration: z.enum(['1h', '6h', '24h', '7d', '30d']).describe('Total time period to analyze'),
+      duration: z
+        .string()
+        .describe('Total time period to analyze. Accepts compact durations like "1h" or natural phrases like "past 30 minutes".'),
       coin: z.array(z.string()).optional().describe('Filter by asset symbols (e.g., ["BTC", "ETH"])'),
       user: z.array(z.string()).optional().describe('Filter by trader addresses'),
       group_by: z
@@ -144,8 +146,10 @@ EXAMPLES:
         toBlock: endBlock,
         fillFilter,
         fillFields,
-        maxBytes: 150 * 1024 * 1024,
-        concurrency: 3,
+        initialChunkSize: 100_000,
+        minChunkSize: 10_000,
+        maxBytes: 200 * 1024 * 1024,
+        concurrency: 6,
         onBlock: (block) => {
           const fills = block.fills || []
           for (let index = 0; index < fills.length; index += 1) {
@@ -188,7 +192,8 @@ EXAMPLES:
       }
 
       const seriesEndExclusive = Math.floor(latestTimestamp / intervalSeconds) * intervalSeconds + intervalSeconds
-      const seriesStartTimestamp = seriesEndExclusive - durationSeconds
+      const bucketSpanSeconds = expectedBuckets * intervalSeconds
+      const seriesStartTimestamp = seriesEndExclusive - bucketSpanSeconds
 
       // Helper to extract metric value
       function getMetricValue(data: { fills: number; volume: number; traders: Set<number>; pnl: number; liqVolume: number }): number {
@@ -319,7 +324,7 @@ EXAMPLES:
           gap_diagnostics: gapDiagnostics,
           time_series: timeSeries,
         },
-        `Aggregated ${metric}${coinNote} over ${duration} in ${interval} intervals. ${timeSeries.length} data points. Avg: ${avg.toFixed(2)}, Min: ${min.toFixed(2)}, Max: ${max.toFixed(2)}`,
+        `Aggregated ${metric}${coinNote} over ${describeTimeWindowInput(duration)} in ${interval} intervals. ${timeSeries.length} data points. Avg: ${avg.toFixed(2)}, Min: ${min.toFixed(2)}, Max: ${max.toFixed(2)}`,
         {
           freshness: buildQueryFreshness({
             finality: 'latest',
