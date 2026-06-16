@@ -4,6 +4,7 @@ import { Buffer } from 'node:buffer'
 
 import { ActionableError, parsePortalError, sanitizeErrorContext, sanitizeText } from '../src/helpers/errors.ts'
 import { encodeCursor } from '../src/helpers/pagination.ts'
+import { parseNumericAmount } from '../src/tools/convenience/wallet-summary.ts'
 import {
   assert,
   assertErrorQuality,
@@ -160,8 +161,17 @@ function runRedactionAssertions() {
   console.log('PASS  Error context and telemetry text redaction')
 }
 
+function runNumericParsingAssertions() {
+  assert(parseNumericAmount('1,234.56') === 1234.56, 'Comma-formatted native amounts should parse')
+  assert(parseNumericAmount('0.00000001') === 0.00000001, 'Small native amounts should parse')
+  assert(parseNumericAmount('not-a-number') === 0, 'Invalid numeric strings should be zeroed')
+
+  console.log('PASS  Wallet fund-flow numeric parsing')
+}
+
 async function main() {
   runRedactionAssertions()
+  runNumericParsingAssertions()
 
   const connected = await connectTestClient('negative-test')
   const { client } = connected

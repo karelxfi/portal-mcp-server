@@ -145,33 +145,33 @@ async function main() {
         },
       },
       {
-        name: 'latest pass mint prompt shape refuses unbounded historical scans',
+        name: 'broad selective latest mint scan attempts reverse search',
         run: async () => {
-          const result = await callToolWithRetry(
-            client,
-            'portal_evm_query_logs',
-            {
-              network: 'base-mainnet',
-              from_block: 1,
-              addresses: ['0xE4E70FdF2Fc1147a7f35c4c5de88E6BeA63eeAfA'],
-              event: 'transfer',
-              topic1: [ZERO_TOPIC],
-              scan_order: 'latest',
-              decode: true,
-              include_transaction: true,
-              limit: 1,
-              field_preset: 'full',
-              response_format: 'full',
-            },
-            { parseJson: false, retries: 0 },
-          )
-          assert(result.isError, 'Expected unbounded historical latest mint query to fail fast')
+          const result = await callToolWithRetry(client, 'portal_evm_query_logs', {
+            network: 'base-mainnet',
+            from_block: context.baseHead - 150_000,
+            to_block: context.baseHead,
+            addresses: ['0xE4E70FdF2Fc1147a7f35c4c5de88E6BeA63eeAfA'],
+            event: 'transfer',
+            topic1: [ZERO_TOPIC],
+            scan_order: 'latest',
+            decode: true,
+            include_transaction: true,
+            limit: 1,
+            field_preset: 'full',
+            response_format: 'full',
+          })
+          assert(!result.isError, 'Expected broad selective latest mint query to scan instead of fail fast')
+          assert(result.data._execution?.scan_order === 'latest', 'Expected latest scan metadata')
           assert(
-            result.text.includes('Complete latest event search is too broad'),
-            'Expected actionable broad-scan error',
+            result.data._execution?.scanned_blocks > 100_000,
+            'Expected selective latest scan to cover a broad block range',
           )
-          assert(result.text.includes('deployment block'), 'Expected deployment-block guidance')
-          assert(result.text.includes('requested_blocks'), 'Expected requested block count context')
+          assert(
+            Array.isArray(result.data._notices) &&
+              result.data._notices.some((notice: string) => /complete filtered latest scan/i.test(notice)),
+            'Expected complete filtered latest scan notice',
+          )
         },
       },
       {

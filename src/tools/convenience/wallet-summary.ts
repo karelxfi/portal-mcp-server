@@ -517,10 +517,10 @@ function buildTopCounterparties(
     .slice(0, limit)
 }
 
-function parseNumericAmount(value: unknown): number {
+export function parseNumericAmount(value: unknown): number {
   if (typeof value === 'number' && Number.isFinite(value)) return value
   if (typeof value === 'string') {
-    const parsed = Number(value)
+    const parsed = Number(value.trim().replace(/,/g, ''))
     return Number.isFinite(parsed) ? parsed : 0
   }
   return 0

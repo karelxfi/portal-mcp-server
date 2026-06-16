@@ -15,7 +15,7 @@ import {
   type TokenListLookupMetadata,
   resolveTokenSymbolsForQuery,
 } from '../../helpers/entity-resolution.js'
-import { ActionableError, createUnsupportedChainError } from '../../helpers/errors.js'
+import { createUnsupportedChainError } from '../../helpers/errors.js'
 import { resolveEventTopic0 } from '../../helpers/evm-aliases.js'
 import { portalFetchRecentRecords, portalFetchStreamRange } from '../../helpers/fetch.js'
 import { getLogFields } from '../../helpers/field-presets.js'
@@ -48,8 +48,6 @@ import { decodeLog } from '../utilities/decode-logs.js'
 // ============================================================================
 // Tool: Query Logs (EVM)
 // ============================================================================
-
-const MAX_COMPLETE_FILTERED_LATEST_SCAN_BLOCKS = 100_000
 
 function flattenLogsWithBlockContext(results: unknown[]) {
   return results.flatMap((block: unknown) => {
@@ -597,28 +595,6 @@ export function registerQueryLogsTool(server: McpServer) {
         topic2,
         topic3,
       })
-      if (completeFilteredLatestScan && inclusiveBlockRange > MAX_COMPLETE_FILTERED_LATEST_SCAN_BLOCKS) {
-        throw new ActionableError(
-          'Complete latest event search is too broad for a synchronous Portal MCP response.',
-          [
-            'Provide a bounded window with timeframe, from_timestamp/to_timestamp, or from_block/to_block.',
-            'For NFT/pass mint questions, first find or provide the contract deployment block, then retry from that block.',
-            'If you only need recent mints, use a recent timeframe such as 6h, 24h, 7d, or 30d.',
-          ],
-          {
-            network: dataset,
-            requested_from_block: resolvedFromBlock,
-            requested_to_block: pageToBlock,
-            requested_blocks: inclusiveBlockRange,
-            max_complete_scan_blocks: MAX_COMPLETE_FILTERED_LATEST_SCAN_BLOCKS,
-            addresses: addressFilters,
-            topic0: normalizedTopic0,
-            ...(topic1 ? { topic1 } : {}),
-            ...(topic2 ? { topic2 } : {}),
-            ...(topic3 ? { topic3 } : {}),
-          },
-        )
-      }
       const scanResult =
         scan_order === 'earliest' || completeFilteredLatestScan
           ? await fetchLogsByScanOrder({
