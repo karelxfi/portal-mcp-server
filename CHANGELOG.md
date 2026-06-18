@@ -5,7 +5,7 @@
 ### Codex plugin
 - Added a repo-local Codex plugin wrapper for the hosted SQD Portal MCP endpoint.
 - Added a repo-local marketplace entry so Codex can install `sqd-portal-mcp@portal-mcp-server` from this repository.
-- Documented the hosted default, checkout-local stdio fallback, and first-use prompts for Codex users.
+- Documented the hosted default, checkout-local stdio fallback, and higher-signal first-use prompts for Codex users.
 - Added official SQD square logo assets, including light/dark presentation variants, to polish Codex plugin surfaces.
 - Added `npm run test:plugin` to validate the plugin manifest, marketplace wiring, optional asset paths, and a hosted MCP smoke check before release.
 

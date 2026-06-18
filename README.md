@@ -137,7 +137,7 @@ codex plugin marketplace add .
 codex plugin add sqd-portal-mcp@portal-mcp-server
 ```
 
-Open a new Codex thread after installing. First-use prompts exposed by the plugin include network discovery, SQD token resolution on Base, and wallet recent-activity summaries.
+Open a new Codex thread after installing. First-use prompts include Hyperliquid BTC perp fills, recent Base transaction volume, and top USDC senders on Base.
 
 ## Claude Desktop
 

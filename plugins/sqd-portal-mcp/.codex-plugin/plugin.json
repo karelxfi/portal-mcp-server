@@ -1,6 +1,6 @@
 {
   "name": "sqd-portal-mcp",
-  "version": "0.8.0",
+  "version": "0.8.0+codex.20260618124633",
   "description": "Read validated onchain data through SQD Portal from Codex.",
   "author": {
     "name": "Subsquid Labs",
@@ -35,9 +35,9 @@
     "websiteURL": "https://sqd.dev/portal/",
     "privacyPolicyURL": "https://sqd.dev/imprint/",
     "defaultPrompt": [
-      "List Base and Ethereum networks in SQD Portal.",
-      "Resolve SQD on Base and return query filters.",
-      "Summarize a wallet's recent onchain activity."
+      "Show me the last 200 BTC perp fills on Hyperliquid.",
+      "How many transactions landed on Base in the past 2h?",
+      "Who sent the most USDC on Base in the past hour?"
     ],
     "brandColor": "#08090A",
     "composerIcon": "./assets/sqd-logo.svg",

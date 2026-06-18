@@ -36,9 +36,9 @@ Open a new Codex thread after installing so Codex picks up the plugin MCP server
 
 The plugin exposes these starter prompts:
 
-- List Base and Ethereum networks in SQD Portal.
-- Resolve SQD on Base and return query filters.
-- Summarize a wallet's recent onchain activity.
+- Show me the last 200 BTC perp fills on Hyperliquid.
+- How many transactions landed on Base in the past 2h?
+- Who sent the most USDC on Base in the past hour?
 
 ## Release Gate
 

@@ -74,6 +74,12 @@ function assertSquareLogoVariants(pluginRoot: string, interfaceConfig: JsonObjec
 function assertPromptList(value: unknown) {
   assert(Array.isArray(value), 'interface.defaultPrompt must be an array')
   assert(value.length > 0 && value.length <= 3, 'interface.defaultPrompt must contain 1-3 prompts')
+  const expectedPrompts = [
+    'Show me the last 200 BTC perp fills on Hyperliquid.',
+    'How many transactions landed on Base in the past 2h?',
+    'Who sent the most USDC on Base in the past hour?',
+  ]
+  assert(JSON.stringify(value) === JSON.stringify(expectedPrompts), 'interface.defaultPrompt should stay concrete and analysis-oriented')
   for (const [index, prompt] of value.entries()) {
     assertString(prompt, `interface.defaultPrompt[${index}] must be a non-empty string`)
     assert(prompt.length <= 128, `interface.defaultPrompt[${index}] must be at most 128 characters`)
