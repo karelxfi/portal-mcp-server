@@ -11,11 +11,11 @@ so the repository root is the marketplace root.
 The plugin uses official SQD brand assets from `https://sqd.dev/brand/`:
 
 - `assets/sqd-symbol.svg` is the compact composer icon.
-- `assets/sqd-logo.svg` is the full SQD wordmark for plugin detail surfaces.
+- `assets/sqd-logo.svg` is the full SQD wordmark on a black background for plugin detail surfaces.
 
-Both assets use the dark-fill versions intended for light backgrounds. Keep the original colors and
-proportions intact; use the SQD symbol for compact UI and the wordmark for larger presentation
-surfaces.
+The logo uses the black-background presentation style used by SQD on GitHub, while the composer
+icon stays as the compact symbol. Keep the original colors and proportions intact; use the SQD
+symbol for compact UI and the wordmark for larger presentation surfaces.
 
 ## Install From This Repo
 

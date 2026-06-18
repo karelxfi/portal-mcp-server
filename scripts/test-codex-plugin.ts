@@ -54,6 +54,13 @@ function assertOptionalAsset(pluginRoot: string, value: unknown, field: string) 
   assert(existsSync(resolve(pluginRoot, value)), `${field} points to a missing asset: ${value}`)
 }
 
+function assertBlackBackgroundLogo(pluginRoot: string, value: unknown) {
+  assertString(value, 'interface.logo must be a string')
+  const svg = readFileSync(resolve(pluginRoot, value), 'utf8')
+  assert(svg.includes('<rect width="812" height="342" fill="black"/>'), 'interface.logo must use the black-background SQD wordmark')
+  assert(svg.includes('fill="white"'), 'interface.logo must contain the white SQD mark')
+}
+
 function assertPromptList(value: unknown) {
   assert(Array.isArray(value), 'interface.defaultPrompt must be an array')
   assert(value.length > 0 && value.length <= 3, 'interface.defaultPrompt must contain 1-3 prompts')
@@ -104,6 +111,7 @@ function assertManifest() {
   assertPromptList(manifest.interface.defaultPrompt)
   assertOptionalAsset(PLUGIN_ROOT, manifest.interface.composerIcon, 'interface.composerIcon')
   assertOptionalAsset(PLUGIN_ROOT, manifest.interface.logo, 'interface.logo')
+  assertBlackBackgroundLogo(PLUGIN_ROOT, manifest.interface.logo)
   const screenshots = manifest.interface.screenshots
   if (screenshots !== undefined) {
     assert(Array.isArray(screenshots), 'interface.screenshots must be an array when present')
