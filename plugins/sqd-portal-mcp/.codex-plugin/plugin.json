@@ -1,0 +1,43 @@
+{
+  "name": "sqd-portal-mcp",
+  "version": "0.8.0",
+  "description": "Query blockchain data through the hosted SQD Portal MCP server.",
+  "author": {
+    "name": "Subsquid Labs",
+    "url": "https://www.sqd.ai/"
+  },
+  "homepage": "https://docs.sqd.dev/en/ai/mcp-server",
+  "repository": "https://github.com/subsquid-labs/portal-mcp-server",
+  "license": "MIT",
+  "keywords": [
+    "sqd",
+    "subsquid",
+    "portal",
+    "mcp",
+    "blockchain",
+    "analytics",
+    "evm",
+    "solana",
+    "bitcoin",
+    "hyperliquid"
+  ],
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "SQD Portal MCP",
+    "shortDescription": "Query indexed blockchain data from SQD Portal",
+    "longDescription": "Use the hosted SQD Portal MCP server from Codex to discover supported networks, inspect indexed blockchain state, resolve token and contract entities, and run read-only analytics across EVM, Solana, Bitcoin, Substrate, and Hyperliquid data.",
+    "developerName": "Subsquid Labs",
+    "category": "Data & Analytics",
+    "capabilities": [
+      "Interactive",
+      "Read"
+    ],
+    "websiteURL": "https://docs.sqd.dev/en/ai/mcp-server",
+    "defaultPrompt": [
+      "List the SQD Portal networks available for Base and Ethereum.",
+      "Resolve the SQD token on Base and show query-ready filters.",
+      "Summarize recent activity for a wallet using SQD Portal data."
+    ],
+    "brandColor": "#111827"
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "name": "portal-mcp-server",
+  "interface": {
+    "displayName": "Portal MCP Server"
+  },
+  "plugins": [
+    {
+      "name": "sqd-portal-mcp",
+      "source": {
+        "source": "local",
+        "path": "./plugins/sqd-portal-mcp"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Data & Analytics"
+    }
+  ]
+}

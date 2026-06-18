@@ -57,6 +57,15 @@ Runs an automated response-quality audit over the full manifest. It:
 ### `npm run test:package`
 Runs `npm pack --dry-run` and verifies the published tarball contains only runtime essentials. It fails if source, test, plan, workflow, dashboard, lockfile, or local tooling artifacts are included.
 
+### `npm run test:plugin`
+Validates the Codex plugin wrapper and repo-local marketplace. It:
+
+- checks `plugins/sqd-portal-mcp/.codex-plugin/plugin.json`
+- checks `.agents/plugins/marketplace.json`
+- verifies icon, logo, and screenshot paths if assets are added later
+- confirms the hosted MCP endpoint initializes, lists tools, and answers a small `portal_list_networks` smoke call
+- rejects committed local paths or secret-like markers in plugin manifests
+
 ### `npm run test:timestamps`
 Runs focused timestamp resolver QA. It:
 
@@ -76,6 +85,7 @@ Runs the full live matrix:
 - substrate
 - timestamps
 - HTTP mode
+- Codex plugin manifest, marketplace, asset, and hosted MCP smoke checks
 - conversations
 - realistic prompts
 - negative paths
@@ -109,8 +119,9 @@ When tool names or recommended arguments change:
 5. Re-run `npm run test:realistic-prompts`
 6. Re-run `npm run test:negative`
 7. Re-run `npm run test:quality`
-8. Re-run `npm run test:package`
-9. Re-run `npx tsx scripts/data-quality-test.ts` for a quick qualitative review
+8. Re-run `npm run test:plugin`
+9. Re-run `npm run test:package`
+10. Re-run `npx tsx scripts/data-quality-test.ts` for a quick qualitative review
 
 ## Why the manifest exists
 

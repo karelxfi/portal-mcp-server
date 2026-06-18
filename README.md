@@ -126,6 +126,19 @@ The server exposes a structured tool-selection guide for client builders:
 - MCP resource `sqd://tools/{name}` returns the guide entry for one tool, for example `sqd://tools/portal_get_time_series`.
 - HTTP `GET /tools` or `GET /tools.json` returns the live tool catalog with input schemas plus the same structured guide metadata.
 
+## Codex plugin
+
+The Codex plugin wrapper lives in `plugins/sqd-portal-mcp` and defaults to the hosted MCP endpoint at `https://portal.sqd.dev/mcp`.
+
+Install it from this repo-local marketplace:
+
+```bash
+codex plugin marketplace add .
+codex plugin add sqd-portal-mcp@portal-mcp-server
+```
+
+Open a new Codex thread after installing. First-use prompts exposed by the plugin include network discovery, SQD token resolution on Base, and wallet recent-activity summaries.
+
 ## Claude Desktop
 
 Add an entry like this to `claude_desktop_config.json`:
@@ -171,6 +184,7 @@ npm run test:tools
 npm run test:routing
 npm run test:substrate
 npm run test:timestamps
+npm run test:plugin
 npm run test:conversations
 npm run test:negative
 npm run test:quality

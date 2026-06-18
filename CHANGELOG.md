@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.8.0] - 2026-06-18
+
+### Codex plugin
+- Added a repo-local Codex plugin wrapper for the hosted SQD Portal MCP endpoint.
+- Added a repo-local marketplace entry so Codex can install `sqd-portal-mcp@portal-mcp-server` from this repository.
+- Documented the hosted default, checkout-local stdio fallback, and first-use prompts for Codex users.
+- Added `npm run test:plugin` to validate the plugin manifest, marketplace wiring, optional asset paths, and a hosted MCP smoke check before release.
+
 ## [0.7.9] - 2026-05-16
 
 Portal MCP v0.7.9 is focused on developer and agent ergonomics for natural blockchain questions.
