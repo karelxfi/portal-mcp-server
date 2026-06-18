@@ -76,6 +76,9 @@ data/
 # Claude project files (local configuration)
 .claude/
 .agents/
+!.agents/
+!.agents/plugins/
+!.agents/plugins/marketplace.json
 
 # Package manager lock files (keep package-lock.json, ignore others)
 yarn.lock
@@ -92,6 +95,7 @@ coverage/
 
 # Local dev files
 .mcp.json
+!plugins/*/.mcp.json
 mcp-config.json
 charts-demo.html
 V*_SCOPE.md

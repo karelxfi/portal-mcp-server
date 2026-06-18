@@ -1,0 +1,47 @@
+{
+  "name": "sqd-portal-mcp",
+  "version": "0.8.0+codex.20260618125602",
+  "description": "Read validated onchain data through SQD Portal from Codex.",
+  "author": {
+    "name": "Subsquid Labs",
+    "url": "https://sqd.dev/"
+  },
+  "homepage": "https://docs.sqd.dev/en/ai/mcp-server",
+  "repository": "https://github.com/subsquid-labs/portal-mcp-server",
+  "license": "MIT",
+  "keywords": [
+    "sqd",
+    "subsquid",
+    "portal",
+    "mcp",
+    "blockchain",
+    "analytics",
+    "evm",
+    "solana",
+    "bitcoin",
+    "hyperliquid"
+  ],
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "SQD Portal",
+    "shortDescription": "Read validated onchain data from Codex.",
+    "longDescription": "Connect Codex to the hosted SQD Portal MCP server for read-only blockchain data. Discover networks, resolve tokens and contracts, inspect wallet or contract activity, and run analytics across EVM, Solana, Bitcoin, Substrate, and Hyperliquid data.",
+    "developerName": "Subsquid Labs",
+    "category": "Data & Analytics",
+    "capabilities": [
+      "Interactive",
+      "Read"
+    ],
+    "websiteURL": "https://sqd.dev/portal/",
+    "privacyPolicyURL": "https://sqd.dev/imprint/",
+    "defaultPrompt": [
+      "Show me the last 200 BTC perp fills on Hyperliquid.",
+      "How many transactions landed on Base in the past 2h?",
+      "Who sent the most USDC on Base in the past hour?"
+    ],
+    "brandColor": "#08090A",
+    "composerIcon": "./assets/sqd-composer-icon.svg",
+    "logo": "./assets/sqd-logo.svg",
+    "logoDark": "./assets/sqd-logo-dark.svg"
+  }
+}
