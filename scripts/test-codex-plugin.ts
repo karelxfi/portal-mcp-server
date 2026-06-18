@@ -54,11 +54,21 @@ function assertOptionalAsset(pluginRoot: string, value: unknown, field: string) 
   assert(existsSync(resolve(pluginRoot, value)), `${field} points to a missing asset: ${value}`)
 }
 
-function assertBlackBackgroundLogo(pluginRoot: string, value: unknown) {
-  assertString(value, 'interface.logo must be a string')
-  const svg = readFileSync(resolve(pluginRoot, value), 'utf8')
-  assert(svg.includes('<rect width="812" height="342" fill="black"/>'), 'interface.logo must use the black-background SQD wordmark')
-  assert(svg.includes('fill="white"'), 'interface.logo must contain the white SQD mark')
+function assertSquareLogoVariants(pluginRoot: string, interfaceConfig: JsonObject) {
+  assertString(interfaceConfig.logo, 'interface.logo must be a string')
+  assertString(interfaceConfig.logoDark, 'interface.logoDark must be a string')
+  const lightSurfaceLogo = readFileSync(resolve(pluginRoot, interfaceConfig.logo), 'utf8')
+  const darkSurfaceLogo = readFileSync(resolve(pluginRoot, interfaceConfig.logoDark), 'utf8')
+  assert(
+    lightSurfaceLogo.includes('<rect width="305" height="305" transform="translate(0.117798 0.453125)" fill="black"/>'),
+    'interface.logo must use the black-background SQD square symbol'
+  )
+  assert(lightSurfaceLogo.includes('fill="white"'), 'interface.logo must contain the white SQD mark')
+  assert(
+    darkSurfaceLogo.includes('<rect width="305" height="305" transform="translate(0.117798 0.453125)" fill="white"/>'),
+    'interface.logoDark must use the white-background SQD square symbol'
+  )
+  assert(darkSurfaceLogo.includes('fill="black"'), 'interface.logoDark must contain the black SQD mark')
 }
 
 function assertPromptList(value: unknown) {
@@ -106,12 +116,14 @@ function assertManifest() {
   assert(manifest.interface.websiteURL === 'https://sqd.dev/portal/', 'plugin website should point at the SQD Portal product page')
   assert(manifest.interface.privacyPolicyURL === 'https://sqd.dev/imprint/', 'plugin privacy policy should point at SQD imprint/privacy page')
   assert(manifest.interface.brandColor === '#08090A', 'plugin brand color should match SQD surface black')
-  assert(manifest.interface.composerIcon === './assets/sqd-symbol.svg', 'plugin should use the SQD symbol as composer icon')
-  assert(manifest.interface.logo === './assets/sqd-logo.svg', 'plugin should use the SQD wordmark as logo')
+  assert(manifest.interface.composerIcon === './assets/sqd-logo.svg', 'plugin should use the SQD square logo as composer icon')
+  assert(manifest.interface.logo === './assets/sqd-logo.svg', 'plugin should use the black SQD square logo in light mode')
+  assert(manifest.interface.logoDark === './assets/sqd-logo-dark.svg', 'plugin should use the white SQD square logo in dark mode')
   assertPromptList(manifest.interface.defaultPrompt)
   assertOptionalAsset(PLUGIN_ROOT, manifest.interface.composerIcon, 'interface.composerIcon')
   assertOptionalAsset(PLUGIN_ROOT, manifest.interface.logo, 'interface.logo')
-  assertBlackBackgroundLogo(PLUGIN_ROOT, manifest.interface.logo)
+  assertOptionalAsset(PLUGIN_ROOT, manifest.interface.logoDark, 'interface.logoDark')
+  assertSquareLogoVariants(PLUGIN_ROOT, manifest.interface)
   const screenshots = manifest.interface.screenshots
   if (screenshots !== undefined) {
     assert(Array.isArray(screenshots), 'interface.screenshots must be an array when present')

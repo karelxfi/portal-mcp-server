@@ -40,7 +40,8 @@
       "Summarize a wallet's recent onchain activity."
     ],
     "brandColor": "#08090A",
-    "composerIcon": "./assets/sqd-symbol.svg",
-    "logo": "./assets/sqd-logo.svg"
+    "composerIcon": "./assets/sqd-logo.svg",
+    "logo": "./assets/sqd-logo.svg",
+    "logoDark": "./assets/sqd-logo-dark.svg"
   }
 }
