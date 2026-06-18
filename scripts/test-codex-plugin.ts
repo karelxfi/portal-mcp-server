@@ -71,6 +71,17 @@ function assertSquareLogoVariants(pluginRoot: string, interfaceConfig: JsonObjec
   assert(darkSurfaceLogo.includes('fill="black"'), 'interface.logoDark must contain the black SQD mark')
 }
 
+function assertComposerIcon(pluginRoot: string, value: unknown) {
+  assertString(value, 'interface.composerIcon must be a string')
+  assert(value === './assets/sqd-composer-icon.svg', 'plugin should use the trimmed SQD composer icon in prompt previews')
+  const composerIcon = readFileSync(resolve(pluginRoot, value), 'utf8')
+  assert(
+    composerIcon.includes('<rect width="305" height="305" rx="42" transform="translate(0.117798 0.453125)" fill="black"/>'),
+    'interface.composerIcon must use a softened black SQD square for prompt previews'
+  )
+  assert(composerIcon.includes('fill="white"'), 'interface.composerIcon must contain the white SQD mark')
+}
+
 function assertPromptList(value: unknown) {
   assert(Array.isArray(value), 'interface.defaultPrompt must be an array')
   assert(value.length > 0 && value.length <= 3, 'interface.defaultPrompt must contain 1-3 prompts')
@@ -122,13 +133,13 @@ function assertManifest() {
   assert(manifest.interface.websiteURL === 'https://sqd.dev/portal/', 'plugin website should point at the SQD Portal product page')
   assert(manifest.interface.privacyPolicyURL === 'https://sqd.dev/imprint/', 'plugin privacy policy should point at SQD imprint/privacy page')
   assert(manifest.interface.brandColor === '#08090A', 'plugin brand color should match SQD surface black')
-  assert(manifest.interface.composerIcon === './assets/sqd-logo.svg', 'plugin should use the SQD square logo as composer icon')
   assert(manifest.interface.logo === './assets/sqd-logo.svg', 'plugin should use the black SQD square logo in light mode')
   assert(manifest.interface.logoDark === './assets/sqd-logo-dark.svg', 'plugin should use the white SQD square logo in dark mode')
   assertPromptList(manifest.interface.defaultPrompt)
   assertOptionalAsset(PLUGIN_ROOT, manifest.interface.composerIcon, 'interface.composerIcon')
   assertOptionalAsset(PLUGIN_ROOT, manifest.interface.logo, 'interface.logo')
   assertOptionalAsset(PLUGIN_ROOT, manifest.interface.logoDark, 'interface.logoDark')
+  assertComposerIcon(PLUGIN_ROOT, manifest.interface.composerIcon)
   assertSquareLogoVariants(PLUGIN_ROOT, manifest.interface)
   const screenshots = manifest.interface.screenshots
   if (screenshots !== undefined) {
@@ -156,11 +167,13 @@ function assertMarketplace() {
 function getEndpoint() {
   const mcp = readJson(MCP_JSON_PATH)
   assertRecord(mcp.mcpServers, '.mcp.json mcpServers must be an object')
-  const server = mcp.mcpServers['sqd-portal']
-  assertRecord(server, '.mcp.json should include sqd-portal server')
-  assert(server.type === 'http', 'sqd-portal MCP server should use HTTP transport')
-  assertString(server.url, 'sqd-portal MCP server must define a URL')
-  assert(server.url === 'https://portal.sqd.dev/mcp', 'sqd-portal MCP URL should be the hosted endpoint')
+  const serverNames = Object.keys(mcp.mcpServers)
+  assert(JSON.stringify(serverNames) === JSON.stringify(['SQD']), '.mcp.json should expose the MCP server as SQD')
+  const server = mcp.mcpServers.SQD
+  assertRecord(server, '.mcp.json should include the SQD server')
+  assert(server.type === 'http', 'SQD MCP server should use HTTP transport')
+  assertString(server.url, 'SQD MCP server must define a URL')
+  assert(server.url === 'https://portal.sqd.dev/mcp', 'SQD MCP URL should be the hosted endpoint')
   assertNoCommittedSecretOrLocalPath(mcp)
   return server.url
 }

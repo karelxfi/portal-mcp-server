@@ -12,9 +12,12 @@ The plugin uses official SQD brand assets from `https://sqd.dev/brand/`:
 
 - `assets/sqd-logo.svg` is the black-background SQD symbol used for light-mode plugin surfaces.
 - `assets/sqd-logo-dark.svg` is the white-background SQD symbol used for dark-mode plugin surfaces.
+- `assets/sqd-composer-icon.svg` keeps the black SQD symbol but rounds the square for small prompt
+  and composer previews.
 
 The default logo matches the GitHub-style SQD profile picture. Keep the original colors and
-proportions intact; use the square symbol for both compact UI and plugin detail surfaces.
+proportions intact for plugin detail surfaces, and use the trimmed composer icon for compact
+preview rows where the app does not apply the same outer corner treatment.
 
 ## Install From This Repo
 
@@ -83,6 +86,8 @@ The default plugin MCP server is the hosted HTTP endpoint:
   "url": "https://portal.sqd.dev/mcp"
 }
 ```
+
+The checked-in MCP server key is `SQD` so Codex shows the server as `SQD` in plugin details.
 
 Do not add tenant credentials, bearer tokens, local checkout paths, or personal marketplace paths to
 the plugin manifest.

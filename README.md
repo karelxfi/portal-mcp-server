@@ -146,7 +146,7 @@ Add an entry like this to `claude_desktop_config.json`:
 ```json
 {
   "mcpServers": {
-    "sqd-portal": {
+    "SQD": {
       "command": "node",
       "args": ["/absolute/path/to/sqd-portal-mcp-server/dist/index.js"]
     }

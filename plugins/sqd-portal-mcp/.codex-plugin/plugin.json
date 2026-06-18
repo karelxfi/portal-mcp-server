@@ -1,6 +1,6 @@
 {
   "name": "sqd-portal-mcp",
-  "version": "0.8.0+codex.20260618124633",
+  "version": "0.8.0+codex.20260618125602",
   "description": "Read validated onchain data through SQD Portal from Codex.",
   "author": {
     "name": "Subsquid Labs",
@@ -40,7 +40,7 @@
       "Who sent the most USDC on Base in the past hour?"
     ],
     "brandColor": "#08090A",
-    "composerIcon": "./assets/sqd-logo.svg",
+    "composerIcon": "./assets/sqd-composer-icon.svg",
     "logo": "./assets/sqd-logo.svg",
     "logoDark": "./assets/sqd-logo-dark.svg"
   }
