@@ -1,9 +1,10 @@
 # SQD Portal MCP Codex Plugin
 
 This directory contains the Codex plugin wrapper for the hosted SQD Portal MCP endpoint.
+It also contains the Claude Code plugin manifest for the same hosted MCP endpoint.
 
 The first distribution target is the repo-local marketplace in `.agents/plugins/marketplace.json`.
-The marketplace entry points at this plugin with the stable source path `./plugins/sqd`,
+The marketplace entry points at this plugin with the stable source path `./plugins/portal`,
 so the repository root is the marketplace root.
 
 ## Presentation
@@ -19,7 +20,7 @@ The default logo matches the GitHub-style SQD profile picture. Keep the original
 proportions intact for plugin detail surfaces, and use the trimmed composer icon for compact
 preview rows where the app does not apply the same outer corner treatment.
 
-## Install From This Repo
+## Codex Install From This Repo
 
 Register the repo-local marketplace once:
 
@@ -30,10 +31,26 @@ codex plugin marketplace add .
 Then install the plugin from the marketplace name in `.agents/plugins/marketplace.json`:
 
 ```bash
-codex plugin add sqd@sqd-portal
+codex plugin add portal@sqd
 ```
 
 Open a new Codex thread after installing so Codex picks up the plugin MCP server.
+
+## Claude Code Install From This Repo
+
+Register the Claude Code marketplace once:
+
+```bash
+claude plugin marketplace add ./
+```
+
+Then install the plugin from the marketplace name in `.claude-plugin/marketplace.json`:
+
+```bash
+claude plugin install portal@sqd
+```
+
+Open a new Claude Code session after installing so the plugin MCP server is loaded.
 
 ## First-use Prompts
 
@@ -49,10 +66,11 @@ Run the plugin release gate before publishing plugin changes:
 
 ```bash
 npm run test:plugin
+npm run test:claude-plugin
 ```
 
-This validates the plugin manifest, marketplace entry, optional asset paths, and a small hosted MCP
-smoke check.
+These validate the Codex and Claude Code plugin manifests, marketplace entries, optional asset
+paths, and a small hosted MCP smoke check.
 
 ## Local Iteration
 
@@ -63,7 +81,7 @@ From the repository root:
 
 ```bash
 codex plugin marketplace add .
-codex plugin add sqd@sqd-portal
+codex plugin add portal@sqd
 ```
 
 Start a new Codex thread after reinstalling. During local-only iteration, a temporary cachebuster

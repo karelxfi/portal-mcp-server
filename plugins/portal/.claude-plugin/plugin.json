@@ -1,0 +1,25 @@
+{
+  "name": "portal",
+  "displayName": "SQD Portal",
+  "version": "0.8.0",
+  "description": "Read validated onchain data from Claude Code through SQD Portal.",
+  "author": {
+    "name": "Subsquid Labs"
+  },
+  "homepage": "https://docs.sqd.dev/en/ai/mcp-server",
+  "repository": "https://github.com/subsquid-labs/portal-mcp-server",
+  "license": "MIT",
+  "keywords": [
+    "sqd",
+    "subsquid",
+    "portal",
+    "mcp",
+    "blockchain",
+    "analytics",
+    "evm",
+    "solana",
+    "bitcoin",
+    "hyperliquid"
+  ],
+  "mcpServers": "./.mcp.json"
+}
