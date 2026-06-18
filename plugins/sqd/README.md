@@ -3,7 +3,7 @@
 This directory contains the Codex plugin wrapper for the hosted SQD Portal MCP endpoint.
 
 The first distribution target is the repo-local marketplace in `.agents/plugins/marketplace.json`.
-The marketplace entry points at this plugin with the stable source path `./plugins/portal`,
+The marketplace entry points at this plugin with the stable source path `./plugins/sqd`,
 so the repository root is the marketplace root.
 
 ## Presentation
@@ -30,7 +30,7 @@ codex plugin marketplace add .
 Then install the plugin from the marketplace name in `.agents/plugins/marketplace.json`:
 
 ```bash
-codex plugin add portal@sqd
+codex plugin add sqd@sqd-portal
 ```
 
 Open a new Codex thread after installing so Codex picks up the plugin MCP server.
@@ -63,7 +63,7 @@ From the repository root:
 
 ```bash
 codex plugin marketplace add .
-codex plugin add portal@sqd
+codex plugin add sqd@sqd-portal
 ```
 
 Start a new Codex thread after reinstalling. During local-only iteration, a temporary cachebuster
