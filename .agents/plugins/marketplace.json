@@ -1,14 +1,14 @@
 {
-  "name": "portal-mcp-server",
+  "name": "sqd",
   "interface": {
-    "displayName": "Portal MCP Server"
+    "displayName": "SQD"
   },
   "plugins": [
     {
-      "name": "sqd-portal-mcp",
+      "name": "portal",
       "source": {
         "source": "local",
-        "path": "./plugins/sqd-portal-mcp"
+        "path": "./plugins/portal"
       },
       "policy": {
         "installation": "AVAILABLE",
