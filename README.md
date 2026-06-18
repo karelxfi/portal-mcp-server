@@ -128,13 +128,13 @@ The server exposes a structured tool-selection guide for client builders:
 
 ## Codex plugin
 
-The Codex plugin wrapper lives in `plugins/sqd-portal-mcp` and defaults to the hosted MCP endpoint at `https://portal.sqd.dev/mcp`.
+The Codex plugin wrapper lives in `plugins/portal` and defaults to the hosted MCP endpoint at `https://portal.sqd.dev/mcp`.
 
 Install it from this repo-local marketplace:
 
 ```bash
 codex plugin marketplace add .
-codex plugin add sqd-portal-mcp@portal-mcp-server
+codex plugin add portal@sqd
 ```
 
 Open a new Codex thread after installing. First-use prompts include Hyperliquid BTC perp fills, recent Base transaction volume, and top USDC senders on Base.

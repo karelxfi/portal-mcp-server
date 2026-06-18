@@ -1,6 +1,6 @@
 {
-  "name": "sqd-portal-mcp",
-  "version": "0.8.0+codex.20260618125602",
+  "name": "portal",
+  "version": "0.8.0",
   "description": "Read validated onchain data through SQD Portal from Codex.",
   "author": {
     "name": "Subsquid Labs",

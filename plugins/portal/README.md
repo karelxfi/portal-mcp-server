@@ -3,7 +3,7 @@
 This directory contains the Codex plugin wrapper for the hosted SQD Portal MCP endpoint.
 
 The first distribution target is the repo-local marketplace in `.agents/plugins/marketplace.json`.
-The marketplace entry points at this plugin with the stable source path `./plugins/sqd-portal-mcp`,
+The marketplace entry points at this plugin with the stable source path `./plugins/portal`,
 so the repository root is the marketplace root.
 
 ## Presentation
@@ -30,7 +30,7 @@ codex plugin marketplace add .
 Then install the plugin from the marketplace name in `.agents/plugins/marketplace.json`:
 
 ```bash
-codex plugin add sqd-portal-mcp@portal-mcp-server
+codex plugin add portal@sqd
 ```
 
 Open a new Codex thread after installing so Codex picks up the plugin MCP server.
@@ -56,25 +56,18 @@ smoke check.
 
 ## Local Iteration
 
-When changing the plugin during development, use the plugin-creator helper scripts instead of
-editing marketplace or installed-plugin state by hand.
+The public plugin manifest should keep the release version, for example `0.8.0`, without a Codex
+cachebuster suffix.
 
 From the repository root:
 
 ```bash
-PLUGIN_CREATOR=/path/to/plugin-creator
-
-python3 "$PLUGIN_CREATOR/scripts/update_plugin_cachebuster.py" \
-  plugins/sqd-portal-mcp
-
-python3 "$PLUGIN_CREATOR/scripts/read_marketplace_name.py" \
-  --marketplace-path .agents/plugins/marketplace.json
-
-codex plugin add sqd-portal-mcp@portal-mcp-server
+codex plugin marketplace add .
+codex plugin add portal@sqd
 ```
 
-Use the marketplace name printed by `read_marketplace_name.py` if it ever differs from
-`portal-mcp-server`. Start a new Codex thread after reinstalling.
+Start a new Codex thread after reinstalling. During local-only iteration, a temporary cachebuster
+suffix can be useful to force reinstall behavior, but remove it before publishing.
 
 ## Current MCP Endpoint
 
