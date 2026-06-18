@@ -1,0 +1,36 @@
+{
+  "name": "sqd",
+  "owner": {
+    "name": "Subsquid Labs"
+  },
+  "description": "Claude Code plugins for SQD Portal blockchain data access.",
+  "version": "0.8.0",
+  "plugins": [
+    {
+      "name": "portal",
+      "source": "./plugins/portal",
+      "displayName": "SQD Portal",
+      "description": "Read validated onchain data from Claude Code through SQD Portal.",
+      "version": "0.8.0",
+      "author": {
+        "name": "Subsquid Labs"
+      },
+      "homepage": "https://docs.sqd.dev/en/ai/mcp-server",
+      "repository": "https://github.com/subsquid-labs/portal-mcp-server",
+      "license": "MIT",
+      "keywords": [
+        "sqd",
+        "subsquid",
+        "portal",
+        "mcp",
+        "blockchain",
+        "analytics",
+        "evm",
+        "solana",
+        "bitcoin",
+        "hyperliquid"
+      ],
+      "category": "data-analytics"
+    }
+  ]
+}

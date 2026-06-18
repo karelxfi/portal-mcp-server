@@ -60,10 +60,18 @@ Runs `npm pack --dry-run` and verifies the published tarball contains only runti
 ### `npm run test:plugin`
 Validates the Codex plugin wrapper and repo-local marketplace. It:
 
-- checks `plugins/sqd/.codex-plugin/plugin.json`
+- checks `plugins/portal/.codex-plugin/plugin.json`
 - checks `.agents/plugins/marketplace.json`
 - verifies icon, logo, and screenshot paths if assets are added later
 - confirms the hosted MCP endpoint initializes, lists tools, and answers a small `portal_list_networks` smoke call
+- rejects committed local paths or secret-like markers in plugin manifests
+
+### `npm run test:claude-plugin`
+Validates the Claude Code plugin wrapper and repo-local marketplace. It:
+
+- checks `plugins/portal/.claude-plugin/plugin.json`
+- checks `.claude-plugin/marketplace.json`
+- confirms the hosted MCP endpoint initializes and lists the expected SQD Portal tools
 - rejects committed local paths or secret-like markers in plugin manifests
 
 ### `npm run test:timestamps`
@@ -86,6 +94,7 @@ Runs the full live matrix:
 - timestamps
 - HTTP mode
 - Codex plugin manifest, marketplace, asset, and hosted MCP smoke checks
+- Claude Code plugin manifest, marketplace, and hosted MCP smoke checks
 - conversations
 - realistic prompts
 - negative paths

@@ -128,16 +128,27 @@ The server exposes a structured tool-selection guide for client builders:
 
 ## Codex plugin
 
-The Codex plugin wrapper lives in `plugins/sqd` and defaults to the hosted MCP endpoint at `https://portal.sqd.dev/mcp`.
+The Codex plugin wrapper lives in `plugins/portal` and defaults to the hosted MCP endpoint at `https://portal.sqd.dev/mcp`.
 
 Install it from this repo-local marketplace:
 
 ```bash
 codex plugin marketplace add .
-codex plugin add sqd@sqd-portal
+codex plugin add portal@sqd
 ```
 
 Open a new Codex thread after installing. First-use prompts include Hyperliquid BTC perp fills, recent Base transaction volume, and top USDC senders on Base.
+
+## Claude Code plugin
+
+The Claude Code plugin uses the same hosted MCP endpoint and the same public selector:
+
+```bash
+claude plugin marketplace add subsquid-labs/portal-mcp-server
+claude plugin install portal@sqd
+```
+
+Open a new Claude Code session after installing so the SQD MCP tools are loaded.
 
 ## Claude Desktop
 

@@ -1,5 +1,5 @@
 {
-  "name": "sqd",
+  "name": "portal",
   "version": "0.8.0",
   "description": "Read validated onchain data through SQD Portal from Codex.",
   "author": {
