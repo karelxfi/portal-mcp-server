@@ -5,7 +5,7 @@ import { resolve } from 'node:path'
 
 type JsonObject = Record<string, unknown>
 
-const PLUGIN_ROOT = 'plugins/portal'
+const PLUGIN_ROOT = 'plugins/sqd'
 const MARKETPLACE_PATH = '.agents/plugins/marketplace.json'
 const PLUGIN_JSON_PATH = `${PLUGIN_ROOT}/.codex-plugin/plugin.json`
 const MCP_JSON_PATH = `${PLUGIN_ROOT}/.mcp.json`
@@ -126,7 +126,7 @@ async function postRpc(endpoint: string, method: string, params: JsonObject) {
 
 function assertManifest() {
   const manifest = readJson(PLUGIN_JSON_PATH)
-  assert(manifest.name === 'portal', 'plugin name should be portal')
+  assert(manifest.name === 'sqd', 'plugin name should be sqd')
   assert(manifest.version === '0.8.0', 'plugin version should be the public release version')
   assert(manifest.mcpServers === './.mcp.json', 'plugin should reference ./.mcp.json')
   assertRecord(manifest.interface, 'plugin interface must be an object')
@@ -152,15 +152,15 @@ function assertManifest() {
 
 function assertMarketplace() {
   const marketplace = readJson(MARKETPLACE_PATH)
-  assert(marketplace.name === 'sqd', 'marketplace name should be sqd')
+  assert(marketplace.name === 'sqd-portal', 'marketplace name should be sqd-portal')
   assertRecord(marketplace.interface, 'marketplace interface must be an object')
-  assert(marketplace.interface.displayName === 'SQD', 'marketplace display name should be SQD')
+  assert(marketplace.interface.displayName === 'SQD Portal', 'marketplace display name should be SQD Portal')
   assert(Array.isArray(marketplace.plugins), 'marketplace.plugins must be an array')
-  const entry = marketplace.plugins.find((plugin) => plugin?.name === 'portal') as JsonObject | undefined
-  assertRecord(entry, 'marketplace should include portal')
+  const entry = marketplace.plugins.find((plugin) => plugin?.name === 'sqd') as JsonObject | undefined
+  assertRecord(entry, 'marketplace should include sqd')
   assertRecord(entry.source, 'marketplace source must be an object')
   assert(entry.source.source === 'local', 'marketplace source.source should be local')
-  assert(entry.source.path === './plugins/portal', 'marketplace source.path should stay stable')
+  assert(entry.source.path === './plugins/sqd', 'marketplace source.path should stay stable')
   assertRecord(entry.policy, 'marketplace policy must be an object')
   assert(entry.policy.installation === 'AVAILABLE', 'marketplace installation policy should be AVAILABLE')
   assert(entry.policy.authentication === 'ON_INSTALL', 'marketplace authentication policy should be ON_INSTALL')

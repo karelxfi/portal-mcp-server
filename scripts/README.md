@@ -60,7 +60,7 @@ Runs `npm pack --dry-run` and verifies the published tarball contains only runti
 ### `npm run test:plugin`
 Validates the Codex plugin wrapper and repo-local marketplace. It:
 
-- checks `plugins/portal/.codex-plugin/plugin.json`
+- checks `plugins/sqd/.codex-plugin/plugin.json`
 - checks `.agents/plugins/marketplace.json`
 - verifies icon, logo, and screenshot paths if assets are added later
 - confirms the hosted MCP endpoint initializes, lists tools, and answers a small `portal_list_networks` smoke call

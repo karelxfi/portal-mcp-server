@@ -1,14 +1,14 @@
 {
-  "name": "sqd",
+  "name": "sqd-portal",
   "interface": {
-    "displayName": "SQD"
+    "displayName": "SQD Portal"
   },
   "plugins": [
     {
-      "name": "portal",
+      "name": "sqd",
       "source": {
         "source": "local",
-        "path": "./plugins/portal"
+        "path": "./plugins/sqd"
       },
       "policy": {
         "installation": "AVAILABLE",
