@@ -6,6 +6,17 @@ The first distribution target is the repo-local marketplace in `.agents/plugins/
 The marketplace entry points at this plugin with the stable source path `./plugins/sqd-portal-mcp`,
 so the repository root is the marketplace root.
 
+## Presentation
+
+The plugin uses official SQD brand assets from `https://sqd.dev/brand/`:
+
+- `assets/sqd-symbol.svg` is the compact composer icon.
+- `assets/sqd-logo.svg` is the full SQD wordmark for plugin detail surfaces.
+
+Both assets use the dark-fill versions intended for light backgrounds. Keep the original colors and
+proportions intact; use the SQD symbol for compact UI and the wordmark for larger presentation
+surfaces.
+
 ## Install From This Repo
 
 Register the repo-local marketplace once:
@@ -26,9 +37,9 @@ Open a new Codex thread after installing so Codex picks up the plugin MCP server
 
 The plugin exposes these starter prompts:
 
-- List the SQD Portal networks available for Base and Ethereum.
-- Resolve the SQD token on Base and show query-ready filters.
-- Summarize recent activity for a wallet using SQD Portal data.
+- List Base and Ethereum networks in SQD Portal.
+- Resolve SQD on Base and return query filters.
+- Summarize a wallet's recent onchain activity.
 
 ## Release Gate
 

@@ -1,10 +1,10 @@
 {
   "name": "sqd-portal-mcp",
   "version": "0.8.0",
-  "description": "Query blockchain data through the hosted SQD Portal MCP server.",
+  "description": "Read validated onchain data through SQD Portal from Codex.",
   "author": {
     "name": "Subsquid Labs",
-    "url": "https://www.sqd.ai/"
+    "url": "https://sqd.dev/"
   },
   "homepage": "https://docs.sqd.dev/en/ai/mcp-server",
   "repository": "https://github.com/subsquid-labs/portal-mcp-server",
@@ -23,21 +23,24 @@
   ],
   "mcpServers": "./.mcp.json",
   "interface": {
-    "displayName": "SQD Portal MCP",
-    "shortDescription": "Query indexed blockchain data from SQD Portal",
-    "longDescription": "Use the hosted SQD Portal MCP server from Codex to discover supported networks, inspect indexed blockchain state, resolve token and contract entities, and run read-only analytics across EVM, Solana, Bitcoin, Substrate, and Hyperliquid data.",
+    "displayName": "SQD Portal",
+    "shortDescription": "Read validated onchain data from Codex.",
+    "longDescription": "Connect Codex to the hosted SQD Portal MCP server for read-only blockchain data. Discover networks, resolve tokens and contracts, inspect wallet or contract activity, and run analytics across EVM, Solana, Bitcoin, Substrate, and Hyperliquid data.",
     "developerName": "Subsquid Labs",
     "category": "Data & Analytics",
     "capabilities": [
       "Interactive",
       "Read"
     ],
-    "websiteURL": "https://docs.sqd.dev/en/ai/mcp-server",
+    "websiteURL": "https://sqd.dev/portal/",
+    "privacyPolicyURL": "https://sqd.dev/imprint/",
     "defaultPrompt": [
-      "List the SQD Portal networks available for Base and Ethereum.",
-      "Resolve the SQD token on Base and show query-ready filters.",
-      "Summarize recent activity for a wallet using SQD Portal data."
+      "List Base and Ethereum networks in SQD Portal.",
+      "Resolve SQD on Base and return query filters.",
+      "Summarize a wallet's recent onchain activity."
     ],
-    "brandColor": "#111827"
+    "brandColor": "#08090A",
+    "composerIcon": "./assets/sqd-symbol.svg",
+    "logo": "./assets/sqd-logo.svg"
   }
 }
