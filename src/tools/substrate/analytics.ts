@@ -1,8 +1,8 @@
+import { buildPortalUrl } from '../../portal/endpoints.js'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { z } from 'zod'
 
 import { resolveDataset, validateBlockRange } from '../../cache/datasets.js'
-import { PORTAL_URL } from '../../constants/index.js'
 import { detectChainType } from '../../helpers/chain.js'
 import { buildTableDescriptor } from '../../helpers/chart-metadata.js'
 import { createUnsupportedChainError } from '../../helpers/errors.js'
@@ -301,7 +301,7 @@ export function registerSubstrateAnalyticsTool(server: McpServer) {
 
       await Promise.all([
         portalFetchStreamRangeVisit(
-          `${PORTAL_URL}/datasets/${dataset}/stream`,
+          buildPortalUrl(`/datasets/${dataset}/stream`),
           eventQuery,
           {
             maxBytes: 150 * 1024 * 1024,
@@ -316,7 +316,7 @@ export function registerSubstrateAnalyticsTool(server: McpServer) {
           },
         ),
         portalFetchStreamRangeVisit(
-          `${PORTAL_URL}/datasets/${dataset}/stream`,
+          buildPortalUrl(`/datasets/${dataset}/stream`),
           callQuery,
           {
             maxBytes: 150 * 1024 * 1024,

@@ -2,6 +2,8 @@ import { datasetQueriesTotal, observabilityExportsTotal, toolErrorsTotal, toolIn
 import { detectChainType } from './helpers/chain.js'
 import { ActionableError, sanitizeText } from './helpers/errors.js'
 import { getToolContract } from './helpers/tool-ux.js'
+import { getSafePortalEndpointMetadata, type SafePortalEndpointMetadata } from './portal/endpoints.js'
+import type { PortalRequestTelemetrySnapshot } from './portal/telemetry.js'
 import { npmVersion } from './version.js'
 
 export type TransportKind = 'stdio' | 'http'
@@ -15,6 +17,10 @@ export type RuntimeRequestContext = {
   userQuery?: string
   userAgent?: string
   forwardedFor?: string
+  endpoint?: SafePortalEndpointMetadata
+  mcpAuthMode?: string
+  mcpAuthOutcome?: 'authorized' | 'anonymous' | 'not_applicable'
+  credentialPolicy?: string
 }
 
 type ToolEventStatus = 'success' | 'error'
@@ -28,6 +34,13 @@ type ObservabilityEvent = {
   transport: TransportKind
   server_version: string
   tool: string
+  endpoint_id: string
+  endpoint_class: string
+  endpoint_auth_mode: string
+  endpoint_tenant_key?: string
+  mcp_auth_mode: string
+  mcp_auth_outcome: string
+  credential_policy?: string
   audience?: string
   category?: string
   intent?: string
@@ -39,6 +52,10 @@ type ObservabilityEvent = {
   duration_ms: number
   status: ToolEventStatus
   response_size_bytes?: number
+  upstream_portal_request_count?: number
+  upstream_portal_status_codes?: string[]
+  upstream_portal_status_classes?: string[]
+  upstream_portal_last_status_code?: string
   response_format?: string
   mode?: string
   args_summary?: Record<string, unknown>
@@ -344,10 +361,12 @@ export function recordToolOutcome(params: {
   durationMs: number
   runtime: RuntimeRequestContext
   invocationId: string
+  portal?: PortalRequestTelemetrySnapshot
 }) {
-  const { toolName, args, result, error, durationMs, runtime, invocationId } = params
+  const { toolName, args, result, error, durationMs, runtime, invocationId, portal } = params
   const payload = result ? parseResultPayload(result) : undefined
   const toolContract = getToolContract(toolName)
+  const endpoint = runtime.endpoint ?? getSafePortalEndpointMetadata()
   const network = extractNetwork(args, payload)
   const vm = classifyVm(toolName, args, payload)
   const status: ToolEventStatus = error ? 'error' : 'success'
@@ -400,6 +419,13 @@ export function recordToolOutcome(params: {
     transport: runtime.transport,
     server_version: npmVersion,
     tool: toolName,
+    endpoint_id: endpoint.id,
+    endpoint_class: endpoint.endpoint_class,
+    endpoint_auth_mode: endpoint.auth_mode,
+    ...(endpoint.tenant_key ? { endpoint_tenant_key: endpoint.tenant_key } : {}),
+    mcp_auth_mode: runtime.mcpAuthMode ?? (runtime.transport === 'stdio' ? 'not_applicable' : 'anonymous'),
+    mcp_auth_outcome: runtime.mcpAuthOutcome ?? (runtime.transport === 'stdio' ? 'not_applicable' : 'anonymous'),
+    ...(runtime.credentialPolicy ? { credential_policy: runtime.credentialPolicy } : {}),
     ...(toolContract?.audience ? { audience: toolContract.audience } : {}),
     ...(toolContract?.category ? { category: toolContract.category } : {}),
     ...(toolContract?.intent ? { intent: toolContract.intent } : {}),
@@ -411,6 +437,14 @@ export function recordToolOutcome(params: {
     duration_ms: durationMs,
     status,
     ...(responseSizeBytes !== undefined ? { response_size_bytes: responseSizeBytes } : {}),
+    ...(portal && portal.request_count > 0
+      ? {
+          upstream_portal_request_count: portal.request_count,
+          upstream_portal_status_codes: portal.status_codes,
+          upstream_portal_status_classes: portal.status_classes,
+          ...(portal.last_status_code ? { upstream_portal_last_status_code: portal.last_status_code } : {}),
+        }
+      : {}),
     ...(responseFormat ? { response_format: responseFormat } : {}),
     ...(mode ? { mode } : {}),
     args_summary: summarizeArgs(args),

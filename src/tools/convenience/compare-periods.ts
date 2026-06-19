@@ -1,9 +1,9 @@
+import { buildPortalUrl } from '../../portal/endpoints.js'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { z } from 'zod'
 
 import { getBlockHead, resolveDataset, validateBlockRange } from '../../cache/datasets.js'
 import { createQueryCache, stableCacheKey } from '../../cache/query-cache.js'
-import { PORTAL_URL } from '../../constants/index.js'
 import { buildTableDescriptor, buildTimeSeriesChart, buildTimeSeriesTable } from '../../helpers/chart-metadata.js'
 import { detectChainType } from '../../helpers/chain.js'
 import { createUnsupportedChainError, createUnsupportedMetricError } from '../../helpers/errors.js'
@@ -281,7 +281,7 @@ export async function computeWindowSeries(params: {
       while (currentFrom <= rangeTo) {
         const plannedTo = Math.min(currentFrom + initialChunkSize - 1, rangeTo)
         const chunk = await portalFetchStream(
-          `${PORTAL_URL}/datasets/${dataset}/stream`,
+          buildPortalUrl(`/datasets/${dataset}/stream`),
           {
             type: queryType,
             fromBlock: currentFrom,

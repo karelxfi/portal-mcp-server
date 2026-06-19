@@ -1,8 +1,8 @@
+import { buildPortalUrl } from '../../portal/endpoints.js'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { z } from 'zod'
 
 import { resolveDataset, validateBlockRange } from '../../cache/datasets.js'
-import { PORTAL_URL } from '../../constants/index.js'
 import { detectChainType, isL2Chain } from '../../helpers/chain.js'
 import { getBlockFields } from '../../helpers/field-presets.js'
 import { portalFetchStreamRange } from '../../helpers/fetch.js'
@@ -178,7 +178,7 @@ export function registerQueryBlocksTool(server: McpServer) {
         includeAllBlocks: true,
       }
 
-      const results = await portalFetchStreamRange(`${PORTAL_URL}/datasets/${dataset}/stream`, query)
+      const results = await portalFetchStreamRange(buildPortalUrl(`/datasets/${dataset}/stream`), query)
 
       const formattedBlocks =
         chainType !== 'evm'

@@ -1,10 +1,10 @@
+import { buildPortalUrl } from '../../portal/endpoints.js'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { z } from 'zod'
 
 import { getBlockHead, resolveDataset } from '../../cache/datasets.js'
 import { createQueryCache, stableCacheKey } from '../../cache/query-cache.js'
 
-import { PORTAL_URL } from '../../constants/index.js'
 import { buildTableDescriptor } from '../../helpers/chart-metadata.js'
 import { detectChainType } from '../../helpers/chain.js'
 import { ActionableError, createUnsupportedChainError } from '../../helpers/errors.js'
@@ -231,7 +231,7 @@ export function registerGetTopContractsTool(server: McpServer) {
           let chunkTotalTxs = 0
 
           try {
-            const processed = await portalFetchStreamRangeVisit(`${PORTAL_URL}/datasets/${dataset}/stream`, {
+            const processed = await portalFetchStreamRangeVisit(buildPortalUrl(`/datasets/${dataset}/stream`), {
               ...query,
               fromBlock: currentFrom,
               toBlock: plannedTo,

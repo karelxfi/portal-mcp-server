@@ -1,8 +1,8 @@
+import { buildPortalUrl } from '../../portal/endpoints.js'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { z } from 'zod'
 
 import { getBlockHead, getChainType, getDatasets, isL2Chain, resolveDataset } from '../../cache/datasets.js'
-import { PORTAL_URL } from '../../constants/index.js'
 import { portalFetch, portalFetchStream } from '../../helpers/fetch.js'
 import { formatResult, humanizeLabel } from '../../helpers/format.js'
 import { formatDuration, formatTimestamp } from '../../helpers/format.js'
@@ -67,7 +67,7 @@ async function fetchHeadTimestamp(dataset: string, chainType: string, blockNumbe
               }
 
   const response = await portalFetchStream(
-    `${PORTAL_URL}/datasets/${dataset}/stream`,
+    buildPortalUrl(`/datasets/${dataset}/stream`),
     query,
     { maxBlocks: 1, maxBytes: 2 * 1024 * 1024 },
   )
@@ -153,9 +153,9 @@ export function registerGetDatasetInfoTool(server: McpServer) {
 
       const [datasets, metadata, head, finalizedHead] = await Promise.all([
         getDatasets(),
-        portalFetch<DatasetMetadata>(`${PORTAL_URL}/datasets/${dataset}/metadata`),
-        portalFetch<BlockHead>(`${PORTAL_URL}/datasets/${dataset}/head`),
-        portalFetch<BlockHead>(`${PORTAL_URL}/datasets/${dataset}/finalized-head`).catch(() => undefined),
+        portalFetch<DatasetMetadata>(buildPortalUrl(`/datasets/${dataset}/metadata`)),
+        portalFetch<BlockHead>(buildPortalUrl(`/datasets/${dataset}/head`)),
+        portalFetch<BlockHead>(buildPortalUrl(`/datasets/${dataset}/finalized-head`)).catch(() => undefined),
       ])
 
       const ds = datasets.find((d) => d.dataset === dataset)

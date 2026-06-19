@@ -1,9 +1,9 @@
+import { buildPortalUrl } from '../../portal/endpoints.js'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { z } from 'zod'
 
 import { getBlockHead, resolveDataset, validateBlockRange } from '../../cache/datasets.js'
 import { createQueryCache, stableCacheKey } from '../../cache/query-cache.js'
-import { PORTAL_URL } from '../../constants/index.js'
 import {
   buildTableDescriptor,
   buildTimeSeriesChart,
@@ -969,7 +969,7 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
 
             try {
               await portalFetchStreamRangeVisit(
-                `${PORTAL_URL}/datasets/${dataset}/stream`,
+                buildPortalUrl(`/datasets/${dataset}/stream`),
                 {
                   type: 'evm',
                   fromBlock: currentFrom,
@@ -1601,7 +1601,7 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
         const durationSeconds = parseTimeframeToSeconds(duration)
         const expectedBuckets = Math.ceil(durationSeconds / intervalSeconds)
         const blockResults = await portalFetchStream(
-          `${PORTAL_URL}/datasets/${dataset}/stream`,
+          buildPortalUrl(`/datasets/${dataset}/stream`),
           {
             type: 'bitcoin',
             fromBlock,
@@ -1812,7 +1812,7 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
           let chunk: TimeSeriesBlock[]
           try {
             chunk = await portalFetchStream(
-              `${PORTAL_URL}/datasets/${dataset}/stream`,
+              buildPortalUrl(`/datasets/${dataset}/stream`),
               query,
               {
                 maxBytes: chainType === 'solana' && hasTxData ? SOLANA_GENERIC_MAX_BYTES : 100 * 1024 * 1024,

@@ -1,8 +1,8 @@
+import { buildPortalUrl } from '../../portal/endpoints.js'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { z } from 'zod'
 
 import { resolveDataset, validateBlockRange } from '../../cache/datasets.js'
-import { PORTAL_URL } from '../../constants/index.js'
 import { detectChainType } from '../../helpers/chain.js'
 import { createUnsupportedChainError } from '../../helpers/errors.js'
 import { portalFetchRecentRecords } from '../../helpers/fetch.js'
@@ -196,7 +196,7 @@ EXAMPLES:
       const hasFilters = !!(type || prevout_address || prevout_script_type)
       const cursorSkip = paginationCursor?.skip_inclusive_block ?? 0
       const fetchLimit = limit + cursorSkip + 1
-      const results = await portalFetchRecentRecords(`${PORTAL_URL}/datasets/${dataset}/stream`, query, {
+      const results = await portalFetchRecentRecords(buildPortalUrl(`/datasets/${dataset}/stream`), query, {
         itemKeys: ['inputs'],
         limit: fetchLimit,
         chunkSize: hasFilters ? 20 : 10,

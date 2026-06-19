@@ -1,8 +1,8 @@
+import { buildPortalUrl } from '../../portal/endpoints.js'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { z } from 'zod'
 
 import { resolveDataset, validateBlockRange } from '../../cache/datasets.js'
-import { PORTAL_URL } from '../../constants/index.js'
 import { buildTimeSeriesChart, buildTimeSeriesTable, type TableValueFormat } from '../../helpers/chart-metadata.js'
 import { detectChainType } from '../../helpers/chain.js'
 import { createUnsupportedChainError } from '../../helpers/errors.js'
@@ -108,7 +108,7 @@ EXAMPLES:
       }
 
       const txResults = await portalFetchStreamRange(
-        `${PORTAL_URL}/datasets/${dataset}/stream`,
+        buildPortalUrl(`/datasets/${dataset}/stream`),
         txQuery,
         {
           maxBytes: 100 * 1024 * 1024,
@@ -157,7 +157,7 @@ EXAMPLES:
         }
 
         const outputResults = await portalFetchStreamRange(
-          `${PORTAL_URL}/datasets/${dataset}/stream`,
+          buildPortalUrl(`/datasets/${dataset}/stream`),
           outputQuery,
           {
             maxBytes: 100 * 1024 * 1024,
@@ -181,7 +181,7 @@ EXAMPLES:
         // Coinbase (transactionIndex 0) has no real inputs and outputs include block reward
         const [inputResults, outputFeeResults] = await Promise.all([
           portalFetchStreamRange(
-            `${PORTAL_URL}/datasets/${dataset}/stream`,
+            buildPortalUrl(`/datasets/${dataset}/stream`),
             {
               type: 'bitcoin',
               fromBlock,
@@ -197,7 +197,7 @@ EXAMPLES:
             },
           ),
           portalFetchStreamRange(
-            `${PORTAL_URL}/datasets/${dataset}/stream`,
+            buildPortalUrl(`/datasets/${dataset}/stream`),
             {
               type: 'bitcoin',
               fromBlock,

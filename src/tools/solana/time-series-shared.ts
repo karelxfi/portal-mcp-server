@@ -1,5 +1,5 @@
+import { buildPortalUrl } from '../../portal/endpoints.js'
 import { validateBlockRange } from '../../cache/datasets.js'
-import { PORTAL_URL } from '../../constants/index.js'
 import { portalFetchStream, portalFetchStreamVisit } from '../../helpers/fetch.js'
 import { formatDuration, formatNumber, formatTimestamp } from '../../helpers/format.js'
 import { hashString53 } from '../../helpers/hash.js'
@@ -139,7 +139,7 @@ function createBucket(): BucketData {
 
 async function fetchSolanaBlockTimestamp(dataset: string, blockNumber: number): Promise<number | undefined> {
   const result = await portalFetchStream(
-    `${PORTAL_URL}/datasets/${dataset}/stream`,
+    buildPortalUrl(`/datasets/${dataset}/stream`),
     {
       type: 'solana',
       fromBlock: blockNumber,
@@ -432,7 +432,7 @@ async function visitSolanaTimeSeriesRange({
 
     try {
       const processedBlocks = await portalFetchStreamVisit(
-        `${PORTAL_URL}/datasets/${dataset}/stream`,
+        buildPortalUrl(`/datasets/${dataset}/stream`),
         {
           type: 'solana',
           fromBlock: currentFrom,

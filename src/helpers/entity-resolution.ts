@@ -524,7 +524,7 @@ export async function resolveProtocolQuery({
   const trimmed = query.trim()
   if (!trimmed) {
     throw new ActionableError('Protocol query cannot be empty.', [
-      'Pass a protocol name or slug such as "uniswap", "aave", or "morpho".',
+      'Pass a protocol name or slug such as "uniswap", "aave", or "curve".',
     ])
   }
 

@@ -1,8 +1,8 @@
+import { buildPortalUrl } from '../../portal/endpoints.js'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { z } from 'zod'
 
 import { getBlockHead, resolveDataset } from '../../cache/datasets.js'
-import { PORTAL_URL } from '../../constants/index.js'
 import { buildTableDescriptor, buildTimeSeriesChart } from '../../helpers/chart-metadata.js'
 import { detectChainType } from '../../helpers/chain.js'
 import { createUnsupportedChainError } from '../../helpers/errors.js'
@@ -89,7 +89,7 @@ export function registerGetTransactionDensityTool(server: McpServer) {
         transactions: [{}],
       }
 
-      const results = await portalFetchStreamRange(`${PORTAL_URL}/datasets/${dataset}/stream`, query)
+      const results = await portalFetchStreamRange(buildPortalUrl(`/datasets/${dataset}/stream`), query)
 
       // Calculate tx density per block
       const densityData = results.map((block: any) => {

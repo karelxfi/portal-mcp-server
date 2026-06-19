@@ -1,8 +1,9 @@
+import { buildPortalUrl } from '../../portal/endpoints.js'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { z } from 'zod'
 
 import { resolveDataset, validateBlockRange } from '../../cache/datasets.js'
-import { PORTAL_URL } from '../../constants/index.js'
+import { stableCacheKey } from '../../cache/query-cache.js'
 import { detectChainType } from '../../helpers/chain.js'
 import { ActionableError, createUnsupportedChainError } from '../../helpers/errors.js'
 import { portalFetchStream, portalFetchStreamRangeVisit } from '../../helpers/fetch.js'
@@ -246,7 +247,7 @@ async function visitAdaptiveSolanaRange(
 
 async function fetchSolanaBlockTimestamp(dataset: string, blockNumber: number): Promise<number | undefined> {
   const result = await portalFetchStream(
-    `${PORTAL_URL}/datasets/${dataset}/stream`,
+    buildPortalUrl(`/datasets/${dataset}/stream`),
     {
       type: 'solana',
       fromBlock: blockNumber,
@@ -386,7 +387,17 @@ export function registerSolanaAnalyticsTool(server: McpServer) {
         : SOLANA_ANALYTICS_FAST_SLOT_BUDGET[analyticsBudgetKey]
       const slotsAnalyzed = Math.min(requestedSlots, maxSlotsForTimeframe, MAX_ANALYTICS_SLOTS)
       const effectiveFrom = requestedSlots > slotsAnalyzed ? endBlock - slotsAnalyzed + 1 : fromBlock
-      const cacheKey = `${dataset}:${mode}:${requestedTimeframe}:${String(from_timestamp ?? '')}:${String(to_timestamp ?? '')}:${include_compute_units}:${include_programs}:${response_format}:${program_limit}`
+      const cacheKey = stableCacheKey('solana-analytics', {
+        dataset,
+        mode,
+        requestedTimeframe,
+        from_timestamp,
+        to_timestamp,
+        include_compute_units,
+        include_programs,
+        response_format,
+        program_limit,
+      })
       const cached = !cursor && !include_programs ? getCachedAnalyticsResult(cacheKey) : undefined
 
       if (cached) {
@@ -452,7 +463,7 @@ export function registerSolanaAnalyticsTool(server: McpServer) {
         const feeSamples: number[] = []
         const computeUnitSamples: number[] = []
 
-        const txUrl = `${PORTAL_URL}/datasets/${dataset}/stream`
+        const txUrl = buildPortalUrl(`/datasets/${dataset}/stream`)
         const txQueryForRange = (chunkFrom: number, chunkTo: number) => ({
           type: 'solana',
           fromBlock: chunkFrom,
@@ -592,7 +603,7 @@ export function registerSolanaAnalyticsTool(server: McpServer) {
             })
 
             const programRanges = buildSlotRanges(programFrom, endBlock, INITIAL_SOLANA_PROGRAM_CHUNK_SIZE)
-            const programUrl = `${PORTAL_URL}/datasets/${dataset}/stream`
+            const programUrl = buildPortalUrl(`/datasets/${dataset}/stream`)
 
             for (let index = 0; index < programRanges.length; index += SOLANA_PROGRAM_CONCURRENCY) {
               const rangeBatch = programRanges.slice(index, index + SOLANA_PROGRAM_CONCURRENCY)

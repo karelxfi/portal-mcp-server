@@ -1,8 +1,8 @@
+import { buildPortalUrl } from '../../portal/endpoints.js'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { z } from 'zod'
 
 import { resolveDataset, validateBlockRange } from '../../cache/datasets.js'
-import { PORTAL_URL } from '../../constants/index.js'
 import { portalFetchRecentRecords } from '../../helpers/fetch.js'
 import { formatResult } from '../../helpers/format.js'
 import { normalizeHyperliquidReplicaCmdResult } from '../../helpers/normalized-results.js'
@@ -21,6 +21,8 @@ type HyperliquidReplicaRequest = {
   to_timestamp?: TimestampInput
   limit: number
   finalized_only: boolean
+  include_response?: boolean
+  include_action_payload?: boolean
   action_type?: Array<'order' | 'cancel' | 'cancelByCloid' | 'batchModify' | 'transfer' | 'withdraw' | 'updateLeverage'>
   user?: string[]
   vault_address?: string[]
@@ -59,6 +61,28 @@ function sortActions(items: HyperliquidActionItem[]) {
   })
 }
 
+function getActionPayloadType(action: unknown): string | undefined {
+  if (!action || typeof action !== 'object') return undefined
+  const actionType = (action as { type?: unknown }).type
+  return typeof actionType === 'string' ? actionType : undefined
+}
+
+function compactActionItem(item: Record<string, unknown>, includeActionPayload: boolean): Record<string, unknown> {
+  const actionType = getActionPayloadType(item.action)
+  if (includeActionPayload) {
+    return {
+      ...item,
+      ...(actionType ? { action_type: actionType } : {}),
+    }
+  }
+
+  const { action: _action, ...compactItem } = item
+  return {
+    ...compactItem,
+    ...(actionType ? { action_type: actionType } : {}),
+  }
+}
+
 export function registerQueryHyperliquidReplicaCmdsTool(server: McpServer) {
   server.tool(
     'portal_debug_hyperliquid_query_replica_commands',
@@ -91,6 +115,8 @@ export function registerQueryHyperliquidReplicaCmdsTool(server: McpServer) {
       user: z.array(z.string()).optional().describe('User wallet addresses (0x-prefixed, lowercase)'),
       vault_address: z.array(z.string()).optional().describe('Vault addresses (0x-prefixed, lowercase)'),
       status: z.enum(['ok', 'err']).optional().describe('Filter by action status'),
+      include_response: z.boolean().optional().default(false).describe('Include verbose action response payloads'),
+      include_action_payload: z.boolean().optional().default(false).describe('Include verbose raw action payloads'),
       limit: z.number().optional().default(50).describe('Max actions to return'),
       cursor: z.string().optional().describe('Continuation cursor from a previous response'),
     },
@@ -106,6 +132,8 @@ export function registerQueryHyperliquidReplicaCmdsTool(server: McpServer) {
       user,
       vault_address,
       status,
+      include_response,
+      include_action_payload,
       limit,
       cursor,
     }) => {
@@ -125,6 +153,8 @@ export function registerQueryHyperliquidReplicaCmdsTool(server: McpServer) {
         user = paginationCursor.request.user
         vault_address = paginationCursor.request.vault_address
         status = paginationCursor.request.status
+        include_response = paginationCursor.request.include_response ?? false
+        include_action_payload = paginationCursor.request.include_action_payload ?? false
       }
 
       // Resolve timeframe or use explicit blocks
@@ -178,7 +208,7 @@ export function registerQueryHyperliquidReplicaCmdsTool(server: McpServer) {
             nonce: true,
             vaultAddress: true,
             status: true,
-            response: true,
+            ...(include_response ? { response: true } : {}),
           },
         },
         actions: [actionFilter],
@@ -187,7 +217,7 @@ export function registerQueryHyperliquidReplicaCmdsTool(server: McpServer) {
       const hasFilters = !!(action_type || user || vault_address || status)
       const cursorSkip = paginationCursor?.skip_inclusive_block ?? 0
       const fetchLimit = limit + cursorSkip + 1
-      const results = await portalFetchRecentRecords(`${PORTAL_URL}/datasets/${dataset}/stream`, query, {
+      const results = await portalFetchRecentRecords(buildPortalUrl(`/datasets/${dataset}/stream`), query, {
         itemKeys: ['actions'],
         limit: fetchLimit,
         chunkSize: hasFilters ? 5_000 : 100,
@@ -201,11 +231,14 @@ export function registerQueryHyperliquidReplicaCmdsTool(server: McpServer) {
             actions?: Array<Record<string, unknown>>
           }
           return (b.actions || []).map((action) =>
-            normalizeHyperliquidReplicaCmdResult({
-              ...action,
-              ...(b.header?.number !== undefined ? { block_number: b.header.number } : {}),
-              ...(b.header?.timestamp !== undefined ? { block_timestamp: b.header.timestamp } : {}),
-            }),
+            compactActionItem(
+              normalizeHyperliquidReplicaCmdResult({
+                ...action,
+                ...(b.header?.number !== undefined ? { block_number: b.header.number } : {}),
+                ...(b.header?.timestamp !== undefined ? { block_timestamp: b.header.timestamp } : {}),
+              }),
+              Boolean(include_action_payload),
+            ),
           )
         }) as HyperliquidActionItem[],
       )
@@ -230,6 +263,8 @@ export function registerQueryHyperliquidReplicaCmdsTool(server: McpServer) {
               ...(to_timestamp !== undefined ? { to_timestamp } : {}),
               limit,
               finalized_only,
+              ...(include_response ? { include_response } : {}),
+              ...(include_action_payload ? { include_action_payload } : {}),
               ...(action_type ? { action_type } : {}),
               ...(user ? { user } : {}),
               ...(vault_address ? { vault_address } : {}),

@@ -1,8 +1,9 @@
+import { buildPortalUrl } from '../../portal/endpoints.js'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { z } from 'zod'
 
 import { getBlockHead, resolveDataset } from '../../cache/datasets.js'
-import { EVENT_NAMES, PORTAL_URL } from '../../constants/index.js'
+import { EVENT_NAMES } from '../../constants/index.js'
 import { detectChainType } from '../../helpers/chain.js'
 import { createUnsupportedChainError } from '../../helpers/errors.js'
 import { TRANSACTION_FIELD_PRESETS } from '../../helpers/field-presets.js'
@@ -151,7 +152,7 @@ export function registerGetContractActivityTool(server: McpServer) {
       const callerCounts = new Map<string, number>()
       const uniqueCallerHashes = new Set<number>()
       let totalTransactions = 0
-      await portalFetchStreamRangeVisit(`${PORTAL_URL}/datasets/${dataset}/stream`, txQuery, {
+      await portalFetchStreamRangeVisit(buildPortalUrl(`/datasets/${dataset}/stream`), txQuery, {
         maxBytes: 100 * 1024 * 1024,
         onRecord: (record) => {
           const transactions = (record as { transactions?: Array<{ from?: string }> }).transactions || []
@@ -186,7 +187,7 @@ export function registerGetContractActivityTool(server: McpServer) {
           logs: [{ address: [normalizedContract] }],
         }
 
-        await portalFetchStreamRangeVisit(`${PORTAL_URL}/datasets/${dataset}/stream`, eventsQuery, {
+        await portalFetchStreamRangeVisit(buildPortalUrl(`/datasets/${dataset}/stream`), eventsQuery, {
           maxBytes: 100 * 1024 * 1024,
           onRecord: (record) => {
             const events = (record as { logs?: Array<{ topics?: string[] }> }).logs || []

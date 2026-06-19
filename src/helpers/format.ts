@@ -8,6 +8,7 @@ import { buildLlmHints } from './llm-hints.js'
 import type { PipesRecipe } from './pipes-recipe.js'
 import { getToolContract } from './tool-ux.js'
 import type { UiFollowUpAction } from './ui-metadata.js'
+import { getSafePortalEndpointMetadata, type SafePortalEndpointMetadata } from '../portal/endpoints.js'
 
 const MAX_RESPONSE_LENGTH = 50_000 // 50KB - keeps responses within MCP client context limits
 
@@ -40,6 +41,7 @@ export interface ResponseMetadata {
   response_time_ms?: number
   returned?: number
   has_more?: boolean
+  endpoint?: SafePortalEndpointMetadata
 }
 
 type RecordLike = Record<string, unknown>
@@ -1346,6 +1348,12 @@ export function formatResult(
 
   if (typeof responsePayload === 'object' && responsePayload !== null) {
     const payloadRecord = responsePayload as Record<string, unknown>
+    const existingMeta = isRecord(payloadRecord._meta) ? payloadRecord._meta : {}
+    payloadRecord._meta = {
+      ...existingMeta,
+      endpoint: getSafePortalEndpointMetadata(),
+    }
+
     const toolContract = options?.toolName ? getToolContract(options.toolName) : undefined
     const execution = normalizeExecutionMetadata(
       mergeExecutionMetadata(buildInferredExecutionMetadata(metadata), options?.execution)

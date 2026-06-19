@@ -1,8 +1,9 @@
+import { buildPortalUrl } from '../../portal/endpoints.js'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { z } from 'zod'
 
 import { resolveDataset, validateBlockRange } from '../../cache/datasets.js'
-import { EVENT_SIGNATURES, PORTAL_URL } from '../../constants/index.js'
+import { EVENT_SIGNATURES } from '../../constants/index.js'
 import { detectChainType } from '../../helpers/chain.js'
 import { createUnsupportedChainError } from '../../helpers/errors.js'
 import { portalFetchStream } from '../../helpers/fetch.js'
@@ -438,7 +439,7 @@ export function registerDecodeLogsTool(server: McpServer) {
         logs: [logFilter],
       }
 
-      const results = await portalFetchStream(`${PORTAL_URL}/datasets/${dataset}/stream`, query)
+      const results = await portalFetchStream(buildPortalUrl(`/datasets/${dataset}/stream`), query)
 
       const decodedLogs = results
         .flatMap((block: unknown) => {

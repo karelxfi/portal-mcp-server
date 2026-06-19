@@ -46,6 +46,10 @@ const requiredFiles = [
   'dist/index.js',
   'dist/http.js',
   'dist/server.js',
+  'docs/portal-app-mcp-auth-contract.md',
+  'docs/enterprise-http-deployment.md',
+  'docs/v0.8.0-migration.md',
+  'docs/v0.8.0-release-runbook.md',
 ]
 
 const forbiddenPrefixes = ['src/', 'scripts/', 'plans/', '.github/', 'grafana/', 'node_modules/']

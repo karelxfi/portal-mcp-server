@@ -1,8 +1,8 @@
+import { buildPortalUrl } from '../../portal/endpoints.js'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { z } from 'zod'
 
 import { resolveDataset } from '../../cache/datasets.js'
-import { PORTAL_URL } from '../../constants/index.js'
 import { portalFetch } from '../../helpers/fetch.js'
 import { formatResult } from '../../helpers/format.js'
 import { buildToolDescription } from '../../helpers/tool-ux.js'
@@ -24,8 +24,8 @@ export function registerGetBlockNumberTool(server: McpServer) {
       const dataset = await resolveDataset(network)
       const endpoint =
         type === 'finalized'
-          ? `${PORTAL_URL}/datasets/${dataset}/finalized-head`
-          : `${PORTAL_URL}/datasets/${dataset}/head`
+          ? buildPortalUrl(`/datasets/${dataset}/finalized-head`)
+          : buildPortalUrl(`/datasets/${dataset}/head`)
       const head = await portalFetch<BlockHead>(endpoint)
       if (!head || typeof head !== 'object' || !('number' in head) || head.number == null) {
         throw new Error(

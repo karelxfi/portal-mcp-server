@@ -1,8 +1,8 @@
+import { buildPortalUrl } from '../../portal/endpoints.js'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { z } from 'zod'
 
 import { getBlockHead, resolveDataset, validateBlockRange } from '../../cache/datasets.js'
-import { PORTAL_URL } from '../../constants/index.js'
 import {
   buildBoundedSearchExecution,
   buildBoundedSearchNotice,
@@ -248,7 +248,7 @@ export function registerContractDeploymentTool(server: McpServer) {
 
       const transactionFields = buildEvmTransactionFields(false)
       delete transactionFields.input
-      const portalUrl = `${PORTAL_URL}/datasets/${dataset}/stream`
+      const portalUrl = buildPortalUrl(`/datasets/${dataset}/stream`)
       const query = {
         type: 'evm',
         fromBlock: resolvedBlocks.from_block,

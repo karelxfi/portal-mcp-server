@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.8.0] - Unreleased
+
+Portal MCP v0.8.0 makes the HTTP runtime enterprise-deployable while keeping the public v0.7.9 tool surface stable.
+
+### Enterprise Portal access
+- **Same-origin dedicated Portal MCP** — hosted deployments can route `https://<portal-host>/mcp` to one MCP service while preserving the original host; public `portal.sqd.dev` remains anonymous and single-label dedicated Portal hosts resolve dynamically to their own Portal base URL without committing customer hostnames.
+- **Delegated Portal API-key auth** — added MCP OAuth discovery, public-client registration, PKCE authorization-code exchange, and a compact hosted auth page so compatible clients can connect after the user pastes a Portal API key once.
+- **Endpoint-aware Portal runtime** — added typed `PortalEndpoint` configuration for public, internal, and enterprise endpoint classes, including safe labels, tenant scopes, default endpoint selection, explicit endpoint mappings, and dynamic dedicated-host routing.
+- **Outbound Portal auth isolation** — centralized Portal HTTP helpers now inject bearer or API-key credentials only for the selected Portal destination, keeping inbound MCP credentials separate from outbound Portal credentials and binding delegated sessions to one endpoint.
+- **Endpoint-scoped datasets and caches** — dataset discovery, dataset resolution, head, timestamp, query, schema, and tool-catalog caches are scoped by endpoint/tenant-safe cache keys so public metadata cannot satisfy dedicated endpoint requests.
+- **Hosted key compatibility** — hosted deployments can still validate static self-hosted bearer tokens or pre-issued `MCP_AUTH_KEYS`, resolving principal, tenant, scopes, credential policy, and endpoint context before tool execution.
+- **Auth contract docs** — documented the optional pre-issued MCP key shape, one-time secret reveal, hashed-at-rest key storage, audience binding, revocation, expiration, browser-token boundary, and failure semantics.
+
+### Operations and readiness
+- **Readiness endpoint** — added public `/ready` separate from `/health`, reporting endpoint config, cursor signing, MCP auth, metrics protection, and Portal reachability with safe metadata only.
+- **Strict hosted readiness** — `MCP_READINESS_STRICT=true` or `NODE_ENV=production` makes `/ready` fail when required deployment guards are missing.
+- **Safe observability context** — JSON tool events now include request id, invocation id, endpoint id/class/auth mode, auth outcome, credential policy, hashed tenant key, and upstream Portal status summaries without raw tenant, principal, key, or secret values.
+- **Metrics and dashboard gate** — HTTP runtime tests verify protected `/metrics`, emitted metric names, and Grafana dashboard references stay aligned.
+
+### Release gates and docs
+- **Enterprise docs** — added migration notes, enterprise HTTP deployment guidance, the portal-app MCP auth contract, and the v0.8.0 release runbook.
+- **Artifact smoke coverage** — HTTP runtime QA now verifies `/health`, `/ready`, `/tools`, MCP `initialize`, `tools/list`, `sqd://tools`, auth failures, metrics, and representative live tool calls against the built HTTP artifact.
+- **Package hygiene** — package-content checks include public v0.8.0 docs while continuing to keep source, tests, plans, dashboards, lockfiles, local tooling, and secrets out of the published tarball.
+
+**Full Changelog**: https://github.com/subsquid-labs/portal-mcp-server/compare/v0.7.9...v0.8.0
+
 ## [0.7.9] - 2026-05-16
 
 Portal MCP v0.7.9 is focused on developer and agent ergonomics for natural blockchain questions.

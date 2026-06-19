@@ -2,6 +2,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { z } from 'zod'
 
 import { resolveDataset, validateBlockRange } from '../../cache/datasets.js'
+import { stableCacheKey } from '../../cache/query-cache.js'
 import { buildTableDescriptor } from '../../helpers/chart-metadata.js'
 import { ActionableError } from '../../helpers/errors.js'
 import { formatResult } from '../../helpers/format.js'
@@ -462,7 +463,16 @@ export function registerHyperliquidAnalyticsTool(server: McpServer) {
       const effectiveFrom = requestedBlockRange > maxAnalyticsBlocks
         ? endBlock - maxAnalyticsBlocks + 1
         : fromBlock
-      const cacheKey = `${dataset}:${mode}:${timeframe ?? ''}:${String(from_timestamp ?? '')}:${String(to_timestamp ?? '')}:${(coin || []).join(',')}:${response_format}:${section_limit ?? ''}`
+      const cacheKey = stableCacheKey('hyperliquid-analytics', {
+        dataset,
+        mode,
+        timeframe,
+        from_timestamp,
+        to_timestamp,
+        coin,
+        response_format,
+        section_limit,
+      })
       const cached = !cursor ? getCachedHyperliquidAnalyticsResult(cacheKey) : undefined
 
       if (cached) {

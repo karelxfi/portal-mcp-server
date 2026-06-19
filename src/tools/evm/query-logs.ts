@@ -1,8 +1,8 @@
+import { buildPortalUrl } from '../../portal/endpoints.js'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { z } from 'zod'
 
 import { resolveDataset, validateBlockRange } from '../../cache/datasets.js'
-import { PORTAL_URL } from '../../constants/index.js'
 import {
   buildBoundedSearchExecution,
   buildBoundedSearchNotice,
@@ -584,7 +584,7 @@ export function registerQueryLogsTool(server: McpServer) {
 
       const cursorSkip = paginationCursor?.skip_inclusive_block ?? 0
       const fetchLimit = limit + cursorSkip + 1
-      const portalUrl = `${PORTAL_URL}/datasets/${dataset}/stream`
+      const portalUrl = buildPortalUrl(`/datasets/${dataset}/stream`)
       const completeFilteredLatestScan = shouldUseCompleteFilteredLatestScan({
         scanOrder: scan_order,
         blockRange: inclusiveBlockRange,

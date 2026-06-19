@@ -1,7 +1,8 @@
-import { PORTAL_URL } from '../constants/index.js'
+import { getActiveDelegatedCredentialCacheScope } from '../auth/delegated.js'
 import { createCache } from '../helpers/cache-manager.js'
 import { createBlockRangeError, createDatasetError } from '../helpers/errors.js'
 import { portalFetch } from '../helpers/fetch.js'
+import { type PortalEndpoint, buildPortalUrl, getDefaultPortalEndpoint, portalEndpointKey } from '../portal/endpoints.js'
 import type { BlockHead, ChainType, Dataset, DatasetMetadata } from '../types/index.js'
 
 // ============================================================================
@@ -16,7 +17,7 @@ const metadataCache = createCache<{ start_block: number; head: BlockHead; finali
   HEAD_CACHE_TTL,
   100,
 )
-let datasetsCache: { data: Dataset[]; timestamp: number } | null = null
+const datasetsCache = new Map<string, { data: Dataset[]; timestamp: number }>()
 const knownDatasetKinds = new Map<string, ChainType>()
 
 const pendingRequests = new Map<string, Promise<any>>()
@@ -29,35 +30,43 @@ function dedupe<T>(key: string, fn: () => Promise<T>): Promise<T> {
   return pendingRequests.get(key) as Promise<T>
 }
 
-function rememberDatasetKinds(datasets: Dataset[]) {
+function scopedKey(endpoint: PortalEndpoint, key: string): string {
+  const credentialScope = getActiveDelegatedCredentialCacheScope(endpoint)
+  return `${portalEndpointKey(endpoint)}:${credentialScope ?? 'shared'}:${key}`
+}
+
+function rememberDatasetKinds(datasets: Dataset[], endpoint: PortalEndpoint) {
   for (const dataset of datasets) {
     const kind = dataset.metadata?.kind
     if (!kind) continue
 
-    knownDatasetKinds.set(dataset.dataset.toLowerCase(), kind)
-    dataset.aliases.forEach((alias) => knownDatasetKinds.set(alias.toLowerCase(), kind))
+    knownDatasetKinds.set(scopedKey(endpoint, dataset.dataset.toLowerCase()), kind)
+    dataset.aliases.forEach((alias) => knownDatasetKinds.set(scopedKey(endpoint, alias.toLowerCase()), kind))
   }
 }
 
-export function peekKnownChainType(dataset: string): ChainType | undefined {
-  return knownDatasetKinds.get(dataset.toLowerCase())
+export function peekKnownChainType(dataset: string, endpoint: PortalEndpoint = getDefaultPortalEndpoint()): ChainType | undefined {
+  return knownDatasetKinds.get(scopedKey(endpoint, dataset.toLowerCase()))
 }
 
 /**
  * Fetch all datasets with expanded metadata and schema.
  * Uses ?expand[]=metadata&expand[]=schema to get chain kind, chain_id, display_name, and available tables.
  */
-export async function getDatasets(): Promise<Dataset[]> {
-  if (datasetsCache && Date.now() - datasetsCache.timestamp < CACHE_TTL) {
-    return datasetsCache.data
+export async function getDatasets(endpoint: PortalEndpoint = getDefaultPortalEndpoint()): Promise<Dataset[]> {
+  const cacheKey = scopedKey(endpoint, 'datasets')
+  const cached = datasetsCache.get(cacheKey)
+  if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
+    return cached.data
   }
 
-  return dedupe('datasets', async () => {
+  return dedupe(cacheKey, async () => {
     const data = await portalFetch<Dataset[]>(
-      `${PORTAL_URL}/datasets?expand%5B%5D=metadata&expand%5B%5D=schema`,
+      buildPortalUrl('/datasets?expand%5B%5D=metadata&expand%5B%5D=schema', endpoint),
+      { endpoint },
     )
-    rememberDatasetKinds(data)
-    datasetsCache = { data, timestamp: Date.now() }
+    rememberDatasetKinds(data, endpoint)
+    datasetsCache.set(cacheKey, { data, timestamp: Date.now() })
     return data
   })
 }
@@ -66,14 +75,14 @@ export async function getDatasets(): Promise<Dataset[]> {
  * Get the chain type for a resolved dataset name from its metadata.
  * Falls back to heuristic if metadata.kind is not available.
  */
-export async function getChainType(dataset: string): Promise<ChainType> {
-  const datasets = await getDatasets()
+export async function getChainType(dataset: string, endpoint: PortalEndpoint = getDefaultPortalEndpoint()): Promise<ChainType> {
+  const datasets = await getDatasets(endpoint)
   const ds = datasets.find((d) => d.dataset === dataset || d.aliases.includes(dataset))
   if (ds?.metadata?.kind) {
     return ds.metadata.kind
   }
 
-  const cachedKind = peekKnownChainType(dataset)
+  const cachedKind = peekKnownChainType(dataset, endpoint)
   if (cachedKind) {
     return cachedKind
   }
@@ -142,8 +151,8 @@ export function isL2Chain(dataset: string): boolean {
 /**
  * Get the available tables for a dataset from schema metadata.
  */
-export async function getDatasetTables(dataset: string): Promise<string[]> {
-  const datasets = await getDatasets()
+export async function getDatasetTables(dataset: string, endpoint: PortalEndpoint = getDefaultPortalEndpoint()): Promise<string[]> {
+  const datasets = await getDatasets(endpoint)
   const ds = datasets.find((d) => d.dataset === dataset)
   if (ds?.schema?.tables) {
     return Object.keys(ds.schema.tables)
@@ -198,8 +207,8 @@ const CHAIN_ALIASES: Record<string, string[]> = {
 /**
  * Resolve a dataset name or alias to the canonical dataset name.
  */
-export async function resolveDataset(dataset: string): Promise<string> {
-  const datasets = await getDatasets()
+export async function resolveDataset(dataset: string, endpoint: PortalEndpoint = getDefaultPortalEndpoint()): Promise<string> {
+  const datasets = await getDatasets(endpoint)
 
   // Exact match
   const exactMatch = datasets.find((d) => d.dataset === dataset || d.aliases.includes(dataset))
@@ -211,8 +220,9 @@ export async function resolveDataset(dataset: string): Promise<string> {
 
   // Check common aliases
   for (const [canonicalName, aliases] of Object.entries(CHAIN_ALIASES)) {
-    if (aliases.some((a) => a === lowerDataset || lowerDataset.includes(a) || a.includes(lowerDataset))) {
-      return canonicalName
+    const canonicalDataset = datasets.find((d) => d.dataset === canonicalName || d.aliases.includes(canonicalName))
+    if (canonicalDataset && aliases.some((a) => a === lowerDataset || lowerDataset.includes(a) || a.includes(lowerDataset))) {
+      return canonicalDataset.dataset
     }
   }
 
@@ -238,12 +248,12 @@ export async function resolveDataset(dataset: string): Promise<string> {
   throw createDatasetError(dataset, datasets.length)
 }
 
-export async function validateDataset(dataset: string): Promise<void> {
-  await resolveDataset(dataset)
+export async function validateDataset(dataset: string, endpoint: PortalEndpoint = getDefaultPortalEndpoint()): Promise<void> {
+  await resolveDataset(dataset, endpoint)
 }
 
-export async function getBlockHead(dataset: string, finalized = false): Promise<BlockHead> {
-  const cacheKey = `${dataset}:${finalized ? 'finalized' : 'head'}`
+export async function getBlockHead(dataset: string, finalized = false, endpoint: PortalEndpoint = getDefaultPortalEndpoint()): Promise<BlockHead> {
+  const cacheKey = scopedKey(endpoint, `${dataset}:${finalized ? 'finalized' : 'head'}`)
   const cached = headCache.get(cacheKey)
 
   if (cached) {
@@ -251,28 +261,32 @@ export async function getBlockHead(dataset: string, finalized = false): Promise<
   }
 
   return dedupe(cacheKey, async () => {
-    const endpoint = finalized ? 'finalized-head' : 'head'
-    const head = await portalFetch<BlockHead>(`${PORTAL_URL}/datasets/${dataset}/${endpoint}`)
+    const portalPath = finalized ? 'finalized-head' : 'head'
+    const head = await portalFetch<BlockHead>(buildPortalUrl(`/datasets/${dataset}/${portalPath}`, endpoint), { endpoint })
     headCache.set(cacheKey, head)
     return head
   })
 }
 
-export async function getDatasetMetadata(dataset: string): Promise<{
+export async function getDatasetMetadata(
+  dataset: string,
+  endpoint: PortalEndpoint = getDefaultPortalEndpoint(),
+): Promise<{
   start_block: number
   head: BlockHead
   finalized_head?: BlockHead
 }> {
-  const cached = metadataCache.get(dataset)
+  const cacheKey = scopedKey(endpoint, `metadata:${dataset}`)
+  const cached = metadataCache.get(cacheKey)
   if (cached) {
     return cached
   }
 
-  return dedupe(`metadata:${dataset}`, async () => {
+  return dedupe(cacheKey, async () => {
     const [metadata, head, finalizedHead] = await Promise.all([
-      portalFetch<DatasetMetadata>(`${PORTAL_URL}/datasets/${dataset}/metadata`),
-      getBlockHead(dataset, false),
-      getBlockHead(dataset, true).catch(() => undefined),
+      portalFetch<DatasetMetadata>(buildPortalUrl(`/datasets/${dataset}/metadata`, endpoint), { endpoint }),
+      getBlockHead(dataset, false, endpoint),
+      getBlockHead(dataset, true, endpoint).catch(() => undefined),
     ])
 
     const result = {
@@ -281,7 +295,7 @@ export async function getDatasetMetadata(dataset: string): Promise<{
       finalized_head: finalizedHead,
     }
 
-    metadataCache.set(dataset, result)
+    metadataCache.set(cacheKey, result)
     return result
   })
 }
@@ -291,8 +305,9 @@ export async function validateBlockRange(
   fromBlock: number,
   toBlock: number,
   finalizedOnly: boolean = false,
+  endpoint: PortalEndpoint = getDefaultPortalEndpoint(),
 ): Promise<{ validatedToBlock: number; head: BlockHead }> {
-  const meta = await getDatasetMetadata(dataset)
+  const meta = await getDatasetMetadata(dataset, endpoint)
 
   if (fromBlock < meta.start_block) {
     throw createBlockRangeError(

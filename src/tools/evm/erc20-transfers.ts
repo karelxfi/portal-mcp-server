@@ -1,8 +1,9 @@
+import { buildPortalUrl } from '../../portal/endpoints.js'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { z } from 'zod'
 
 import { resolveDataset, validateBlockRange } from '../../cache/datasets.js'
-import { EVENT_SIGNATURES, PORTAL_URL } from '../../constants/index.js'
+import { EVENT_SIGNATURES } from '../../constants/index.js'
 import {
   buildBoundedSearchExecution,
   buildBoundedSearchNotice,
@@ -359,7 +360,7 @@ export function registerGetErc20TransfersTool(server: McpServer) {
       const hasAddressFilters = !!(tokenFilterAddresses || normalizedFrom || normalizedTo)
       const cursorSkip = paginationCursor?.skip_inclusive_block ?? 0
       const fetchLimit = limit + cursorSkip + 1
-      const portalUrl = `${PORTAL_URL}/datasets/${dataset}/stream`
+      const portalUrl = buildPortalUrl(`/datasets/${dataset}/stream`)
       const scanResult =
         scan_order === 'earliest'
           ? await fetchTransferBlocksByScanOrder({

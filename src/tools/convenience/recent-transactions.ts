@@ -1,8 +1,8 @@
+import { buildPortalUrl } from '../../portal/endpoints.js'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { z } from 'zod'
 
 import { getBlockHead, resolveDataset } from '../../cache/datasets.js'
-import { PORTAL_URL } from '../../constants/index.js'
 import { detectChainType, isL2Chain } from '../../helpers/chain.js'
 import { ActionableError, createUnsupportedChainError } from '../../helpers/errors.js'
 import { TRANSACTION_FIELD_PRESETS } from '../../helpers/field-presets.js'
@@ -369,7 +369,7 @@ export function registerGetRecentTransactionsTool(server: McpServer) {
         transactions: txFilters.length > 0 ? txFilters : [{}],
       }
 
-      const results = await portalFetchRecentRecords(`${PORTAL_URL}/datasets/${dataset}/stream`, query, {
+      const results = await portalFetchRecentRecords(buildPortalUrl(`/datasets/${dataset}/stream`), query, {
         itemKeys: ['transactions'],
         limit: fetchLimit,
         chunkSize: hasFilters ? 500 : 100,
@@ -497,7 +497,7 @@ async function queryBitcoinRecent(params: {
     transactions: [{}],
   }
 
-  const results = await portalFetchRecentRecords(`${PORTAL_URL}/datasets/${dataset}/stream`, query, {
+  const results = await portalFetchRecentRecords(buildPortalUrl(`/datasets/${dataset}/stream`), query, {
     itemKeys: ['transactions'],
     limit: fetchLimit,
     chunkSize: 20,
@@ -631,7 +631,7 @@ async function querySolanaRecent(params: {
     transactions: hasFilters ? txFilters : [{}],
   }
 
-  const results = await portalFetchRecentRecords(`${PORTAL_URL}/datasets/${dataset}/stream`, query, {
+  const results = await portalFetchRecentRecords(buildPortalUrl(`/datasets/${dataset}/stream`), query, {
     itemKeys: ['transactions'],
     limit: fetchLimit,
     chunkSize: hasFilters ? 500 : 100,

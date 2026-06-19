@@ -50,6 +50,10 @@ function getCursorSecret(): string {
   return configured || LOCAL_DEV_CURSOR_SECRET
 }
 
+export function hasConfiguredCursorSecret(env: NodeJS.ProcessEnv = process.env): boolean {
+  return Boolean(env.MCP_CURSOR_SECRET?.trim())
+}
+
 function signCursorPayload(payload: string): string {
   return createHmac('sha256', getCursorSecret()).update(payload).digest('base64url')
 }

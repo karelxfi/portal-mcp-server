@@ -2,7 +2,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { ResourceTemplate } from '@modelcontextprotocol/sdk/server/mcp.js'
 
 import { getDatasets, resolveDataset } from '../cache/datasets.js'
-import { EVENT_SIGNATURES, PORTAL_URL } from '../constants/index.js'
+import { EVENT_SIGNATURES } from '../constants/index.js'
 import { portalFetch } from '../helpers/fetch.js'
 import {
   buildEvmBlockFields,
@@ -18,6 +18,7 @@ import {
   buildSolanaTransactionFields,
 } from '../helpers/fields.js'
 import { type ToolGuideEntry, getToolGuideEntries, getToolGuideEntry } from '../helpers/tool-ux.js'
+import { type PortalEndpoint, buildPortalUrl, getDefaultPortalEndpoint, getSafePortalEndpointMetadata } from '../portal/endpoints.js'
 import type { BlockHead, DatasetMetadata } from '../types/index.js'
 import { npmVersion } from '../version.js'
 
@@ -33,7 +34,7 @@ function groupToolsByCategory(tools: ToolGuideEntry[]) {
   }, {})
 }
 
-function buildDeveloperToolGuide() {
+function buildDeveloperToolGuide(endpoint: PortalEndpoint = getDefaultPortalEndpoint()) {
   const tools = getToolGuideEntries()
   const publicTools = tools.filter((tool) => tool.audience === 'public')
   const advancedTools = tools.filter((tool) => tool.audience === 'advanced')
@@ -41,6 +42,7 @@ function buildDeveloperToolGuide() {
   return {
     description: 'Developer-facing guide for selecting SQD Portal MCP tools and starting from common workflows.',
     version: npmVersion,
+    endpoint: getSafePortalEndpointMetadata(endpoint),
     counts: {
       tools: tools.length,
       public: publicTools.length,
@@ -122,12 +124,13 @@ function buildDeveloperToolGuide() {
 
 export function registerSchemaResource(server: McpServer) {
   server.resource('tool-guide', 'sqd://tools', async (uri) => {
+    const endpoint = getDefaultPortalEndpoint()
     return {
       contents: [
         {
           uri: uri.href,
           mimeType: 'application/json',
-          text: JSON.stringify(buildDeveloperToolGuide(), null, 2),
+          text: JSON.stringify(buildDeveloperToolGuide(endpoint), null, 2),
         },
       ],
     }
@@ -137,6 +140,7 @@ export function registerSchemaResource(server: McpServer) {
     'tool-guide-entry',
     new ResourceTemplate('sqd://tools/{name}', { list: undefined }),
     async (uri, { name }) => {
+      const endpoint = getDefaultPortalEndpoint()
       const toolName = Array.isArray(name) ? name[0] : name
       const tool = getToolGuideEntry(toolName)
       if (!tool) {
@@ -148,7 +152,7 @@ export function registerSchemaResource(server: McpServer) {
           {
             uri: uri.href,
             mimeType: 'application/json',
-            text: JSON.stringify(tool, null, 2),
+            text: JSON.stringify({ ...tool, endpoint: getSafePortalEndpointMetadata(endpoint) }, null, 2),
           },
         ],
       }
@@ -157,13 +161,22 @@ export function registerSchemaResource(server: McpServer) {
 
   // Resource: List all datasets
   server.resource('datasets', 'sqd://datasets', async (uri) => {
-    const datasets = await getDatasets()
+    const endpoint = getDefaultPortalEndpoint()
+    const datasets = await getDatasets(endpoint)
     return {
       contents: [
         {
           uri: uri.href,
           mimeType: 'application/json',
-          text: JSON.stringify(datasets, null, 2),
+          text: JSON.stringify(
+            {
+              endpoint: getSafePortalEndpointMetadata(endpoint),
+              dataset_count: datasets.length,
+              datasets,
+            },
+            null,
+            2,
+          ),
         },
       ],
     }
@@ -174,16 +187,17 @@ export function registerSchemaResource(server: McpServer) {
     'dataset-info',
     new ResourceTemplate('sqd://datasets/{name}', { list: undefined }),
     async (uri, { name }) => {
+      const endpoint = getDefaultPortalEndpoint()
       let datasetName = Array.isArray(name) ? name[0] : name
-      datasetName = await resolveDataset(datasetName)
-      const metadata = await portalFetch<DatasetMetadata>(`${PORTAL_URL}/datasets/${datasetName}/metadata`)
-      const head = await portalFetch<BlockHead>(`${PORTAL_URL}/datasets/${datasetName}/head`)
+      datasetName = await resolveDataset(datasetName, endpoint)
+      const metadata = await portalFetch<DatasetMetadata>(buildPortalUrl(`/datasets/${datasetName}/metadata`, endpoint), { endpoint })
+      const head = await portalFetch<BlockHead>(buildPortalUrl(`/datasets/${datasetName}/head`, endpoint), { endpoint })
       return {
         contents: [
           {
             uri: uri.href,
             mimeType: 'application/json',
-            text: JSON.stringify({ ...metadata, head }, null, 2),
+            text: JSON.stringify({ endpoint: getSafePortalEndpointMetadata(endpoint), ...metadata, head }, null, 2),
           },
         ],
       }
@@ -192,9 +206,11 @@ export function registerSchemaResource(server: McpServer) {
 
   // Resource: EVM API Schema
   server.resource('schema-evm', 'sqd://schema/evm', async (uri) => {
+    const endpoint = getDefaultPortalEndpoint()
     const schema = {
       description: 'SQD Portal EVM API Documentation',
       version: npmVersion,
+      endpoint: getSafePortalEndpointMetadata(endpoint),
       endpoints: {
         blocks: {
           description: 'Query block data',
@@ -264,9 +280,11 @@ export function registerSchemaResource(server: McpServer) {
 
   // Resource: Solana API Schema
   server.resource('schema-solana', 'sqd://schema/solana', async (uri) => {
+    const endpoint = getDefaultPortalEndpoint()
     const schema = {
       description: 'SQD Portal Solana API Documentation',
       version: npmVersion,
+      endpoint: getSafePortalEndpointMetadata(endpoint),
       endpoints: {
         instructions: {
           description: 'Query instruction data',

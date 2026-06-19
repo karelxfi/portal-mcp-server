@@ -1,4 +1,5 @@
 import { ManagedCache, estimateSize } from '../helpers/cache-manager.js'
+import { type PortalEndpoint, getDefaultPortalEndpoint, portalEndpointKey } from '../portal/endpoints.js'
 
 export interface QueryCacheOptions {
   ttl: number
@@ -77,8 +78,8 @@ export function createQueryCache<T>(options: QueryCacheOptions): QueryCache<T> {
   return new QueryCache<T>(options)
 }
 
-export function stableCacheKey(prefix: string, value: unknown): string {
-  return `${prefix}:${JSON.stringify(normalizeForCacheKey(value))}`
+export function stableCacheKey(prefix: string, value: unknown, endpoint: PortalEndpoint = getDefaultPortalEndpoint()): string {
+  return `${prefix}:${portalEndpointKey(endpoint)}:${JSON.stringify(normalizeForCacheKey(value))}`
 }
 
 function normalizeForCacheKey(value: unknown): unknown {

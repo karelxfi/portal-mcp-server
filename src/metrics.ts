@@ -77,7 +77,7 @@ export const toolIntentCallsTotal = new Counter({
 export const portalRequestsTotal = new Counter({
   name: 'mcp_portal_api_requests_total',
   help: 'Total number of requests to the Portal API',
-  labelNames: ['method', 'status_code'] as const,
+  labelNames: ['method', 'status_code', 'endpoint_id', 'endpoint_class', 'endpoint_auth_mode'] as const,
   registers: [register],
 })
 

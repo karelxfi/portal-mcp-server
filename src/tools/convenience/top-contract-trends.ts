@@ -1,8 +1,8 @@
+import { buildPortalUrl } from '../../portal/endpoints.js'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { z } from 'zod'
 
 import { resolveDataset, validateBlockRange } from '../../cache/datasets.js'
-import { PORTAL_URL } from '../../constants/index.js'
 import { buildTableDescriptor, buildTimeSeriesChart, buildTimeSeriesTable } from '../../helpers/chart-metadata.js'
 import { detectChainType } from '../../helpers/chain.js'
 import { createUnsupportedChainError } from '../../helpers/errors.js'
@@ -103,7 +103,7 @@ export function registerGetTopContractTrendsTool(server: McpServer) {
       const notices = getTimestampWindowNotices(resolvedWindow)
 
       await portalFetchStreamRangeVisit(
-        `${PORTAL_URL}/datasets/${dataset}/stream`,
+        buildPortalUrl(`/datasets/${dataset}/stream`),
         {
           type: 'evm',
           fromBlock,
@@ -139,7 +139,7 @@ export function registerGetTopContractTrendsTool(server: McpServer) {
       const populatedBuckets = createBuckets(expectedBuckets, seriesStartTimestamp, intervalSeconds)
 
       await portalFetchStreamRangeVisit(
-        `${PORTAL_URL}/datasets/${dataset}/stream`,
+        buildPortalUrl(`/datasets/${dataset}/stream`),
         {
           type: 'evm',
           fromBlock,

@@ -1,5 +1,8 @@
 import { DEFAULT_RETRIES, DEFAULT_TIMEOUT, STREAM_TIMEOUT } from '../constants/index.js'
 import { portalRequestsTotal } from '../metrics.js'
+import { withPortalAuthHeaders } from '../portal/client.js'
+import { type PortalEndpoint, getDefaultPortalEndpoint, getSafePortalEndpointMetadata } from '../portal/endpoints.js'
+import { recordPortalRequestObservation } from '../portal/telemetry.js'
 import { createTimeoutError, parsePortalError, wrapError } from './errors.js'
 
 // ============================================================================
@@ -33,6 +36,7 @@ export interface PortalFetchStreamOptions {
   maxBlocks?: number
   maxBytes?: number
   retries?: number
+  endpoint?: PortalEndpoint
   stopAfterItems?: StreamStopAfterItems
 }
 
@@ -63,6 +67,7 @@ function normalizePortalFetchStreamOptions(
       maxBlocks: timeoutOrOptions.maxBlocks ?? 0,
       maxBytes: timeoutOrOptions.maxBytes ?? 50 * 1024 * 1024,
       retries: timeoutOrOptions.retries ?? DEFAULT_RETRIES,
+      endpoint: timeoutOrOptions.endpoint,
       stopAfterItems: timeoutOrOptions.stopAfterItems,
     }
   }
@@ -72,8 +77,39 @@ function normalizePortalFetchStreamOptions(
     maxBlocks,
     maxBytes,
     retries,
+    endpoint: undefined,
     stopAfterItems: undefined,
   }
+}
+
+const JSON_HEADERS = {
+  'Accept-Encoding': 'gzip',
+  'Content-Type': 'application/json',
+  Accept: 'application/json',
+}
+
+const NDJSON_HEADERS = {
+  'Accept-Encoding': 'gzip',
+  'Content-Type': 'application/json',
+  Accept: 'application/x-ndjson',
+}
+
+function recordPortalRequest(method: string, statusCode: number, endpoint: PortalEndpoint) {
+  const safeEndpoint = getSafePortalEndpointMetadata(endpoint)
+  portalRequestsTotal.inc({
+    method,
+    status_code: statusCode,
+    endpoint_id: safeEndpoint.id,
+    endpoint_class: safeEndpoint.endpoint_class,
+    endpoint_auth_mode: safeEndpoint.auth_mode,
+  })
+  recordPortalRequestObservation({
+    method,
+    statusCode,
+    endpointId: safeEndpoint.id,
+    endpointClass: safeEndpoint.endpoint_class,
+    authMode: safeEndpoint.auth_mode,
+  })
 }
 
 function countMatchingItems(record: unknown, stopAfterItems?: StreamStopAfterItems): number {
@@ -129,9 +165,11 @@ export async function portalFetch<T>(
     body?: unknown
     timeout?: number
     retries?: number
+    endpoint?: PortalEndpoint
   } = {},
 ): Promise<T> {
   const { method = 'GET', body, timeout = DEFAULT_TIMEOUT, retries = DEFAULT_RETRIES } = options
+  const endpoint = options.endpoint ?? getDefaultPortalEndpoint()
 
   let lastError: Error | null = null
 
@@ -142,11 +180,7 @@ export async function portalFetch<T>(
     try {
       const fetchOptions: RequestInit = {
         method,
-        headers: {
-          'Accept-Encoding': 'gzip',
-          'Content-Type': 'application/json',
-          Accept: 'application/json',
-        },
+        headers: withPortalAuthHeaders(url, JSON_HEADERS, endpoint),
         signal: controller.signal,
       }
 
@@ -157,7 +191,7 @@ export async function portalFetch<T>(
       const response = await fetch(url, fetchOptions)
       clearTimeout(timeoutId)
 
-      portalRequestsTotal.inc({ method, status_code: response.status })
+      recordPortalRequest(method, response.status, endpoint)
 
       // Handle specific status codes
       if (response.status === 204) {
@@ -236,6 +270,7 @@ export async function portalFetchStream(
 ): Promise<unknown[]> {
   const options = normalizePortalFetchStreamOptions(timeoutOrOptions, maxBlocks, maxBytes, _retries)
   const { timeout, stopAfterItems } = options
+  const endpoint = options.endpoint ?? getDefaultPortalEndpoint()
   let lastError: Error | null = null
 
   for (let attempt = 0; attempt <= options.retries; attempt++) {
@@ -245,18 +280,14 @@ export async function portalFetchStream(
     try {
       const response = await fetch(url, {
         method: 'POST',
-        headers: {
-          'Accept-Encoding': 'gzip',
-          'Content-Type': 'application/json',
-          Accept: 'application/x-ndjson',
-        },
+        headers: withPortalAuthHeaders(url, NDJSON_HEADERS, endpoint),
         body: JSON.stringify(body),
         signal: controller.signal,
       })
 
       clearTimeout(timeoutId)
 
-      portalRequestsTotal.inc({ method: 'POST', status_code: response.status })
+      recordPortalRequest('POST', response.status, endpoint)
 
       if (response.status === 204) {
         return []
@@ -413,6 +444,7 @@ export async function portalFetchStreamVisit(
 ): Promise<number> {
   const normalizedOptions = normalizePortalFetchStreamOptions(options, 0, 50 * 1024 * 1024, DEFAULT_RETRIES)
   const { timeout, stopAfterItems } = normalizedOptions
+  const endpoint = normalizedOptions.endpoint ?? getDefaultPortalEndpoint()
   let lastError: Error | null = null
 
   for (let attempt = 0; attempt <= normalizedOptions.retries; attempt++) {
@@ -422,18 +454,14 @@ export async function portalFetchStreamVisit(
     try {
       const response = await fetch(url, {
         method: 'POST',
-        headers: {
-          'Accept-Encoding': 'gzip',
-          'Content-Type': 'application/json',
-          Accept: 'application/x-ndjson',
-        },
+        headers: withPortalAuthHeaders(url, NDJSON_HEADERS, endpoint),
         body: JSON.stringify(body),
         signal: controller.signal,
       })
 
       clearTimeout(timeoutId)
 
-      portalRequestsTotal.inc({ method: 'POST', status_code: response.status })
+      recordPortalRequest('POST', response.status, endpoint)
 
       if (response.status === 204) {
         return 0

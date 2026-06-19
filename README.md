@@ -152,16 +152,68 @@ Add an entry like this to `claude_desktop_config.json`:
 
 ## HTTP Deployment Notes
 
-HTTP mode exposes health state at `/health` and read-only tool discovery at `/tools` and `/tools.json`.
+HTTP mode exposes liveness at `/health`, readiness at `/ready`, and read-only tool discovery at `/tools` and `/tools.json`.
 
 - Set `MCP_HTTP_BEARER_TOKEN` to require `Authorization: Bearer <token>` for `POST /` and `POST /mcp`.
-- `/health` and read-only `GET /tools` / `GET /tools.json` remain public.
+- Hosted deployments can also use portal-app issued MCP keys through `MCP_AUTH_KEYS`; see [Portal app MCP auth contract](docs/portal-app-mcp-auth-contract.md).
+- Hosted deployments can use built-in MCP OAuth delegated Portal API-key bootstrap with `MCP_DELEGATED_AUTH=true` and endpoint `authMode: "delegated_api_key"`; compatible MCP clients connect to `/mcp`, open the hosted auth form, and finish the token exchange automatically after the user pastes a Portal API key once.
+- The public `https://portal.sqd.dev/mcp` endpoint remains anonymous by default. Delegated auth is required only for endpoints configured as `internal` or `enterprise`, unless a deployment explicitly sets global static auth.
+- `/health`, `/ready`, and read-only `GET /tools` / `GET /tools.json` remain public.
+- `/health` is a safe liveness check and intentionally omits Portal URLs, tenant ids, and secrets.
+- `/ready` returns safe endpoint metadata plus readiness checks for endpoint config, `MCP_CURSOR_SECRET`, MCP auth, metrics protection, and default Portal reachability. It returns `503` only when a required check fails.
+- Set `MCP_READINESS_STRICT=true` in hosted/production deployments to require cursor signing, MCP auth, metrics protection, and Portal reachability. `NODE_ENV=production` also enables strict readiness.
+- Set `MCP_READY_CHECK_PORTAL=false` to skip the live Portal reachability probe, or `MCP_READY_REQUIRE_PORTAL=true` to require it outside strict mode.
 - Set `MCP_CURSOR_SECRET` in production so pagination cursors are signed with a deployment-specific secret. Local development uses a deterministic fallback for convenience.
+
+Detailed v0.8.0 deployment docs:
+
+- [v0.8.0 migration notes](docs/v0.8.0-migration.md)
+- [Enterprise HTTP deployment](docs/enterprise-http-deployment.md)
+- [v0.8.0 release runbook](docs/v0.8.0-release-runbook.md)
+
+## Portal Endpoint Configuration
+
+By default, Portal MCP uses the public SQD Portal endpoint at `https://portal.sqd.dev`. The legacy `PORTAL_URL` variable remains supported and now maps to the default `PortalEndpoint` base URL.
+
+For one dedicated endpoint, set:
+
+- `PORTAL_BASE_URL` / `PORTAL_URL` to the upstream Portal API base URL, without query strings or embedded credentials
+- `PORTAL_ENDPOINT_ID` to a stable opaque id such as `enterprise-prod`
+- `PORTAL_ENDPOINT_LABEL` to a safe display label
+- `PORTAL_ENDPOINT_CLASS` to `internal` for SQD-operated internal Portal endpoints, or `enterprise` for customer-dedicated endpoints
+- `PORTAL_MCP_HOSTNAMES` / `PORTAL_ENDPOINT_HOSTNAMES` or `mcpHostnames` to the portal hostnames that should route `/mcp` traffic to this endpoint when they differ from the upstream Portal API base URL
+- `PORTAL_ENDPOINT_TENANT_SCOPE` to `organization`, `tenant`, or `endpoint`
+- `PORTAL_ENDPOINT_TENANT_ID` to a safe tenant slug when useful for diagnostics
+- `PORTAL_ENDPOINT_AUTH_MODE` to `bearer`, `api_key`, or `delegated_api_key`
+- `PORTAL_ENDPOINT_TOKEN_ENV` to the name of the environment variable that contains the outbound Portal credential
+- `PORTAL_ENDPOINT_API_KEY_HEADER` when `api_key` or `delegated_api_key` mode needs a header other than `X-API-Key`
+
+Internal and enterprise endpoint URLs must use HTTPS when outbound Portal credentials are configured.
+
+Endpoint classes are intentionally small:
+
+- `public`: the public `https://portal.sqd.dev` endpoint, with no outbound Portal auth.
+- `internal`: SQD-operated internal endpoints, protected by a server-side Portal credential or delegated user Portal API key configured outside this repo.
+- `enterprise`: customer-dedicated endpoints, protected by that endpoint's server-side Portal credential or delegated user Portal API key configured outside this repo.
+
+For multi-endpoint routing, set `PORTAL_ENDPOINTS` to a JSON array of endpoint objects and optionally set `PORTAL_DEFAULT_ENDPOINT_ID`. Endpoint objects use the fields `id`, `portalBaseUrl`, `mcpHostnames`, `label`, `endpointClass`, `tenantScope`, `tenantId`, `authMode`, `tokenEnv`, and `headerName`. Legacy `baseUrl` and `hostnames` remain accepted. In `delegated_api_key` mode, omit `tokenEnv`; the authenticated MCP session supplies the Portal API key.
+
+Hosted deployments can expose MCP on the same portal origin as the data API. Configure the portal edge or reverse proxy to route `https://<portal-host>/mcp` to the central MCP service while preserving `Host`; if the proxy rewrites `Host`, set `MCP_TRUST_FORWARDED_HOST=true` and forward the original host in `X-Forwarded-Host`. The public `portal.sqd.dev` host stays anonymous. Any single-label `*.portal.sqd.dev` host is resolved dynamically as a delegated enterprise Portal endpoint with `portalBaseUrl=https://<that-host>`, so one MCP service can handle dedicated portals without committing customer hostnames. Mark internal hosts only through deployment environment with `PORTAL_DYNAMIC_INTERNAL_HOSTS`. Use deployment-only `PORTAL_ENDPOINTS` only for non-standard hosts, local aliases, or server-side outbound credentials.
+
+Do not put Portal credentials, real customer hostnames, or real customer identifiers directly into this public repo. Configure `PORTAL_BASE_URL` / `PORTAL_ENDPOINTS` and secret values through the deployment environment or secret manager. Use `tokenEnv` / `PORTAL_ENDPOINT_TOKEN_ENV` so secrets stay in environment variables and can be injected only by the endpoint-aware Portal client.
 
 Useful environment variables:
 
+- `PORTAL_BASE_URL` / `PORTAL_URL` to override the default upstream Portal API base URL
+- `PORTAL_ENDPOINTS` and `PORTAL_DEFAULT_ENDPOINT_ID` for future multi-endpoint routing
+- `MCP_TRUST_FORWARDED_HOST` when a trusted portal edge forwards the original portal host through `X-Forwarded-Host`
 - `MCP_HTTP_BEARER_TOKEN` to protect HTTP MCP POSTs
+- `MCP_AUTH_KEYS` and `MCP_REQUIRED_SCOPE` for hosted portal-app issued MCP keys
+- `MCP_DELEGATED_AUTH=true` or `MCP_AUTH_MODE=portal_api_key_bootstrap` for built-in MCP OAuth delegated Portal API-key sessions. `/mcp/auth` remains available as a local/manual smoke-test fallback.
+- `MCP_DELEGATED_AUTH_VALIDATE=false` only for local UX smoke tests that should skip the live `/status` key check
 - `MCP_CURSOR_SECRET` to sign pagination cursors
+- `MCP_READINESS_STRICT`, `MCP_READY_CHECK_PORTAL`, and `MCP_READY_REQUIRE_PORTAL` to tune `/ready`
+- `METRICS_BEARER_TOKEN` to protect `/metrics`
 
 ## Tests
 
@@ -171,9 +223,12 @@ npm run test:tools
 npm run test:routing
 npm run test:substrate
 npm run test:timestamps
+npm run test:auth
+npm run test:readiness
 npm run test:conversations
 npm run test:negative
 npm run test:quality
+npm run test:endpoints
 npm run test:ci
 ```
 

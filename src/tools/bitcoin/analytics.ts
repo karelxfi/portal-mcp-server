@@ -1,8 +1,8 @@
+import { buildPortalUrl } from '../../portal/endpoints.js'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { z } from 'zod'
 
 import { resolveDataset, validateBlockRange } from '../../cache/datasets.js'
-import { PORTAL_URL } from '../../constants/index.js'
 import { detectChainType } from '../../helpers/chain.js'
 import { createUnsupportedChainError } from '../../helpers/errors.js'
 import { portalFetchStreamRange } from '../../helpers/fetch.js'
@@ -185,7 +185,7 @@ export function registerBitcoinAnalyticsTool(server: McpServer) {
       }
 
       const txResults = await portalFetchStreamRange(
-        `${PORTAL_URL}/datasets/${dataset}/stream`,
+        buildPortalUrl(`/datasets/${dataset}/stream`),
         txQuery,
         {
           maxBytes: 100 * 1024 * 1024,
@@ -299,7 +299,7 @@ export function registerBitcoinAnalyticsTool(server: McpServer) {
 
         try {
           const outputResults = await portalFetchStreamRange(
-            `${PORTAL_URL}/datasets/${dataset}/stream`,
+            buildPortalUrl(`/datasets/${dataset}/stream`),
             outputQuery,
             {
               maxBlocks: outputMaxBlocks,
@@ -381,8 +381,8 @@ export function registerBitcoinAnalyticsTool(server: McpServer) {
         }
 
         const [inputResults, outputFeeResults] = await Promise.all([
-          portalFetchStreamRange(`${PORTAL_URL}/datasets/${dataset}/stream`, inputQuery, { maxBlocks: feeSampleBlocks }),
-          portalFetchStreamRange(`${PORTAL_URL}/datasets/${dataset}/stream`, outputFeeQuery, { maxBlocks: feeSampleBlocks }),
+          portalFetchStreamRange(buildPortalUrl(`/datasets/${dataset}/stream`), inputQuery, { maxBlocks: feeSampleBlocks }),
+          portalFetchStreamRange(buildPortalUrl(`/datasets/${dataset}/stream`), outputFeeQuery, { maxBlocks: feeSampleBlocks }),
         ])
 
         // Sum input values and output values to estimate fees.

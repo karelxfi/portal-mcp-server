@@ -67,6 +67,10 @@ data/
 !CHANGELOG.md
 !LICENSE.md
 !CONTRIBUTING.md
+!docs/portal-app-mcp-auth-contract.md
+!docs/enterprise-http-deployment.md
+!docs/v0.8.0-migration.md
+!docs/v0.8.0-release-runbook.md
 
 # Environment files with secrets
 .env

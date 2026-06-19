@@ -1,9 +1,10 @@
+import { buildPortalUrl } from '../../portal/endpoints.js'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { z } from 'zod'
 
 import { getBlockHead, resolveDataset } from '../../cache/datasets.js'
 import { createQueryCache, stableCacheKey } from '../../cache/query-cache.js'
-import { EVENT_SIGNATURES, PORTAL_URL } from '../../constants/index.js'
+import { EVENT_SIGNATURES } from '../../constants/index.js'
 import { detectChainType, isL2Chain } from '../../helpers/chain.js'
 import { buildTableDescriptor } from '../../helpers/chart-metadata.js'
 import {
@@ -248,7 +249,7 @@ async function fetchCachedWalletSection(params: {
     chunkSize,
   })
   const { value } = await walletSectionQueryCache.getOrLoad(cacheKey, async () =>
-    portalFetchRecentRecords(`${PORTAL_URL}/datasets/${dataset}/stream`, query, {
+    portalFetchRecentRecords(buildPortalUrl(`/datasets/${dataset}/stream`), query, {
       itemKeys,
       limit,
       chunkSize,
@@ -1925,7 +1926,7 @@ async function buildNonEvmWalletSummary(params: {
       transactions: [{ feePayer: [address] }],
     }
 
-    const results = await portalFetchRecentRecords(`${PORTAL_URL}/datasets/${dataset}/stream`, txQuery, {
+    const results = await portalFetchRecentRecords(buildPortalUrl(`/datasets/${dataset}/stream`), txQuery, {
       itemKeys: ['transactions'],
       limit: limit_per_type,
       chunkSize: Math.max(25, Math.min(100, limit_per_type * 4)),
@@ -2087,7 +2088,7 @@ async function buildNonEvmWalletSummary(params: {
   if (chainType === 'bitcoin') {
     const [outputBlocks, inputBlocks] = await Promise.all([
       portalFetchRecentRecords(
-        `${PORTAL_URL}/datasets/${dataset}/stream`,
+        buildPortalUrl(`/datasets/${dataset}/stream`),
         {
           type: 'bitcoin',
           fromBlock,
@@ -2106,7 +2107,7 @@ async function buildNonEvmWalletSummary(params: {
         },
       ),
       portalFetchRecentRecords(
-        `${PORTAL_URL}/datasets/${dataset}/stream`,
+        buildPortalUrl(`/datasets/${dataset}/stream`),
         {
           type: 'bitcoin',
           fromBlock,
@@ -2363,7 +2364,7 @@ async function buildNonEvmWalletSummary(params: {
   }
 
   const fillBlocks = await portalFetchRecentRecords(
-    `${PORTAL_URL}/datasets/${dataset}/stream`,
+    buildPortalUrl(`/datasets/${dataset}/stream`),
     {
       type: 'hyperliquidFills',
       fromBlock,

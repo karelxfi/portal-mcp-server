@@ -145,6 +145,9 @@ async function main() {
   const toolGuideText = toolGuideResp.result?.contents?.[0]?.text
   if (!toolGuideText) fail('sqd://tools returned empty content')
   const toolGuide = JSON.parse(toolGuideText)
+  if (toolGuide.endpoint?.id !== 'public' || toolGuide.endpoint?.endpoint_class !== 'public') {
+    fail('sqd://tools should include safe public endpoint metadata')
+  }
   if (toolGuide.counts?.tools !== 28) fail(`sqd://tools expected 28 tool guide entries, got ${toolGuide.counts?.tools}`)
   if (!toolGuide.categories?.convenience?.includes('portal_get_time_series')) {
     fail('sqd://tools should group portal_get_time_series under convenience')
@@ -160,10 +163,24 @@ async function main() {
   const toolGuideEntry = JSON.parse(toolGuideEntryText)
   if (toolGuideEntry.name !== 'portal_get_time_series')
     fail('Expected the single-tool guide to return portal_get_time_series')
+  if (toolGuideEntry.endpoint?.id !== 'public') {
+    fail('sqd://tools/{name} should include safe endpoint metadata')
+  }
   if (!Array.isArray(toolGuideEntry.examples) || toolGuideEntry.examples.length === 0) {
     fail('Expected the single-tool guide to include examples')
   }
   console.log('sqd://tools/{name} OK')
+
+  const evmSchemaId = send('resources/read', { uri: 'sqd://schema/evm' })
+  const evmSchemaResp = await readResponse(evmSchemaId)
+  if (evmSchemaResp.error) fail(`resources/read sqd://schema/evm error: ${JSON.stringify(evmSchemaResp.error)}`)
+  const evmSchemaText = evmSchemaResp.result?.contents?.[0]?.text
+  if (!evmSchemaText) fail('sqd://schema/evm returned empty content')
+  const evmSchema = JSON.parse(evmSchemaText)
+  if (evmSchema.endpoint?.id !== 'public') {
+    fail('sqd://schema/evm should include safe endpoint metadata')
+  }
+  console.log('sqd://schema/evm OK')
 
   // Step 5: Call portal_list_networks
   const dsId = send('tools/call', {

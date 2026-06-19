@@ -1,8 +1,8 @@
+import { buildPortalUrl } from '../../portal/endpoints.js'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { z } from 'zod'
 
 import { resolveDataset, validateBlockRange } from '../../cache/datasets.js'
-import { PORTAL_URL } from '../../constants/index.js'
 import {
   buildBoundedSearchExecution,
   buildBoundedSearchNotice,
@@ -984,7 +984,7 @@ export function registerQueryTransactionsTool(server: McpServer) {
             10,
             Math.min(40, fetchLimit * (effectiveResponseFormat === 'summary' ? 4 : field_preset === 'minimal' ? 5 : 3)),
           )
-      const portalUrl = `${PORTAL_URL}/datasets/${dataset}/stream`
+      const portalUrl = buildPortalUrl(`/datasets/${dataset}/stream`)
       const scanPath = effectiveScanOrder === 'earliest' || hasClientFilters
       const results = scanPath
         ? []

@@ -1,9 +1,11 @@
+import { buildPortalUrl } from '../../portal/endpoints.js'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { keccak_256 } from '@noble/hashes/sha3'
 import { z } from 'zod'
 
 import { resolveDataset, validateBlockRange } from '../../cache/datasets.js'
-import { EVENT_SIGNATURES, PORTAL_URL } from '../../constants/index.js'
+import { stableCacheKey } from '../../cache/query-cache.js'
+import { EVENT_SIGNATURES } from '../../constants/index.js'
 import { createCache, estimateSize } from '../../helpers/cache-manager.js'
 import { detectChainType } from '../../helpers/chain.js'
 import {
@@ -668,7 +670,7 @@ async function resolveUniswapV4PoolMetadata(params: {
   for (const lookbackBlocks of lookbackSteps) {
     const fromBlock = Math.max(0, params.toBlock - lookbackBlocks)
     const results = await portalFetchRecentRecords(
-      `${PORTAL_URL}/datasets/${params.dataset}/stream`,
+      buildPortalUrl(`/datasets/${params.dataset}/stream`),
       {
         type: 'evm',
         fromBlock,
@@ -759,31 +761,7 @@ function buildOhlcResponseCacheKey(params: {
   token0Address?: string
   token1Address?: string
 }): string {
-  return [
-    params.dataset,
-    params.source,
-    params.interval,
-    params.duration,
-    params.mode,
-    params.endBlock,
-    params.poolAddress ?? '',
-    params.poolId ?? '',
-    params.poolManagerAddress ?? '',
-    params.priceIn ?? '',
-    String(Boolean(params.includeRecentTrades)),
-    String(params.recentTradesLimit ?? ''),
-    params.currency0Address ?? '',
-    params.currency1Address ?? '',
-    String(params.fee ?? ''),
-    String(params.tickSpacing ?? ''),
-    params.hooksAddress ?? '',
-    params.token0Symbol ?? '',
-    params.token1Symbol ?? '',
-    String(params.token0Decimals ?? ''),
-    String(params.token1Decimals ?? ''),
-    params.token0Address ?? '',
-    params.token1Address ?? '',
-  ].join(':')
+  return stableCacheKey('evm-ohlc-response', params)
 }
 
 async function getCachedOrResolveUniswapV4PoolMetadata(params: {
@@ -793,7 +771,11 @@ async function getCachedOrResolveUniswapV4PoolMetadata(params: {
   toBlock: number
   mode: OhlcMode
 }): Promise<UniswapV4PoolMetadata | undefined> {
-  const cacheKey = `${params.dataset}:${params.poolManagerAddress}:${params.poolId}`
+  const cacheKey = stableCacheKey('evm-ohlc-v4-metadata', {
+    dataset: params.dataset,
+    poolManagerAddress: params.poolManagerAddress,
+    poolId: params.poolId,
+  })
   const cached = evmOhlcMetadataCache.get(cacheKey)
   if (cached !== undefined) {
     return cached ?? undefined
@@ -834,7 +816,7 @@ async function visitAdaptiveEvmLogRange(
 ): Promise<number> {
   try {
     return await portalFetchStreamRangeVisit(
-      `${PORTAL_URL}/datasets/${dataset}/stream`,
+      buildPortalUrl(`/datasets/${dataset}/stream`),
       {
         ...body,
         fromBlock: rangeFrom,

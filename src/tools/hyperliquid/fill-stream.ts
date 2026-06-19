@@ -1,4 +1,4 @@
-import { PORTAL_URL } from '../../constants/index.js'
+import { buildPortalUrl } from '../../portal/endpoints.js'
 import { portalFetchStreamRange, portalFetchStreamVisit } from '../../helpers/fetch.js'
 
 export type HyperliquidFillBlock = {
@@ -66,7 +66,7 @@ export async function fetchRecentHyperliquidFillBlocks({
   while (currentTo >= fromBlock && returnedFills < limit) {
     const chunkFrom = Math.max(fromBlock, currentTo - chunkSize + 1)
     const chunk = (await portalFetchStreamRange(
-      `${PORTAL_URL}/datasets/${dataset}/stream`,
+      buildPortalUrl(`/datasets/${dataset}/stream`),
       {
         type: 'hyperliquidFills',
         fromBlock: chunkFrom,
@@ -164,7 +164,7 @@ export async function visitHyperliquidFillBlocks({
 
       try {
         const processedBlocks = await portalFetchStreamVisit(
-          `${PORTAL_URL}/datasets/${dataset}/stream`,
+          buildPortalUrl(`/datasets/${dataset}/stream`),
           {
             type: 'hyperliquidFills',
             fromBlock: currentFrom,

@@ -3,7 +3,7 @@
 // Falls back to per-chain block time estimation when the endpoint is unavailable.
 
 import { getBlockHead } from '../cache/datasets.js'
-import { PORTAL_URL } from '../constants/index.js'
+import { type PortalEndpoint, buildPortalUrl, getDefaultPortalEndpoint, portalEndpointKey } from '../portal/endpoints.js'
 import { detectChainType } from './chain.js'
 import { ActionableError } from './errors.js'
 import { formatTimestamp } from './format.js'
@@ -141,24 +141,29 @@ function estimateFromBlock(
 // entirely on subsequent calls (avoiding wasted retries + timeout).
 
 const TIMESTAMP_FAILURE_TTL = 5 * 60 * 1000 // 5 minutes
-const timestampFailures = new Map<string, number>() // dataset → failure timestamp
+const timestampFailures = new Map<string, number>() // endpoint+dataset → failure timestamp
 
-function isTimestampEndpointDown(dataset: string): boolean {
-  const failedAt = timestampFailures.get(dataset)
+function timestampFailureKey(dataset: string, endpoint: PortalEndpoint): string {
+  return `${portalEndpointKey(endpoint)}:${dataset}`
+}
+
+function isTimestampEndpointDown(dataset: string, endpoint: PortalEndpoint = getDefaultPortalEndpoint()): boolean {
+  const cacheKey = timestampFailureKey(dataset, endpoint)
+  const failedAt = timestampFailures.get(cacheKey)
   if (!failedAt) return false
   if (Date.now() - failedAt > TIMESTAMP_FAILURE_TTL) {
-    timestampFailures.delete(dataset)
+    timestampFailures.delete(cacheKey)
     return false
   }
   return true
 }
 
-function markTimestampEndpointDown(dataset: string): void {
-  timestampFailures.set(dataset, Date.now())
+function markTimestampEndpointDown(dataset: string, endpoint: PortalEndpoint = getDefaultPortalEndpoint()): void {
+  timestampFailures.set(timestampFailureKey(dataset, endpoint), Date.now())
 }
 
-function markTimestampEndpointUp(dataset: string): void {
-  timestampFailures.delete(dataset)
+function markTimestampEndpointUp(dataset: string, endpoint: PortalEndpoint = getDefaultPortalEndpoint()): void {
+  timestampFailures.delete(timestampFailureKey(dataset, endpoint))
 }
 
 // ---------------------------------------------------------------------------
@@ -311,7 +316,7 @@ function parseNaturalDuration(input: string): ParsedDuration | undefined {
 // ---------------------------------------------------------------------------
 
 /** Timeout for the /timestamps/ endpoint — fast-fail since we have a fallback. */
-const TIMESTAMP_TIMEOUT = 3000
+const TIMESTAMP_TIMEOUT = 6000
 
 /**
  * Convert a Unix timestamp to a block number using Portal's /timestamps/ endpoint.
@@ -321,10 +326,14 @@ const TIMESTAMP_TIMEOUT = 3000
  * Uses a short timeout and zero retries — the caller should fall back to
  * block time estimation on failure.
  */
-export async function timestampToBlock(dataset: string, timestamp: number): Promise<number> {
+export async function timestampToBlock(
+  dataset: string,
+  timestamp: number,
+  endpoint: PortalEndpoint = getDefaultPortalEndpoint(),
+): Promise<number> {
   const result = await portalFetch<{ block_number: number }>(
-    `${PORTAL_URL}/datasets/${dataset}/timestamps/${Math.floor(timestamp)}/block`,
-    { timeout: TIMESTAMP_TIMEOUT, retries: 0 },
+    buildPortalUrl(`/datasets/${dataset}/timestamps/${Math.floor(timestamp)}/block`, endpoint),
+    { timeout: TIMESTAMP_TIMEOUT, retries: 0, endpoint },
   )
   return result.block_number
 }
@@ -332,7 +341,11 @@ export async function timestampToBlock(dataset: string, timestamp: number): Prom
 /**
  * Get the head block's timestamp by querying Portal for the actual block data.
  */
-export async function getHeadTimestamp(dataset: string, headBlock: number): Promise<number> {
+export async function getHeadTimestamp(
+  dataset: string,
+  headBlock: number,
+  endpoint: PortalEndpoint = getDefaultPortalEndpoint(),
+): Promise<number> {
   const chainType = detectChainType(dataset)
 
   // Determine the query type and field key based on chain type
@@ -378,9 +391,9 @@ export async function getHeadTimestamp(dataset: string, headBlock: number): Prom
   }
 
   const response = await portalFetchStream(
-    `${PORTAL_URL}/datasets/${dataset}/stream`,
+    buildPortalUrl(`/datasets/${dataset}/stream`, endpoint),
     query,
-    TIMESTAMP_TIMEOUT,
+    { timeout: TIMESTAMP_TIMEOUT, endpoint },
   )
 
   if (!response || response.length === 0) {
@@ -525,11 +538,15 @@ export function describeTimeWindowInput(input: string): string {
   return `last ${trimmed}`
 }
 
-export async function resolveBlockAtTimestamp(dataset: string, input: string | number): Promise<BlockAtTimestampResult> {
+export async function resolveBlockAtTimestamp(
+  dataset: string,
+  input: string | number,
+  endpoint: PortalEndpoint = getDefaultPortalEndpoint(),
+): Promise<BlockAtTimestampResult> {
   const parsed = parseTimestampInput(input)
 
   try {
-    const blockNumber = await timestampToBlock(dataset, parsed.timestamp)
+    const blockNumber = await timestampToBlock(dataset, parsed.timestamp, endpoint)
     return {
       ...parsed,
       block_number: blockNumber,
@@ -538,8 +555,8 @@ export async function resolveBlockAtTimestamp(dataset: string, input: string | n
       timestamp_human: formatTimestamp(parsed.timestamp),
     }
   } catch {
-    const head = await getBlockHead(dataset)
-    const headTimestamp = await getHeadTimestamp(dataset, head.number)
+    const head = await getBlockHead(dataset, false, endpoint)
+    const headTimestamp = await getHeadTimestamp(dataset, head.number, endpoint)
     const chainType = detectChainType(dataset)
     const estimatedBlockTimeSeconds = estimateBlockTime(dataset, chainType)
     const deltaSeconds = Math.max(0, headTimestamp - parsed.timestamp)
@@ -582,8 +599,9 @@ export async function resolveTimeframeOrBlocks(params: {
   to_block?: number
   from_timestamp?: TimestampInput
   to_timestamp?: TimestampInput
+  endpoint?: PortalEndpoint
 }): Promise<ResolvedBlockWindow> {
-  const { dataset, timeframe, from_block, to_block, from_timestamp, to_timestamp } = params
+  const { dataset, timeframe, from_block, to_block, from_timestamp, to_timestamp, endpoint = getDefaultPortalEndpoint() } = params
   const hasTimestampWindow = from_timestamp !== undefined || to_timestamp !== undefined
   const hasBlockWindow = from_block !== undefined || to_block !== undefined
 
@@ -606,14 +624,14 @@ export async function resolveTimeframeOrBlocks(params: {
   }
 
   if (timeframe) {
-    const head = await getBlockHead(dataset)
+    const head = await getBlockHead(dataset, false, endpoint)
     const latestBlock = head.number
     const chainType = detectChainType(dataset)
     const seconds = parseTimeframeToSeconds(timeframe)
 
     const estimationReason = chainType === 'hyperliquidReplicaCmds'
       ? 'timestamp_endpoint_unsupported'
-      : isTimestampEndpointDown(dataset)
+        : isTimestampEndpointDown(dataset, endpoint)
         ? 'timestamp_endpoint_down'
         : undefined
 
@@ -627,10 +645,10 @@ export async function resolveTimeframeOrBlocks(params: {
     // Real-time datasets expose head block timestamps, so anchor relative
     // windows to the latest indexed block instead of wall-clock time.
     try {
-      const headTimestamp = await getHeadTimestamp(dataset, latestBlock)
+      const headTimestamp = await getHeadTimestamp(dataset, latestBlock, endpoint)
       const targetTimestamp = Math.max(0, headTimestamp - seconds)
-      const fromBlock = await timestampToBlock(dataset, targetTimestamp)
-      markTimestampEndpointUp(dataset)
+      const fromBlock = await timestampToBlock(dataset, targetTimestamp, endpoint)
+      markTimestampEndpointUp(dataset, endpoint)
       return {
         from_block: Math.min(fromBlock, latestBlock),
         to_block: latestBlock,
@@ -650,7 +668,7 @@ export async function resolveTimeframeOrBlocks(params: {
       }
     } catch {
       // Cache the failure so subsequent calls skip straight to estimation
-      markTimestampEndpointDown(dataset)
+      markTimestampEndpointDown(dataset, endpoint)
       return {
         ...estimateFromBlock(latestBlock, seconds, dataset, chainType, 'timestamp_endpoint_unavailable'),
         range_kind: 'timeframe',
@@ -658,11 +676,11 @@ export async function resolveTimeframeOrBlocks(params: {
     }
   } else if (hasTimestampWindow) {
     const [resolvedFrom, resolvedTo] = await Promise.all([
-      from_timestamp !== undefined ? resolveBlockAtTimestamp(dataset, from_timestamp) : Promise.resolve(undefined),
-      to_timestamp !== undefined ? resolveBlockAtTimestamp(dataset, to_timestamp) : Promise.resolve(undefined),
+      from_timestamp !== undefined ? resolveBlockAtTimestamp(dataset, from_timestamp, endpoint) : Promise.resolve(undefined),
+      to_timestamp !== undefined ? resolveBlockAtTimestamp(dataset, to_timestamp, endpoint) : Promise.resolve(undefined),
     ])
 
-    const head = resolvedTo ? undefined : await getBlockHead(dataset)
+    const head = resolvedTo ? undefined : await getBlockHead(dataset, false, endpoint)
     const resolvedFromBlock = resolvedFrom?.block_number ?? resolvedTo?.block_number
     const resolvedToBlock = resolvedTo?.block_number ?? head?.number
 
