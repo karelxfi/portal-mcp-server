@@ -128,6 +128,10 @@ async function main() {
   const resources = resourcesResp.result?.resources ?? []
   const resourceUris = resources.map((resource: any) => resource.uri)
   if (!resourceUris.includes('sqd://tools')) fail(`Expected sqd://tools developer guide resource`)
+  if (!resourceUris.includes('sqd://execution-guidance')) fail(`Expected sqd://execution-guidance resource`)
+  if (!resourceUris.includes('sqd://datasets')) fail(`Expected sqd://datasets resource`)
+  if (!resourceUris.includes('sqd://schema/evm')) fail(`Expected sqd://schema/evm resource`)
+  if (!resourceUris.includes('sqd://schema/solana')) fail(`Expected sqd://schema/solana resource`)
   console.log('resources/list OK')
 
   const resourceTemplatesId = send('resources/templates/list')
@@ -137,6 +141,7 @@ async function main() {
   const resourceTemplates = resourceTemplatesResp.result?.resourceTemplates ?? []
   const templateUris = resourceTemplates.map((template: any) => template.uriTemplate)
   if (!templateUris.includes('sqd://tools/{name}')) fail(`Expected sqd://tools/{name} developer guide template`)
+  if (!templateUris.includes('sqd://datasets/{name}')) fail(`Expected sqd://datasets/{name} dataset info template`)
   console.log('resources/templates/list OK')
 
   const toolGuideId = send('resources/read', { uri: 'sqd://tools' })
@@ -149,10 +154,36 @@ async function main() {
     fail('sqd://tools should include safe public endpoint metadata')
   }
   if (toolGuide.counts?.tools !== 28) fail(`sqd://tools expected 28 tool guide entries, got ${toolGuide.counts?.tools}`)
+  if (toolGuide.execution_guidance?.version !== 'portal_execution_guidance_v1') {
+    fail('sqd://tools should include portal_execution_guidance_v1 guidance')
+  }
+  if (!toolGuide.execution_guidance?.surfaces?.portal_stream_api) {
+    fail('sqd://tools should explain the Portal Stream API/curl fallback')
+  }
   if (!toolGuide.categories?.convenience?.includes('portal_get_time_series')) {
     fail('sqd://tools should group portal_get_time_series under convenience')
   }
   console.log('sqd://tools OK')
+
+  const executionGuideId = send('resources/read', { uri: 'sqd://execution-guidance' })
+  const executionGuideResp = await readResponse(executionGuideId)
+  if (executionGuideResp.error)
+    fail(`resources/read sqd://execution-guidance error: ${JSON.stringify(executionGuideResp.error)}`)
+  const executionGuideText = executionGuideResp.result?.contents?.[0]?.text
+  if (!executionGuideText) fail('sqd://execution-guidance returned empty content')
+  const executionGuide = JSON.parse(executionGuideText)
+  if (executionGuide.plugin?.selector !== 'portal@sqd') fail('sqd://execution-guidance should mention portal@sqd')
+  if (executionGuide.plugin?.mcp_server_label !== 'SQD') fail('sqd://execution-guidance should mention the SQD MCP server label')
+  if (!executionGuide.surfaces?.pipes_squid) fail('sqd://execution-guidance should explain Pipes SDK handoff')
+  if (executionGuide.surfaces?.pipes_squid?.label !== 'Pipes SDK data pipelines') {
+    fail('sqd://execution-guidance should use polished Pipes SDK data pipeline copy')
+  }
+  const executionGuideTextJson = JSON.stringify(executionGuide)
+  if (!/raw rows/i.test(executionGuideTextJson)) fail('sqd://execution-guidance should explain raw-row export routing')
+  if (!/durable data pipeline/i.test(executionGuideTextJson)) {
+    fail('sqd://execution-guidance should explain durable data pipeline routing')
+  }
+  console.log('sqd://execution-guidance OK')
 
   const toolGuideEntryId = send('resources/read', { uri: 'sqd://tools/portal_get_time_series' })
   const toolGuideEntryResp = await readResponse(toolGuideEntryId)
@@ -171,6 +202,39 @@ async function main() {
   }
   console.log('sqd://tools/{name} OK')
 
+  const unknownToolGuideEntryId = send('resources/read', { uri: 'sqd://tools/not_a_tool' })
+  const unknownToolGuideEntryResp = await readResponse(unknownToolGuideEntryId)
+  if (!unknownToolGuideEntryResp.error) fail('Unknown sqd://tools/{name} should return a resource error')
+  if (!String(unknownToolGuideEntryResp.error.message ?? '').includes('Unknown Portal MCP tool')) {
+    fail('Unknown sqd://tools/{name} error should explain the unknown tool')
+  }
+  console.log('sqd://tools/{unknown} OK')
+
+  const datasetsId = send('resources/read', { uri: 'sqd://datasets' })
+  const datasetsResp = await readResponse(datasetsId)
+  if (datasetsResp.error) fail(`resources/read sqd://datasets error: ${JSON.stringify(datasetsResp.error)}`)
+  const datasetsText = datasetsResp.result?.contents?.[0]?.text
+  if (!datasetsText) fail('sqd://datasets returned empty content')
+  const datasets = JSON.parse(datasetsText)
+  if (datasets.endpoint?.id !== 'public') fail('sqd://datasets should include safe endpoint metadata')
+  if (!Array.isArray(datasets.datasets) || datasets.datasets.length === 0) fail('sqd://datasets should list Portal datasets')
+  if (!datasets.datasets.some((dataset: any) => dataset.dataset === 'base-mainnet')) {
+    fail('sqd://datasets should include base-mainnet')
+  }
+  console.log('sqd://datasets OK')
+
+  const datasetInfoId = send('resources/read', { uri: 'sqd://datasets/base-mainnet' })
+  const datasetInfoResp = await readResponse(datasetInfoId)
+  if (datasetInfoResp.error)
+    fail(`resources/read sqd://datasets/base-mainnet error: ${JSON.stringify(datasetInfoResp.error)}`)
+  const datasetInfoText = datasetInfoResp.result?.contents?.[0]?.text
+  if (!datasetInfoText) fail('sqd://datasets/base-mainnet returned empty content')
+  const datasetInfo = JSON.parse(datasetInfoText)
+  if (datasetInfo.endpoint?.id !== 'public') fail('sqd://datasets/{name} should include safe endpoint metadata')
+  if (datasetInfo.dataset !== 'base-mainnet') fail('sqd://datasets/{name} should resolve base-mainnet metadata')
+  if (!datasetInfo.head) fail('sqd://datasets/{name} should include dataset head metadata')
+  console.log('sqd://datasets/{name} OK')
+
   const evmSchemaId = send('resources/read', { uri: 'sqd://schema/evm' })
   const evmSchemaResp = await readResponse(evmSchemaId)
   if (evmSchemaResp.error) fail(`resources/read sqd://schema/evm error: ${JSON.stringify(evmSchemaResp.error)}`)
@@ -181,6 +245,17 @@ async function main() {
     fail('sqd://schema/evm should include safe endpoint metadata')
   }
   console.log('sqd://schema/evm OK')
+
+  const solanaSchemaId = send('resources/read', { uri: 'sqd://schema/solana' })
+  const solanaSchemaResp = await readResponse(solanaSchemaId)
+  if (solanaSchemaResp.error) fail(`resources/read sqd://schema/solana error: ${JSON.stringify(solanaSchemaResp.error)}`)
+  const solanaSchemaText = solanaSchemaResp.result?.contents?.[0]?.text
+  if (!solanaSchemaText) fail('sqd://schema/solana returned empty content')
+  const solanaSchema = JSON.parse(solanaSchemaText)
+  if (solanaSchema.endpoint?.id !== 'public') {
+    fail('sqd://schema/solana should include safe endpoint metadata')
+  }
+  console.log('sqd://schema/solana OK')
 
   // Step 5: Call portal_list_networks
   const dsId = send('tools/call', {

@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "SQD": {
+      "type": "http",
+      "url": "https://portal.sqd.dev/mcp",
+      "note": "Hosted SQD Portal MCP endpoint for read-only blockchain data queries."
+    }
+  }
+}

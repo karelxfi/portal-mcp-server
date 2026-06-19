@@ -3,6 +3,7 @@
 import { readFileSync } from 'node:fs'
 import type { Client } from '@modelcontextprotocol/sdk/client/index.js'
 
+import { EXECUTION_GUIDANCE_VERSION, getExecutionGuidance } from '../src/helpers/execution-guidance.js'
 import { TOOL_SPECS, loadToolTestContext } from './tool-manifest.ts'
 import {
   assert,
@@ -264,6 +265,39 @@ function validateTextFallbackParsing() {
   assert(fallback.data.answer === 'Fallback response', 'Text fallback should parse JSON response content')
 }
 
+function validateExecutionGuidanceUx(failures: QualityWarning[]) {
+  const guide = getExecutionGuidance()
+  const guideText = JSON.stringify(guide)
+
+  if (guide.version !== EXECUTION_GUIDANCE_VERSION) {
+    failures.push({ tool: 'execution-guidance', message: 'execution guidance version should match the exported constant' })
+  }
+
+  if (JSON.stringify(guide.default_order) !== JSON.stringify(['portal_mcp', 'portal_stream_api', 'pipes_squid'])) {
+    failures.push({ tool: 'execution-guidance', message: 'execution guidance should preserve the MCP -> Portal Stream API -> Pipes SDK order' })
+  }
+
+  if (guide.surfaces?.pipes_squid?.label !== 'Pipes SDK data pipelines') {
+    failures.push({ tool: 'execution-guidance', message: 'Pipes handoff label should be product-facing' })
+  }
+
+  if (/Pipes\s*\/\s*Squid|Pipes SDK indexer/i.test(guideText)) {
+    failures.push({ tool: 'execution-guidance', message: 'execution guidance should use Pipes SDK data pipeline language' })
+  }
+
+  if (!guideText.includes('raw rows') || !/Portal Stream API\s*\/\s*curl/.test(guideText)) {
+    failures.push({ tool: 'execution-guidance', message: 'execution guidance should explain raw row and curl export handoffs' })
+  }
+
+  if (!guideText.includes('durable data pipeline')) {
+    failures.push({ tool: 'execution-guidance', message: 'execution guidance should explain durable data pipeline handoffs' })
+  }
+
+  if (guide.plugin?.selector !== 'portal@sqd' || guide.plugin?.mcp_server_label !== 'SQD') {
+    failures.push({ tool: 'execution-guidance', message: 'execution guidance should advertise the polished plugin selector and MCP server label' })
+  }
+}
+
 async function validateContractActivityFastModeCoverage(params: {
   client: Client
   context: Awaited<ReturnType<typeof loadToolTestContext>>
@@ -436,6 +470,7 @@ async function main() {
 
     printSection(`Quality audit for ${TOOL_SPECS.length} tools`)
     validateTextFallbackParsing()
+    validateExecutionGuidanceUx(failures)
     validateCatalogSemantics(tools, failures)
 
     await runQualityPass({ client, context, pass: 'cold', warnings, failures, responseSizes })

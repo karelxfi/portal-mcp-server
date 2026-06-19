@@ -30,7 +30,7 @@ Runs multi-step user journeys that behave more like an AI chat session than isol
 - catches places where a tool works technically but still feels awkward in chat
 
 ### `npm run test:realistic-prompts`
-Runs skeptical, user-style prompts for the v0.7.9 investigation features. It:
+Runs skeptical, user-style prompts for the investigation and execution-routing features. It:
 
 - maps messy incident-response prompts to the intended existing tool
 - calls the live MCP server and validates the returned artifact, not only routing rank
@@ -57,6 +57,37 @@ Runs an automated response-quality audit over the full manifest. It:
 ### `npm run test:package`
 Runs `npm pack --dry-run` and verifies the published tarball contains only runtime essentials. It fails if source, test, plan, workflow, dashboard, lockfile, or local tooling artifacts are included.
 
+### `npm run test:plugin`
+Validates the Codex plugin wrapper and repo-local marketplace. It:
+
+- checks `plugins/portal/.codex-plugin/plugin.json`
+- checks `.agents/plugins/marketplace.json`
+- verifies icon and logo paths
+- verifies bundled SQD skills exist and avoid stale MCP tool names
+- confirms the hosted MCP endpoint initializes, lists tools, and answers a small `portal_list_networks` smoke call
+- validates the starter-prompt output UX for BTC fills, Base 2h transaction buckets, and SQD/Base entity resolution
+- optionally runs an isolated `codex plugin marketplace add` / `codex plugin add portal@sqd` install smoke when `PORTAL_PLUGIN_RUN_CLI_INSTALL=1`
+- rejects committed local paths or secret-like markers in plugin manifests
+
+### `npm run test:claude-plugin`
+Validates the Claude Code plugin wrapper and repo-local marketplace. It:
+
+- checks `plugins/portal/.claude-plugin/plugin.json`
+- checks `.claude-plugin/marketplace.json`
+- verifies presentation metadata, bundled skills, and logo paths where supported
+- confirms the hosted MCP endpoint initializes and lists the expected SQD Portal tools
+- validates the starter-prompt output UX for BTC fills, Base 2h transaction buckets, and SQD/Base entity resolution
+- optionally runs an isolated `claude plugin marketplace add` / `claude plugin install portal@sqd` smoke when `PORTAL_PLUGIN_RUN_CLI_INSTALL=1`
+- rejects committed local paths or secret-like markers in plugin manifests
+
+### `npm run test:hosted-release`
+Runs the release-day hosted plugin gate against `https://portal.sqd.dev/mcp` by default. It:
+
+- requires hosted MCP `initialize` to report the expected release version
+- checks hosted `tools/list`
+- reads `sqd://tools` and `sqd://execution-guidance`
+- validates hosted `/health` and `/tools` only when those public routes are exposed; otherwise it treats hosted discovery as MCP-only and logs the skip
+
 ### `npm run test:timestamps`
 Runs focused timestamp resolver QA. It:
 
@@ -76,14 +107,23 @@ Runs the full live matrix:
 - substrate
 - timestamps
 - HTTP mode
+- hosted auth
+- delegated auth
+- readiness
+- Codex plugin manifest, marketplace, asset, bundled-skill, optional CLI install, and hosted MCP smoke checks
+- Claude Code plugin manifest, marketplace, bundled-skill, optional CLI install, and hosted MCP smoke checks
 - conversations
 - realistic prompts
+- endpoints
 - negative paths
 - quality audit
 - package contents
 
 ### `npm run test:ci`
 Alias for the full CI verification entrypoint. Today it runs the same matrix as `test:all`, including the quality-and-budget gate and package-content check.
+
+### `npm run test:release`
+Runs `test:ci` and `test:hosted-release`. Use it on release day after the hosted endpoint has been deployed for the target version.
 
 ### `npm run test:substrate`
 Runs a focused live QA pass for Substrate readiness. It:

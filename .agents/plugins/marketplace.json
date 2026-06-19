@@ -1,0 +1,22 @@
+{
+  "name": "sqd",
+  "interface": {
+    "displayName": "SQD"
+  },
+  "plugins": [
+    {
+      "name": "portal",
+      "displayName": "SQD Portal",
+      "description": "Query validated onchain data with SQD Portal, plus bundled Portal and Pipes SDK skills.",
+      "source": {
+        "source": "local",
+        "path": "./plugins/portal"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Data & Analytics"
+    }
+  ]
+}

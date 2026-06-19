@@ -10,7 +10,7 @@ This server does not index chains itself. It validates user input, maps it onto 
 - `3` advanced/debug tools
 - public params use `network`
 - discovery filters use `vm`
-- no legacy tool aliases in `v0.7.9`
+- no legacy tool aliases in `v0.8.0`
 
 Raw query tools default to compact responses. Ask for `response_format: "full"` only when you need the larger payload.
 
@@ -124,7 +124,32 @@ The server exposes a structured tool-selection guide for client builders:
 
 - MCP resource `sqd://tools` returns grouped tool metadata, examples, starting points, and integration notes.
 - MCP resource `sqd://tools/{name}` returns the guide entry for one tool, for example `sqd://tools/portal_get_time_series`.
+- MCP resource `sqd://execution-guidance` explains when agents should use Portal MCP, Portal raw exports, or a durable Pipes SDK data pipeline.
 - HTTP `GET /tools` or `GET /tools.json` returns the live tool catalog with input schemas plus the same structured guide metadata.
+
+## Codex plugin
+
+The Codex plugin wrapper lives in `plugins/portal` and defaults to the hosted MCP endpoint at `https://portal.sqd.dev/mcp`. Installing `portal@sqd` adds the hosted MCP server plus bundled Portal and Pipes SDK skills.
+
+Install it from this repo-local marketplace:
+
+```bash
+codex plugin marketplace add .
+codex plugin add portal@sqd
+```
+
+Open a new Codex thread after installing. First-use prompts include "Show the last 200 BTC perp fills on Hyperliquid with price, size, side, and raw rows only.", "Chart Base transaction throughput over the last 2 hours in 15-minute buckets.", and "Trace Base USDC flows from the past hour with amounts, counterparties, and tx hashes."
+
+## Claude Code plugin
+
+The Claude Code plugin uses the same hosted MCP endpoint, bundled skills, and public selector:
+
+```bash
+claude plugin marketplace add subsquid-labs/portal-mcp-server
+claude plugin install portal@sqd
+```
+
+Open a new Claude Code session after installing so the SQD MCP tools are loaded.
 
 ## Claude Desktop
 
@@ -133,7 +158,7 @@ Add an entry like this to `claude_desktop_config.json`:
 ```json
 {
   "mcpServers": {
-    "sqd-portal": {
+    "SQD": {
       "command": "node",
       "args": ["/absolute/path/to/sqd-portal-mcp-server/dist/index.js"]
     }
@@ -146,6 +171,8 @@ Add an entry like this to `claude_desktop_config.json`:
 - If you do not know the exact network name, start with `portal_list_networks`.
 - If you need recent indexed state, use `portal_get_network_info` or `portal_get_head` first.
 - If the question is broad, start with `portal_get_recent_activity`, `portal_get_wallet_summary`, or `portal_get_time_series` before dropping to raw queries.
+- Use Portal MCP for bounded interactive answers; use Portal for raw rows, exports, or exact reproducible requests; use Pipes SDK when the user needs recurring sync, backfills, joins, durable storage, dashboards, alerts, or production APIs.
+- For explicit raw rows, last-N records, CSV/NDJSON, files, or curl prompts, skip overview narration. Run the direct query/export path and put the requested rows or file first; add no more than one short postscript about caps, pagination, or reproducibility.
 - Time windows accept compact and natural wording such as `30m`, `past 30 minutes`, `in the past 1h`, `in last 38 mins`, `last hour`, or `30 minutes ago`.
 - Use `portal_evm_get_ohlc` and `portal_hyperliquid_get_ohlc` only when you actually need candle-shaped output.
 - For large or exploratory queries, prefer `response_format: "compact"` unless you need the full record shape.
@@ -153,6 +180,8 @@ Add an entry like this to `claude_desktop_config.json`:
 ## HTTP Deployment Notes
 
 HTTP mode exposes liveness at `/health`, readiness at `/ready`, and read-only tool discovery at `/tools` and `/tools.json`.
+
+The managed hosted endpoint at `https://portal.sqd.dev/mcp` is the canonical plugin endpoint. Hosted release validation is MCP-resource based: initialize the MCP server, list tools, and read `sqd://tools` plus `sqd://execution-guidance`. If the hosted edge also exposes `/health` or `/tools`, those routes must report the same release version; otherwise `npm run test:hosted-release` treats hosted discovery as MCP-only and logs the skipped HTTP route.
 
 - Set `MCP_HTTP_BEARER_TOKEN` to require `Authorization: Bearer <token>` for `POST /` and `POST /mcp`.
 - Hosted deployments can also use portal-app issued MCP keys through `MCP_AUTH_KEYS`; see [Portal app MCP auth contract](docs/portal-app-mcp-auth-contract.md).
@@ -224,11 +253,17 @@ npm run test:routing
 npm run test:substrate
 npm run test:timestamps
 npm run test:auth
+npm run test:http-runtime
+npm run test:plugin
+npm run test:claude-plugin
+npm run test:hosted-release
 npm run test:readiness
 npm run test:conversations
+npm run test:realistic-prompts
 npm run test:negative
 npm run test:quality
 npm run test:endpoints
+npm run test:package
 npm run test:ci
 ```
 

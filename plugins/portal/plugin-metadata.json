@@ -1,0 +1,55 @@
+{
+  "version": "0.8.0",
+  "pluginName": "portal",
+  "selector": "portal@sqd",
+  "marketplaceName": "sqd",
+  "serverName": "sqd-portal-mcp-server",
+  "mcpServerLabel": "SQD",
+  "displayName": "SQD Portal",
+  "developerName": "Subsquid Labs",
+  "category": "Data & Analytics",
+  "homepage": "https://docs.sqd.dev/en/ai/mcp-server",
+  "websiteURL": "https://sqd.dev/portal/",
+  "privacyPolicyURL": "https://sqd.dev/imprint/",
+  "repository": "https://github.com/subsquid-labs/portal-mcp-server",
+  "mcpEndpoint": "https://portal.sqd.dev/mcp",
+  "brandColor": "#08090A",
+  "assets": {
+    "logo": "./assets/sqd-logo.svg",
+    "logoDark": "./assets/sqd-logo-dark.svg",
+    "composerIcon": "./assets/sqd-composer-icon.svg"
+  },
+  "description": {
+    "codex": "Query validated onchain data with SQD Portal.",
+    "claude": "Query validated onchain data with SQD Portal.",
+    "short": "Query validated onchain data.",
+    "long": "Use SQD Portal to inspect wallets, contracts, transfers, blocks, and market activity with read-only MCP tools. For larger jobs, switch to Portal for raw exports or Pipes SDK for durable data pipelines."
+  },
+  "capabilities": ["Interactive", "Read"],
+  "defaultPrompts": [
+    "Show the last 200 BTC perp fills on Hyperliquid with price, size, side, and raw rows only.",
+    "Chart Base transaction throughput over the last 2 hours in 15-minute buckets.",
+    "Trace Base USDC flows from the past hour with amounts, counterparties, and tx hashes."
+  ],
+  "skills": [
+    {
+      "name": "portal",
+      "displayName": "SQD Portal",
+      "path": "./skills/portal/SKILL.md",
+      "purpose": "Plan non-obvious SQD data work across Portal MCP, Portal exports, and Pipes SDK. Direct raw-row/export prompts should use the SQD MCP tool or Portal Stream API without loading this skill."
+    },
+    {
+      "name": "pipes",
+      "displayName": "Pipes SDK",
+      "path": "./skills/pipes/SKILL.md",
+      "purpose": "Turn Portal handoffs into durable Pipes SDK data pipelines when the job needs recurring sync, joins, storage, or production analytics."
+    }
+  ],
+  "trust": {
+    "readOnly": true,
+    "publicModeRequiresApiKey": false,
+    "toolCount": 28,
+    "publicToolCount": 25,
+    "advancedToolCount": 3
+  }
+}

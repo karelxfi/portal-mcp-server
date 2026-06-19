@@ -5,6 +5,7 @@
  * Usage: tsx scripts/prompt-taxonomy.ts <path-to-jsonl>
  */
 import { readFileSync } from 'node:fs'
+import { pathToFileURL } from 'node:url'
 
 type Bucket = {
   name: string
@@ -12,6 +13,20 @@ type Bucket = {
 }
 
 const BUCKETS: Bucket[] = [
+  {
+    name: 'raw_export',
+    patterns: [
+      /raw rows?/i,
+      /last\s+\d+/i,
+      /\b(?:\d{3,}|\d{1,3}(?:,\d{3})+)\s+rows?\b/i,
+      /\b\d+(?:\.\d+)?k\s+rows?\b/i,
+      /\b(all|full)\s+rows?\b/i,
+      /\bno (?:tool )?chatter\b/i,
+      /\bno progress updates?\b/i,
+      /\b(csv|ndjson|export|curl|file)\b/i,
+    ],
+  },
+  { name: 'durable_pipeline', patterns: [/recurring/i, /dashboard/i, /indexer/i, /pipes/i, /backfill/i, /production/i, /alerts?/i, /data pipeline/i] },
   { name: 'wallet_investigation', patterns: [/wallet/i, /address/i, /balances?/i, /counterpart/i, /holdings?/i] },
   { name: 'time_series', patterns: [/time\s*series/i, /chart/i, /trend/i, /bucket/i, /compare/i] },
   { name: 'contract_activity', patterns: [/contract/i, /top contracts?/i, /activity/i] },
@@ -22,7 +37,7 @@ const BUCKETS: Bucket[] = [
   { name: 'raw_query', patterns: [/query/i, /logs?/i, /transactions?/i, /traces?/i] },
 ]
 
-function classify(query: string) {
+export function classify(query: string) {
   const matches = BUCKETS.filter((bucket) => bucket.patterns.some((pattern) => pattern.test(query)))
   if (!matches.length) return 'other'
   return matches[0].name
@@ -60,4 +75,6 @@ function main() {
   })
 }
 
-main()
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main()
+}

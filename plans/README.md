@@ -1,12 +1,22 @@
-# v0.7.9 Release Hardening Notes
+# Portal MCP Release Hardening Notes
 
-This directory records the completed factual UX hardening pass for v0.7.9.
+This directory records release-hardening passes for Portal MCP.
 
 ## Status
 
 | Plan | Title | Status |
 |---|---|---|
 | 001 | v0.7.9 factual UX release hardening | Done |
+| 002 | v0.8.0 plugin and skills release hardening | In progress |
+
+## v0.8.0 Release Checklist
+
+- Bundle refreshed SQD skills into `portal@sqd`.
+- Keep package, plugin metadata, Claude marketplace, changelog, and hosted MCP version coherent.
+- Validate `portal@sqd` for Codex and Claude Code from repo-local marketplaces.
+- Validate the managed hosted endpoint through MCP initialize, `tools/list`, `sqd://tools`, and `sqd://execution-guidance`.
+- Document that self-hosted HTTP mode exposes `/health` and `/tools`, while hosted discovery may be MCP-only until public edge routes are configured.
+- Keep plugin presentation polished: `SQD Portal` as product name, `portal@sqd` as selector, `SQD` as compact MCP server label, and current black/white SQD logo assets.
 
 ## Completed Scope
 
@@ -37,9 +47,10 @@ npm run test:all
 ## Deferred Direction
 
 - Extend schema resources beyond EVM and Solana after structured output is settled.
-- Collapse tool registry, tool catalog, manifest specs, and README counts into one source of truth after v0.7.9.
+- Collapse tool registry, tool catalog, manifest specs, and README counts into one source of truth after v0.8.0.
 - Treat dependency and workflow pinning as a separate release-hardening pass.
 
 ## Plan File
 
 - `plans/001-v079-factual-ux-release-hardening.md`
+- `plans/002-v080-plugin-skills-release-hardening.md`

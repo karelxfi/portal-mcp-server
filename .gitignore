@@ -71,6 +71,8 @@ data/
 !docs/enterprise-http-deployment.md
 !docs/v0.8.0-migration.md
 !docs/v0.8.0-release-runbook.md
+!plugins/portal/skills/**/*.md
+!plans/002-v080-plugin-skills-release-hardening.md
 
 # Environment files with secrets
 .env

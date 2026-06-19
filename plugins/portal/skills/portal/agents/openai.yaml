@@ -1,0 +1,6 @@
+interface:
+  display_name: "SQD Portal"
+  short_description: "Plan Portal queries and exports"
+  icon_small: "./assets/sqd-composer-icon.svg"
+  icon_large: "./assets/sqd-composer-icon.svg"
+  default_prompt: "Use $portal to choose between MCP, raw exports, and Pipes SDK."

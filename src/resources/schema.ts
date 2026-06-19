@@ -3,6 +3,7 @@ import { ResourceTemplate } from '@modelcontextprotocol/sdk/server/mcp.js'
 
 import { getDatasets, resolveDataset } from '../cache/datasets.js'
 import { EVENT_SIGNATURES } from '../constants/index.js'
+import { getExecutionGuidance } from '../helpers/execution-guidance.js'
 import { portalFetch } from '../helpers/fetch.js'
 import {
   buildEvmBlockFields,
@@ -43,6 +44,7 @@ function buildDeveloperToolGuide(endpoint: PortalEndpoint = getDefaultPortalEndp
     description: 'Developer-facing guide for selecting SQD Portal MCP tools and starting from common workflows.',
     version: npmVersion,
     endpoint: getSafePortalEndpointMetadata(endpoint),
+    execution_guidance: getExecutionGuidance(),
     counts: {
       tools: tools.length,
       public: publicTools.length,
@@ -116,6 +118,7 @@ function buildDeveloperToolGuide(endpoint: PortalEndpoint = getDefaultPortalEndp
       'Raw query tools default to compact output. Use response_format: "full" only when the caller needs chain-specific raw fields.',
       'Wallet investigations should start from fund_flow and investigation.pivots, then use raw tools only for evidence drill-down.',
       'For chartable responses, read chart and tables metadata before inferring visual structure from raw arrays.',
+      'Use Portal MCP for bounded interactive answers, Portal Stream API/curl for raw exports or reproducible requests, and Pipes SDK for durable data pipelines.',
     ],
     categories: groupToolsByCategory(tools),
     tools,
@@ -158,6 +161,18 @@ export function registerSchemaResource(server: McpServer) {
       }
     },
   )
+
+  server.resource('execution-guidance', 'sqd://execution-guidance', async (uri) => {
+    return {
+      contents: [
+        {
+          uri: uri.href,
+          mimeType: 'application/json',
+          text: JSON.stringify(getExecutionGuidance(), null, 2),
+        },
+      ],
+    }
+  })
 
   // Resource: List all datasets
   server.resource('datasets', 'sqd://datasets', async (uri) => {

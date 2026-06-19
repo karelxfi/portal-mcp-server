@@ -1,11 +1,13 @@
 #!/usr/bin/env tsx
 
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
+import { readFileSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { setTimeout as sleep } from 'node:timers/promises'
 
 const PORT = 3197
 const BASE_URL = `http://localhost:${PORT}`
+const metadata = JSON.parse(readFileSync('plugins/portal/plugin-metadata.json', 'utf8'))
 const METRICS_TOKEN = 'test-metrics-token'
 const MCP_TOKEN = 'test-mcp-token'
 const OBS_USER_QUERY_SECRET = 'obs-user-query-secret'
@@ -71,6 +73,15 @@ async function assertMcpHttpAuth() {
   assert(health.ok, `Public /health should stay reachable, got ${health.status}`)
   const healthText = await health.text()
   assert(!healthText.includes('https://portal.sqd.dev'), '/health should not expose the Portal base URL')
+  const healthJson = JSON.parse(healthText)
+  assert(healthJson.version === metadata.version, `Public /health should expose version ${metadata.version}, got ${healthJson.version}`)
+  assert(healthJson.plugin?.selector === metadata.selector, 'Public /health should expose the portal@sqd plugin selector')
+  assert(healthJson.plugin?.mcp_server_label === metadata.mcpServerLabel, 'Public /health should expose the compact SQD MCP label')
+  assert(healthJson.tools?.total === metadata.trust.toolCount, `Public /health should expose ${metadata.trust.toolCount} tools, got ${healthJson.tools?.total}`)
+  assert(
+    healthJson.discovery?.mcp_resources?.includes('sqd://execution-guidance'),
+    'Public /health should advertise sqd://execution-guidance',
+  )
 
   const readyHead = await fetch(`${BASE_URL}/ready`, { method: 'HEAD' })
   assert(readyHead.ok, `Public HEAD /ready should stay reachable, got ${readyHead.status}`)
@@ -95,6 +106,16 @@ async function assertMcpHttpAuth() {
   assert(toolsJson?.endpoint?.endpoint_class === 'public', '/tools endpoint metadata should classify the public endpoint')
   assert(toolsJson?.endpoint?.auth_required === false, '/tools endpoint metadata should not report auth for the public endpoint')
   assert(toolsJson?.tool_count === 28, '/tools should expose the full current tool catalog')
+  assert(toolsJson.version === metadata.version, `Public /tools should expose version ${metadata.version}, got ${toolsJson.version}`)
+  assert(toolsJson.plugin?.selector === metadata.selector, 'Public /tools should expose plugin selector')
+  assert(
+    toolsJson.execution_guidance?.version === 'portal_execution_guidance_v1',
+    'Public /tools should expose structured execution guidance',
+  )
+  assert(
+    toolsJson.execution_guidance?.surfaces?.portal_stream_api !== undefined,
+    'Public /tools should explain the raw Portal Stream API/curl fallback',
+  )
 
   const routedTools = await fetch(`${BASE_URL}/tools`, {
     headers: { 'x-forwarded-host': 'dedicated.portal.example.com' },

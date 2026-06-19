@@ -3,12 +3,13 @@
 // ============================================================================
 
 import { Buffer } from 'node:buffer'
+import { getSafePortalEndpointMetadata, type SafePortalEndpointMetadata } from '../portal/endpoints.js'
+import { buildResponseExecutionGuidance } from './execution-guidance.js'
 import type { LlmOverrides } from './llm-hints.js'
 import { buildLlmHints } from './llm-hints.js'
 import type { PipesRecipe } from './pipes-recipe.js'
 import { getToolContract } from './tool-ux.js'
 import type { UiFollowUpAction } from './ui-metadata.js'
-import { getSafePortalEndpointMetadata, type SafePortalEndpointMetadata } from '../portal/endpoints.js'
 
 const MAX_RESPONSE_LENGTH = 50_000 // 50KB - keeps responses within MCP client context limits
 
@@ -1393,7 +1394,20 @@ export function formatResult(
     payloadRecord.next_steps = nextSteps
 
     payloadRecord.investigation = buildInvestigationGuide(payloadRecord)
-    payloadRecord._llm = buildLlmHints(payloadRecord, options?.llm)
+    const coverage = isRecord(payloadRecord._coverage) ? payloadRecord._coverage : undefined
+    const pagination = isRecord(payloadRecord._pagination) ? payloadRecord._pagination : undefined
+    const llmHints = buildLlmHints(payloadRecord, options?.llm)
+    payloadRecord._llm = {
+      ...llmHints,
+      execution_guidance: buildResponseExecutionGuidance({
+        toolName: options?.toolName,
+        responseFormat: typeof execution.response_format === 'string' ? execution.response_format : undefined,
+        hasPagination: typeof pagination?.next_cursor === 'string' || pagination?.has_more === true,
+        resultComplete: typeof coverage?.result_complete === 'boolean' ? coverage.result_complete : undefined,
+        windowComplete: typeof coverage?.window_complete === 'boolean' ? coverage.window_complete : undefined,
+        hasPipesHandoff: options?.pipes !== undefined,
+      }),
+    }
 
     const orderedPayload: Record<string, unknown> = {}
 

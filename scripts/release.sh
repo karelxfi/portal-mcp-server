@@ -87,6 +87,25 @@ if (fs.existsSync('package-lock.json')) {
   }
   fs.writeFileSync('package-lock.json', JSON.stringify(lock, null, 2) + '\n');
 }
+
+const jsonFiles = [
+  'plugins/portal/plugin-metadata.json',
+  'plugins/portal/.codex-plugin/plugin.json',
+  'plugins/portal/.claude-plugin/plugin.json',
+  '.claude-plugin/marketplace.json',
+];
+
+for (const path of jsonFiles) {
+  if (!fs.existsSync(path)) continue;
+  const data = JSON.parse(fs.readFileSync(path, 'utf8'));
+  data.version = '${NEW_VERSION}';
+  if (Array.isArray(data.plugins)) {
+    for (const plugin of data.plugins) {
+      if (plugin && plugin.name === 'portal') plugin.version = '${NEW_VERSION}';
+    }
+  }
+  fs.writeFileSync(path, JSON.stringify(data, null, 2) + '\n');
+}
 "
 
 if [[ "$CHANGELOG_MODE" == "date" ]]; then
@@ -101,7 +120,7 @@ fs.writeFileSync(path, text.replace(oldHeading, newHeading));
 fi
 
 # Commit and tag
-git add package.json package-lock.json CHANGELOG.md
+git add package.json package-lock.json CHANGELOG.md plugins/portal/plugin-metadata.json plugins/portal/.codex-plugin/plugin.json plugins/portal/.claude-plugin/plugin.json .claude-plugin/marketplace.json
 git commit -m "chore: release v${NEW_VERSION}"
 git tag -a "$TAG" -m "v${NEW_VERSION}"
 

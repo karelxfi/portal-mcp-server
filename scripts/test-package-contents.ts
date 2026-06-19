@@ -52,7 +52,7 @@ const requiredFiles = [
   'docs/v0.8.0-release-runbook.md',
 ]
 
-const forbiddenPrefixes = ['src/', 'scripts/', 'plans/', '.github/', 'grafana/', 'node_modules/']
+const forbiddenPrefixes = ['src/', 'scripts/', 'plans/', 'plugins/', '.agents/', '.claude-plugin/', '.github/', 'grafana/', 'node_modules/']
 const forbiddenFiles = [
   '.dockerignore',
   '.mise.toml',

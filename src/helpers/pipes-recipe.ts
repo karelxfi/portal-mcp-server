@@ -34,7 +34,7 @@ export function buildTimeSeriesPipesRecipe(params: {
     version: 'pipes_recipe_v1',
     title: `Need more data? Build a custom ${metricLabel.toLowerCase()} pipeline`,
     summary: `Use Pipes when you need a longer lookback, protocol-specific joins, or a derived ${metricLabel.toLowerCase()} view that goes beyond the built-in Portal chart.`,
-    goal: `Create a custom ${metricLabel.toLowerCase()} time-series indexer for ${networkLabel}${params.address ? ` filtered to ${params.address}` : ''}.`,
+    goal: `Create a custom ${metricLabel.toLowerCase()} time-series data pipeline for ${networkLabel}${params.address ? ` filtered to ${params.address}` : ''}.`,
     entities: params.group_by === 'contract'
       ? ['blocks', 'transactions', 'contracts', 'derived bucket metrics']
       : ['blocks', 'transactions', 'derived bucket metrics'],
@@ -58,9 +58,9 @@ export function buildTimeSeriesPipesRecipe(params: {
       'Start with a small backfill like 24h before widening the range.',
       'Keep one stable bucket schema so the chart and summary table stay in sync.',
     ],
-    recommended_skills: ['pipes-new-indexer', 'pipes-troubleshooting', 'portal-query'],
-    starter_prompt: `Build a Pipes-based ${metricLabel.toLowerCase()} time-series workflow for ${networkLabel}. Reuse the current Portal query as the validation baseline, keep ${params.interval} buckets, and produce both chart-ready rows and a summary table. Prefer SQD agent skills when scaffolding or debugging the indexer.`,
-    client_limitations: 'Chat clients usually cannot create the full indexer for you inline, so treat this as a handoff recipe for Codex, Claude Code, or another terminal agent with the Pipes SDK.',
+    recommended_skills: ['portal', 'pipes'],
+    starter_prompt: `Build a Pipes SDK ${metricLabel.toLowerCase()} time-series data pipeline for ${networkLabel}. Reuse the current Portal query as the validation baseline, keep ${params.interval} buckets, and produce both chart-ready rows and a summary table. Use the bundled Portal and Pipes SDK SQD skills when scaffolding or debugging the pipeline.`,
+    client_limitations: 'Chat clients usually cannot create the full data pipeline for you inline, so treat this as a handoff recipe for Codex, Claude Code, or another terminal agent with the Pipes SDK.',
   }
 }
 
@@ -105,8 +105,8 @@ export function buildWalletPipesRecipe(params: {
       'Start with the current wallet window before attempting a full historical rebuild.',
       'Keep one normalized activity table so app and summary views can share the same base data.',
     ],
-    recommended_skills: ['pipes-new-indexer', 'pipes-troubleshooting', 'portal-query'],
-    starter_prompt: `Build a Pipes-based wallet investigation workflow for ${params.address} on ${networkLabel}. Keep a normalized activity table, add counterparty and asset summaries, and validate the first output against portal_get_wallet_summary. Prefer SQD agent skills when scaffolding or debugging the indexer.`,
+    recommended_skills: ['portal', 'pipes'],
+    starter_prompt: `Build a Pipes SDK wallet investigation data pipeline for ${params.address} on ${networkLabel}. Keep a normalized activity table, add counterparty and asset summaries, and validate the first output against portal_get_wallet_summary. Use the bundled Portal and Pipes SDK SQD skills when scaffolding or debugging the pipeline.`,
     client_limitations: 'Chat clients usually cannot scaffold and run the full Pipes project inline, so this recipe is designed for a terminal agent or local development handoff.',
   }
 }

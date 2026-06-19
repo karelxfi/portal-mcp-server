@@ -1,5 +1,7 @@
 #!/usr/bin/env tsx
 
+import { existsSync, readdirSync, statSync } from 'node:fs'
+import { join } from 'node:path'
 import type { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { Client as McpClient } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
@@ -42,10 +44,47 @@ const RETRYABLE_PATTERNS = [
   /429/i,
 ]
 
+let distFreshnessChecked = false
+
 export function assert(condition: boolean, message: string) {
   if (!condition) {
     throw new Error(`Assertion failed: ${message}`)
   }
+}
+
+function listSourceFiles(root: string): string[] {
+  if (!existsSync(root)) return []
+  const files: string[] = []
+
+  for (const entry of readdirSync(root)) {
+    const path = join(root, entry)
+    const stats = statSync(path)
+    if (stats.isDirectory()) {
+      files.push(...listSourceFiles(path))
+    } else if (path.endsWith('.ts')) {
+      files.push(path)
+    }
+  }
+
+  return files
+}
+
+function assertDistIsFresh() {
+  if (distFreshnessChecked || process.env.PORTAL_TEST_SKIP_DIST_FRESHNESS === '1') return
+  distFreshnessChecked = true
+
+  const distEntry = 'dist/index.js'
+  assert(existsSync(distEntry), 'dist/index.js is missing; run npm run build before runtime tests')
+  const distMtimeMs = statSync(distEntry).mtimeMs
+  const staleSource = listSourceFiles('src')
+    .map((path) => ({ path, mtimeMs: statSync(path).mtimeMs }))
+    .filter((entry) => entry.mtimeMs > distMtimeMs + 1_000)
+    .sort((left, right) => right.mtimeMs - left.mtimeMs)[0]
+
+  assert(
+    staleSource === undefined,
+    `${distEntry} is older than ${staleSource?.path}; run npm run build before runtime tests`,
+  )
 }
 
 export function sleep(ms: number) {
@@ -226,6 +265,22 @@ export function assertChatSurface(parsed: any, label: string, options?: { expect
   assertStringArray(parsed._llm.answer_sequence, `${label} _llm.answer_sequence`, { nonEmpty: true })
   assert(Array.isArray(parsed._llm.sections), `${label} _llm.sections should be an array`)
   assert(Array.isArray(parsed._llm.recommended_views), `${label} _llm.recommended_views should be an array`)
+  assertRecord(parsed._llm.execution_guidance, `${label} _llm.execution_guidance`)
+  assert(
+    parsed._llm.execution_guidance.version === 'portal_execution_guidance_v1',
+    `${label} _llm.execution_guidance should use portal_execution_guidance_v1`,
+  )
+  assert(
+    Array.isArray(parsed._llm.execution_guidance.recommended_surfaces) &&
+      parsed._llm.execution_guidance.recommended_surfaces.includes('portal_mcp'),
+    `${label} _llm.execution_guidance should recommend Portal MCP as the current bounded surface`,
+  )
+  assert(
+    Array.isArray(parsed._llm.execution_guidance.bundled_skills) &&
+      parsed._llm.execution_guidance.bundled_skills.includes('portal') &&
+      parsed._llm.execution_guidance.bundled_skills.includes('pipes'),
+    `${label} _llm.execution_guidance should mention bundled SQD skills`,
+  )
   if (parsed._llm.follow_up?.actions !== undefined) {
     assertFollowUpActions(parsed._llm.follow_up.actions, `${label} _llm.follow_up.actions`, {
       requireExecutableArguments: false,
@@ -250,6 +305,7 @@ export function assertErrorQuality(text: string, label: string) {
 }
 
 export async function connectTestClient(name: string): Promise<ConnectedTestClient> {
+  assertDistIsFresh()
   const transport = new StdioClientTransport({
     command: 'node',
     args: ['dist/index.js'],

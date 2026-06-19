@@ -1,0 +1,38 @@
+{
+  "name": "portal",
+  "displayName": "SQD Portal",
+  "version": "0.8.0",
+  "description": "Query validated onchain data with SQD Portal.",
+  "author": {
+    "name": "Subsquid Labs"
+  },
+  "homepage": "https://docs.sqd.dev/en/ai/mcp-server",
+  "repository": "https://github.com/subsquid-labs/portal-mcp-server",
+  "license": "MIT",
+  "keywords": [
+    "sqd",
+    "subsquid",
+    "portal",
+    "mcp",
+    "blockchain",
+    "analytics",
+    "evm",
+    "solana",
+    "bitcoin",
+    "hyperliquid"
+  ],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "SQD Portal",
+    "shortDescription": "Query validated onchain data.",
+    "longDescription": "Use SQD Portal to inspect wallets, contracts, transfers, blocks, and market activity with read-only MCP tools. For larger jobs, switch to Portal for raw exports or Pipes SDK for durable data pipelines.",
+    "defaultPrompt": [
+      "Show the last 200 BTC perp fills on Hyperliquid with price, size, side, and raw rows only.",
+      "Chart Base transaction throughput over the last 2 hours in 15-minute buckets.",
+      "Trace Base USDC flows from the past hour with amounts, counterparties, and tx hashes."
+    ],
+    "logo": "./assets/sqd-logo.svg",
+    "logoDark": "./assets/sqd-logo-dark.svg"
+  }
+}

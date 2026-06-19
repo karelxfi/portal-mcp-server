@@ -22,6 +22,7 @@ import {
   registerOAuthClient,
 } from './auth/oauth.js'
 import { sanitizeText } from './helpers/errors.js'
+import { PORTAL_MCP_SERVER_LABEL, PORTAL_PLUGIN_SELECTOR, getExecutionGuidance } from './helpers/execution-guidance.js'
 import { type ToolGuideEntry, getToolGuideEntry } from './helpers/tool-ux.js'
 import { clientRequestsTotal, register } from './metrics.js'
 import { getObservabilityStatus } from './observability.js'
@@ -905,11 +906,29 @@ const server = createServer(async (req, res) => {
   // Health check endpoint
   // NOTE: Do not expose PORTAL_URL here — it may contain a sensitive token
   if (url.pathname === '/health') {
+    const catalog = buildToolCatalog()
     res.writeHead(200, { 'Content-Type': 'application/json' })
     res.end(
       JSON.stringify({
         status: 'ok',
+        server: 'sqd-portal-mcp-server',
         version: npmVersion,
+        plugin: {
+          selector: PORTAL_PLUGIN_SELECTOR,
+          mcp_server_label: PORTAL_MCP_SERVER_LABEL,
+          read_only: true,
+        },
+        tools: {
+          total: catalog.entries.length,
+          public: catalog.entries.filter((entry) => entry.guide?.audience === 'public').length,
+          advanced: catalog.entries.filter((entry) => entry.guide?.audience === 'advanced').length,
+        },
+        discovery: {
+          mcp_resources: ['sqd://tools', 'sqd://tools/{name}', 'sqd://execution-guidance', 'sqd://datasets'],
+          http_routes: ['/health', '/ready', '/tools', '/tools.json'],
+          hosted_note:
+            'Self-hosted HTTP mode exposes these public GET routes. Managed hosted deployments may expose MCP-only discovery until the edge route is configured.',
+        },
         observability: getObservabilityStatus(),
       }),
     )
@@ -1230,6 +1249,12 @@ const server = createServer(async (req, res) => {
           server: 'sqd-portal-mcp-server',
           version: npmVersion,
           endpoint: catalog.endpoint,
+          plugin: {
+            selector: PORTAL_PLUGIN_SELECTOR,
+            mcp_server_label: PORTAL_MCP_SERVER_LABEL,
+            read_only: true,
+          },
+          execution_guidance: getExecutionGuidance(),
           generated_at: catalog.generatedAt,
           tool_count: catalog.entries.length,
           public_tool_count: catalog.entries.filter((entry) => entry.guide?.audience === 'public').length,

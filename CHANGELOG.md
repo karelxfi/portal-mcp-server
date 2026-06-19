@@ -21,7 +21,13 @@ Portal MCP v0.8.0 makes the HTTP runtime enterprise-deployable while keeping the
 
 ### Release gates and docs
 - **Enterprise docs** — added migration notes, enterprise HTTP deployment guidance, the portal-app MCP auth contract, and the v0.8.0 release runbook.
+- **Codex and Claude plugins** — added repo-local `portal@sqd` plugin wrappers for the hosted SQD Portal MCP endpoint, with polished marketplace copy, SQD logo assets, and high-signal starter prompts.
+- **Bundled SQD skills** — bundled refreshed `portal` and `pipes-sdk` skills so agents know when to use MCP, raw Portal Stream API/curl, or durable Pipes/Squid indexers.
+- **Execution routing guidance** — exposed structured guidance through `sqd://tools`, `sqd://execution-guidance`, HTTP `/tools`, and `_llm.execution_guidance` in tool responses.
+- **Plugin metadata coherence** — added shared plugin metadata and release-script validation so package, plugin, Claude marketplace, and release versions stay aligned.
 - **Artifact smoke coverage** — HTTP runtime QA now verifies `/health`, `/ready`, `/tools`, MCP `initialize`, `tools/list`, `sqd://tools`, auth failures, metrics, and representative live tool calls against the built HTTP artifact.
+- **Plugin release gates** — added Codex and Claude plugin gates for manifests, marketplace wiring, bundled skills, logo assets, optional isolated CLI installs, and hosted MCP compatibility.
+- **Hosted release gate** — added an explicit post-deploy hosted release check for MCP initialize, `tools/list`, `sqd://tools`, and `sqd://execution-guidance` version coherence.
 - **Package hygiene** — package-content checks include public v0.8.0 docs while continuing to keep source, tests, plans, dashboards, lockfiles, local tooling, and secrets out of the published tarball.
 
 **Full Changelog**: https://github.com/subsquid-labs/portal-mcp-server/compare/v0.7.9...v0.8.0

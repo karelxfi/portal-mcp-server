@@ -1,0 +1,6 @@
+interface:
+  display_name: "Pipes SDK"
+  short_description: "Build Pipes SDK data pipelines"
+  icon_small: "./assets/sqd-composer-icon.svg"
+  icon_large: "./assets/sqd-composer-icon.svg"
+  default_prompt: "Use $pipes to turn this Portal query into a durable data pipeline."

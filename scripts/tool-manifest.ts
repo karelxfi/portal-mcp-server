@@ -164,11 +164,23 @@ function isZeroAddress(value: string) {
 }
 
 async function portalStream(dataset: string, body: Record<string, unknown>) {
-  const response = await fetch(`${PORTAL_API_URL}/datasets/${dataset}/stream`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(body),
-  })
+  let response: Response | undefined
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    response = await fetch(`${PORTAL_API_URL}/datasets/${dataset}/stream`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+
+    if ((response.status === 429 || response.status >= 500) && attempt < 4) {
+      await sleep(500 * (attempt + 1))
+      continue
+    }
+
+    break
+  }
+
+  assert(response !== undefined, 'Portal stream fixture query should produce a response')
 
   if (response.status === 204) return []
   if (!response.ok) {
@@ -658,6 +670,10 @@ export const TOOL_SPECS: ToolSpec[] = [
       assert(Array.isArray(data.fund_flow?.asset_flows), 'Expected wallet asset flow rows')
       assert(Array.isArray(data.fund_flow?.largest_movements), 'Expected wallet largest movement rows')
       assert(data.pipes_handoff?.version === 'pipes_recipe_v1', 'Expected wallet summary Pipes handoff')
+      assert(
+        JSON.stringify(data.pipes_handoff?.recommended_skills) === JSON.stringify(['portal', 'pipes']),
+        'Expected wallet summary handoff to resolve to bundled SQD skills',
+      )
       expectWindowMetadata(data, 'portal_get_wallet_summary evm')
     },
     validateFollowUp: async (_text, client, context) => {
@@ -709,6 +725,10 @@ export const TOOL_SPECS: ToolSpec[] = [
       expectGapDiagnostics(data, 'portal_get_time_series base')
       assert(data.chart?.kind === 'time_series', 'Expected time-series chart metadata')
       assert(data.pipes_handoff?.version === 'pipes_recipe_v1', 'Expected time-series Pipes handoff')
+      assert(
+        JSON.stringify(data.pipes_handoff?.recommended_skills) === JSON.stringify(['portal', 'pipes']),
+        'Expected time-series handoff to resolve to bundled SQD skills',
+      )
       expectPresentation(data, 'portal_get_time_series base', { chartDataKey: 'time_series', tableId: 'main' })
     },
     validateFollowUp: async (_text, client) => {

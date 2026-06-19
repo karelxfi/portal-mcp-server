@@ -28,6 +28,66 @@ function assertInvestigation(data: any, label: string) {
   assert(Array.isArray(data.investigation?.limitations), `${label} should expose limitations`)
 }
 
+function assertSurfaceGuidance(data: any, label: string, surfaces: string[]) {
+  const recommended = data._llm?.execution_guidance?.recommended_surfaces
+  assert(Array.isArray(recommended), `${label} should expose recommended execution surfaces`)
+  for (const surface of surfaces) {
+    assert(recommended.includes(surface), `${label} should recommend ${surface}`)
+  }
+}
+
+const PROCESS_NARRATION_PATTERNS: Array<{ pattern: RegExp; reason: string }> = [
+  { pattern: /\bloaded (?:a )?(?:tool|file|reference|skill)\b/i, reason: 'loaded-tool/file chatter' },
+  { pattern: /\bread (?:a |\d+ )?(?:file|files|reference|references|memory|memories)\b/i, reason: 'reference-loading chatter' },
+  { pattern: /\bprior Hyperliquid notes\b/i, reason: 'prepared-note chatter' },
+  { pattern: /\bprepared notes?\b/i, reason: 'prepared-note chatter' },
+  { pattern: /\bfreshness check (?:is )?(?:clean|passed|good)\b/i, reason: 'freshness-check narration' },
+  { pattern: /\banchoring (?:the )?(?:export|query)\b/i, reason: 'head-anchoring narration' },
+  { pattern: /\b(?:confirmed|checking|verify|verifying) (?:the )?query shape\b/i, reason: 'query-shape narration' },
+  { pattern: /\brunning (?:count|line) checks?\b/i, reason: 'count-check narration' },
+  { pattern: /\bexpand(?:ing)? (?:the )?(?:block|time) window\b/i, reason: 'window-expansion narration' },
+  { pattern: /\bI(?:'|’)ll (?:use|check|read|load|verify|run|export)\b/i, reason: 'process preamble' },
+  { pattern: /\blet me (?:check|read|load|inspect|verify|run)\b/i, reason: 'process preamble' },
+]
+
+function collectNarrativeText(value: unknown, path = '$', out: Array<{ path: string; text: string }> = []) {
+  if (typeof value === 'string') {
+    out.push({ path, text: value })
+    return out
+  }
+  if (Array.isArray(value)) {
+    value.forEach((item, index) => collectNarrativeText(item, `${path}[${index}]`, out))
+    return out
+  }
+  if (value && typeof value === 'object') {
+    for (const [key, item] of Object.entries(value)) {
+      collectNarrativeText(item, `${path}.${key}`, out)
+    }
+  }
+  return out
+}
+
+function assertNoProcessNarration(data: any, label: string) {
+  const narrativeSurface = {
+    answer: data.answer,
+    display: data.display,
+    next_steps: data.next_steps,
+    investigation: data.investigation,
+    llm: {
+      answer_sequence: data._llm?.answer_sequence,
+      sections: data._llm?.sections,
+      recommended_views: data._llm?.recommended_views,
+      execution_guidance: data._llm?.execution_guidance,
+    },
+  }
+
+  for (const { path, text } of collectNarrativeText(narrativeSurface)) {
+    for (const { pattern, reason } of PROCESS_NARRATION_PATTERNS) {
+      assert(!pattern.test(text), `${label} should not include ${reason} at ${path}: ${text}`)
+    }
+  }
+}
+
 function hasPivot(data: any, fields: string[]) {
   return data.investigation?.pivots?.some((pivot: any) => fields.includes(String(pivot.field)))
 }
@@ -145,6 +205,111 @@ const CASES: RealisticPromptCase[] = [
       assertInvestigation(data, 'raw transaction evidence')
       assert(hasPivot(data, ['hash', 'from', 'to']), 'raw transaction evidence should expose hash or address pivots')
       assert(data._execution !== undefined, 'raw transaction evidence should describe execution window')
+    },
+  },
+  {
+    prompt: 'Show the last 200 BTC perp fills on Hyperliquid with price, size, side, and raw rows only.',
+    expectedTool: 'portal_hyperliquid_query_fills',
+    why: 'Last-N market-data prompts should return the requested raw rows and preserve exact continuation metadata.',
+    args: () => ({
+      network: 'hyperliquid-fills',
+      timeframe: '6h',
+      coin: ['BTC'],
+      limit: 200,
+    }),
+    validate: (data) => {
+      assert(Array.isArray(data.items) && data.items.length > 0, 'BTC fills should return visible row evidence')
+      assert(data.items.every((item: any) => item.coin === 'BTC'), 'BTC fills should only include BTC rows')
+      for (const item of data.items) {
+        assert(item.px !== undefined, 'BTC fill rows should include price')
+        assert(item.sz !== undefined, 'BTC fill rows should include size')
+        assert(item.side !== undefined, 'BTC fill rows should include side')
+      }
+      assert(data.page_summary?.visible_fills === 200, 'BTC fills should report the requested 200-fill page')
+      assert(data._pagination?.returned === 200, 'BTC fills should record 200 returned rows')
+      assert(data._pagination?.page_size === 200, 'BTC fills should preserve the 200-row page size')
+      assert(data._pagination?.has_more === true, 'BTC fills should expose continuation for older fills')
+      assert(data._coverage?.returned_items === 200, 'BTC fills coverage should record 200 returned items')
+      assertSurfaceGuidance(data, 'BTC fills', ['portal_stream_api'])
+      assert(data._llm?.answer_sequence?.[0] === 'page_summary', 'BTC fills answer sequence should start with results, not setup')
+      assert(data._llm?.answer_sequence?.[1] === 'items', 'BTC fills answer sequence should put raw rows before continuation mechanics')
+      assertNoProcessNarration(data, 'BTC fills')
+    },
+  },
+  {
+    prompt:
+      'Export the latest 20,000 BTC perp fills on Hyperliquid to CSV/NDJSON. Raw rows only; no progress updates.',
+    expectedTool: 'portal_hyperliquid_query_fills',
+    why: 'Large export prompts should use a bounded MCP page only as evidence, then route to Portal Stream API/curl without process narration.',
+    args: () => ({
+      network: 'hyperliquid-fills',
+      timeframe: '6h',
+      coin: ['BTC'],
+      limit: 200,
+    }),
+    validate: (data) => {
+      assert(Array.isArray(data.items) && data.items.length > 0, 'large BTC export setup should return visible row evidence')
+      assert(data.items.every((item: any) => item.coin === 'BTC'), 'large BTC export setup should only include BTC rows')
+      assert(data._pagination?.page_size === 200, 'large BTC export setup should preserve the MCP page-size boundary')
+      assert(data._pagination?.has_more === true, 'large BTC export setup should expose continuation for larger exports')
+      assertSurfaceGuidance(data, 'large BTC export setup', ['portal_stream_api'])
+      assert(
+        data._llm?.execution_guidance?.switch_to_portal_api_when?.some((item: string) => /NDJSON|CSV|file|curl/i.test(item)),
+        'large BTC export setup should explain file/curl export triggers',
+      )
+      assert(data._llm?.answer_sequence?.[0] === 'page_summary', 'large BTC export answer sequence should start with row evidence')
+      assertNoProcessNarration(data, 'large BTC export setup')
+    },
+  },
+  {
+    prompt:
+      'Give me raw Base USDC transfers as a reproducible export, not just a chat summary.',
+    expectedTool: 'portal_evm_query_token_transfers',
+    why: 'Raw export prompts should keep MCP bounded but tell the agent when to switch to Portal Stream API/curl.',
+    args: (context) => ({
+      network: 'base',
+      from_block: context.baseHead - 500,
+      to_block: context.baseHead,
+      token_symbols: ['USDC'],
+      limit: 3,
+    }),
+    validate: (data) => {
+      assert(Array.isArray(data.items) && data.items.length > 0, 'raw export setup should return proof rows')
+      for (const item of data.items) {
+        assert(item.tx_hash || item.transaction_hash, 'raw export rows should include transaction hashes')
+        assert(item.sender || item.from, 'raw export rows should include senders')
+        assert(item.recipient || item.to, 'raw export rows should include recipients')
+        assert(item.token_address, 'raw export rows should include token addresses')
+        assert(item.value_formatted, 'raw export rows should include formatted values')
+      }
+      assertSurfaceGuidance(data, 'raw export setup', ['portal_stream_api'])
+      assert(
+        data._llm?.execution_guidance?.switch_to_portal_api_when?.some((item: string) => /NDJSON|CSV|file|curl/i.test(item)),
+        'raw export setup should explain file/curl export triggers',
+      )
+      assertNoProcessNarration(data, 'raw export setup')
+    },
+  },
+  {
+    prompt:
+      'This Base activity chart should become a recurring dashboard. Should I keep using MCP or build a data pipeline?',
+    expectedTool: 'portal_get_time_series',
+    why: 'Durable dashboard prompts should surface the Pipes SDK handoff instead of stretching MCP into production architecture.',
+    args: () => ({
+      network: 'base',
+      metric: 'transaction_count',
+      interval: '15m',
+      duration: '2h',
+    }),
+    validate: (data) => {
+      assert(Array.isArray(data.time_series) && data.time_series.length > 0, 'dashboard handoff should return chart buckets')
+      assert(data.pipes_handoff?.version === 'pipes_recipe_v1', 'dashboard handoff should include a Pipes recipe')
+      assert(
+        JSON.stringify(data.pipes_handoff?.recommended_skills) === JSON.stringify(['portal', 'pipes']),
+        'dashboard handoff should resolve to bundled SQD skills',
+      )
+      assertSurfaceGuidance(data, 'dashboard handoff', ['pipes_squid'])
+      assert(/data pipeline/i.test(JSON.stringify(data.pipes_handoff)), 'dashboard handoff should use data pipeline language')
     },
   },
   {
