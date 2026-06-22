@@ -275,10 +275,7 @@ export function summarizeHyperliquidFills(fills: any[]): any {
  */
 export function compactHyperliquidFills(fills: any[]): any[] {
   return fills.map((fill) => ({
-    primary_id: fill.primary_id,
-    tx_hash: fill.tx_hash,
-    block_number: fill.block_number,
-    timestamp_human: fill.timestamp_human,
+    ...pickCommonAliases(fill),
     user: fill.user,
     coin: fill.coin,
     px: fill.px,
