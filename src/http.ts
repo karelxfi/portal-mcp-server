@@ -298,31 +298,12 @@ function resolveRequestEndpoint(req: IncomingMessage): ResolvedEndpoint {
   return resolveEndpointFromHost(readRequestHost(req))
 }
 
-function resolveAuthEndpoint(req: IncomingMessage, url: URL): ResolvedEndpoint {
-  const hostParam = url.searchParams.get('host')
-  if (hostParam) {
-    const normalizedHost = normalizeHostHeaderValue(hostParam)
-    if (!normalizedHost) {
-      return { endpoint: getDefaultPortalEndpoint(), matchedHost: false, host: hostParam, unknownNonLocalHost: true }
-    }
-    return resolveEndpointFromHost(normalizedHost)
-  }
-
+function resolveAuthEndpoint(req: IncomingMessage): ResolvedEndpoint {
   return resolveRequestEndpoint(req)
 }
 
-function resolveOAuthEndpoint(req: IncomingMessage, url: URL, resource?: string): ResolvedEndpoint {
-  if (resource) {
-    try {
-      const resourceUrl = new URL(resource)
-      const endpoint = getPortalEndpointByHost(resourceUrl.host)
-      if (endpoint) return { endpoint, matchedHost: true, host: resourceUrl.host, unknownNonLocalHost: false }
-    } catch {
-      // Authorization validation will report malformed resource later.
-    }
-  }
-
-  return resolveAuthEndpoint(req, url)
+function resolveOAuthEndpoint(req: IncomingMessage): ResolvedEndpoint {
+  return resolveAuthEndpoint(req)
 }
 
 function rejectUnknownMcpHost(res: ServerResponse, req: IncomingMessage) {
@@ -726,7 +707,6 @@ function writeOAuthAuthorizePage(res: ServerResponse, params: {
     'code_challenge',
     'code_challenge_method',
     'resource',
-    'host',
   ]
     .map((field) => appendHiddenInput(field, params.fields[field]))
     .join('')
@@ -802,7 +782,6 @@ function writeDelegatedAuthPage(res: ServerResponse, params: {
   expiresAt?: string
   debugToken?: boolean
 }) {
-  const hostQuery = params.host ? `?host=${encodeURIComponent(params.host)}` : ''
   const endpointLabel = escapeHtml(params.endpoint.label)
   const portalHost = escapeHtml(endpointPortalHost(params.endpoint, params.host))
   const errorHtml = params.error
@@ -824,7 +803,7 @@ function writeDelegatedAuthPage(res: ServerResponse, params: {
     : ''
   const formHtml = params.token
     ? ''
-    : `<form method="post" action="/mcp/auth${hostQuery}">
+    : `<form method="post" action="/mcp/auth">
         <label for="api_key">Portal API key</label>
         <div class="input-wrap">
           <input id="api_key" name="api_key" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" autofocus required>
@@ -1076,7 +1055,7 @@ const server = createServer(async (req, res) => {
 
     try {
       const fields = req.method === 'GET' ? readUrlFields(url) : await readRequestFields(req)
-      const endpointResolution = resolveOAuthEndpoint(req, url, fields.resource)
+      const endpointResolution = resolveOAuthEndpoint(req)
       const { endpoint } = endpointResolution
       if (endpointResolution.unknownNonLocalHost) {
         writeOAuthAuthorizePage(res, { endpoint, fields, host: endpointResolution.host, error: 'Unknown MCP host.' })
@@ -1132,7 +1111,7 @@ const server = createServer(async (req, res) => {
       })
       res.end()
     } catch (error) {
-      const endpointResolution = resolveOAuthEndpoint(req, url)
+      const endpointResolution = resolveOAuthEndpoint(req)
       const { endpoint } = endpointResolution
       writeOAuthAuthorizePage(res, {
         endpoint,
@@ -1266,7 +1245,7 @@ const server = createServer(async (req, res) => {
   }
 
   if (url.pathname === '/mcp/auth') {
-    const endpointResolution = resolveAuthEndpoint(req, url)
+    const endpointResolution = resolveAuthEndpoint(req)
     const { endpoint, host } = endpointResolution
     if (!validateKnownMcpHost(endpointResolution, res, req)) return
     if (!isDelegatedMcpAuthEnabled()) {

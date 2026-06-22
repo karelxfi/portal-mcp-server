@@ -5,6 +5,7 @@ import assert from 'node:assert/strict'
 import { issueDelegatedMcpSession, runWithDelegatedPortalCredential } from '../src/auth/delegated.js'
 import { authenticateMcpBearerToken } from '../src/auth/mcp.js'
 import { getDatasets } from '../src/cache/datasets.js'
+import { createQueryCache, stableCacheKey } from '../src/cache/query-cache.js'
 import { isPortalEndpointUrl, withPortalAuthHeaders } from '../src/portal/client.js'
 import { buildPortalUrl, getPortalEndpointByHost, getPortalEndpointById, getSafePortalEndpointMetadata, loadPortalEndpointConfig, portalEndpointKey } from '../src/portal/endpoints.js'
 
@@ -67,6 +68,37 @@ function assertThrowsConfig(message: string, fn: () => unknown) {
       'X-API-Key': 'dynamic-dedicated-key',
     },
   )
+
+  const secondDynamicSession = issueDelegatedMcpSession({
+    endpoint: dedicatedEndpoint,
+    apiKey: 'second-dynamic-dedicated-key',
+    env: dynamicEnv,
+  })
+  const secondDynamicAuth = authenticateMcpBearerToken(secondDynamicSession.token, dynamicEnv, dedicatedEndpoint)
+  assert.equal(secondDynamicAuth.ok, true)
+
+  const scopedQueryCache = createQueryCache<string>({ ttl: 60_000, maxEntries: 10 })
+  let loadCount = 0
+  const loadScopedValue = (credentialRef: string | undefined) =>
+    runWithDelegatedPortalCredential(credentialRef, dedicatedEndpoint, () =>
+      scopedQueryCache.getOrLoad(
+        stableCacheKey('delegated-query-cache-test', { dataset: 'ethereum-mainnet', limit: 1 }, dedicatedEndpoint),
+        async () => `credential-value-${++loadCount}`,
+      ),
+    )
+
+  const firstScopedValue = await loadScopedValue(dynamicAuth.ok ? dynamicAuth.context.delegated_credential_ref : undefined)
+  const firstScopedValueAgain = await loadScopedValue(dynamicAuth.ok ? dynamicAuth.context.delegated_credential_ref : undefined)
+  const secondScopedValue = await loadScopedValue(
+    secondDynamicAuth.ok ? secondDynamicAuth.context.delegated_credential_ref : undefined,
+  )
+  assert.equal(firstScopedValue.source, 'fresh')
+  assert.equal(firstScopedValue.value, 'credential-value-1')
+  assert.equal(firstScopedValueAgain.source, 'cache')
+  assert.equal(firstScopedValueAgain.value, 'credential-value-1')
+  assert.equal(secondScopedValue.source, 'fresh')
+  assert.equal(secondScopedValue.value, 'credential-value-2')
+  assert.equal(loadCount, 2)
 
   const internalEndpoint = getPortalEndpointByHost('internal-a.portal.sqd.dev', {
     PORTAL_DYNAMIC_INTERNAL_HOSTS: 'internal-a.portal.sqd.dev',

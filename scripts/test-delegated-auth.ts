@@ -97,7 +97,7 @@ async function main() {
   const portalCheck = readyJson.checks.find((check: { name: string }) => check.name === 'portal_reachability')
   assert.equal(portalCheck.status, 'skipped')
 
-  const page = await fetch(`${BASE_URL}/mcp/auth?host=${LOCAL_PORTAL_HOST}`)
+  const page = await fetch(`${BASE_URL}/mcp/auth`, { headers: { 'x-forwarded-host': LOCAL_PORTAL_HOST } })
   assert.equal(page.ok, true)
   assert.match(page.headers.get('content-security-policy') ?? '', /frame-ancestors 'none'/)
   assert.equal(page.headers.get('referrer-policy'), 'no-referrer')
@@ -111,6 +111,14 @@ async function main() {
   assert.match(pageHtml, /Hidden from browser/)
   assert.match(pageHtml, /Connect MCP/)
   assert.equal(pageHtml.includes(TEST_PORTAL_KEY), false)
+
+  const coercedAuthPage = await fetch(`${BASE_URL}/mcp/auth?host=attacker.portal.sqd.dev`, {
+    headers: { 'x-forwarded-host': LOCAL_PORTAL_HOST },
+  })
+  assert.equal(coercedAuthPage.ok, true)
+  const coercedAuthHtml = await coercedAuthPage.text()
+  assert.match(coercedAuthHtml, /SQD internal Portal/)
+  assert.equal(coercedAuthHtml.includes('attacker.portal.sqd.dev'), false)
 
   const publicAnonymous = await postRpc(undefined, 'portal.sqd.dev')
   assert.equal(publicAnonymous.response.ok, true)
@@ -221,6 +229,26 @@ async function main() {
   assert.equal(attackerResourcePage.status, 400)
   assert.match(await attackerResourcePage.text(), /OAuth resource must match this Portal MCP endpoint/)
 
+  const attackerPortalResourceParams = new URLSearchParams({
+    ...Object.fromEntries(authorizeParams),
+    resource: 'https://attacker.portal.sqd.dev/mcp',
+  })
+  const attackerPortalResourcePage = await fetch(`${BASE_URL}/oauth/authorize?${attackerPortalResourceParams}`, {
+    headers: { 'x-forwarded-host': LOCAL_PORTAL_HOST },
+  })
+  assert.equal(attackerPortalResourcePage.status, 400)
+  const attackerPortalResourceHtml = await attackerPortalResourcePage.text()
+  assert.match(attackerPortalResourceHtml, /OAuth resource must match this Portal MCP endpoint/)
+  assert.match(attackerPortalResourceHtml, /This connection is scoped to sqd\.portal\.localhost/)
+
+  const attackerHostParamPage = await fetch(`${BASE_URL}/oauth/authorize?${authorizeParams}&host=attacker.portal.sqd.dev`, {
+    headers: { 'x-forwarded-host': LOCAL_PORTAL_HOST },
+  })
+  assert.equal(attackerHostParamPage.ok, true)
+  const attackerHostParamHtml = await attackerHostParamPage.text()
+  assert.match(attackerHostParamHtml, /This connection is scoped to sqd\.portal\.localhost/)
+  assert.equal(attackerHostParamHtml.includes('attacker.portal.sqd.dev'), false)
+
   const authorizeSubmit = await fetch(`${BASE_URL}/oauth/authorize`, {
     method: 'POST',
     redirect: 'manual',
@@ -324,11 +352,12 @@ async function main() {
   })
   assert.equal(reusedCode.status, 400)
 
-  const auth = await fetch(`${BASE_URL}/mcp/auth?host=${LOCAL_PORTAL_HOST}`, {
+  const auth = await fetch(`${BASE_URL}/mcp/auth`, {
     method: 'POST',
     headers: {
       Accept: 'application/json',
       'Content-Type': 'application/json',
+      'x-forwarded-host': LOCAL_PORTAL_HOST,
     },
     body: JSON.stringify({ [PORTAL_KEY_FIELD]: TEST_PORTAL_KEY }),
   })
@@ -338,10 +367,11 @@ async function main() {
   assert.equal(authJson.endpoint_id, 'sqd-internal')
   assert.equal(JSON.stringify(authJson).includes(TEST_PORTAL_KEY), false)
 
-  const htmlAuth = await fetch(`${BASE_URL}/mcp/auth?host=${LOCAL_PORTAL_HOST}&debug=1`, {
+  const htmlAuth = await fetch(`${BASE_URL}/mcp/auth?debug=1`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/x-www-form-urlencoded',
+      'x-forwarded-host': LOCAL_PORTAL_HOST,
     },
     body: new URLSearchParams({ [PORTAL_KEY_FIELD]: TEST_PORTAL_KEY }),
   })

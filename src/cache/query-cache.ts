@@ -1,4 +1,5 @@
 import { ManagedCache, estimateSize } from '../helpers/cache-manager.js'
+import { getActiveDelegatedCredentialCacheScope } from '../auth/delegated.js'
 import { type PortalEndpoint, getDefaultPortalEndpoint, portalEndpointKey } from '../portal/endpoints.js'
 
 export interface QueryCacheOptions {
@@ -79,7 +80,8 @@ export function createQueryCache<T>(options: QueryCacheOptions): QueryCache<T> {
 }
 
 export function stableCacheKey(prefix: string, value: unknown, endpoint: PortalEndpoint = getDefaultPortalEndpoint()): string {
-  return `${prefix}:${portalEndpointKey(endpoint)}:${JSON.stringify(normalizeForCacheKey(value))}`
+  const credentialScope = getActiveDelegatedCredentialCacheScope(endpoint) ?? 'shared'
+  return `${prefix}:${portalEndpointKey(endpoint)}:${credentialScope}:${JSON.stringify(normalizeForCacheKey(value))}`
 }
 
 function normalizeForCacheKey(value: unknown): unknown {

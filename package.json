@@ -43,8 +43,9 @@
     "test:quality": "tsx scripts/test-quality.ts",
     "test:package": "tsx scripts/test-package-contents.ts",
     "test:all": "npm run build && npm test && npm run test:tools && npm run test:evm-investigator && npm run test:routing && npm run test:substrate && npm run test:timestamps && npm run test:http-runtime && npm run test:auth && npm run test:delegated-auth && npm run test:readiness && npm run test:conversations && npm run test:realistic-prompts && npm run test:endpoints && npm run test:negative && npm run test:quality && npm run test:package",
-    "test:ci": "npm run test:all",
-    "test:release": "npm run test:ci",
+    "test:hermetic": "npm run build && npm run test:http-runtime && npm run test:auth && npm run test:delegated-auth && npm run test:readiness && npm run test:endpoints && npm run test:package",
+    "test:ci": "npm run test:hermetic",
+    "test:release": "npm run test:all",
     "release:patch": "./scripts/release.sh patch",
     "release:minor": "./scripts/release.sh minor",
     "release:major": "./scripts/release.sh major"

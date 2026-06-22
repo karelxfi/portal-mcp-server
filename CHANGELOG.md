@@ -141,7 +141,7 @@ Portal MCP v0.7.8 is focused on query correctness, faster analytics, and release
 - Added negative tests for unsupported-chain paths and bad tool choices.
 - Added response-size and latency budget checks in `test:quality`.
 - Made truncation a test failure instead of a warning.
-- Wired CI to run the full `npm run test:ci` suite before the Docker build step.
+- Added a pull-request CI gate for the hermetic `npm run test:ci` suite.
 
 ### Docs and repo cleanup
 - Rewrote the README around the actual public surface and usage patterns.
