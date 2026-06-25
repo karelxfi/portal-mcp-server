@@ -2,6 +2,7 @@
   "name": "sqd-portal-mcp",
   "version": "0.7.9",
   "description": "MCP server wrapping SQD Portal API",
+  "license": "MIT",
   "type": "module",
   "main": "dist/index.js",
   "bin": {
