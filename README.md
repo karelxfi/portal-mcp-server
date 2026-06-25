@@ -1,5 +1,7 @@
 # SQD Portal MCP Server
 
+[![SQD Portal MCP server](https://glama.ai/mcp/servers/subsquid-labs/portal-mcp-server/badges/score.svg)](https://glama.ai/mcp/servers/subsquid-labs/portal-mcp-server)
+
 Thin MCP wrapper around the [SQD Portal API](https://portal.sqd.dev) for blockchain data queries.
 
 This server does not index chains itself. It validates user input, maps it onto Portal requests, and returns MCP-friendly responses.
