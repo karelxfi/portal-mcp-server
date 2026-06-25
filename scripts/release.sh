@@ -87,6 +87,14 @@ if (fs.existsSync('package-lock.json')) {
   }
   fs.writeFileSync('package-lock.json', JSON.stringify(lock, null, 2) + '\n');
 }
+
+// Keep the MCP registry manifest in lockstep so 'mcp-publisher publish' never
+// ships a stale/duplicate version after a release.
+if (fs.existsSync('server.json')) {
+  const server = JSON.parse(fs.readFileSync('server.json', 'utf8'));
+  server.version = '${NEW_VERSION}';
+  fs.writeFileSync('server.json', JSON.stringify(server, null, 2) + '\n');
+}
 "
 
 if [[ "$CHANGELOG_MODE" == "date" ]]; then
@@ -101,13 +109,20 @@ fs.writeFileSync(path, text.replace(oldHeading, newHeading));
 fi
 
 # Commit and tag
-git add package.json package-lock.json CHANGELOG.md
+STAGE_FILES=(package.json package-lock.json CHANGELOG.md)
+if [[ -f server.json ]]; then
+  STAGE_FILES+=(server.json)
+fi
+git add "${STAGE_FILES[@]}"
 git commit -m "chore: release v${NEW_VERSION}"
 git tag -a "$TAG" -m "v${NEW_VERSION}"
 
 echo ""
 echo "Released $TAG"
 echo "  - package.json/package-lock.json bumped to $NEW_VERSION"
+if [[ -f server.json ]]; then
+  echo "  - server.json registry manifest bumped to $NEW_VERSION"
+fi
 echo "  - CHANGELOG.md entry dated"
 echo "  - Git tag $TAG created"
 echo ""
