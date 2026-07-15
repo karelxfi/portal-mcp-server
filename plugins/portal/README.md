@@ -1,7 +1,11 @@
-# SQD Portal MCP Codex Plugin
+# SQD Plugin
 
-This directory contains the Codex plugin wrapper for the hosted SQD Portal MCP endpoint.
-It also contains the Claude Code plugin manifest for the same hosted MCP endpoint.
+This directory contains the Codex and Claude Code plugin package for SQD. It combines the hosted
+SQD Portal MCP endpoint with the upstream Portal and Pipes SDK agent skills.
+
+The plugin release version is independent from the hosted MCP server version. Plugin `0.8.0` uses
+the current unauthenticated hosted MCP server and does not require the unreleased server `0.8.0`
+authentication work.
 
 The first distribution target is the repo-local marketplace in `.agents/plugins/marketplace.json`.
 The marketplace entry points at this plugin with the stable source path `./plugins/portal`,
@@ -34,7 +38,9 @@ Then install the plugin from the marketplace name in `.agents/plugins/marketplac
 codex plugin add portal@sqd
 ```
 
-Open a new Codex thread after installing so Codex picks up the plugin MCP server.
+Open a new Codex task after installing so Codex picks up the plugin skills and MCP server. Codex
+may ask you to approve an `SQD` MCP tool call. The hosted endpoint does not require an API key or
+sign-in.
 
 ## Claude Code Install From This Repo
 
@@ -54,11 +60,33 @@ Open a new Claude Code session after installing so the plugin MCP server is load
 
 ## First-use Prompts
 
-The plugin exposes these starter prompts:
+The Codex plugin exposes these starter prompts. The same prompts are documented for Claude Code:
 
-- Show me the last 200 BTC perp fills on Hyperliquid.
+- Show me up to 200 BTC perp fills on Hyperliquid from the past hour.
 - How many transactions landed on Base in the past 2h?
-- Who sent the most USDC on Base in the past hour?
+- Show me the 20 most recent USDC transfers on Base from the past hour.
+
+These prompts are release-gated against their intended hosted MCP tools. Keep the manifest prompts
+and `scripts/plugin-prompt-cases.ts` in sync.
+
+## Bundled Skills
+
+The plugin bundles exact copies of these directories from
+[`subsquid-labs/skills`](https://github.com/subsquid-labs/skills):
+
+- `portal`
+- `pipes-sdk`
+
+The upstream Git tree hashes and skill versions are recorded in `skills-upstream.json`. To refresh
+or check the bundle against a sibling checkout of the skills repository:
+
+```bash
+npm run sync:plugin-skills -- --source ../skills
+npm run check:plugin-skills -- --source ../skills
+```
+
+The scheduled `sync-plugin-skills` workflow checks upstream weekly and opens or updates a draft PR
+when either bundled skill changes.
 
 ## Release Gate
 
@@ -67,10 +95,11 @@ Run the plugin release gate before publishing plugin changes:
 ```bash
 npm run test:plugin
 npm run test:claude-plugin
+npm run test:realistic-prompts
 ```
 
-These validate the Codex and Claude Code plugin manifests, marketplace entries, optional asset
-paths, and a small hosted MCP smoke check.
+These validate the Codex and Claude Code plugin manifests, bundled skills, marketplace entries,
+optional asset paths, hosted MCP compatibility, and the published starter prompts.
 
 ## Local Iteration
 
@@ -84,7 +113,7 @@ codex plugin marketplace add .
 codex plugin add portal@sqd
 ```
 
-Start a new Codex thread after reinstalling. During local-only iteration, a temporary cachebuster
+Start a new Codex task after reinstalling. During local-only iteration, a temporary cachebuster
 suffix can be useful to force reinstall behavior, but remove it before publishing.
 
 ## Current MCP Endpoint

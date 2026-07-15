@@ -9,8 +9,8 @@
     {
       "name": "portal",
       "source": "./plugins/portal",
-      "displayName": "SQD Portal",
-      "description": "Read validated onchain data from Claude Code through SQD Portal.",
+      "displayName": "SQD",
+      "description": "Query SQD Portal data with hosted MCP tools and bundled agent skills.",
       "version": "0.8.0",
       "author": {
         "name": "Subsquid Labs"

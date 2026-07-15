@@ -1,8 +1,8 @@
 {
   "name": "portal",
-  "displayName": "SQD Portal",
+  "displayName": "SQD",
   "version": "0.8.0",
-  "description": "Read validated onchain data from Claude Code through SQD Portal.",
+  "description": "Query SQD Portal data with hosted MCP tools and bundled agent skills.",
   "author": {
     "name": "Subsquid Labs"
   },
@@ -19,7 +19,10 @@
     "evm",
     "solana",
     "bitcoin",
-    "hyperliquid"
+    "tron",
+    "hyperliquid",
+    "pipes-sdk"
   ],
+  "skills": "./skills/",
   "mcpServers": "./.mcp.json"
 }
