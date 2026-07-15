@@ -56,7 +56,21 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git checkout -B "$branch"
-          git add plugins/portal/skills plugins/portal/skills-upstream.json
+          # The repository intentionally ignores broad file patterns such as examples/,
+          # data/, test-*.js, and *.parquet. Upstream skills may legitimately contain
+          # those paths, so force-add the complete generated bundle.
+          git add --force -- plugins/portal/skills plugins/portal/skills-upstream.json
+
+          unstaged_skill_files="$({
+            git ls-files --others --exclude-standard -- plugins/portal/skills
+            git ls-files --others --ignored --exclude-standard -- plugins/portal/skills
+          } | sort -u)"
+          if [ -n "$unstaged_skill_files" ]; then
+            echo "Skill sync left files outside the commit:"
+            echo "$unstaged_skill_files"
+            exit 1
+          fi
+
           git commit -m "chore(plugin): sync bundled upstream skills"
           git push --force origin "HEAD:$branch"
 
