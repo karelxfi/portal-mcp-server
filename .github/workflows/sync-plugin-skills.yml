@@ -1,8 +1,8 @@
 name: Sync bundled plugin skills
 
 on:
-  schedule:
-    - cron: "17 6 * * 1"
+  repository_dispatch:
+    types: [skills-updated]
   workflow_dispatch:
 
 permissions:
@@ -24,6 +24,7 @@ jobs:
         uses: actions/checkout@v7
         with:
           repository: subsquid-labs/skills
+          ref: ${{ github.event.client_payload.skills_sha || 'main' }}
           path: .upstream-skills
 
       - name: Set up Node.js

@@ -12,6 +12,7 @@ const MARKETPLACE_PATH = '.agents/plugins/marketplace.json'
 const PLUGIN_JSON_PATH = `${PLUGIN_ROOT}/.codex-plugin/plugin.json`
 const MCP_JSON_PATH = `${PLUGIN_ROOT}/.mcp.json`
 const SKILLS_METADATA_PATH = `${PLUGIN_ROOT}/skills-upstream.json`
+const DISCOVERY_TERMS = ['blockchain', 'onchain', 'Hyperliquid', 'Bitcoin', 'Solana']
 
 function assert(condition: boolean, message: string) {
   if (!condition) {
@@ -104,6 +105,21 @@ function assertPromptList(value: unknown) {
   }
 }
 
+function assertDiscoveryDescription(value: unknown, field: string) {
+  assertString(value, `${field} must be a string`)
+  for (const term of DISCOVERY_TERMS) {
+    assert(value.toLowerCase().includes(term.toLowerCase()), `${field} should mention ${term}`)
+  }
+}
+
+function assertDiscoveryKeywords(value: unknown, field: string) {
+  assert(Array.isArray(value), `${field} must be an array`)
+  const keywords = value.map((keyword) => String(keyword).toLowerCase())
+  for (const term of DISCOVERY_TERMS) {
+    assert(keywords.includes(term.toLowerCase()), `${field} should include ${term.toLowerCase()}`)
+  }
+}
+
 function assertSkillBundle() {
   const metadata = readJson(SKILLS_METADATA_PATH)
   assert(
@@ -163,8 +179,12 @@ function assertManifest() {
   assert(manifest.version === '0.8.0', 'plugin version should be the public release version')
   assert(manifest.skills === './skills/', 'plugin should reference bundled skills')
   assert(manifest.mcpServers === './.mcp.json', 'plugin should reference ./.mcp.json')
+  assertDiscoveryDescription(manifest.description, 'plugin description')
+  assertDiscoveryKeywords(manifest.keywords, 'plugin keywords')
   assertRecord(manifest.interface, 'plugin interface must be an object')
   assert(manifest.interface.displayName === 'SQD', 'plugin display name should be SQD')
+  assertDiscoveryDescription(manifest.interface.shortDescription, 'interface.shortDescription')
+  assertDiscoveryDescription(manifest.interface.longDescription, 'interface.longDescription')
   assert(
     manifest.interface.websiteURL === 'https://sqd.dev/portal/',
     'plugin website should point at the SQD Portal product page',

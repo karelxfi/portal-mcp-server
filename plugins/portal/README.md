@@ -1,7 +1,8 @@
 # SQD Plugin
 
-This directory contains the Codex and Claude Code plugin package for SQD. It combines the hosted
-SQD Portal MCP endpoint with the upstream Portal and Pipes SDK agent skills.
+This directory contains the Codex and Claude Code plugin package for SQD. Query live blockchain
+and onchain data across Hyperliquid, Bitcoin, Solana, EVM, Substrate, Tron, and hundreds of Portal
+datasets through the hosted SQD Portal MCP endpoint and bundled Portal and Pipes SDK agent skills.
 
 The plugin release version is independent from the hosted MCP server version. Plugin `0.8.0` uses
 the current unauthenticated hosted MCP server and does not require the unreleased server `0.8.0`
@@ -85,8 +86,14 @@ npm run sync:plugin-skills -- --source ../skills
 npm run check:plugin-skills -- --source ../skills
 ```
 
-The scheduled `sync-plugin-skills` workflow checks upstream weekly and opens or updates a draft PR
-when either bundled skill changes.
+After every push to the upstream skills repository's `main` branch, its notifier sends a
+`skills-updated` repository dispatch containing the new commit SHA. The `sync-plugin-skills`
+workflow checks out that exact revision and opens or updates a draft PR when either bundled skill
+changes. The workflow can also be started manually.
+
+The upstream notifier requires a `PORTAL_MCP_SERVER_DISPATCH_TOKEN` Actions secret in
+`subsquid-labs/skills`. Use a fine-grained token scoped to `subsquid-labs/portal-mcp-server` with
+**Contents: write** permission, which GitHub requires for creating a repository dispatch event.
 
 ## Release Gate
 

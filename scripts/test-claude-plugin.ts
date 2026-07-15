@@ -9,6 +9,7 @@ const PLUGIN_ROOT = 'plugins/portal'
 const MARKETPLACE_PATH = '.claude-plugin/marketplace.json'
 const PLUGIN_JSON_PATH = `${PLUGIN_ROOT}/.claude-plugin/plugin.json`
 const MCP_JSON_PATH = `${PLUGIN_ROOT}/.mcp.json`
+const DISCOVERY_TERMS = ['blockchain', 'onchain', 'Hyperliquid', 'Bitcoin', 'Solana']
 
 function assert(condition: boolean, message: string) {
   if (!condition) {
@@ -26,6 +27,21 @@ function assertRecord(value: unknown, message: string): asserts value is JsonObj
 
 function assertString(value: unknown, message: string): asserts value is string {
   assert(typeof value === 'string' && value.trim().length > 0, message)
+}
+
+function assertDiscoveryDescription(value: unknown, field: string) {
+  assertString(value, `${field} must be a string`)
+  for (const term of DISCOVERY_TERMS) {
+    assert(value.toLowerCase().includes(term.toLowerCase()), `${field} should mention ${term}`)
+  }
+}
+
+function assertDiscoveryKeywords(value: unknown, field: string) {
+  assert(Array.isArray(value), `${field} must be an array`)
+  const keywords = value.map((keyword) => String(keyword).toLowerCase())
+  for (const term of DISCOVERY_TERMS) {
+    assert(keywords.includes(term.toLowerCase()), `${field} should include ${term.toLowerCase()}`)
+  }
 }
 
 function assertNoCommittedSecretOrLocalPath(value: unknown, path = '$') {
@@ -77,6 +93,7 @@ async function postRpc(endpoint: string, method: string, params: JsonObject) {
 function assertMarketplace() {
   const marketplace = readJson(MARKETPLACE_PATH)
   assert(marketplace.name === 'sqd', 'Claude marketplace name should be sqd')
+  assertDiscoveryDescription(marketplace.description, 'Claude marketplace description')
   assertRecord(marketplace.owner, 'Claude marketplace owner must be an object')
   assert(marketplace.owner.name === 'Subsquid Labs', 'Claude marketplace owner should be Subsquid Labs')
   assert(marketplace.version === '0.8.0', 'Claude marketplace version should match the plugin release')
@@ -85,6 +102,8 @@ function assertMarketplace() {
   assertRecord(entry, 'Claude marketplace should include portal')
   assert(entry.source === './plugins/portal', 'Claude marketplace portal source should point at ./plugins/portal')
   assert(entry.displayName === 'SQD', 'Claude marketplace display name should be SQD')
+  assertDiscoveryDescription(entry.description, 'Claude marketplace plugin description')
+  assertDiscoveryKeywords(entry.keywords, 'Claude marketplace plugin keywords')
   assert(entry.version === '0.8.0', 'Claude marketplace plugin entry version should be 0.8.0')
   assertNoCommittedSecretOrLocalPath(marketplace)
 }
@@ -93,6 +112,8 @@ function getEndpoint() {
   const manifest = readJson(PLUGIN_JSON_PATH)
   assert(manifest.name === 'portal', 'Claude plugin name should be portal')
   assert(manifest.displayName === 'SQD', 'Claude plugin display name should be SQD')
+  assertDiscoveryDescription(manifest.description, 'Claude plugin description')
+  assertDiscoveryKeywords(manifest.keywords, 'Claude plugin keywords')
   assert(manifest.version === '0.8.0', 'Claude plugin version should be 0.8.0')
   assert(manifest.skills === './skills/', 'Claude plugin should reference bundled skills')
   assert(manifest.mcpServers === './.mcp.json', 'Claude plugin should reference ./.mcp.json')

@@ -2,7 +2,7 @@
   "name": "portal",
   "displayName": "SQD",
   "version": "0.8.0",
-  "description": "Query SQD Portal data with hosted MCP tools and bundled agent skills.",
+  "description": "Explore blockchain and onchain data across Hyperliquid, Bitcoin, Solana, EVM, Tron, and more with SQD Portal MCP tools and agent skills.",
   "author": {
     "name": "Subsquid Labs"
   },
@@ -21,6 +21,8 @@
     "bitcoin",
     "tron",
     "hyperliquid",
+    "onchain",
+    "blockchain-data",
     "pipes-sdk"
   ],
   "skills": "./skills/",
