@@ -31,7 +31,7 @@ The final v0.8.4 gate is 100% of the declared matrix, not an ambiguous “best e
 
 | Release | Outcome | Status | Primary owner | Depends on |
 |---|---|---|---|---|
-| v0.8.0 | Stop the major timeout, cancellation, and slow-query failure modes | In progress | MCP maintainer | Full release gate |
+| v0.8.0 | Stop the major timeout, cancellation, and slow-query failure modes | Complete | MCP maintainer | Full release gate |
 | v0.8.1 | Make every call and failure class measurable | Not started | MCP maintainer | v0.8.0 telemetry contract |
 | v0.8.2 | Finalize and test Claude, Codex/ChatGPT, and Grok distribution | Not started | MCP maintainer + developer relations | Stable hosted endpoint and platform review accounts |
 | v0.8.3 | Reach 100% declared hardening coverage across tools and transports | Not started | MCP maintainer | v0.8.1 metrics inventory |

@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.8.0] - Unreleased
+## [0.8.0] - 2026-08-27
 
 Portal MCP v0.8.0 focuses on reliable interactive queries, faster common investigations, and clearer partial-result reporting. Existing connection and authentication behavior is unchanged.
 

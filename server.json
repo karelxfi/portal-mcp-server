@@ -3,7 +3,7 @@
   "name": "io.github.subsquid-labs/portal-mcp-server",
   "title": "SQD Portal",
   "description": "Query onchain data across EVM, Solana, Bitcoin, Substrate, and Hyperliquid via the SQD Portal API.",
-  "version": "0.7.9",
+  "version": "0.8.0",
   "repository": {
     "url": "https://github.com/subsquid-labs/portal-mcp-server",
     "source": "github"
