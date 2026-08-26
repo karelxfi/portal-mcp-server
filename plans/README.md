@@ -1,14 +1,15 @@
-# v0.7.9 Release Hardening Notes
+# Release Plans and Roadmaps
 
-This directory records the completed factual UX hardening pass for v0.7.9.
+This directory records completed release plans and proposed follow-on roadmaps.
 
 ## Status
 
 | Plan | Title | Status |
 |---|---|---|
 | 001 | v0.7.9 factual UX release hardening | Done |
+| 002 | v0.8.x reliability and AI plugin roadmap | Proposed |
 
-## Completed Scope
+## Completed v0.7.9 Scope
 
 - Estimated relative time windows are identified as estimated in the response metadata and user-facing notices.
 - Bounded contract-activity previews distinguish requested block bounds from analyzed block bounds.
@@ -40,6 +41,7 @@ npm run test:all
 - Collapse tool registry, tool catalog, manifest specs, and README counts into one source of truth after v0.7.9.
 - Treat dependency and workflow pinning as a separate release-hardening pass.
 
-## Plan File
+## Plan Files
 
 - `plans/001-v079-factual-ux-release-hardening.md`
+- `plans/002-v08x-reliability-plugins-roadmap.md`
