@@ -1,32 +1,18 @@
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
-import { z } from 'zod'
-
 import { getBlockHead, resolveDataset, validateBlockRange } from '../../cache/datasets.js'
 import { createQueryCache, stableCacheKey } from '../../cache/query-cache.js'
 import { PORTAL_URL } from '../../constants/index.js'
-import { buildTableDescriptor, buildTimeSeriesChart, buildTimeSeriesTable } from '../../helpers/chart-metadata.js'
 import { detectChainType } from '../../helpers/chain.js'
-import { createUnsupportedChainError, createUnsupportedMetricError } from '../../helpers/errors.js'
 import { portalFetchStream } from '../../helpers/fetch.js'
-import { formatResult } from '../../helpers/format.js'
 import { formatDuration, formatTimestamp } from '../../helpers/format.js'
 import { buildBucketCoverage, buildBucketGapDiagnostics, buildQueryFreshness } from '../../helpers/result-metadata.js'
 import {
-  describeTimeWindowInput,
-  getHeadTimestamp,
   getTimestampWindowNotices,
   parseTimeframeToSeconds,
-  parseTimestampInput,
   resolveTimeframeOrBlocks,
 } from '../../helpers/timeframe.js'
 import { computeSolanaTimeSeries } from '../solana/time-series-shared.js'
 
-type CompareMetric =
-  | 'transaction_count'
-  | 'avg_gas_price'
-  | 'gas_used'
-  | 'block_utilization'
-  | 'unique_addresses'
+type CompareMetric = 'transaction_count' | 'avg_gas_price' | 'gas_used' | 'block_utilization' | 'unique_addresses'
 
 type TimeSeriesBlock = {
   number?: number
@@ -47,7 +33,6 @@ type TimeSeriesBlock = {
     to?: string
   }>
 }
-
 type BucketAccumulator = {
   bucketIndex: number
   bucketTimestamp: number
@@ -102,11 +87,18 @@ function getBlockTimestamp(block: TimeSeriesBlock): number | undefined {
   return block.timestamp ?? block.header?.timestamp
 }
 
-function getBlockBigIntString(block: TimeSeriesBlock, key: 'baseFeePerGas' | 'gasUsed' | 'gasLimit'): string | undefined {
+function getBlockBigIntString(
+  block: TimeSeriesBlock,
+  key: 'baseFeePerGas' | 'gasUsed' | 'gasLimit',
+): string | undefined {
   return block[key] ?? block.header?.[key]
 }
 
-function createBucketAccumulators(expectedBuckets: number, seriesStartTimestamp: number, intervalSeconds: number): BucketAccumulator[] {
+function createBucketAccumulators(
+  expectedBuckets: number,
+  seriesStartTimestamp: number,
+  intervalSeconds: number,
+): BucketAccumulator[] {
   return Array.from({ length: expectedBuckets }, (_, bucketIndex) => ({
     bucketIndex,
     bucketTimestamp: seriesStartTimestamp + bucketIndex * intervalSeconds,
@@ -280,7 +272,7 @@ export async function computeWindowSeries(params: {
 
       while (currentFrom <= rangeTo) {
         const plannedTo = Math.min(currentFrom + initialChunkSize - 1, rangeTo)
-        const chunk = await portalFetchStream(
+        const chunk = (await portalFetchStream(
           `${PORTAL_URL}/datasets/${dataset}/stream`,
           {
             type: queryType,
@@ -293,7 +285,7 @@ export async function computeWindowSeries(params: {
           {
             maxBytes: 100 * 1024 * 1024,
           },
-        ) as TimeSeriesBlock[]
+        )) as TimeSeriesBlock[]
 
         if (chunk.length === 0) {
           break
@@ -481,283 +473,4 @@ export async function computeWindowSeries(params: {
   })
 
   return value
-}
-
-export function registerComparePeriodsTool(server: McpServer) {
-  server.tool(
-    'portal_compare_periods',
-    `Compare the current period against the immediately previous period for chartable blockchain metrics. Returns current and previous series plus delta summaries.`,
-    {
-      dataset: z.string().describe("Dataset name (supports short names like 'base', 'ethereum', 'solana', 'bitcoin')"),
-      metric: z
-        .enum(['transaction_count', 'avg_gas_price', 'gas_used', 'block_utilization', 'unique_addresses'])
-        .describe('Metric to compare across adjacent time windows'),
-      interval: z.enum(['5m', '15m', '1h', '6h', '1d']).describe('Time bucket interval'),
-      duration: z
-        .string()
-        .describe('Duration for each period window. Accepts compact durations like "1h" or natural phrases like "past 30 minutes".'),
-      address: z.string().optional().describe('Optional EVM contract address filter for contract-specific comparisons'),
-      to_timestamp: z
-        .union([z.number(), z.string()])
-        .optional()
-        .describe('Optional period end time. Accepts Unix seconds, Unix milliseconds, ISO datetime, or relative input like "now".'),
-    },
-    async ({ dataset, metric, interval, duration, address, to_timestamp }) => {
-      const queryStartTime = Date.now()
-      dataset = await resolveDataset(dataset)
-      const chainType = detectChainType(dataset)
-
-      if (chainType === 'hyperliquidFills' || chainType === 'hyperliquidReplicaCmds') {
-        throw createUnsupportedChainError({
-          toolName: 'portal_compare_periods',
-          dataset,
-          actualChainType: chainType,
-          supportedChains: ['evm', 'solana', 'bitcoin'],
-          suggestions: [
-            'Use portal_hyperliquid_time_series for Hyperliquid trend charts.',
-            'Use portal_hyperliquid_get_analytics for period snapshots on Hyperliquid fills.',
-          ],
-        })
-      }
-
-      const gasMetrics = ['avg_gas_price', 'gas_used', 'block_utilization']
-      if (gasMetrics.includes(metric) && chainType !== 'evm') {
-        throw createUnsupportedMetricError({
-          toolName: 'portal_compare_periods',
-          metric,
-          dataset,
-          supportedMetrics: ['transaction_count', 'unique_addresses'],
-          reason: 'Gas metrics are available only on EVM datasets.',
-        })
-      }
-
-      if (metric === 'unique_addresses' && chainType === 'bitcoin') {
-        throw createUnsupportedMetricError({
-          toolName: 'portal_compare_periods',
-          metric,
-          dataset,
-          supportedMetrics: ['transaction_count'],
-          reason: 'Bitcoin uses a UTXO model, so there is no simple address set for this metric.',
-        })
-      }
-
-      const durationSeconds = parseTimeframeToSeconds(duration)
-      const head = await getBlockHead(dataset)
-      const anchorTimestamp = to_timestamp !== undefined
-        ? parseTimestampInput(to_timestamp).timestamp
-        : await getHeadTimestamp(dataset, head.number)
-      const currentEndInclusive = anchorTimestamp
-      const currentEndExclusive = currentEndInclusive + 1
-      const currentStartTimestamp = currentEndExclusive - durationSeconds
-      const previousEndExclusive = currentStartTimestamp
-      const previousEndInclusive = previousEndExclusive - 1
-      const previousStartTimestamp = previousEndExclusive - durationSeconds
-
-      const [currentSeries, previousSeries] = await Promise.all([
-        computeWindowSeries({
-          dataset,
-          metric,
-          interval,
-          duration,
-          address,
-          fromTimestamp: currentStartTimestamp,
-          toTimestampInclusive: currentEndInclusive,
-        }),
-        computeWindowSeries({
-          dataset,
-          metric,
-          interval,
-          duration,
-          address,
-          fromTimestamp: previousStartTimestamp,
-          toTimestampInclusive: previousEndInclusive,
-        }),
-      ])
-
-      const comparisonSeries = currentSeries.timeSeries.flatMap((point, bucketIndex) => {
-        const previousPoint = previousSeries.timeSeries[bucketIndex]
-        return [
-          {
-            period: 'current',
-            bucket_index: bucketIndex,
-            timestamp: point.timestamp,
-            timestamp_human: point.timestamp_human,
-            value: point.value,
-          },
-          {
-            period: 'previous',
-            bucket_index: bucketIndex,
-            timestamp: previousPoint.timestamp,
-            timestamp_human: previousPoint.timestamp_human,
-            value: previousPoint.value,
-          },
-        ]
-      })
-      const bucketDeltas = currentSeries.timeSeries.map((point, bucketIndex) => {
-        const previousPoint = previousSeries.timeSeries[bucketIndex]
-        const delta = Number((point.value - previousPoint.value).toFixed(2))
-        return {
-          bucket_index: bucketIndex,
-          current_value: point.value,
-          previous_value: previousPoint.value,
-          delta,
-          pct_change: computePctChange(point.value, previousPoint.value),
-        }
-      })
-
-      const currentValues = currentSeries.timeSeries.map((point) => point.value)
-      const previousValues = previousSeries.timeSeries.map((point) => point.value)
-      const currentTotal = Number(currentValues.reduce((sum, value) => sum + value, 0).toFixed(2))
-      const previousTotal = Number(previousValues.reduce((sum, value) => sum + value, 0).toFixed(2))
-      const currentAvg = Number((currentTotal / currentValues.length).toFixed(2))
-      const previousAvg = Number((previousTotal / previousValues.length).toFixed(2))
-      const summaryRows = [
-        {
-          label: 'Total',
-          current_value: currentTotal,
-          previous_value: previousTotal,
-          delta: Number((currentTotal - previousTotal).toFixed(2)),
-          pct_change: computePctChange(currentTotal, previousTotal),
-        },
-        {
-          label: 'Average bucket value',
-          current_value: currentAvg,
-          previous_value: previousAvg,
-          delta: Number((currentAvg - previousAvg).toFixed(2)),
-          pct_change: computePctChange(currentAvg, previousAvg),
-        },
-      ]
-
-      const notices = [
-        ...currentSeries.notices,
-        ...previousSeries.notices,
-      ]
-
-      return formatResult(
-        {
-          summary: {
-            metric,
-            interval,
-            duration,
-            current_window: {
-              from_block: currentSeries.metadata.from_block,
-              to_block: currentSeries.metadata.to_block,
-              start_timestamp: currentStartTimestamp,
-              start_timestamp_human: formatTimestamp(currentStartTimestamp),
-              end_timestamp: currentEndInclusive,
-              end_timestamp_human: formatTimestamp(currentEndInclusive),
-            },
-            previous_window: {
-              from_block: previousSeries.metadata.from_block,
-              to_block: previousSeries.metadata.to_block,
-              start_timestamp: previousStartTimestamp,
-              start_timestamp_human: formatTimestamp(previousStartTimestamp),
-              end_timestamp: previousEndInclusive,
-              end_timestamp_human: formatTimestamp(previousEndInclusive),
-            },
-          },
-          comparison: {
-            current_total: currentTotal,
-            previous_total: previousTotal,
-            total_delta: Number((currentTotal - previousTotal).toFixed(2)),
-            total_pct_change: computePctChange(currentTotal, previousTotal),
-            current_avg_bucket_value: currentAvg,
-            previous_avg_bucket_value: previousAvg,
-            avg_bucket_delta: Number((currentAvg - previousAvg).toFixed(2)),
-            avg_bucket_pct_change: computePctChange(currentAvg, previousAvg),
-            strongest_bucket_delta: bucketDeltas.reduce((best, item) => (item.delta > best.delta ? item : best), bucketDeltas[0]),
-            weakest_bucket_delta: bucketDeltas.reduce((worst, item) => (item.delta < worst.delta ? item : worst), bucketDeltas[0]),
-          },
-          chart: buildTimeSeriesChart({
-            interval,
-            totalPoints: comparisonSeries.length,
-            groupedValueField: 'period',
-            xField: 'bucket_index',
-            recommendedVisual: 'line',
-            dataKey: 'comparison_series',
-            title: `${metric} current vs previous`,
-            xAxisLabel: 'Bucket',
-            yAxisLabel: metric,
-          }),
-          tables: [
-            buildTableDescriptor({
-              id: 'summary_rows',
-              dataKey: 'summary_rows',
-              rowCount: summaryRows.length,
-              title: 'Current vs previous summary',
-              defaultSort: { key: 'label', direction: 'asc' },
-              dense: true,
-              columns: [
-                { key: 'label', label: 'Metric', kind: 'dimension' },
-                { key: 'current_value', label: 'Current', kind: 'metric', format: 'decimal', align: 'right' },
-                { key: 'previous_value', label: 'Previous', kind: 'metric', format: 'decimal', align: 'right' },
-                { key: 'delta', label: 'Delta', kind: 'metric', format: 'decimal', align: 'right' },
-                { key: 'pct_change', label: 'Pct change', kind: 'metric', format: 'percent', unit: '%', align: 'right' },
-              ],
-            }),
-            buildTimeSeriesTable({
-              id: 'comparison_series',
-              dataKey: 'comparison_series',
-              rowCount: comparisonSeries.length,
-              title: 'Aligned comparison buckets',
-              groupedValueField: 'period',
-              groupedValueLabel: 'Period',
-              valueLabel: 'Value',
-              valueFormat: 'decimal',
-              timestampField: 'timestamp',
-              keyField: 'period',
-              defaultSort: { key: 'bucket_index', direction: 'asc' },
-            }),
-            buildTableDescriptor({
-              id: 'bucket_deltas',
-              dataKey: 'bucket_deltas',
-              rowCount: bucketDeltas.length,
-              title: 'Bucket deltas',
-              defaultSort: { key: 'bucket_index', direction: 'asc' },
-              dense: true,
-              columns: [
-                { key: 'bucket_index', label: 'Bucket', kind: 'dimension', format: 'integer', align: 'right' },
-                { key: 'current_value', label: 'Current', kind: 'metric', format: 'decimal', align: 'right' },
-                { key: 'previous_value', label: 'Previous', kind: 'metric', format: 'decimal', align: 'right' },
-                { key: 'delta', label: 'Delta', kind: 'metric', format: 'decimal', align: 'right' },
-                { key: 'pct_change', label: 'Pct change', kind: 'metric', format: 'percent', unit: '%', align: 'right' },
-              ],
-            }),
-          ],
-          summary_rows: summaryRows,
-          current_series: currentSeries.timeSeries,
-          previous_series: previousSeries.timeSeries,
-          comparison_series: comparisonSeries,
-          bucket_deltas: bucketDeltas,
-          gap_diagnostics: {
-            current: currentSeries.gapDiagnostics,
-            previous: previousSeries.gapDiagnostics,
-          },
-        },
-        `Compared ${metric} across the current window and previous matching window (${describeTimeWindowInput(duration)}). Current total: ${currentTotal.toLocaleString()}, previous total: ${previousTotal.toLocaleString()}.`,
-        {
-          ...(notices.length > 0 ? { notices } : {}),
-          freshness: {
-            kind: 'period_compare',
-            current: currentSeries.freshness,
-            previous: previousSeries.freshness,
-            anchor_timestamp: currentEndInclusive,
-            anchor_timestamp_human: formatTimestamp(currentEndInclusive),
-          },
-          coverage: {
-            kind: 'period_compare',
-            current: currentSeries.coverage,
-            previous: previousSeries.coverage,
-            aligned_buckets: currentSeries.timeSeries.length,
-          },
-          metadata: {
-            dataset,
-            from_block: previousSeries.metadata.from_block,
-            to_block: currentSeries.metadata.to_block,
-            query_start_time: queryStartTime,
-          },
-        },
-      )
-    },
-  )
 }

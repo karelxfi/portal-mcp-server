@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.8.1] - Unreleased
+
+Portal MCP v0.8.1 starts the move to a smaller, stateless MCP `2026-07-28` core while preserving the factual 28-tool surface.
+
+### Maintenance
+- **Dead-code removal** — removed unregistered tool implementations and abandoned helper modules that were still compiled despite never appearing in the MCP catalog.
+- **Clean package builds** — build output is removed before compilation so deleted modules cannot remain in the published tarball.
+- **Lean-surface gate** — CI now rejects unreachable runtime modules and tool registration functions that are never connected to the public registry.
+- **Protocol migration plan** — added explicit TypeScript SDK v2, stateless discovery, cacheable catalogs, modern cancellation, connector observability, and legacy-client exit gates to the v0.8.x roadmap.
+
 ## [0.8.0] - 2026-08-27
 
 Portal MCP v0.8.0 focuses on reliable interactive queries, faster common investigations, and clearer partial-result reporting. Existing connection and authentication behavior is unchanged.

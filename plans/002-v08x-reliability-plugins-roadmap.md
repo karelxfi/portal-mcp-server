@@ -12,6 +12,8 @@ The sequence is outcome-driven rather than date-driven. A release moves forward 
 - Authentication is deferred to v0.9.0 and should use one unified `auth.sqd.dev` flow.
 - The v0.8.x line will not introduce manual SQD API-key entry as a temporary product path.
 - Reliability, measurement, client distribution, and documentation take priority over adding more tools.
+- v0.8.1 adopts MCP `2026-07-28` through the stable TypeScript SDK v2 while retaining a tested legacy-client path only for clients that still need it.
+- Every release must delete superseded protocol adapters, unregistered tools, duplicate discovery surfaces, and unused dependencies instead of carrying them forward indefinitely.
 
 ## What “100% Hardened and Measured” Means
 
@@ -22,8 +24,9 @@ It does not mean external networks and APIs can never fail. It means every expos
 3. Every outbound request has a full-response deadline, client cancellation propagation, and a finite retry policy.
 4. Every result is classified as success, partial success, tool error, request error, or cancellation.
 5. Every tool reports latency and outcome without recording wallet addresses, transaction hashes, query text, or other high-cardinality user input as metric labels.
-6. Stdio and Streamable HTTP both pass protocol, cancellation, and response-size gates.
+6. Stdio and Streamable HTTP both pass MCP `2026-07-28` discovery, per-request metadata, cancellation, cache-hint, and response-size gates.
 7. Release evidence reconciles tool calls with outcomes and identifies upstream failures separately from server defects.
+8. The shipped package contains no unregistered tool modules or generated output left behind by removed source files.
 
 The final v0.8.4 gate is 100% of the declared matrix, not an ambiguous “best effort” claim.
 
@@ -32,8 +35,8 @@ The final v0.8.4 gate is 100% of the declared matrix, not an ambiguous “best e
 | Release | Outcome | Status | Primary owner | Depends on |
 |---|---|---|---|---|
 | v0.8.0 | Stop the major timeout, cancellation, and slow-query failure modes | Complete | MCP maintainer | Full release gate |
-| v0.8.1 | Make every call and failure class measurable | Not started | MCP maintainer | v0.8.0 telemetry contract |
-| v0.8.2 | Finalize and test Claude, Codex/ChatGPT, and Grok distribution | Not started | MCP maintainer + developer relations | Stable hosted endpoint and platform review accounts |
+| v0.8.1 | Adopt the stateless MCP 2026 core, remove legacy code, and make every failure class measurable | In progress | MCP maintainer | v0.8.0 reliability baseline |
+| v0.8.2 | Finalize and test Claude, Codex/ChatGPT, and Grok distribution against the modern protocol | Not started | MCP maintainer + developer relations | v0.8.1 protocol and metrics contract |
 | v0.8.3 | Reach 100% declared hardening coverage across tools and transports | Not started | MCP maintainer | v0.8.1 metrics inventory |
 | v0.8.4 | Prove the SLOs in a sustained canary and close the v0.8.x reliability program | Not started | MCP maintainer + service owner | v0.8.2 distribution and v0.8.3 hardening |
 
@@ -61,12 +64,19 @@ Exit criteria:
 - `npm audit` reports no known findings in the release tree.
 - Package, server metadata, changelog, commit, and tag all identify v0.8.0.
 
-### v0.8.1 — Complete metrics and error taxonomy
+### v0.8.1 — Stateless, lean, and measurable core
 
-**Outcome:** every MCP call can be explained quantitatively without inspecting sensitive request content.
+**Outcome:** the server uses the stateless MCP `2026-07-28` request model, carries no abandoned compatibility code, and explains every MCP call quantitatively without inspecting sensitive request content.
 
 Scope:
 
+- Upgrade from `@modelcontextprotocol/sdk` v1 to the stable split v2 server/client packages and Zod v4.
+- Serve modern HTTP with `createMcpHandler` and stdio with `serveStdio`, supporting `server/discover`, self-contained per-request metadata, and stream-close cancellation.
+- Keep the SDK's tested legacy-client negotiation during the rollout; do not maintain a second hand-written transport implementation.
+- Add deterministic list ordering plus `ttlMs` and `cacheScope` hints for tools and resources.
+- Read client identity and tracing context from standardized per-request MCP metadata instead of custom session headers.
+- Remove unregistered tool modules, unused exports, stale generated artifacts, the duplicate plain-HTTP tool catalog, and dependencies used only by that catalog.
+- Review the custom `answer`, `display`, `_ui`, `_llm`, and chart/table compatibility envelope. Keep only model-useful structured content; move genuine interactive UI to the MCP Apps extension rather than growing proprietary metadata.
 - Define one result taxonomy: `success`, `partial`, `tool_error`, `request_error`, and `cancelled`.
 - Instrument all 28 tools with call count, result class, duration, in-flight count, and response-size distributions.
 - Instrument upstream calls with duration, status class, timeout, cancellation, retry, and rate-limit counts.
@@ -78,6 +88,10 @@ Scope:
 
 Exit criteria:
 
+- Modern HTTP and stdio clients complete `server/discover` and representative calls without an initialization handshake or protocol session.
+- The declared legacy-client matrix still works through SDK negotiation, with an explicit removal date rather than permanent parallel code.
+- The package has 0 unregistered tool modules, 0 stale compiled artifacts, and 0 bespoke session-routing code.
+- Source lines, packed size, startup imports, and median/p95 response sizes are lower than the v0.8.0 baseline without reducing factual query coverage.
 - 100% of exposed tools appear in the metrics inventory and emit one terminal result.
 - 100% of upstream helpers emit bounded outcome and latency telemetry.
 - Cancellation is excluded from the tool-failure numerator but remains visible as its own result class.
@@ -99,8 +113,9 @@ Claude:
 
 - Keep the strict-valid `.claude-plugin` manifest and repository marketplace.
 - Test clean installs in Claude Code at user and project scope, including update and uninstall.
-- Test the hosted endpoint in Claude Code and the supported Claude desktop connector path.
-- Submit to Anthropic’s official plugin marketplace when listing, privacy, and support requirements are complete.
+- Test the hosted endpoint across Claude, Claude Code, and Cowork using MCP `2026-07-28`, not only legacy initialization smoke tests.
+- Submit the connector to Claude's in-app connectors directory and use its adoption, latency, and per-tool error dashboard as an external client-side signal alongside server metrics.
+- Treat MCP Apps as optional: add an app only when an inline chart or investigation UI is materially better than concise structured tool output.
 
 Grok:
 
@@ -135,6 +150,7 @@ Scope:
 - Property-test cursors, time windows, block ranges, limits, network aliases, and field/filter combinations.
 - Verify every outbound path has a deadline, retry ceiling, abort signal, and bounded accumulation.
 - Exercise both stdio and Streamable HTTP, including concurrent calls and one caller cancelling a shared cached load.
+- Exercise `server/discover`, required routing headers, cacheable list results, modern stream-close cancellation, and the SDK-negotiated legacy path.
 - Add sustained concurrency and memory tests with explicit ceilings and leak detection.
 
 Exit criteria:
@@ -171,6 +187,9 @@ Target gates:
 
 - OpenAI documents one universal public plugin directory for ChatGPT and Codex, with local marketplaces used during development: <https://developers.openai.com/codex/build-plugins>.
 - Claude Code supports repository marketplaces, strict validation, scoped installation, and official marketplace submission: <https://code.claude.com/docs/en/plugin-marketplaces>.
+- MCP `2026-07-28` removes protocol sessions and the initialization handshake, adds per-request capability metadata, header routing, cacheable list results, and a formal extensions framework: <https://modelcontextprotocol.io/specification/2026-07-28/changelog>.
+- The stable TypeScript SDK v2 uses split server/client packages; modern HTTP uses `createMcpHandler` and modern stdio uses `serveStdio`, with SDK-managed legacy negotiation during migration: <https://ts.sdk.modelcontextprotocol.io/v2/migration/support-2026-07-28>.
+- Claude is rolling the revision across its products, supports MCP Apps, and provides published connectors with adoption, latency, and per-tool error observability: <https://claude.com/blog/bringing-mcp-2026-07-28-to-claude>.
 - Grok chat accepts publicly reachable custom MCP connectors: <https://docs.x.ai/grok/connectors>.
 - Grok Build supports plugins and marketplaces, including Claude-compatible packages, but a dedicated Grok marketplace entry is clearer and independently testable: <https://docs.x.ai/build/features/skills-plugins-marketplaces>.
 - The current SQD Claude package validates in Grok Build because of that compatibility. Its Claude-specific description and missing Grok marketplace entry mean it is not yet a finalized Grok distribution.
@@ -184,6 +203,7 @@ Target gates:
 | Metrics can become expensive or leak request detail | MCP maintainer | Enforce a low-cardinality allowlist and privacy test before exporting new labels |
 | “100%” can become vague as tools are added | MCP maintainer | Generate the denominator from the registry and block releases on uncovered tools or scenarios |
 | Client plugin formats can change | MCP maintainer | Validate against current CLIs and official docs in the compatibility gate for every release |
+| Modern MCP support is still rolling out unevenly across clients | MCP maintainer | Use SDK-managed dual-era negotiation and delete legacy support only after the exact client matrix passes without it |
 | Auth pressure could fragment the client setup | Product owner | Keep v0.8.x unauthenticated; design one `auth.sqd.dev` flow for v0.9.0 |
 
 ## Explicitly Deferred to v0.9.0

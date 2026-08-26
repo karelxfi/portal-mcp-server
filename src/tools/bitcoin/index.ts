@@ -1,5 +1,2 @@
 export { registerQueryBitcoinTransactionsTool } from './query-transactions.js'
-export { registerQueryBitcoinInputsTool } from './query-inputs.js'
-export { registerQueryBitcoinOutputsTool } from './query-outputs.js'
 export { registerBitcoinAnalyticsTool } from './analytics.js'
-export { registerBitcoinTimeSeresTool } from './time-series.js'

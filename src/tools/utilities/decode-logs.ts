@@ -1,14 +1,4 @@
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
-import { z } from 'zod'
-
-import { resolveDataset, validateBlockRange } from '../../cache/datasets.js'
-import { EVENT_SIGNATURES, PORTAL_URL } from '../../constants/index.js'
-import { detectChainType } from '../../helpers/chain.js'
-import { createUnsupportedChainError } from '../../helpers/errors.js'
-import { portalFetchStream } from '../../helpers/fetch.js'
-import { buildEvmLogFields } from '../../helpers/fields.js'
-import { formatResult } from '../../helpers/format.js'
-import { normalizeAddresses } from '../../helpers/validation.js'
+import { EVENT_SIGNATURES } from '../../constants/index.js'
 
 // ============================================================================
 // Known Event Signatures
@@ -16,17 +6,7 @@ import { normalizeAddresses } from '../../helpers/validation.js'
 
 type EventInput = { name: string; indexed: boolean }
 
-const ADDRESS_INPUT_NAMES = new Set([
-  'from',
-  'to',
-  'owner',
-  'spender',
-  'operator',
-  'sender',
-  'recipient',
-  'dst',
-  'src',
-])
+const ADDRESS_INPUT_NAMES = new Set(['from', 'to', 'owner', 'spender', 'operator', 'sender', 'recipient', 'dst', 'src'])
 
 const NUMERIC_INPUT_NAMES = new Set([
   'value',
@@ -51,7 +31,6 @@ const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000'
 function normalizeTopic(topic: string | undefined): string {
   return typeof topic === 'string' ? topic.toLowerCase() : ''
 }
-
 function decodeIndexedAddress(topic: string | undefined): string {
   const clean = normalizeTopic(topic).replace(/^0x/, '').padStart(64, '0')
   return `0x${clean.slice(-40)}`
@@ -335,146 +314,4 @@ export function decodeLog(log: {
     transaction_hash: log.transactionHash,
     log_index: log.logIndex,
   }
-}
-
-// ============================================================================
-// Tool: Decode Logs
-// ============================================================================
-
-export function registerDecodeLogsTool(server: McpServer) {
-  server.tool(
-    'portal_decode_logs',
-    'Decode event logs using known event signatures (Transfer, Approval, Swap, etc.)',
-    {
-      dataset: z.string().describe('Dataset name or alias'),
-      from_block: z.number().describe('Starting block number'),
-      to_block: z.number().optional().describe('Ending block number'),
-      addresses: z.array(z.string()).optional().describe('Contract addresses to filter'),
-      event_types: z
-        .array(z.enum([
-          'Transfer', 'Approval', 'ApprovalForAll', 'Swap', 'Sync',
-          'Deposit', 'Withdrawal', 'Burn', 'Mint',
-          'IncreaseLiquidity', 'DecreaseLiquidity', 'all',
-        ]))
-        .optional()
-        .default(['all'])
-        .describe('Event types to decode'),
-      limit: z
-        .number()
-        .optional()
-        .default(20)
-        .describe('Max logs to return (default: 20). Note: Lower default for MCP to reduce context usage.'),
-      finalized_only: z.boolean().optional().default(false).describe('Only query finalized blocks'),
-    },
-    async ({ dataset, from_block, to_block, addresses, event_types, limit, finalized_only }) => {
-      const queryStartTime = Date.now()
-      dataset = await resolveDataset(dataset)
-      const chainType = detectChainType(dataset)
-
-      if (chainType !== 'evm') {
-        throw createUnsupportedChainError({
-          toolName: 'portal_decode_logs',
-          dataset,
-          actualChainType: chainType,
-          supportedChains: ['evm'],
-          suggestions: [
-            'Use portal_solana_query_instructions for Solana program activity.',
-            'Use portal_query_bitcoin_outputs or portal_query_bitcoin_inputs for Bitcoin activity.',
-          ],
-        })
-      }
-
-      const { validatedToBlock: endBlock } = await validateBlockRange(
-        dataset,
-        from_block,
-        to_block ?? Number.MAX_SAFE_INTEGER,
-        finalized_only,
-      )
-
-      // Build topic0 filter based on event types
-      let topic0Filter: string[] | undefined
-      if (!event_types?.includes('all')) {
-        topic0Filter = []
-        const eventToSig: Record<string, string> = {
-          Transfer: EVENT_SIGNATURES.TRANSFER_ERC20,
-          Approval: EVENT_SIGNATURES.APPROVAL_ERC20,
-          ApprovalForAll: EVENT_SIGNATURES.APPROVAL_FOR_ALL,
-          Swap: EVENT_SIGNATURES.UNISWAP_V2_SWAP,
-          Sync: EVENT_SIGNATURES.SYNC,
-          Deposit: EVENT_SIGNATURES.DEPOSIT,
-          Withdrawal: EVENT_SIGNATURES.WITHDRAWAL,
-          Burn: EVENT_SIGNATURES.BURN,
-          Mint: EVENT_SIGNATURES.MINT,
-          IncreaseLiquidity: EVENT_SIGNATURES.INCREASE_LIQUIDITY,
-          DecreaseLiquidity: EVENT_SIGNATURES.DECREASE_LIQUIDITY,
-        }
-        for (const et of event_types || []) {
-          if (eventToSig[et]) {
-            topic0Filter.push(eventToSig[et])
-          }
-        }
-        // Also add Uniswap V3 Swap if Swap is requested
-        if (event_types?.includes('Swap')) {
-          topic0Filter.push(EVENT_SIGNATURES.UNISWAP_V3_SWAP)
-        }
-      }
-
-      const logFilter: Record<string, unknown> = {}
-      if (addresses) {
-        logFilter.address = normalizeAddresses(addresses, 'evm')
-      }
-      if (topic0Filter && topic0Filter.length > 0) {
-        logFilter.topic0 = topic0Filter
-      }
-
-      const query = {
-        type: 'evm',
-        fromBlock: from_block,
-        toBlock: endBlock,
-        fields: {
-          block: { number: true, timestamp: true },
-          log: buildEvmLogFields(),
-        },
-        logs: [logFilter],
-      }
-
-      const results = await portalFetchStream(`${PORTAL_URL}/datasets/${dataset}/stream`, query)
-
-      const decodedLogs = results
-        .flatMap((block: unknown) => {
-          const b = block as {
-            header?: { number: number; timestamp: number }
-            logs?: Array<{
-              address: string
-              topics: string[]
-              data: string
-              transactionHash: string
-              logIndex: number
-            }>
-          }
-          return (b.logs || []).map((log) => ({
-            block_number: b.header?.number,
-            timestamp: b.header?.timestamp,
-            ...decodeLog(log),
-          }))
-        })
-        .slice(0, limit)
-
-      const knownCount = decodedLogs.filter((l) => l.event_name !== null).length
-      const unknownCount = decodedLogs.length - knownCount
-
-      return formatResult(
-        decodedLogs,
-        `Decoded ${decodedLogs.length} logs (${knownCount} known events, ${unknownCount} unknown)`,
-        {
-          metadata: {
-            dataset,
-            from_block,
-            to_block: endBlock,
-            query_start_time: queryStartTime,
-          },
-        },
-      )
-    },
-  )
 }

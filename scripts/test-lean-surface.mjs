@@ -1,0 +1,73 @@
+import { readFile, readdir, stat } from 'node:fs/promises'
+import { dirname, relative, resolve } from 'node:path'
+
+const sourceRoot = resolve('src')
+
+async function collectTypeScriptFiles(directory) {
+  const files = []
+  for (const name of await readdir(directory)) {
+    const path = resolve(directory, name)
+    const details = await stat(path)
+    if (details.isDirectory()) {
+      files.push(...(await collectTypeScriptFiles(path)))
+    } else if (name.endsWith('.ts')) {
+      files.push(path)
+    }
+  }
+  return files
+}
+
+function resolveLocalImport(importer, specifier, knownFiles) {
+  if (!specifier.startsWith('.')) return undefined
+  const candidate = resolve(dirname(importer), specifier.replace(/\.js$/, '.ts'))
+  return knownFiles.has(candidate) ? candidate : undefined
+}
+
+const files = await collectTypeScriptFiles(sourceRoot)
+const knownFiles = new Set(files)
+const sources = new Map(await Promise.all(files.map(async (file) => [file, await readFile(file, 'utf8')])))
+const dependencies = new Map()
+
+for (const [file, source] of sources) {
+  const localDependencies = new Set()
+  const importPattern = /(?:from\s*|import\s*\()['"](\.[^'"]+)['"]/g
+  for (const match of source.matchAll(importPattern)) {
+    const dependency = resolveLocalImport(file, match[1], knownFiles)
+    if (dependency) localDependencies.add(dependency)
+  }
+  dependencies.set(file, localDependencies)
+}
+
+const reachable = new Set()
+const pending = [resolve('src/index.ts'), resolve('src/http.ts')]
+while (pending.length > 0) {
+  const file = pending.pop()
+  if (!file || reachable.has(file)) continue
+  reachable.add(file)
+  pending.push(...(dependencies.get(file) ?? []))
+}
+
+const unreachable = files.filter((file) => !reachable.has(file))
+if (unreachable.length > 0) {
+  throw new Error(`Unreachable runtime modules:\n${unreachable.map((file) => `- ${relative('.', file)}`).join('\n')}`)
+}
+
+const unusedRegistrations = []
+for (const [file, source] of sources) {
+  for (const match of source.matchAll(/export\s+(?:async\s+)?function\s+(register[A-Za-z0-9_]+)/g)) {
+    const name = match[1]
+    const references = [...sources.values()].filter((candidate) => candidate.includes(name)).length
+    if (references < 2 && name !== 'registerAllTools') {
+      unusedRegistrations.push(`${name} in ${relative('.', file)}`)
+    }
+  }
+}
+
+if (unusedRegistrations.length > 0) {
+  throw new Error(`Unregistered tool implementations:\n${unusedRegistrations.map((item) => `- ${item}`).join('\n')}`)
+}
+
+const sourceLines = [...sources.values()].reduce((total, source) => total + source.split('\n').length, 0)
+console.log(
+  `Lean surface OK: ${files.length} reachable runtime modules, ${sourceLines} source lines, 0 unused registrations`,
+)

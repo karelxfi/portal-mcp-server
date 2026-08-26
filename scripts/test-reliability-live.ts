@@ -142,15 +142,19 @@ async function main() {
     assert(bitcoinWallet.length > 10, 'Expected an active Bitcoin wallet fixture')
     assert(/^0x[0-9a-f]{40}$/i.test(hyperliquidWallet), 'Expected an active Hyperliquid wallet fixture')
 
+    const crossVmWalletCases = [
+      { network: 'solana-mainnet', address: solanaWallet, timeframe: '1h' },
+      { network: 'bitcoin-mainnet', address: bitcoinWallet, timeframe: '24h' },
+      { network: 'hyperliquid-fills', address: hyperliquidWallet, timeframe: '5m' },
+    ]
     const crossVmWalletResults = await Promise.all(
-      [
-        { network: 'solana-mainnet', address: solanaWallet, timeframe: '1h' },
-        { network: 'bitcoin-mainnet', address: bitcoinWallet, timeframe: '24h' },
-        { network: 'hyperliquid-fills', address: hyperliquidWallet, timeframe: '5m' },
-      ].map((args) => callToolWithRetry(client, 'portal_get_wallet_summary', args, { retries: 0 })),
+      crossVmWalletCases.map((args) => callToolWithRetry(client, 'portal_get_wallet_summary', args, { retries: 0 })),
     )
-    for (const result of crossVmWalletResults) {
-      assert(result.elapsedMs < MAX_INTERACTIVE_MS, `cross-VM wallet call took ${result.elapsedMs}ms`)
+    for (const [index, result] of crossVmWalletResults.entries()) {
+      assert(
+        result.elapsedMs < MAX_INTERACTIVE_MS,
+        `${crossVmWalletCases[index].network} wallet call took ${result.elapsedMs}ms`,
+      )
       if (result.isError) {
         assert(
           isBoundedUpstreamToolError(result),
