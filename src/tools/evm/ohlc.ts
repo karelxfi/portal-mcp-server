@@ -14,15 +14,14 @@ import {
   buildTableDescriptor,
 } from '../../helpers/chart-metadata.js'
 import {
-  buildTokenListLookupNotices,
   type TokenListLookupMetadata,
+  buildTokenListLookupNotices,
   resolveTokenByAddressFromListWithStatus,
 } from '../../helpers/entity-resolution.js'
 import { RequestCancelledError, createUnsupportedChainError } from '../../helpers/errors.js'
 import { portalFetchRecentRecords, portalFetchStreamRangeVisit } from '../../helpers/fetch.js'
 import { buildEvmLogFields } from '../../helpers/fields.js'
-import { formatResult } from '../../helpers/format.js'
-import { formatTimestamp } from '../../helpers/format.js'
+import { formatResult, formatTimestamp } from '../../helpers/format.js'
 import { buildPaginationInfo, decodeCursor, encodeCursor } from '../../helpers/pagination.js'
 import { getPortalRequestSignal } from '../../helpers/request-context.js'
 import {
@@ -197,6 +196,8 @@ const UNISWAP_V4_METADATA_MAX_CHUNKS_BY_MODE: Record<OhlcMode, number> = {
 }
 const EVM_OHLC_METADATA_CACHE_TTL_MS = 15 * 60_000
 const EVM_OHLC_RESPONSE_CACHE_TTL_MS = 20_000
+const EVM_OHLC_QUERY_TIMEOUT_MS = 12_000
+const EVM_OHLC_TOOL_BUDGET_MS = 25_000
 const evmOhlcMetadataCache = createCache<UniswapV4PoolMetadata | null>(EVM_OHLC_METADATA_CACHE_TTL_MS, 128)
 const evmOhlcResponseCache = createCache<CachedOhlcResponse>(EVM_OHLC_RESPONSE_CACHE_TTL_MS, 32)
 const pendingUniswapV4Metadata = new Map<
@@ -668,15 +669,18 @@ async function resolveUniswapV4PoolMetadata(params: {
   lookbackSteps?: number[]
 }): Promise<UniswapV4PoolMetadata | undefined> {
   const lookbackSteps = params.lookbackSteps ?? UNISWAP_V4_METADATA_LOOKBACK_STEPS
+  const maxChunks = UNISWAP_V4_METADATA_MAX_CHUNKS_BY_MODE[params.mode]
+  let windowToBlock = params.toBlock
 
   for (const lookbackBlocks of lookbackSteps) {
     const fromBlock = Math.max(0, params.toBlock - lookbackBlocks)
+    if (windowToBlock < fromBlock) continue
     const results = await portalFetchRecentRecords(
       `${PORTAL_URL}/datasets/${params.dataset}/stream`,
       {
         type: 'evm',
         fromBlock,
-        toBlock: params.toBlock,
+        toBlock: windowToBlock,
         fields: {
           block: { number: true, timestamp: true },
           log: buildEvmLogFields(),
@@ -693,7 +697,8 @@ async function resolveUniswapV4PoolMetadata(params: {
         itemKeys: ['logs'],
         limit: 1,
         chunkSize: UNISWAP_V4_METADATA_CHUNK_SIZE,
-        maxChunks: UNISWAP_V4_METADATA_MAX_CHUNKS_BY_MODE[params.mode],
+        maxChunks,
+        concurrency: maxChunks,
         timeout: UNISWAP_V4_METADATA_TIMEOUT_MS,
         retries: 0,
       },
@@ -729,6 +734,8 @@ async function resolveUniswapV4PoolMetadata(params: {
         }
       }
     }
+
+    windowToBlock = Math.max(0, windowToBlock - maxChunks * UNISWAP_V4_METADATA_CHUNK_SIZE)
   }
 
   return undefined
@@ -852,6 +859,8 @@ async function visitAdaptiveEvmLogRange(
       },
       {
         maxBytes: EVM_OHLC_MAX_BYTES,
+        timeout: EVM_OHLC_QUERY_TIMEOUT_MS,
+        retries: 0,
         onRecord,
       },
     )
@@ -912,7 +921,9 @@ export function registerEvmOhlcTool(server: McpServer) {
         .string()
         .optional()
         .default('1h')
-        .describe('How much recent history to cover. Accepts compact durations like "1h" or natural phrases like "past 30 minutes".'),
+        .describe(
+          'How much recent history to cover. Accepts compact durations like "1h" or natural phrases like "past 30 minutes".',
+        ),
       mode: z
         .enum(['fast', 'deep'])
         .optional()
@@ -1441,10 +1452,12 @@ export function registerEvmOhlcTool(server: McpServer) {
       }
 
       let backfillAttempts = 0
+      let backfillInterrupted = false
       while (
         earliestObservedBelowPageEnd > seriesStartTimestamp &&
         scannedFromBlock > 0 &&
-        backfillAttempts < maxBackfillAttempts
+        backfillAttempts < maxBackfillAttempts &&
+        Date.now() - queryStartTime < EVM_OHLC_TOOL_BUDGET_MS
       ) {
         const observedSeconds = Math.max(
           1,
@@ -1458,16 +1471,29 @@ export function registerEvmOhlcTool(server: McpServer) {
 
         if (extensionFromBlock >= scannedFromBlock) break
 
-        await accumulateRange(extensionFromBlock, scannedFromBlock - 1, {
-          ...(paginationCursor
-            ? {
-                pageStartTimestamp: seriesStartTimestamp,
-                pageEndExclusive: seriesEndExclusive,
-              }
-            : {}),
-        })
+        try {
+          await accumulateRange(extensionFromBlock, scannedFromBlock - 1, {
+            ...(paginationCursor
+              ? {
+                  pageStartTimestamp: seriesStartTimestamp,
+                  pageEndExclusive: seriesEndExclusive,
+                }
+              : {}),
+          })
+        } catch (error) {
+          if (error instanceof RequestCancelledError) throw error
+          backfillInterrupted = true
+          break
+        }
         scannedFromBlock = extensionFromBlock
         backfillAttempts += 1
+      }
+      if (
+        !backfillInterrupted &&
+        earliestObservedBelowPageEnd > seriesStartTimestamp &&
+        Date.now() - queryStartTime >= EVM_OHLC_TOOL_BUDGET_MS
+      ) {
+        backfillInterrupted = true
       }
 
       const buildOhlcSeries = (baseSide: BaseTokenSide): OhlcRow[] =>
@@ -1551,7 +1577,7 @@ export function registerEvmOhlcTool(server: McpServer) {
         intervalSeconds,
         isFilled: (bucket) => bucket.sample_count > 0,
         anchor: 'latest_event',
-        windowComplete: earliestObservedBelowPageEnd <= seriesStartTimestamp,
+        windowComplete: !backfillInterrupted && earliestObservedBelowPageEnd <= seriesStartTimestamp,
         ...(earliestObservedTimestamp !== Number.MAX_SAFE_INTEGER
           ? { firstObservedTimestamp: earliestObservedTimestamp }
           : {}),
@@ -1599,6 +1625,11 @@ export function registerEvmOhlcTool(server: McpServer) {
           : undefined
 
       const notices: string[] = []
+      if (backfillInterrupted) {
+        notices.push(
+          'Stopped optional historical backfill at the interactive request budget; returned candles from successfully scanned blocks and marked the window incomplete.',
+        )
+      }
       if (priceScale === 'raw_ratio') {
         notices.push(
           'Prices use raw pool ratios because token decimals were not fully provided or resolved from token-list data. Pass token0_decimals and token1_decimals for human-readable prices.',
@@ -2100,7 +2131,7 @@ export function registerEvmOhlcTool(server: McpServer) {
             to_block: endBlock,
             range_kind: resolvedWindow.range_kind,
             notes: [
-              `Execution depth: ${mode === 'fast' ? 'bounded_preview' : 'complete_window'}.`,
+              `Execution depth: ${backfillInterrupted ? 'partial_window' : mode === 'fast' ? 'bounded_preview' : 'complete_window'}.`,
               `Price source: ${source}.`,
               ...(normalizedPoolId ? [`Pool id: ${normalizedPoolId}.`] : []),
               `Source family: ${sourceFamily}; price method: ${priceMethod}.`,
@@ -2131,7 +2162,7 @@ export function registerEvmOhlcTool(server: McpServer) {
             returnedBuckets: ohlc.length,
             filledBuckets,
             anchor: 'latest_event',
-            windowComplete: earliestObservedBelowPageEnd <= seriesStartTimestamp,
+            windowComplete: !backfillInterrupted && earliestObservedBelowPageEnd <= seriesStartTimestamp,
           }),
           metadata: {
             dataset,
