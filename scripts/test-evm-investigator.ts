@@ -10,7 +10,7 @@ import {
   connectTestClient,
   printSection,
 } from './test-helpers.ts'
-import { loadToolTestContext, type ToolTestContext } from './tool-manifest.ts'
+import { type ToolTestContext, loadToolTestContext } from './tool-manifest.ts'
 
 const ERC20_TRANSFER_SIGHASH = '0xa9059cbb'
 const ERC20_APPROVE_SIGHASH = '0x095ea7b3'
@@ -145,8 +145,9 @@ async function main() {
         },
       },
       {
-        name: 'broad selective latest mint scan attempts reverse search',
+        name: 'broad selective latest mint scan stays bounded and honest',
         run: async () => {
+          const startedAt = Date.now()
           const result = await callToolWithRetry(client, 'portal_evm_query_logs', {
             network: 'base-mainnet',
             from_block: context.baseHead - 150_000,
@@ -161,16 +162,24 @@ async function main() {
             field_preset: 'full',
             response_format: 'full',
           })
-          assert(!result.isError, 'Expected broad selective latest mint query to scan instead of fail fast')
+          const elapsedMs = Date.now() - startedAt
+          assert(!result.isError, 'Expected broad selective latest mint query to return a bounded result')
+          assert(elapsedMs < 30_000, `Expected bounded latest mint scan under 30s, took ${elapsedMs}ms`)
           assert(result.data._execution?.scan_order === 'latest', 'Expected latest scan metadata')
           assert(
-            result.data._execution?.scanned_blocks > 100_000,
-            'Expected selective latest scan to cover a broad block range',
+            result.data._execution?.scanned_blocks > 0 && result.data._execution?.scanned_blocks <= 25_000,
+            'Expected default selective latest scan to inspect no more than 25,000 blocks',
           )
+          assert(result.data._execution?.max_scan_blocks === 25_000, 'Expected the default 25,000-block scan ceiling')
+          assert(result.data._coverage?.window_complete === false, 'Expected partial-window coverage disclosure')
           assert(
             Array.isArray(result.data._notices) &&
-              result.data._notices.some((notice: string) => /complete filtered latest scan/i.test(notice)),
-            'Expected complete filtered latest scan notice',
+              result.data._notices.some((notice: string) => /searched only blocks/i.test(notice)),
+            'Expected bounded scan notice with inspected block bounds',
+          )
+          assert(
+            /older requested blocks were not scanned/i.test(result.data.answer),
+            'Expected partial result in answer',
           )
         },
       },

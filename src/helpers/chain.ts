@@ -18,6 +18,9 @@ export function detectChainType(dataset: string): ChainType {
   if (lower.includes('solana') || lower.includes('eclipse')) {
     return 'solana'
   }
+  if (lower.includes('tron')) {
+    return 'tron'
+  }
   if (lower === 'hyperliquid-fills') {
     return 'hyperliquidFills'
   }

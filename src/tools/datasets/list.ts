@@ -2,6 +2,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { z } from 'zod'
 
 import { getDatasets } from '../../cache/datasets.js'
+import { detectChainType } from '../../helpers/chain.js'
 import { formatResult } from '../../helpers/format.js'
 import { buildToolDescription } from '../../helpers/tool-ux.js'
 
@@ -14,7 +15,7 @@ export function registerListDatasetsTool(server: McpServer) {
     'portal_list_networks',
     buildToolDescription('portal_list_networks'),
     {
-      vm: z.enum(['evm', 'solana', 'bitcoin', 'substrate', 'hyperliquid']).optional().describe('Filter by VM family'),
+      vm: z.enum(['evm', 'tron', 'solana', 'bitcoin', 'substrate', 'hyperliquid']).optional().describe('Filter by VM family'),
       network_type: z.enum(['mainnet', 'testnet', 'devnet']).optional().describe('Filter by network type'),
       query: z.string().optional().describe('Search by name, alias, or chain ID'),
       real_time_only: z.boolean().optional().describe('Only show networks with a real-time indexed head'),
@@ -25,7 +26,7 @@ export function registerListDatasetsTool(server: McpServer) {
 
       if (vm) {
         datasets = datasets.filter((d) => {
-          const kind = d.metadata?.kind
+          const kind = d.metadata?.kind ?? detectChainType(d.dataset)
           if (vm === 'hyperliquid') {
             return kind === 'hyperliquidFills' || kind === 'hyperliquidReplicaCmds'
           }
@@ -75,6 +76,7 @@ export function registerListDatasetsTool(server: McpServer) {
 
       // Return compact results with metadata
       const results = datasets.map((d) => {
+        const kind = d.metadata?.kind ?? detectChainType(d.dataset)
         // Infer correct network type (Portal metadata has bugs)
         const name = d.dataset.toLowerCase()
         let inferredType = d.metadata?.type
@@ -92,9 +94,9 @@ export function registerListDatasetsTool(server: McpServer) {
           network: d.dataset,
           aliases: d.aliases.length > 0 ? d.aliases : undefined,
           vm:
-            d.metadata?.kind === 'hyperliquidFills' || d.metadata?.kind === 'hyperliquidReplicaCmds'
+            kind === 'hyperliquidFills' || kind === 'hyperliquidReplicaCmds'
               ? 'hyperliquid'
-              : d.metadata?.kind,
+              : kind,
           type: inferredType,
           chain_id: d.metadata?.evm?.chain_id,
           display_name: d.metadata?.display_name,

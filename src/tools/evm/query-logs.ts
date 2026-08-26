@@ -58,7 +58,7 @@ function flattenLogsWithBlockContext(results: unknown[]) {
         number?: number
         timestamp?: number
       }
-      logs?: Array<Record<string, unknown>>
+      logs?: Record<string, unknown>[]
     }
 
     const blockNumber = typedBlock.number ?? typedBlock.header?.number
@@ -94,6 +94,7 @@ type QueryLogsRequest = {
   topic2?: string[]
   topic3?: string[]
   scan_order?: 'earliest' | 'latest'
+  max_scan_blocks?: number
   field_preset: 'minimal' | 'standard' | 'full'
   response_format: ResponseFormat
   include_transaction: boolean
@@ -175,11 +176,13 @@ function getRecentLogChunkSize(blockRange: number, hasFilters: boolean): number 
   return Math.min(100_000, Math.max(5_000, Math.ceil(blockRange / 100)))
 }
 
+const DEFAULT_SELECTIVE_LATEST_SCAN_BLOCKS = 25_000
+
 function getSelectiveLatestLogChunkSize(blockRange: number): number {
-  return Math.min(2_000_000, Math.max(1, blockRange))
+  return Math.min(2_500, Math.max(1, blockRange))
 }
 
-function shouldUseCompleteFilteredLatestScan({
+function shouldUseBoundedFilteredLatestScan({
   scanOrder,
   blockRange,
   limit,
@@ -216,6 +219,8 @@ async function fetchLogsByScanOrder({
   limit,
   chunkSize,
   scanOrder,
+  concurrency = 1,
+  maxScanBlocks,
 }: {
   url: string
   query: Record<string, unknown>
@@ -224,13 +229,17 @@ async function fetchLogsByScanOrder({
   limit: number
   chunkSize: number
   scanOrder: 'earliest' | 'latest'
+  concurrency?: number
+  maxScanBlocks?: number
 }) {
   const targetCount = limit + 1
   const scan = await scanBoundedBlockRange<EvmLogItem>({
     fromBlock,
     toBlock,
     chunkSize,
+    concurrency,
     scanOrder,
+    maxScanBlocks,
     shouldContinue: (state) => state.items.length < targetCount,
     fetchChunk: async (chunk) => {
       const records = await portalFetchStreamRange(url, {
@@ -328,6 +337,15 @@ export function registerQueryLogsTool(server: McpServer) {
         .optional()
         .default('latest')
         .describe('Which side of the block window to scan first. Use earliest for first-event questions.'),
+      max_scan_blocks: z
+        .number()
+        .int()
+        .min(1)
+        .max(250_000)
+        .optional()
+        .describe(
+          'Maximum blocks to inspect for bounded earliest/latest scans. Sparse latest searches default to 25,000 blocks to stay within MCP request timeouts; raise only when deeper coverage is worth the added latency.',
+        ),
       limit: z
         .number()
         .max(200)
@@ -382,6 +400,7 @@ export function registerQueryLogsTool(server: McpServer) {
       topic2,
       topic3,
       scan_order,
+      max_scan_blocks,
       limit,
       field_preset,
       response_format,
@@ -430,6 +449,7 @@ export function registerQueryLogsTool(server: McpServer) {
         topic2 = paginationCursor.request.topic2
         topic3 = paginationCursor.request.topic3
         scan_order = paginationCursor.request.scan_order ?? 'latest'
+        max_scan_blocks = paginationCursor.request.max_scan_blocks
         field_preset = paginationCursor.request.field_preset
         response_format = paginationCursor.request.response_format
         include_transaction = paginationCursor.request.include_transaction
@@ -585,7 +605,7 @@ export function registerQueryLogsTool(server: McpServer) {
       const cursorSkip = paginationCursor?.skip_inclusive_block ?? 0
       const fetchLimit = limit + cursorSkip + 1
       const portalUrl = `${PORTAL_URL}/datasets/${dataset}/stream`
-      const completeFilteredLatestScan = shouldUseCompleteFilteredLatestScan({
+      const boundedFilteredLatestScan = shouldUseBoundedFilteredLatestScan({
         scanOrder: scan_order,
         blockRange: inclusiveBlockRange,
         limit,
@@ -596,17 +616,21 @@ export function registerQueryLogsTool(server: McpServer) {
         topic3,
       })
       const scanResult =
-        scan_order === 'earliest' || completeFilteredLatestScan
+        scan_order === 'earliest' || boundedFilteredLatestScan
           ? await fetchLogsByScanOrder({
               url: portalUrl,
               query,
               fromBlock: resolvedFromBlock,
               toBlock: pageToBlock,
               limit,
-              chunkSize: completeFilteredLatestScan
+              chunkSize: boundedFilteredLatestScan
                 ? getSelectiveLatestLogChunkSize(inclusiveBlockRange)
                 : getRecentLogChunkSize(inclusiveBlockRange, hasFilters),
               scanOrder: scan_order,
+              concurrency: boundedFilteredLatestScan ? 5 : 1,
+              maxScanBlocks: boundedFilteredLatestScan
+                ? Math.min(inclusiveBlockRange, max_scan_blocks ?? DEFAULT_SELECTIVE_LATEST_SCAN_BLOCKS)
+                : max_scan_blocks,
             })
           : undefined
       const results = scanResult
@@ -655,6 +679,7 @@ export function registerQueryLogsTool(server: McpServer) {
                 ...(topic2 ? { topic2 } : {}),
                 ...(topic3 ? { topic3 } : {}),
                 scan_order,
+                ...(max_scan_blocks !== undefined ? { max_scan_blocks } : {}),
                 field_preset,
                 response_format: effectiveResponseFormat,
                 include_transaction,
@@ -708,9 +733,9 @@ export function registerQueryLogsTool(server: McpServer) {
       if (openEndedLatestBlockWindow) {
         notices.push('Open-ended from_block was resolved through the latest indexed head for scan_order=latest.')
       }
-      if (completeFilteredLatestScan) {
+      if (boundedFilteredLatestScan) {
         notices.push(
-          'Used a complete filtered latest scan strategy: scan backward from the indexed head with large chunks until the latest match is proven or the requested window is exhausted.',
+          `Used a bounded filtered latest scan strategy: scan backward from the indexed head in small concurrent chunks, inspecting at most ${(max_scan_blocks ?? DEFAULT_SELECTIVE_LATEST_SCAN_BLOCKS).toLocaleString()} blocks unless a match is proven sooner.`,
         )
       }
       if (nextCursor) notices.push('Older results are available via _pagination.next_cursor.')
@@ -737,13 +762,18 @@ export function registerQueryLogsTool(server: McpServer) {
         items: page.pageItems,
         getBlockNumber,
         hasMore: page.hasMore,
+        windowComplete: scanResult ? !scanResult.hasUnscannedBlocks : true,
       })
 
       const message =
         effectiveResponseFormat === 'summary'
           ? `Log summary for ${page.pageItems.length} logs${page.hasMore ? ' (latest preview page)' : ''}`
+          : scanResult?.hasUnscannedBlocks
+            ? page.pageItems.length > 0
+              ? `Retrieved ${page.pageItems.length} logs from the newest ${scanResult.scannedBlocks.toLocaleString()} blocks; older requested blocks were not scanned`
+              : `No matching logs found in the newest ${scanResult.scannedBlocks.toLocaleString()} blocks; older requested blocks were not scanned`
           : scanResult
-            ? `Retrieved ${page.pageItems.length} logs by scanning forward from the start of the window`
+            ? `Retrieved ${page.pageItems.length} logs by scanning ${scan_order === 'latest' ? 'backward from the end' : 'forward from the start'} of the window`
             : `Retrieved ${page.pageItems.length} logs${page.hasMore ? ` from the most recent matching blocks (preview page limited to ${limit})` : ''}`
 
       return formatResult(formattedData, message, {
@@ -774,8 +804,8 @@ export function registerQueryLogsTool(server: McpServer) {
               openEndedLatestBlockWindow
                 ? 'Open-ended from_block searched through the latest indexed head because scan_order=latest.'
                 : undefined,
-              completeFilteredLatestScan
-                ? 'Complete filtered latest scan used large reverse chunks to avoid tiny chunk walks on sparse mint/event searches.'
+              boundedFilteredLatestScan
+                ? 'Bounded filtered latest scan used small concurrent reverse chunks to keep sparse mint/event searches within MCP timeouts.'
                 : undefined,
               include_transaction || include_transaction_traces || include_transaction_logs
                 ? 'Parent transaction context was requested for matching logs.'

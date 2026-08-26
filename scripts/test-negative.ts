@@ -53,6 +53,15 @@ const CASES: NegativeCase[] = [
     },
   },
   {
+    name: 'Unsupported Tron EVM query',
+    tool: 'portal_evm_query_logs',
+    args: { network: 'tron-mainnet', from_block: 1, to_block: 2, limit: 1 },
+    expect: (text) => {
+      assert(/does not support network 'tron-mainnet'/i.test(text), 'Unsupported flow should mention Tron clearly')
+      assert(/Tron network/i.test(text), 'Unsupported flow should identify the native Tron query family')
+    },
+  },
+  {
     name: 'Conflicting compare/group args',
     tool: 'portal_get_time_series',
     args: { network: 'base', metric: 'transaction_count', duration: '1h', interval: '5m', compare_previous: true, group_by: 'contract' },

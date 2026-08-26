@@ -22,7 +22,13 @@ async function fetchHeadTimestamp(dataset: string, chainType: string, blockNumbe
   }
 
   const query =
-    chainType === 'solana'
+    chainType === 'tron'
+      ? {
+          type: 'tron',
+          includeAllBlocks: true,
+          ...baseQuery,
+        }
+      : chainType === 'solana'
       ? {
           type: 'solana',
           includeAllBlocks: true,

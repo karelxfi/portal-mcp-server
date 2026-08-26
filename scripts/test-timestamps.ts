@@ -3,6 +3,7 @@
 import { getBlockHead } from '../dist/cache/datasets.js'
 import { getDatasets } from '../dist/cache/datasets.js'
 import { buildQueryFreshness } from '../dist/helpers/result-metadata.js'
+import { detectChainType } from '../dist/helpers/chain.js'
 import {
   getTimestampWindowNotices,
   getHeadTimestamp,
@@ -152,6 +153,7 @@ async function assertEstimatedTimeframeProvenance() {
 async function main() {
   console.log('Starting timestamp resolver QA...\n')
 
+  assert(detectChainType('tron-mainnet') === 'tron', 'Tron should use its native Portal query type')
   assertNaturalLanguageTimeInputs()
   await assertEstimatedTimeframeProvenance()
 

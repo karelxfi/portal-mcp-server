@@ -1,6 +1,12 @@
 import { DEFAULT_RETRIES, DEFAULT_TIMEOUT, STREAM_TIMEOUT } from '../constants/index.js'
 import { portalRequestsTotal } from '../metrics.js'
-import { createTimeoutError, parsePortalError, wrapError } from './errors.js'
+import { RequestCancelledError, createTimeoutError, parsePortalError, wrapError } from './errors.js'
+import {
+  type RequestAbortContext,
+  createRequestAbortContext,
+  getPortalRequestSignal,
+  isAbortLike,
+} from './request-context.js'
 
 // ============================================================================
 // Portal API Wrapper Functions
@@ -20,7 +26,34 @@ import { createTimeoutError, parsePortalError, wrapError } from './errors.js'
 // ============================================================================
 
 export async function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms))
+  const requestSignal = getPortalRequestSignal()
+  if (!requestSignal) {
+    return new Promise((resolve) => setTimeout(resolve, ms))
+  }
+  if (requestSignal.aborted) throw new RequestCancelledError()
+
+  return new Promise((resolve, reject) => {
+    const timeoutId = setTimeout(() => {
+      requestSignal.removeEventListener('abort', cancelWait)
+      resolve()
+    }, ms)
+    const cancelWait = () => {
+      clearTimeout(timeoutId)
+      reject(new RequestCancelledError())
+    }
+    requestSignal.addEventListener('abort', cancelWait, { once: true })
+  })
+}
+
+function rethrowAbort(
+  error: unknown,
+  abortContext: RequestAbortContext,
+  timeout: number,
+  context?: Record<string, unknown>,
+): void {
+  if (!isAbortLike(error) && !abortContext.signal.aborted) return
+  if (abortContext.wasCancelled()) throw new RequestCancelledError()
+  if (abortContext.didTimeout()) throw createTimeoutError(timeout, context)
 }
 
 export interface StreamStopAfterItems {
@@ -49,6 +82,8 @@ export interface PortalFetchRecentRecordsOptions extends PortalFetchStreamRangeO
   limit: number
   chunkSize: number
   maxChunks?: number
+  concurrency?: number
+  initialSequentialChunks?: number
 }
 
 function normalizePortalFetchStreamOptions(
@@ -136,8 +171,7 @@ export async function portalFetch<T>(
   let lastError: Error | null = null
 
   for (let attempt = 0; attempt <= retries; attempt++) {
-    const controller = new AbortController()
-    const timeoutId = setTimeout(() => controller.abort(), timeout)
+    const abortContext = createRequestAbortContext(timeout)
 
     try {
       const fetchOptions: RequestInit = {
@@ -147,7 +181,7 @@ export async function portalFetch<T>(
           'Content-Type': 'application/json',
           Accept: 'application/json',
         },
-        signal: controller.signal,
+        signal: abortContext.signal,
       }
 
       if (body) {
@@ -155,7 +189,6 @@ export async function portalFetch<T>(
       }
 
       const response = await fetch(url, fetchOptions)
-      clearTimeout(timeoutId)
 
       portalRequestsTotal.inc({ method, status_code: response.status })
 
@@ -192,12 +225,7 @@ export async function portalFetch<T>(
 
       return (await response.json()) as T
     } catch (error) {
-      clearTimeout(timeoutId)
-
-      // Check for timeout/abort
-      if (error instanceof Error && (error.name === 'AbortError' || error.message.includes('abort'))) {
-        throw createTimeoutError(timeout, { url, attempt: attempt + 1, max_attempts: retries + 1 })
-      }
+      rethrowAbort(error, abortContext, timeout, { url, attempt: attempt + 1, max_attempts: retries + 1 })
 
       lastError = wrapError(error, { url, attempt: attempt + 1, max_attempts: retries + 1 }) as Error
 
@@ -210,6 +238,8 @@ export async function portalFetch<T>(
         const delay = Math.pow(2, attempt) * 1000
         await sleep(delay)
       }
+    } finally {
+      abortContext.cleanup()
     }
   }
 
@@ -239,8 +269,7 @@ export async function portalFetchStream(
   let lastError: Error | null = null
 
   for (let attempt = 0; attempt <= options.retries; attempt++) {
-    const controller = new AbortController()
-    const timeoutId = setTimeout(() => controller.abort(), timeout)
+    const abortContext = createRequestAbortContext(timeout)
 
     try {
       const response = await fetch(url, {
@@ -251,10 +280,8 @@ export async function portalFetchStream(
           Accept: 'application/x-ndjson',
         },
         body: JSON.stringify(body),
-        signal: controller.signal,
+        signal: abortContext.signal,
       })
-
-      clearTimeout(timeoutId)
 
       portalRequestsTotal.inc({ method: 'POST', status_code: response.status })
 
@@ -378,11 +405,7 @@ export async function portalFetchStream(
 
       return results
     } catch (error) {
-      clearTimeout(timeoutId)
-
-      if (error instanceof Error && (error.name === 'AbortError' || error.message.includes('abort'))) {
-        throw createTimeoutError(timeout, { url, query: body })
-      }
+      rethrowAbort(error, abortContext, timeout, { url, query: body })
 
       const errMsg = error instanceof Error ? error.message : String(error)
       if (errMsg.includes('HTTP 4') && !errMsg.includes('409') && !errMsg.includes('429')) {
@@ -394,6 +417,8 @@ export async function portalFetchStream(
       if (attempt < options.retries) {
         await sleep(Math.pow(2, attempt) * 1000)
       }
+    } finally {
+      abortContext.cleanup()
     }
   } // end for loop
 
@@ -416,8 +441,7 @@ export async function portalFetchStreamVisit(
   let lastError: Error | null = null
 
   for (let attempt = 0; attempt <= normalizedOptions.retries; attempt++) {
-    const controller = new AbortController()
-    const timeoutId = setTimeout(() => controller.abort(), timeout)
+    const abortContext = createRequestAbortContext(timeout)
 
     try {
       const response = await fetch(url, {
@@ -428,10 +452,8 @@ export async function portalFetchStreamVisit(
           Accept: 'application/x-ndjson',
         },
         body: JSON.stringify(body),
-        signal: controller.signal,
+        signal: abortContext.signal,
       })
-
-      clearTimeout(timeoutId)
 
       portalRequestsTotal.inc({ method: 'POST', status_code: response.status })
 
@@ -552,11 +574,7 @@ export async function portalFetchStreamVisit(
 
       return processedRecords
     } catch (error) {
-      clearTimeout(timeoutId)
-
-      if (error instanceof Error && (error.name === 'AbortError' || error.message.includes('abort'))) {
-        throw createTimeoutError(timeout, { url, query: body })
-      }
+      rethrowAbort(error, abortContext, timeout, { url, query: body })
 
       const errMsg = error instanceof Error ? error.message : String(error)
       if (errMsg.includes('HTTP 4') && !errMsg.includes('409') && !errMsg.includes('429')) {
@@ -568,6 +586,8 @@ export async function portalFetchStreamVisit(
       if (attempt < normalizedOptions.retries) {
         await sleep(Math.pow(2, attempt) * 1000)
       }
+    } finally {
+      abortContext.cleanup()
     }
   }
 
@@ -630,10 +650,7 @@ export async function portalFetchStreamRange(
     }
 
     results.push(...chunk)
-    matchedItems += chunk.reduce<number>(
-      (sum, record) => sum + countMatchingItems(record, options.stopAfterItems),
-      0,
-    )
+    matchedItems += chunk.reduce<number>((sum, record) => sum + countMatchingItems(record, options.stopAfterItems), 0)
 
     if (stopAfterLimit > 0 && matchedItems >= stopAfterLimit) {
       break
@@ -776,6 +793,8 @@ export async function portalFetchRecentRecords(
   }
 
   const chunkSize = Math.max(1, options.chunkSize)
+  const concurrency = Math.max(1, Math.floor(options.concurrency ?? 1))
+  const initialSequentialChunks = Math.max(0, Math.floor(options.initialSequentialChunks ?? 0))
   const recentRecords: unknown[] = []
   let matchedItems = 0
   let currentTo = requestedTo
@@ -786,35 +805,50 @@ export async function portalFetchRecentRecords(
       break
     }
 
-    const chunkFrom = Math.max(requestedFrom, currentTo - chunkSize + 1)
-    const chunk = await portalFetchStreamRange(
-      url,
-      {
-        ...typedBody,
-        fromBlock: chunkFrom,
-        toBlock: currentTo,
-      },
-      {
-        ...options,
-        stopAfterItems: undefined,
-        maxBlocks: 0,
-      },
+    const batchConcurrency = chunksVisited < initialSequentialChunks ? 1 : concurrency
+    const batch: Array<{ fromBlock: number; toBlock: number }> = []
+    let plannedTo = currentTo
+    while (batch.length < batchConcurrency && plannedTo >= requestedFrom) {
+      if (options.maxChunks !== undefined && chunksVisited + batch.length >= options.maxChunks) break
+      const chunkFrom = Math.max(requestedFrom, plannedTo - chunkSize + 1)
+      batch.push({ fromBlock: chunkFrom, toBlock: plannedTo })
+      plannedTo = chunkFrom - 1
+    }
+    if (batch.length === 0) break
+
+    const outcomes = await Promise.allSettled(
+      batch.map((chunk) =>
+        portalFetchStreamRange(
+          url,
+          {
+            ...typedBody,
+            fromBlock: chunk.fromBlock,
+            toBlock: chunk.toBlock,
+          },
+          {
+            ...options,
+            stopAfterItems: undefined,
+            maxBlocks: 0,
+          },
+        ),
+      ),
     )
-    chunksVisited += 1
 
-    if (chunk.length > 0) {
-      recentRecords.unshift(...chunk)
-      matchedItems += chunk.reduce<number>(
-        (sum, record) => sum + countMatchingItems(record, { keys: options.itemKeys, limit: Number.MAX_SAFE_INTEGER }),
-        0,
-      )
+    for (let index = 0; index < outcomes.length && matchedItems < options.limit; index += 1) {
+      const outcome = outcomes[index]
+      if (outcome.status === 'rejected') throw outcome.reason
+      chunksVisited += 1
+
+      if (outcome.value.length > 0) {
+        recentRecords.unshift(...outcome.value)
+        matchedItems += outcome.value.reduce<number>(
+          (sum, record) => sum + countMatchingItems(record, { keys: options.itemKeys, limit: Number.MAX_SAFE_INTEGER }),
+          0,
+        )
+      }
     }
 
-    if (chunkFrom === requestedFrom) {
-      break
-    }
-
-    currentTo = chunkFrom - 1
+    currentTo = batch[batch.length - 1].fromBlock - 1
   }
 
   return recentRecords

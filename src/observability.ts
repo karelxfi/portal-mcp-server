@@ -1,6 +1,6 @@
 import { datasetQueriesTotal, observabilityExportsTotal, toolErrorsTotal, toolIntentCallsTotal, toolResponseSizeBytes, userQueryCapturedTotal } from './metrics.js'
 import { detectChainType } from './helpers/chain.js'
-import { ActionableError, sanitizeText } from './helpers/errors.js'
+import { ActionableError, RequestCancelledError, sanitizeText } from './helpers/errors.js'
 import { getToolContract } from './helpers/tool-ux.js'
 import { npmVersion } from './version.js'
 
@@ -17,7 +17,7 @@ export type RuntimeRequestContext = {
   forwardedFor?: string
 }
 
-type ToolEventStatus = 'success' | 'error'
+type ToolEventStatus = 'success' | 'error' | 'cancelled'
 
 type ObservabilityEvent = {
   event: 'mcp_tool_call'
@@ -146,6 +146,7 @@ function extractExecutionField(payload: Record<string, unknown> | undefined, key
 }
 
 function classifyErrorType(error: unknown): string {
+  if (error instanceof RequestCancelledError) return 'cancelled'
   if (error instanceof ActionableError) return 'actionable'
   if (!(error instanceof Error)) return 'unknown'
   const message = error.message.toLowerCase()
@@ -350,7 +351,7 @@ export function recordToolOutcome(params: {
   const toolContract = getToolContract(toolName)
   const network = extractNetwork(args, payload)
   const vm = classifyVm(toolName, args, payload)
-  const status: ToolEventStatus = error ? 'error' : 'success'
+  const status: ToolEventStatus = error instanceof RequestCancelledError ? 'cancelled' : error ? 'error' : 'success'
   const responseSizeBytes = result ? getResponseSizeBytes(result) : undefined
   const responseFormat =
     (typeof args.response_format === 'string' ? args.response_format : undefined)
@@ -376,7 +377,7 @@ export function recordToolOutcome(params: {
     toolResponseSizeBytes.observe({ tool: toolName, transport: runtime.transport }, responseSizeBytes)
   }
 
-  if (error) {
+  if (error && status === 'error') {
     toolErrorsTotal.inc({
       tool: toolName,
       transport: runtime.transport,

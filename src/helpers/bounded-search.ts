@@ -28,6 +28,7 @@ type ScanBoundedBlockRangeOptions<T> = {
   fromBlock: number
   toBlock: number
   chunkSize: number
+  concurrency?: number
   scanOrder: BoundedSearchScanOrder
   maxScanBlocks?: number
   fetchChunk: (chunk: BoundedSearchChunk) => Promise<T[]>
@@ -39,6 +40,7 @@ export async function scanBoundedBlockRange<T>({
   fromBlock,
   toBlock,
   chunkSize,
+  concurrency = 1,
   scanOrder,
   maxScanBlocks,
   fetchChunk,
@@ -47,6 +49,7 @@ export async function scanBoundedBlockRange<T>({
 }: ScanBoundedBlockRangeOptions<T>): Promise<BoundedSearchResult<T>> {
   const requestedBlocks = Math.max(0, toBlock - fromBlock + 1)
   const effectiveChunkSize = Math.max(1, Math.floor(chunkSize))
+  const effectiveConcurrency = Math.max(1, Math.floor(concurrency))
   const effectiveMaxScanBlocks = Math.max(1, Math.min(Math.floor(maxScanBlocks ?? requestedBlocks), requestedBlocks))
   let items: T[] = []
   let scannedFromBlock = scanOrder === 'earliest' ? fromBlock : toBlock
@@ -55,13 +58,15 @@ export async function scanBoundedBlockRange<T>({
   let chunkCount = 0
 
   const continueScanning = () =>
-    scannedBlocks < effectiveMaxScanBlocks && (!shouldContinue || shouldContinue({
-      items,
-      scannedFromBlock,
-      scannedToBlock,
-      scannedBlocks,
-      chunkCount,
-    }))
+    scannedBlocks < effectiveMaxScanBlocks &&
+    (!shouldContinue ||
+      shouldContinue({
+        items,
+        scannedFromBlock,
+        scannedToBlock,
+        scannedBlocks,
+        chunkCount,
+      }))
 
   if (requestedBlocks > 0 && scanOrder === 'earliest') {
     for (let chunkFrom = fromBlock; chunkFrom <= toBlock && continueScanning(); chunkFrom += effectiveChunkSize) {
@@ -74,7 +79,7 @@ export async function scanBoundedBlockRange<T>({
       chunkCount += 1
       items = mergeChunkItems ? mergeChunkItems(items, chunkItems, chunk) : [...items, ...chunkItems]
     }
-  } else if (requestedBlocks > 0) {
+  } else if (requestedBlocks > 0 && effectiveConcurrency === 1) {
     for (let chunkTo = toBlock; chunkTo >= fromBlock && continueScanning(); chunkTo -= effectiveChunkSize) {
       const chunkFrom = Math.max(fromBlock, chunkTo - effectiveChunkSize + 1, toBlock - effectiveMaxScanBlocks + 1)
       const chunk = { fromBlock: chunkFrom, toBlock: chunkTo, index: chunkCount }
@@ -84,6 +89,44 @@ export async function scanBoundedBlockRange<T>({
       scannedBlocks += chunkTo - chunkFrom + 1
       chunkCount += 1
       items = mergeChunkItems ? mergeChunkItems(items, chunkItems, chunk) : [...items, ...chunkItems]
+    }
+  } else if (requestedBlocks > 0) {
+    let nextChunkTo = toBlock
+
+    while (nextChunkTo >= fromBlock && continueScanning()) {
+      const batch: BoundedSearchChunk[] = []
+      let plannedBlocks = 0
+
+      while (batch.length < effectiveConcurrency && nextChunkTo >= fromBlock) {
+        const remainingBudget = effectiveMaxScanBlocks - scannedBlocks - plannedBlocks
+        if (remainingBudget <= 0) break
+
+        const chunkFrom = Math.max(
+          fromBlock,
+          nextChunkTo - effectiveChunkSize + 1,
+          nextChunkTo - remainingBudget + 1,
+          toBlock - effectiveMaxScanBlocks + 1,
+        )
+        const chunk = { fromBlock: chunkFrom, toBlock: nextChunkTo, index: chunkCount + batch.length }
+        batch.push(chunk)
+        plannedBlocks += nextChunkTo - chunkFrom + 1
+        nextChunkTo = chunkFrom - 1
+      }
+
+      if (batch.length === 0) break
+
+      const fetched = await Promise.allSettled(batch.map((chunk) => fetchChunk(chunk)))
+      for (let index = 0; index < batch.length && continueScanning(); index += 1) {
+        const outcome = fetched[index]
+        if (outcome.status === 'rejected') throw outcome.reason
+
+        const chunk = batch[index]
+        scannedFromBlock = chunk.fromBlock
+        scannedToBlock = chunkCount === 0 ? chunk.toBlock : Math.max(scannedToBlock, chunk.toBlock)
+        scannedBlocks += chunk.toBlock - chunk.fromBlock + 1
+        chunkCount += 1
+        items = mergeChunkItems ? mergeChunkItems(items, outcome.value, chunk) : [...items, ...outcome.value]
+      }
     }
   }
 
@@ -118,10 +161,7 @@ export function buildBoundedSearchExecution(result: BoundedSearchResult<unknown>
   }
 }
 
-export function buildBoundedSearchNotice(
-  result: BoundedSearchResult<unknown>,
-  label: string,
-): string | undefined {
+export function buildBoundedSearchNotice(result: BoundedSearchResult<unknown>, label: string): string | undefined {
   if (!result.hasUnscannedBlocks) return undefined
   return `${label} searched only blocks ${result.scannedFromBlock}-${result.scannedToBlock} of requested window ${result.requestedFromBlock}-${result.requestedToBlock}; narrow filters, page forward, or raise max_scan_blocks for deeper coverage.`
 }

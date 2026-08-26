@@ -18,12 +18,13 @@ import {
   type TokenListLookupMetadata,
   resolveTokenByAddressFromListWithStatus,
 } from '../../helpers/entity-resolution.js'
-import { createUnsupportedChainError } from '../../helpers/errors.js'
+import { RequestCancelledError, createUnsupportedChainError } from '../../helpers/errors.js'
 import { portalFetchRecentRecords, portalFetchStreamRangeVisit } from '../../helpers/fetch.js'
 import { buildEvmLogFields } from '../../helpers/fields.js'
 import { formatResult } from '../../helpers/format.js'
 import { formatTimestamp } from '../../helpers/format.js'
 import { buildPaginationInfo, decodeCursor, encodeCursor } from '../../helpers/pagination.js'
+import { getPortalRequestSignal } from '../../helpers/request-context.js'
 import {
   buildBucketCoverage,
   buildBucketGapDiagnostics,
@@ -198,7 +199,10 @@ const EVM_OHLC_METADATA_CACHE_TTL_MS = 15 * 60_000
 const EVM_OHLC_RESPONSE_CACHE_TTL_MS = 20_000
 const evmOhlcMetadataCache = createCache<UniswapV4PoolMetadata | null>(EVM_OHLC_METADATA_CACHE_TTL_MS, 128)
 const evmOhlcResponseCache = createCache<CachedOhlcResponse>(EVM_OHLC_RESPONSE_CACHE_TTL_MS, 32)
-const pendingUniswapV4Metadata = new Map<string, Promise<UniswapV4PoolMetadata | undefined>>()
+const pendingUniswapV4Metadata = new Map<
+  string,
+  { promise: Promise<UniswapV4PoolMetadata | undefined>; requestSignal?: AbortSignal }
+>()
 
 function isConcentratedLiquiditySwapSource(source: EvmOhlcSource) {
   return source === 'uniswap_v3_swap' || source === 'uniswap_v4_swap' || source === 'aerodrome_slipstream_swap'
@@ -799,9 +803,10 @@ async function getCachedOrResolveUniswapV4PoolMetadata(params: {
     return cached ?? undefined
   }
 
+  const requestSignal = getPortalRequestSignal()
   const pending = pendingUniswapV4Metadata.get(cacheKey)
-  if (pending) {
-    return pending
+  if (pending && pending.requestSignal === requestSignal) {
+    return pending.promise
   }
 
   const lookupPromise = resolveUniswapV4PoolMetadata({
@@ -814,14 +819,19 @@ async function getCachedOrResolveUniswapV4PoolMetadata(params: {
       params.mode === 'fast' ? UNISWAP_V4_METADATA_LOOKBACK_STEPS.slice(0, 1) : UNISWAP_V4_METADATA_LOOKBACK_STEPS,
   })
 
-  pendingUniswapV4Metadata.set(cacheKey, lookupPromise)
+  const ownsPendingEntry = !pending
+  if (ownsPendingEntry) {
+    pendingUniswapV4Metadata.set(cacheKey, { promise: lookupPromise, requestSignal })
+  }
 
   try {
     const resolved = await lookupPromise
     evmOhlcMetadataCache.set(cacheKey, resolved ?? null)
     return resolved
   } finally {
-    pendingUniswapV4Metadata.delete(cacheKey)
+    if (ownsPendingEntry && pendingUniswapV4Metadata.get(cacheKey)?.promise === lookupPromise) {
+      pendingUniswapV4Metadata.delete(cacheKey)
+    }
   }
 }
 
@@ -1208,6 +1218,7 @@ export function registerEvmOhlcTool(server: McpServer) {
             }
           }
         } catch (error) {
+          if (error instanceof RequestCancelledError) throw error
           const message = error instanceof Error ? error.message : String(error)
           v4MetadataResolutionStatus = isTimeoutLikeMessage(message) ? 'timeout' : 'failed'
         }
@@ -1225,6 +1236,7 @@ export function registerEvmOhlcTool(server: McpServer) {
                 return result.match
               })
               .catch((error) => {
+                if (error instanceof RequestCancelledError) throw error
                 tokenListMetadataFailed = true
                 console.error('Failed to resolve token0 metadata from token-list data:', error)
                 return undefined
@@ -1237,6 +1249,7 @@ export function registerEvmOhlcTool(server: McpServer) {
                 return result.match
               })
               .catch((error) => {
+                if (error instanceof RequestCancelledError) throw error
                 tokenListMetadataFailed = true
                 console.error('Failed to resolve token1 metadata from token-list data:', error)
                 return undefined

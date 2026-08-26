@@ -6,6 +6,7 @@ import { PORTAL_URL } from '../../constants/index.js'
 import { detectChainType } from '../../helpers/chain.js'
 import { ActionableError, createUnsupportedChainError } from '../../helpers/errors.js'
 import { portalFetchStream, portalFetchStreamRangeVisit } from '../../helpers/fetch.js'
+import { getPortalRequestSignal } from '../../helpers/request-context.js'
 import { formatResult } from '../../helpers/format.js'
 import { formatDuration, formatNumber, formatPct, shortenAddress } from '../../helpers/format.js'
 import { hashString53 } from '../../helpers/hash.js'
@@ -118,7 +119,10 @@ type FreshAnalyticsResult = {
   effectiveFrom: number
 }
 
-type PendingAnalyticsResult = Promise<FreshAnalyticsResult>
+type PendingAnalyticsResult = {
+  promise: Promise<FreshAnalyticsResult>
+  requestSignal?: AbortSignal
+}
 
 const analyticsCache = new Map<string, CachedAnalyticsResult>()
 const pendingAnalyticsResults = new Map<string, PendingAnalyticsResult>()
@@ -716,17 +720,21 @@ export function registerSolanaAnalyticsTool(server: McpServer) {
         }
       }
 
-      const pending = !cursor && !include_programs ? pendingAnalyticsResults.get(cacheKey) : undefined
+      const canDedupe = !cursor && !include_programs
+      const requestSignal = getPortalRequestSignal()
+      const pendingEntry = canDedupe ? pendingAnalyticsResults.get(cacheKey) : undefined
+      const pending = pendingEntry && pendingEntry.requestSignal === requestSignal ? pendingEntry.promise : undefined
       const analyticsResult = pending ?? loadFreshAnalytics()
-      if (!pending && !cursor && !include_programs) {
-        pendingAnalyticsResults.set(cacheKey, analyticsResult)
+      const ownsPendingEntry = canDedupe && !pending && !pendingEntry
+      if (ownsPendingEntry) {
+        pendingAnalyticsResults.set(cacheKey, { promise: analyticsResult, requestSignal })
       }
 
       let freshAnalytics
       try {
         freshAnalytics = await analyticsResult
       } finally {
-        if (!pending && !cursor && !include_programs) {
+        if (ownsPendingEntry && pendingAnalyticsResults.get(cacheKey)?.promise === analyticsResult) {
           pendingAnalyticsResults.delete(cacheKey)
         }
       }

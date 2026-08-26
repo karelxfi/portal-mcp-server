@@ -255,6 +255,13 @@ export class ActionableError extends Error {
   }
 }
 
+export class RequestCancelledError extends Error {
+  constructor(message = 'Request cancelled by the MCP client') {
+    super(message)
+    this.name = 'RequestCancelledError'
+  }
+}
+
 /**
  * Parse Portal API error and provide actionable suggestions
  */
@@ -488,6 +495,8 @@ function describeChainType(chainType: string): string {
   switch (chainType) {
     case 'evm':
       return 'EVM'
+    case 'tron':
+      return 'Tron'
     case 'solana':
       return 'Solana'
     case 'bitcoin':

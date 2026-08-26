@@ -1,6 +1,19 @@
 # Changelog
 
-## [0.8.0] - 2026-06-18
+## [0.8.0] - Unreleased
+
+Portal MCP v0.8.0 focuses on reliable interactive queries, faster common investigations, and clearer partial-result reporting. Existing connection and authentication behavior is unchanged.
+
+### Reliability
+- **End-to-end cancellation** — active Portal and enrichment requests now stop promptly when an MCP client cancels, including during retry backoff and response-body reads.
+- **Accurate error reporting** — cancelled requests are classified separately from tool failures so error metrics better reflect actionable server problems.
+- **Complete request timeouts** — JSON and NDJSON timeouts now cover the full response body instead of ending when response headers arrive.
+- **Isolated cache loads** — cancellation of one in-flight cached query no longer fails unrelated callers requesting the same data.
+- **Bounded sparse log searches** — large filtered latest-log queries use small concurrent chunks, inspect at most 25,000 recent blocks by default, and disclose any unscanned portion of the requested window. Callers can opt into deeper coverage with `max_scan_blocks`.
+- **Faster wallet summaries** — recent wallet activity sections scan concurrently and return an explicitly marked partial summary when an individual section is temporarily unavailable.
+- **Native Tron classification** — Tron networks now use their native Portal timestamp query shape and return clear unsupported-tool guidance instead of malformed EVM requests.
+- **High-error live regression gate** — release tests now repeat wallet, time-series, EVM transaction/log/token-transfer, and Solana transaction calls without automatic retries and enforce an interactive latency ceiling.
+- **Dependency maintenance** — refreshed compatible runtime and test dependencies; the release tree reports no known npm audit findings.
 
 ### Codex plugin
 - Added a repo-local Codex plugin wrapper for the hosted SQD Portal MCP endpoint.
@@ -13,6 +26,8 @@
 - Added a Claude Code plugin marketplace and manifest so Claude users can install `portal@sqd`.
 - Added `npm run test:plugin` to validate the plugin manifest, marketplace wiring, optional asset paths, and a hosted MCP smoke check before release.
 - Added `npm run test:claude-plugin` to validate the Claude Code plugin manifest, marketplace wiring, and hosted MCP smoke check before release.
+
+**Full Changelog**: https://github.com/subsquid-labs/portal-mcp-server/compare/v0.7.9...v0.8.0
 
 ## [0.7.9] - 2026-05-16
 

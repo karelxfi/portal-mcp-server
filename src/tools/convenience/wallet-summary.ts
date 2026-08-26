@@ -10,7 +10,7 @@ import {
   buildTokenListLookupNotices,
   getTokenMetadataMapForDatasetWithStatus,
 } from '../../helpers/entity-resolution.js'
-import { ActionableError, createUnsupportedChainError } from '../../helpers/errors.js'
+import { ActionableError, RequestCancelledError, createUnsupportedChainError, sanitizeText } from '../../helpers/errors.js'
 import { portalFetchRecentRecords } from '../../helpers/fetch.js'
 import { buildEvmLogFields } from '../../helpers/fields.js'
 import { formatResult, humanizeLabel } from '../../helpers/format.js'
@@ -237,8 +237,10 @@ async function fetchCachedWalletSection(params: {
   itemKeys: string[]
   limit: number
   chunkSize: number
+  concurrency: number
+  initialSequentialChunks: number
 }) {
-  const { dataset, section, query, itemKeys, limit, chunkSize } = params
+  const { dataset, section, query, itemKeys, limit, chunkSize, concurrency, initialSequentialChunks } = params
   const cacheKey = stableCacheKey('wallet-section', {
     dataset,
     section,
@@ -246,12 +248,16 @@ async function fetchCachedWalletSection(params: {
     itemKeys,
     limit,
     chunkSize,
+    concurrency,
+    initialSequentialChunks,
   })
   const { value } = await walletSectionQueryCache.getOrLoad(cacheKey, async () =>
     portalFetchRecentRecords(`${PORTAL_URL}/datasets/${dataset}/stream`, query, {
       itemKeys,
       limit,
       chunkSize,
+      concurrency,
+      initialSequentialChunks,
     }),
   )
   return value
@@ -1322,7 +1328,9 @@ export function registerGetWalletSummaryTool(server: McpServer) {
           query: txQuery,
           itemKeys: ['transactions'],
           limit: txFetchLimit,
-          chunkSize: 5_000,
+          chunkSize: 1_000,
+          concurrency: 6,
+          initialSequentialChunks: 1,
         })
 
         const pagedTransactions = paginateAscendingItems(
@@ -1403,7 +1411,9 @@ export function registerGetWalletSummaryTool(server: McpServer) {
           query: tokenQuery,
           itemKeys: ['logs'],
           limit: tokenFetchLimit,
-          chunkSize: 5_000,
+          chunkSize: 1_000,
+          concurrency: 6,
+          initialSequentialChunks: 1,
         })
 
         let tokenMetadataByAddress = new Map<string, { symbol?: string; name?: string; decimals?: number }>()
@@ -1413,6 +1423,7 @@ export function registerGetWalletSummaryTool(server: McpServer) {
           tokenMetadataByAddress = tokenMetadataResult.metadata
           tokenMetadataNotices.push(...buildTokenListLookupNotices(tokenMetadataResult.lookup))
         } catch (error) {
+          if (error instanceof RequestCancelledError) throw error
           console.error('Failed to fetch token-list metadata:', error)
           tokenMetadataNotices.push(
             'Token-list metadata enrichment failed; token transfer values use 18 decimals unless a known token match was already cached.',
@@ -1524,7 +1535,9 @@ export function registerGetWalletSummaryTool(server: McpServer) {
           query: nftQuery,
           itemKeys: ['logs'],
           limit: nftFetchLimit,
-          chunkSize: 5_000,
+          chunkSize: 1_000,
+          concurrency: 6,
+          initialSequentialChunks: 1,
         })
 
         const pagedNfts = paginateAscendingItems(
@@ -1567,11 +1580,50 @@ export function registerGetWalletSummaryTool(server: McpServer) {
         }
       }
 
-      const [transactionSection, tokenSection, nftSection] = await Promise.all([
+      const [transactionOutcome, tokenOutcome, nftOutcome] = await Promise.allSettled([
         fetchTransactionsSection(),
         fetchTokenTransfersSection(),
         fetchNftTransfersSection(),
       ])
+
+      const activeSectionOutcomes = [
+        { key: 'transactions', label: 'transactions', enabled: sectionCursors.transactions !== null, outcome: transactionOutcome },
+        { key: 'token_transfers', label: 'token transfers', enabled: include_tokens && sectionCursors.token_transfers !== null, outcome: tokenOutcome },
+        { key: 'nft_transfers', label: 'NFT transfers', enabled: include_nfts && sectionCursors.nft_transfers !== null, outcome: nftOutcome },
+      ] as const
+      const cancelledSection = activeSectionOutcomes.find(
+        (section) => section.outcome.status === 'rejected' && section.outcome.reason instanceof RequestCancelledError,
+      )
+      if (cancelledSection?.outcome.status === 'rejected') throw cancelledSection.outcome.reason
+
+      const failedActiveSections = activeSectionOutcomes.filter(
+        (section) => section.enabled && section.outcome.status === 'rejected',
+      )
+      const enabledSectionCount = activeSectionOutcomes.filter((section) => section.enabled).length
+      if (failedActiveSections.length === enabledSectionCount && failedActiveSections[0]?.outcome.status === 'rejected') {
+        throw failedActiveSections[0].outcome.reason
+      }
+
+      const sectionFailures: Array<{ key: string; label: string; message: string }> = []
+      const resolveSection = <T>(
+        key: string,
+        label: string,
+        outcome: PromiseSettledResult<WalletSectionPage<T>>,
+      ): WalletSectionPage<T> => {
+        if (outcome.status === 'fulfilled') return outcome.value
+        const message = sanitizeText(outcome.reason instanceof Error ? outcome.reason.message : String(outcome.reason))
+        sectionFailures.push({ key, label, message: message.slice(0, 180) })
+        return {
+          pageItems: [],
+          hasMore: false,
+          nextBoundary: null,
+          notices: [`The ${label} section was unavailable for this response: ${message.slice(0, 180)}`],
+        }
+      }
+
+      const transactionSection = resolveSection('transactions', 'transactions', transactionOutcome)
+      const tokenSection = resolveSection('token_transfers', 'token transfers', tokenOutcome)
+      const nftSection = resolveSection('nft_transfers', 'NFT transfers', nftOutcome)
 
       const transactions = transactionSection.pageItems
       const txHasMore = transactionSection.hasMore
@@ -1607,7 +1659,9 @@ export function registerGetWalletSummaryTool(server: McpServer) {
         : undefined
 
       const notices: string[] = []
+      notices.push(...(transactionSection.notices ?? []))
       notices.push(...(tokenSection.notices ?? []))
+      notices.push(...(nftSection.notices ?? []))
       if (hasMore) {
         const limitedItems = []
         if (txHasMore) limitedItems.push('transactions')
@@ -1688,6 +1742,20 @@ export function registerGetWalletSummaryTool(server: McpServer) {
           analyzed_from_block: fromBlock,
           description: windowDescription,
           preview: hasMore,
+          partial: sectionFailures.length > 0,
+        },
+        section_status: {
+          transactions: sectionFailures.some((failure) => failure.key === 'transactions') ? 'unavailable' : 'available',
+          token_transfers: !include_tokens
+            ? 'omitted'
+            : sectionFailures.some((failure) => failure.key === 'token_transfers')
+              ? 'unavailable'
+              : 'available',
+          nft_transfers: !include_nfts
+            ? 'omitted'
+            : sectionFailures.some((failure) => failure.key === 'nft_transfers')
+              ? 'unavailable'
+              : 'available',
         },
         activity: {
           count: combinedActivity.length,
@@ -1724,9 +1792,12 @@ export function registerGetWalletSummaryTool(server: McpServer) {
       const topFlowCounterparty = fundFlow.summary.top_counterparty
         ? ` Top counterparty: ${fundFlow.summary.top_counterparty}.`
         : ''
+      const partialPrefix = sectionFailures.length > 0
+        ? `Partial wallet summary; ${sectionFailures.map((failure) => failure.label).join(', ')} unavailable. `
+        : ''
       const message = hasMore
-        ? `Wallet flow for ${normalizedAddress}: ${fundFlow.summary.inbound_events} inbound and ${fundFlow.summary.outbound_events} outbound movement events from ${describeWalletWindow(windowDescription)} (preview page capped at ${limit_per_type}; continue with cursor for older rows).${topFlowCounterparty}`
-        : `Wallet flow for ${normalizedAddress}: ${fundFlow.summary.inbound_events} inbound and ${fundFlow.summary.outbound_events} outbound movement events from ${describeWalletWindow(windowDescription)}.${topFlowCounterparty}`
+        ? `${partialPrefix}Wallet flow for ${normalizedAddress}: ${fundFlow.summary.inbound_events} inbound and ${fundFlow.summary.outbound_events} outbound movement events from ${describeWalletWindow(windowDescription)} (preview page capped at ${limit_per_type}; continue with cursor for older rows).${topFlowCounterparty}`
+        : `${partialPrefix}Wallet flow for ${normalizedAddress}: ${fundFlow.summary.inbound_events} inbound and ${fundFlow.summary.outbound_events} outbound movement events from ${describeWalletWindow(windowDescription)}.${topFlowCounterparty}`
 
       return formatResult(applyWalletSummaryResponseFormat(summary, effectiveResponseFormat), message, {
         toolName: 'portal_get_wallet_summary',
@@ -1753,7 +1824,7 @@ export function registerGetWalletSummaryTool(server: McpServer) {
           windowFromBlock: requestedFromBlock,
           windowToBlock,
           hasMore,
-          windowComplete: fromBlock <= requestedFromBlock,
+          windowComplete: fromBlock <= requestedFromBlock && sectionFailures.length === 0,
           sections: {
             transactions: buildSectionPagination(transactions.length, txHasMore),
             ...(include_tokens ? { token_transfers: buildSectionPagination(tokenTransfers.length, tokenHasMore) } : {}),
@@ -1763,7 +1834,11 @@ export function registerGetWalletSummaryTool(server: McpServer) {
         execution: buildExecutionMetadata({
           mode,
           response_format: effectiveResponseFormat,
-          result_scope: hasMore ? 'preview_page' : fromBlock > requestedFromBlock ? 'partial_window' : 'complete_window',
+          result_scope: hasMore
+            ? 'preview_page'
+            : fromBlock > requestedFromBlock || sectionFailures.length > 0
+              ? 'partial_window'
+              : 'complete_window',
           requested_blocks: Math.max(0, windowToBlock - requestedFromBlock + 1),
           analyzed_blocks: Math.max(0, windowToBlock - fromBlock + 1),
           estimated_scan_blocks: Math.max(0, windowToBlock - fromBlock + 1),
@@ -1781,6 +1856,7 @@ export function registerGetWalletSummaryTool(server: McpServer) {
           notes: [
             include_tokens ? 'Token-transfer section included.' : 'Token-transfer section omitted.',
             include_nfts ? 'NFT section included.' : 'NFT section omitted.',
+            ...sectionFailures.map((failure) => `${failure.label} unavailable: ${failure.message}`),
           ],
         }),
         pipes: pipesRecipe,

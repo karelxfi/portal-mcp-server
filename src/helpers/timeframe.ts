@@ -22,6 +22,7 @@ export type TimestampInput = string | number
  */
 const BLOCK_TIME_ESTIMATES: Record<string, number> = {
   evm: 12, // Ethereum mainnet default (~12s)
+  tron: 3, // Tron blocks (~3s)
   solana: 0.4, // Solana slots (~400ms)
   bitcoin: 600, // Bitcoin (~10 min)
   substrate: 6, // Polkadot-family default (~6s)
@@ -341,6 +342,10 @@ export async function getHeadTimestamp(dataset: string, headBlock: number): Prom
   switch (chainType) {
     case 'solana':
       type = 'solana'
+      fieldKey = 'block'
+      break
+    case 'tron':
+      type = 'tron'
       fieldKey = 'block'
       break
     case 'bitcoin':

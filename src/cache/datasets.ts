@@ -2,6 +2,7 @@ import { PORTAL_URL } from '../constants/index.js'
 import { createCache } from '../helpers/cache-manager.js'
 import { createBlockRangeError, createDatasetError } from '../helpers/errors.js'
 import { portalFetch } from '../helpers/fetch.js'
+import { getPortalRequestSignal } from '../helpers/request-context.js'
 import type { BlockHead, ChainType, Dataset, DatasetMetadata } from '../types/index.js'
 
 // ============================================================================
@@ -19,14 +20,21 @@ const metadataCache = createCache<{ start_block: number; head: BlockHead; finali
 let datasetsCache: { data: Dataset[]; timestamp: number } | null = null
 const knownDatasetKinds = new Map<string, ChainType>()
 
-const pendingRequests = new Map<string, Promise<any>>()
+const pendingRequests = new Map<string, { promise: Promise<any>; requestSignal?: AbortSignal }>()
 
 function dedupe<T>(key: string, fn: () => Promise<T>): Promise<T> {
-  if (!pendingRequests.has(key)) {
-    const promise = fn().finally(() => pendingRequests.delete(key))
-    pendingRequests.set(key, promise)
+  const requestSignal = getPortalRequestSignal()
+  const existing = pendingRequests.get(key)
+  if (existing && existing.requestSignal === requestSignal) {
+    return existing.promise as Promise<T>
   }
-  return pendingRequests.get(key) as Promise<T>
+  if (existing) return fn()
+
+  const promise = fn().finally(() => {
+    if (pendingRequests.get(key)?.promise === promise) pendingRequests.delete(key)
+  })
+  pendingRequests.set(key, { promise, requestSignal })
+  return promise
 }
 
 function rememberDatasetKinds(datasets: Dataset[]) {
@@ -82,6 +90,9 @@ export async function getChainType(dataset: string): Promise<ChainType> {
   const lower = dataset.toLowerCase()
   if (lower.includes('solana') || lower.includes('eclipse')) {
     return 'solana'
+  }
+  if (lower.includes('tron')) {
+    return 'tron'
   }
   if (lower.includes('bitcoin')) {
     return 'bitcoin'

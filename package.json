@@ -28,6 +28,8 @@
     "test:substrate": "tsx scripts/test-substrate.ts",
     "test:timestamps": "tsx scripts/test-timestamps.ts",
     "test:http-runtime": "tsx scripts/test-http-runtime.ts",
+    "test:fetch-reliability": "tsx scripts/test-fetch-reliability.ts",
+    "test:reliability-live": "tsx scripts/test-reliability-live.ts",
     "test:plugin": "tsx scripts/test-codex-plugin.ts",
     "test:claude-plugin": "tsx scripts/test-claude-plugin.ts",
     "test:conversations": "tsx scripts/test-conversations.ts",
@@ -37,7 +39,7 @@
     "test:negative": "tsx scripts/test-negative.ts",
     "test:quality": "tsx scripts/test-quality.ts",
     "test:package": "tsx scripts/test-package-contents.ts",
-    "test:all": "npm run build && npm test && npm run test:tools && npm run test:evm-investigator && npm run test:routing && npm run test:substrate && npm run test:timestamps && npm run test:http-runtime && npm run test:plugin && npm run test:claude-plugin && npm run test:conversations && npm run test:realistic-prompts && npm run test:negative && npm run test:quality && npm run test:package",
+    "test:all": "npm run build && npm run test:fetch-reliability && npm test && npm run test:tools && npm run test:reliability-live && npm run test:evm-investigator && npm run test:routing && npm run test:substrate && npm run test:timestamps && npm run test:http-runtime && npm run test:plugin && npm run test:claude-plugin && npm run test:conversations && npm run test:realistic-prompts && npm run test:negative && npm run test:quality && npm run test:package",
     "test:ci": "npm run test:all",
     "test:release": "npm run test:ci",
     "release:patch": "./scripts/release.sh patch",
@@ -55,7 +57,7 @@
     "@biomejs/biome": "^2.3.14",
     "@cloudflare/workers-types": "^4.20250110.0",
     "@types/node": "^22.10.0",
-    "tsx": "^4.19.0",
+    "tsx": "^4.23.12",
     "typescript": "^5.7.0"
   }
 }

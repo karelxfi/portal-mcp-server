@@ -7,10 +7,13 @@
 // - CoinGecko: Token metadata, prices, logos
 //
 
-import { createCache } from './cache-manager.js'
 import { tokenListCacheEventsTotal, tokenListRequestsTotal } from '../metrics.js'
+import { createCache } from './cache-manager.js'
+import { ActionableError, RequestCancelledError } from './errors.js'
+import { createRequestAbortContext, isAbortLike } from './request-context.js'
 
 const CACHE_TTL = 5 * 60 * 1000 // 5 minutes
+const EXTERNAL_API_TIMEOUT_MS = 5_000
 
 // Managed cache with automatic cleanup to prevent memory leaks
 // Max 500 entries for external API data (token lists can be large)
@@ -31,6 +34,45 @@ function withCache<T>(key: string, ttl: number, fn: () => Promise<T>): Promise<T
     cache.set(key, data)
     return data
   })
+}
+
+export async function fetchExternalJson<T>(
+  url: string,
+  label: string,
+  options: RequestInit & { timeout?: number } = {},
+): Promise<T> {
+  const { timeout = EXTERNAL_API_TIMEOUT_MS, ...fetchOptions } = options
+  const abortContext = createRequestAbortContext(timeout)
+
+  try {
+    const response = await fetch(url, {
+      ...fetchOptions,
+      headers: {
+        Accept: 'application/json',
+        ...fetchOptions.headers,
+      },
+      signal: abortContext.signal,
+    })
+
+    if (!response.ok) {
+      throw new Error(`${label} error: ${response.status} ${response.statusText}`)
+    }
+
+    return (await response.json()) as T
+  } catch (error) {
+    if (isAbortLike(error) || abortContext.signal.aborted) {
+      if (abortContext.wasCancelled()) throw new RequestCancelledError()
+      if (abortContext.didTimeout()) {
+        throw new ActionableError(`${label} timed out after ${timeout}ms`, [
+          'Retry the request; enrichment services can be temporarily slow.',
+          'The Portal query itself may still be available without external enrichment.',
+        ])
+      }
+    }
+    throw error
+  } finally {
+    abortContext.cleanup()
+  }
 }
 
 // ============================================================================
@@ -111,15 +153,7 @@ export async function getCoinGeckoTokenListWithStatus(chain: string): Promise<Co
 
   try {
     tokenListRequestsTotal.inc({ source, chain: normalizedChain, status: 'attempt' })
-    const response = await fetch(url, {
-      headers: { Accept: 'application/json' },
-    })
-
-    if (!response.ok) {
-      throw new Error(`CoinGecko API error: ${response.status} ${response.statusText}`)
-    }
-
-    const data = (await response.json()) as CoinGeckoTokenList
+    const data = await fetchExternalJson<CoinGeckoTokenList>(url, 'CoinGecko API')
     const record = { tokens: data.tokens, fetchedAt: Date.now() }
     tokenListCache.set(cacheKey, record)
     staleTokenLists.set(cacheKey, record)
@@ -128,6 +162,7 @@ export async function getCoinGeckoTokenListWithStatus(chain: string): Promise<Co
     return buildTokenListResult(normalizedChain, record, 'fresh')
   } catch (error) {
     tokenListRequestsTotal.inc({ source, chain: normalizedChain, status: 'error' })
+    if (error instanceof RequestCancelledError) throw error
     const stale = staleTokenLists.get(cacheKey)
     if (stale) {
       tokenListCacheEventsTotal.inc({ source, chain: normalizedChain, event: 'stale_hit' })
@@ -212,15 +247,7 @@ export interface DefiLlamaTvlResponse {
  */
 export async function getDefiLlamaProtocols(): Promise<DefiLlamaProtocol[]> {
   return withCache('defillama:protocols', CACHE_TTL, async () => {
-    const response = await fetch(`${DEFILLAMA_API}/protocols`, {
-      headers: { Accept: 'application/json' },
-    })
-
-    if (!response.ok) {
-      throw new Error(`DeFi Llama API error: ${response.status} ${response.statusText}`)
-    }
-
-    return (await response.json()) as DefiLlamaProtocol[]
+    return fetchExternalJson<DefiLlamaProtocol[]>(`${DEFILLAMA_API}/protocols`, 'DeFi Llama API')
   })
 }
 
@@ -229,15 +256,7 @@ export async function getDefiLlamaProtocols(): Promise<DefiLlamaProtocol[]> {
  */
 export async function getDefiLlamaProtocol(slug: string): Promise<any> {
   return withCache(`defillama:protocol:${slug}`, CACHE_TTL, async () => {
-    const response = await fetch(`${DEFILLAMA_API}/protocol/${slug}`, {
-      headers: { Accept: 'application/json' },
-    })
-
-    if (!response.ok) {
-      throw new Error(`DeFi Llama API error: ${response.status} ${response.statusText}`)
-    }
-
-    return await response.json()
+    return fetchExternalJson(`${DEFILLAMA_API}/protocol/${slug}`, 'DeFi Llama API')
   })
 }
 
@@ -275,15 +294,7 @@ export async function findProtocolByName(name: string): Promise<DefiLlamaProtoco
  */
 export async function getChainTvl(chain: string): Promise<{ tvl: number; protocols: number }> {
   return withCache(`defillama:chain:${chain}`, CACHE_TTL, async () => {
-    const response = await fetch(`${DEFILLAMA_API}/v2/chains`, {
-      headers: { Accept: 'application/json' },
-    })
-
-    if (!response.ok) {
-      throw new Error(`DeFi Llama API error: ${response.status} ${response.statusText}`)
-    }
-
-    const chains = (await response.json()) as any[]
+    const chains = await fetchExternalJson<any[]>(`${DEFILLAMA_API}/v2/chains`, 'DeFi Llama API')
     const normalizedChain = chain.toLowerCase()
 
     const chainData = chains.find(
@@ -306,15 +317,7 @@ export async function getChainTvl(chain: string): Promise<{ tvl: number; protoco
  */
 export async function getStablecoins(): Promise<any[]> {
   return withCache('defillama:stablecoins', CACHE_TTL, async () => {
-    const response = await fetch(`${DEFILLAMA_API}/stablecoins?includePrices=true`, {
-      headers: { Accept: 'application/json' },
-    })
-
-    if (!response.ok) {
-      throw new Error(`DeFi Llama API error: ${response.status} ${response.statusText}`)
-    }
-
-    const data = await response.json()
+    const data = await fetchExternalJson<any>(`${DEFILLAMA_API}/stablecoins?includePrices=true`, 'DeFi Llama API')
     return data.peggedAssets || []
   })
 }
@@ -324,15 +327,7 @@ export async function getStablecoins(): Promise<any[]> {
  */
 export async function getYieldPools(): Promise<any[]> {
   return withCache('defillama:yields', CACHE_TTL, async () => {
-    const response = await fetch('https://yields.llama.fi/pools', {
-      headers: { Accept: 'application/json' },
-    })
-
-    if (!response.ok) {
-      throw new Error(`DeFi Llama Yields API error: ${response.status} ${response.statusText}`)
-    }
-
-    const data = await response.json()
+    const data = await fetchExternalJson<any>('https://yields.llama.fi/pools', 'DeFi Llama Yields API')
     return data.data || []
   })
 }
@@ -342,14 +337,6 @@ export async function getYieldPools(): Promise<any[]> {
  */
 export async function getProtocolFees(protocol: string): Promise<any> {
   return withCache(`defillama:fees:${protocol}`, CACHE_TTL, async () => {
-    const response = await fetch(`${DEFILLAMA_API}/summary/fees/${protocol}`, {
-      headers: { Accept: 'application/json' },
-    })
-
-    if (!response.ok) {
-      throw new Error(`DeFi Llama API error: ${response.status} ${response.statusText}`)
-    }
-
-    return await response.json()
+    return fetchExternalJson(`${DEFILLAMA_API}/summary/fees/${protocol}`, 'DeFi Llama API')
   })
 }

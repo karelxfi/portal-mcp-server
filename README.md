@@ -12,7 +12,7 @@ This server does not index chains itself. It validates user input, maps it onto 
 - `3` advanced/debug tools
 - public params use `network`
 - discovery filters use `vm`
-- no legacy tool aliases in `v0.7.9`
+- no legacy tool aliases in `v0.8.0`
 
 Raw query tools default to compact responses. Ask for `response_format: "full"` only when you need the larger payload.
 

@@ -17,7 +17,7 @@ import {
   type TokenListLookupMetadata,
   resolveTokenSymbolsForQuery,
 } from '../../helpers/entity-resolution.js'
-import { ActionableError, createUnsupportedChainError } from '../../helpers/errors.js'
+import { ActionableError, RequestCancelledError, createUnsupportedChainError } from '../../helpers/errors.js'
 import { portalFetchRecentRecords, portalFetchStreamRange } from '../../helpers/fetch.js'
 import { buildEvmLogFields } from '../../helpers/fields.js'
 import { formatResult } from '../../helpers/format.js'
@@ -389,6 +389,7 @@ export function registerGetErc20TransfersTool(server: McpServer) {
           tokenMetadataByAddress = tokenMetadataResult.metadata
           tokenMetadataLookup = tokenMetadataResult.lookup
         } catch (error) {
+          if (error instanceof RequestCancelledError) throw error
           tokenMetadataFetchFailed = true
           console.error('Failed to fetch token-list metadata:', error)
         }
