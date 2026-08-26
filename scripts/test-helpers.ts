@@ -52,6 +52,15 @@ export function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
+export function isBoundedUpstreamToolError(result: ToolCallResult): boolean {
+  return (
+    result.isError &&
+    /Portal server error \((?:429|5\d\d)\)|rate limit|service is overloaded|Request timeout after \d+ms/i.test(
+      result.text,
+    )
+  )
+}
+
 export function getText(result: any): string {
   return result?.content?.map((entry: any) => entry?.text || '').join('\n') || ''
 }

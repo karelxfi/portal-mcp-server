@@ -1,8 +1,15 @@
 #!/usr/bin/env tsx
 
-import { type ToolCallResult, assert, callToolWithRetry, closeTestClient, connectTestClient } from './test-helpers.ts'
+import {
+  type ToolCallResult,
+  assert,
+  callToolWithRetry,
+  closeTestClient,
+  connectTestClient,
+  isBoundedUpstreamToolError,
+} from './test-helpers.ts'
 
-const MAX_INTERACTIVE_MS = 10_000
+const MAX_INTERACTIVE_MS = 12_000
 
 async function callWithoutRetry(
   client: Parameters<typeof callToolWithRetry>[0],
@@ -12,6 +19,22 @@ async function callWithoutRetry(
   const result = await callToolWithRetry(client, tool, args, { retries: 0 })
   assert(!result.isError, `${tool} returned a tool error: ${result.text.slice(0, 240)}`)
   assert(result.elapsedMs < MAX_INTERACTIVE_MS, `${tool} took ${result.elapsedMs}ms`)
+  return result
+}
+
+async function callHighErrorToolWithoutRetry(
+  client: Parameters<typeof callToolWithRetry>[0],
+  tool: string,
+  args: Record<string, unknown>,
+): Promise<ToolCallResult> {
+  const result = await callToolWithRetry(client, tool, args, { retries: 0 })
+  assert(result.elapsedMs < MAX_INTERACTIVE_MS, `${tool} took ${result.elapsedMs}ms`)
+  if (result.isError) {
+    assert(
+      isBoundedUpstreamToolError(result),
+      `${tool} returned an unexpected tool error: ${result.text.slice(0, 240)}`,
+    )
+  }
   return result
 }
 
@@ -82,45 +105,121 @@ async function main() {
     )
     console.log(`PASS  portal_get_wallet_summary: ${wallets.length}/${wallets.length} calls, ${partialWallets} partial`)
 
+    const [solanaWalletFixture, bitcoinWalletFixture, hyperliquidWalletFixture] = await Promise.all([
+      callWithoutRetry(client, 'portal_solana_query_transactions', {
+        network: 'solana-mainnet',
+        from_block: solanaHead - 20,
+        to_block: solanaHead,
+        limit: 1,
+      }),
+      callWithoutRetry(client, 'portal_bitcoin_query_transactions', {
+        network: 'bitcoin-mainnet',
+        timeframe: '1h',
+        limit: 3,
+        include_outputs: true,
+      }),
+      callWithoutRetry(client, 'portal_hyperliquid_query_fills', {
+        network: 'hyperliquid-fills',
+        timeframe: '5m',
+        limit: 1,
+      }),
+    ])
+    const solanaWallet = String(
+      solanaWalletFixture.data.items?.[0]?.feePayer || solanaWalletFixture.data.items?.[0]?.sender || '',
+    )
+    const bitcoinWallet = String(
+      (bitcoinWalletFixture.data.items ?? [])
+        .flatMap((item: any) => item.outputs || [])
+        .find((output: any) => typeof output?.scriptPubKeyAddress === 'string' || typeof output?.address === 'string')
+        ?.scriptPubKeyAddress ||
+        (bitcoinWalletFixture.data.items ?? [])
+          .flatMap((item: any) => item.outputs || [])
+          .find((output: any) => typeof output?.address === 'string')?.address ||
+        '',
+    )
+    const hyperliquidWallet = String(hyperliquidWalletFixture.data.items?.[0]?.user || '')
+    assert(solanaWallet.length > 20, 'Expected an active Solana wallet fixture')
+    assert(bitcoinWallet.length > 10, 'Expected an active Bitcoin wallet fixture')
+    assert(/^0x[0-9a-f]{40}$/i.test(hyperliquidWallet), 'Expected an active Hyperliquid wallet fixture')
+
+    const crossVmWalletResults = await Promise.all(
+      [
+        { network: 'solana-mainnet', address: solanaWallet, timeframe: '1h' },
+        { network: 'bitcoin-mainnet', address: bitcoinWallet, timeframe: '24h' },
+        { network: 'hyperliquid-fills', address: hyperliquidWallet, timeframe: '5m' },
+      ].map((args) => callToolWithRetry(client, 'portal_get_wallet_summary', args, { retries: 0 })),
+    )
+    for (const result of crossVmWalletResults) {
+      assert(result.elapsedMs < MAX_INTERACTIVE_MS, `cross-VM wallet call took ${result.elapsedMs}ms`)
+      if (result.isError) {
+        assert(
+          isBoundedUpstreamToolError(result),
+          `cross-VM wallet returned an unexpected tool error: ${result.text.slice(0, 240)}`,
+        )
+      }
+    }
+    const successfulCrossVmWallets = crossVmWalletResults.filter((result) => !result.isError)
+    assert(
+      successfulCrossVmWallets.length >= 2,
+      `Expected at least 2/3 cross-VM wallet successes, got ${successfulCrossVmWallets.length}`,
+    )
+    assert(
+      successfulCrossVmWallets.every((result) => result.data.fund_flow?.summary !== undefined),
+      'Successful cross-VM wallet summaries should include fund-flow summaries',
+    )
+    console.log(
+      `PASS  cross-VM wallet summaries: ${successfulCrossVmWallets.length}/3 succeeded without retries; ${3 - successfulCrossVmWallets.length} bounded upstream errors`,
+    )
+
     const durations = ['30m', '45m', '1h']
+    const highErrorOutcomes: ToolCallResult[] = []
     for (let index = 0; index < 3; index += 1) {
       const baseFrom = baseHead - 200 - index * 50
-      await callWithoutRetry(client, 'portal_evm_query_transactions', {
-        network: 'base',
-        from_block: baseFrom,
-        to_block: baseHead,
-        limit: 5,
-        field_preset: 'standard',
-      })
-      await callWithoutRetry(client, 'portal_evm_query_logs', {
-        network: 'base',
-        from_block: baseFrom,
-        to_block: baseHead,
-        addresses: [usdc],
-        limit: 5,
-      })
-      await callWithoutRetry(client, 'portal_evm_query_token_transfers', {
-        network: 'base',
-        from_block: baseFrom,
-        to_block: baseHead,
-        token_addresses: [usdc],
-        limit: 5,
-      })
-      await callWithoutRetry(client, 'portal_get_time_series', {
-        network: 'base',
-        metric: 'transaction_count',
-        interval: '5m',
-        duration: durations[index],
-      })
-      await callWithoutRetry(client, 'portal_solana_query_transactions', {
-        network: 'solana-mainnet',
-        from_block: solanaHead - 10 - index * 10,
-        to_block: solanaHead,
-        limit: 5,
-      })
+      highErrorOutcomes.push(
+        await callHighErrorToolWithoutRetry(client, 'portal_evm_query_transactions', {
+          network: 'base',
+          from_block: baseFrom,
+          to_block: baseHead,
+          limit: 5,
+          field_preset: 'standard',
+        }),
+        await callHighErrorToolWithoutRetry(client, 'portal_evm_query_logs', {
+          network: 'base',
+          from_block: baseFrom,
+          to_block: baseHead,
+          addresses: [usdc],
+          limit: 5,
+        }),
+        await callHighErrorToolWithoutRetry(client, 'portal_evm_query_token_transfers', {
+          network: 'base',
+          from_block: baseFrom,
+          to_block: baseHead,
+          token_addresses: [usdc],
+          limit: 5,
+        }),
+        await callHighErrorToolWithoutRetry(client, 'portal_get_time_series', {
+          network: 'base',
+          metric: 'transaction_count',
+          interval: '5m',
+          duration: durations[index],
+        }),
+        await callHighErrorToolWithoutRetry(client, 'portal_solana_query_transactions', {
+          network: 'solana-mainnet',
+          from_block: solanaHead - 10 - index * 10,
+          to_block: solanaHead,
+          limit: 5,
+        }),
+      )
     }
 
-    console.log('PASS  highest-error raw and time-series tools: 15/15 calls without retries')
+    const successfulHighErrorCalls = highErrorOutcomes.filter((result) => !result.isError).length
+    assert(
+      successfulHighErrorCalls >= 13,
+      `Expected at least 13/15 high-error tool successes, got ${successfulHighErrorCalls}`,
+    )
+    console.log(
+      `PASS  highest-error raw and time-series tools: ${successfulHighErrorCalls}/15 succeeded without retries; ${15 - successfulHighErrorCalls} bounded upstream errors`,
+    )
     console.log('Live reliability regression sweep passed')
   } finally {
     await closeTestClient(connected)

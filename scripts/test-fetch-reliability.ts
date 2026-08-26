@@ -4,6 +4,7 @@ import { createServer } from 'node:http'
 import type { Socket } from 'node:net'
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
+import { StdioClientTransport, getDefaultEnvironment } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
 
 import { createQueryCache } from '../src/cache/query-cache.js'
@@ -69,10 +70,67 @@ async function main() {
   let closedRequests = 0
   let activeRangeRequests = 0
   let maxActiveRangeRequests = 0
+  let walletTokenRequests = 0
   const server = createServer((req, res) => {
     req.on('close', () => {
       closedRequests += 1
     })
+
+    if (req.method === 'GET' && req.url?.startsWith('/datasets?')) {
+      res.writeHead(200, { 'Content-Type': 'application/json' })
+      res.end(
+        JSON.stringify([
+          {
+            dataset: 'base-mainnet',
+            aliases: ['base'],
+            metadata: { kind: 'evm', display_name: 'Base' },
+            schema: { tables: {} },
+          },
+        ]),
+      )
+      return
+    }
+
+    if (req.method === 'GET' && req.url === '/datasets/base-mainnet/head') {
+      res.writeHead(200, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({ number: 1_000, hash: `0x${'1'.repeat(64)}` }))
+      return
+    }
+
+    if (req.method === 'POST' && req.url === '/datasets/base-mainnet/stream') {
+      let body = ''
+      req.setEncoding('utf8')
+      req.on('data', (chunk) => {
+        body += chunk
+      })
+      req.on('end', () => {
+        const query = JSON.parse(body) as Record<string, unknown>
+        if (Array.isArray(query.logs)) {
+          walletTokenRequests += 1
+          res.writeHead(503, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ error: 'temporary fixture failure' }))
+          return
+        }
+
+        res.writeHead(200, { 'Content-Type': 'application/x-ndjson' })
+        res.end(
+          `${JSON.stringify({
+            header: { number: 1_000, timestamp: 1_775_000_000 },
+            transactions: [
+              {
+                transactionIndex: 0,
+                hash: `0x${'2'.repeat(64)}`,
+                from: '0x1111111111111111111111111111111111111111',
+                to: '0x2222222222222222222222222222222222222222',
+                value: '0x0',
+                status: 1,
+              },
+            ],
+          })}\n`,
+        )
+      })
+      return
+    }
 
     if (req.url === '/range') {
       activeRangeRequests += 1
@@ -197,6 +255,51 @@ async function main() {
     await new Promise((resolve) => setTimeout(resolve, 50))
     assert(closedRequests >= 5, `all stalled upstream requests should close, observed ${closedRequests}`)
     console.log('PASS  timed-out and cancelled upstream requests release their connections')
+
+    const walletTransport = new StdioClientTransport({
+      command: 'node',
+      args: ['dist/index.js'],
+      env: { ...getDefaultEnvironment(), PORTAL_URL: baseUrl },
+    })
+    const walletClient = new Client({ name: 'wallet-partial-reliability-test', version: '1.0.0' })
+    await walletClient.connect(walletTransport)
+    try {
+      const startedAt = Date.now()
+      const result = await walletClient.callTool(
+        {
+          name: 'portal_get_wallet_summary',
+          arguments: {
+            network: 'base-mainnet',
+            address: '0x1111111111111111111111111111111111111111',
+            timeframe: '100',
+            include_tokens: true,
+            include_nfts: false,
+            limit_per_type: 3,
+          },
+        },
+        undefined,
+        { timeout: 5_000 },
+      )
+      const elapsedMs = Date.now() - startedAt
+      const data = result.structuredContent as Record<string, any> | undefined
+      assert(!result.isError, 'wallet summary should return a partial success when one section fails')
+      assert(data?.section_status?.transactions === 'available', 'transaction section should remain available')
+      assert(
+        data?.section_status?.token_transfers === 'unavailable',
+        'failed token section should be marked unavailable',
+      )
+      assert(data?._coverage?.window_complete === false, 'partial wallet summary should mark its window incomplete')
+      assert(
+        walletTokenRequests === 1,
+        `wallet section should not amplify retries, observed ${walletTokenRequests} calls`,
+      )
+      assert(elapsedMs < 3_000, `partial wallet response should stay interactive, took ${elapsedMs}ms`)
+      console.log(
+        `PASS  wallet section failures return bounded partial results without retry amplification [${elapsedMs}ms]`,
+      )
+    } finally {
+      await walletClient.close()
+    }
 
     const mcpServer = createPortalServer()
     mcpServer.tool('__test_cancel_portal_fetch', {}, async () => {

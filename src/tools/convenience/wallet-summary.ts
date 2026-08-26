@@ -10,17 +10,21 @@ import {
   buildTokenListLookupNotices,
   getTokenMetadataMapForDatasetWithStatus,
 } from '../../helpers/entity-resolution.js'
-import { ActionableError, RequestCancelledError, createUnsupportedChainError, sanitizeText } from '../../helpers/errors.js'
+import {
+  ActionableError,
+  RequestCancelledError,
+  createUnsupportedChainError,
+  sanitizeText,
+} from '../../helpers/errors.js'
 import { portalFetchRecentRecords } from '../../helpers/fetch.js'
 import { buildEvmLogFields } from '../../helpers/fields.js'
-import { formatResult, humanizeLabel } from '../../helpers/format.js'
-import { formatTimestamp, formatTokenAmount, formatTransactionFields, hexToBigInt } from '../../helpers/format.js'
+import { formatResult, formatTimestamp, formatTokenAmount, formatTransactionFields, hexToBigInt, humanizeLabel } from '../../helpers/format.js'
 import { normalizeEvmTransactionResult } from '../../helpers/normalized-results.js'
 import { decodeCursor, encodeCursor, paginateAscendingItems } from '../../helpers/pagination.js'
 import { buildWalletPipesRecipe } from '../../helpers/pipes-recipe.js'
-import { resolveDefaultResponseFormat, type ResponseFormat } from '../../helpers/response-modes.js'
+import { type ResponseFormat, resolveDefaultResponseFormat } from '../../helpers/response-modes.js'
 import { buildQueryFreshness, buildSectionCoverage } from '../../helpers/result-metadata.js'
-import { describeTimeWindowInput, type TimestampInput, resolveTimeframeOrBlocks } from '../../helpers/timeframe.js'
+import { type TimestampInput, describeTimeWindowInput, resolveTimeframeOrBlocks } from '../../helpers/timeframe.js'
 import { buildExecutionMetadata, buildToolDescription } from '../../helpers/tool-ux.js'
 import {
   buildMetricCard,
@@ -34,6 +38,9 @@ import { normalizeEvmAddress } from '../../helpers/validation.js'
 // ============================================================================
 // Tool: Get Wallet Summary (Convenience Wrapper)
 // ============================================================================
+
+const WALLET_QUERY_TIMEOUT_MS = 8_000
+const WALLET_QUERY_RETRIES = 0
 
 /**
  * One-call wallet activity summary.
@@ -258,6 +265,8 @@ async function fetchCachedWalletSection(params: {
       chunkSize,
       concurrency,
       initialSequentialChunks,
+      timeout: WALLET_QUERY_TIMEOUT_MS,
+      retries: WALLET_QUERY_RETRIES,
     }),
   )
   return value
@@ -2005,6 +2014,8 @@ async function buildNonEvmWalletSummary(params: {
       itemKeys: ['transactions'],
       limit: limit_per_type,
       chunkSize: Math.max(25, Math.min(100, limit_per_type * 4)),
+      timeout: WALLET_QUERY_TIMEOUT_MS,
+      retries: WALLET_QUERY_RETRIES,
     })
 
     const items = results.flatMap((block: any) => {
@@ -2179,6 +2190,8 @@ async function buildNonEvmWalletSummary(params: {
           itemKeys: ['outputs'],
           limit: limit_per_type,
           chunkSize: 20,
+          timeout: WALLET_QUERY_TIMEOUT_MS,
+          retries: WALLET_QUERY_RETRIES,
         },
       ),
       portalFetchRecentRecords(
@@ -2198,6 +2211,8 @@ async function buildNonEvmWalletSummary(params: {
           itemKeys: ['inputs'],
           limit: limit_per_type,
           chunkSize: 20,
+          timeout: WALLET_QUERY_TIMEOUT_MS,
+          retries: WALLET_QUERY_RETRIES,
         },
       ),
     ])
@@ -2466,6 +2481,8 @@ async function buildNonEvmWalletSummary(params: {
       limit: limit_per_type,
       chunkSize: Math.max(50, Math.min(250, limit_per_type * 10)),
       maxBytes: 25 * 1024 * 1024,
+      timeout: WALLET_QUERY_TIMEOUT_MS,
+      retries: WALLET_QUERY_RETRIES,
     },
   )
 
