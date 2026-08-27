@@ -15,6 +15,8 @@ const SKILLS_SOURCE_PATH = `${PLUGIN_ROOT}/skills/SOURCE.md`
 const CHATGPT_SUBMISSION_PATH = 'chatgpt-app-submission.json'
 const REQUIRE_OPENAI_LIVE_METADATA = process.env.REQUIRE_OPENAI_LIVE_METADATA === '1'
 const REQUIRE_MCP_2026_LIVE = process.env.REQUIRE_MCP_2026_LIVE === '1'
+const MODERN_PROTOCOL_VERSION = '2026-07-28'
+const LEGACY_PROTOCOL_VERSION = '2025-11-25'
 
 const EXPECTED_PUBLIC_TOOL_NAMES = [
   'portal_list_networks',
@@ -142,7 +144,9 @@ function assertPromptList(value: unknown) {
   }
 }
 
-function parseSseJson(text: string) {
+function parseRpcJson(text: string) {
+  const trimmed = text.trim()
+  if (trimmed.startsWith('{')) return JSON.parse(trimmed) as JsonObject
   const dataLine = text
     .split('\n')
     .map((line) => line.trim())
@@ -151,7 +155,20 @@ function parseSseJson(text: string) {
   return JSON.parse(dataLine!.slice('data: '.length)) as JsonObject
 }
 
-async function postRpc(endpoint: string, method: string, params: JsonObject) {
+async function postRpc(endpoint: string, method: string, params: JsonObject, modern = false) {
+  const requestParams = modern
+    ? {
+        ...params,
+        _meta: {
+          'io.modelcontextprotocol/protocolVersion': MODERN_PROTOCOL_VERSION,
+          'io.modelcontextprotocol/clientInfo': {
+            name: 'portal-mcp-plugin-release-gate',
+            version: '1.0.0',
+          },
+          'io.modelcontextprotocol/clientCapabilities': {},
+        },
+      }
+    : params
   const response = await fetch(endpoint, {
     method: 'POST',
     headers: {
@@ -159,12 +176,18 @@ async function postRpc(endpoint: string, method: string, params: JsonObject) {
       Accept: 'application/json, text/event-stream',
       'x-mcp-client-name': 'portal-mcp-plugin-release-gate',
       'x-mcp-client-version': '1.0.0',
+      ...(modern
+        ? {
+            'MCP-Protocol-Version': MODERN_PROTOCOL_VERSION,
+            'Mcp-Method': method,
+          }
+        : {}),
     },
-    body: JSON.stringify({ jsonrpc: '2.0', id: method, method, params }),
+    body: JSON.stringify({ jsonrpc: '2.0', id: method, method, params: requestParams }),
   })
   const text = await response.text()
   assert(response.ok, `RPC ${method} should return HTTP 2xx, got ${response.status}: ${text.slice(0, 240)}`)
-  const parsed = parseSseJson(text)
+  const parsed = parseRpcJson(text)
   assert(!parsed.error, `RPC ${method} returned JSON-RPC error: ${JSON.stringify(parsed.error)}`)
   return parsed.result as JsonObject
 }
@@ -359,17 +382,37 @@ function getEndpoint() {
 
 async function assertHostedMcp(endpoint: string) {
   const init = await postRpc(endpoint, 'initialize', {
-    protocolVersion: '2026-07-28',
+    protocolVersion: LEGACY_PROTOCOL_VERSION,
     capabilities: {},
     clientInfo: { name: 'portal-mcp-plugin-release-gate', version: '1.0.0' },
   })
   assertRecord(init.serverInfo, 'initialize should return serverInfo')
   assert(init.serverInfo.name === 'sqd-portal-mcp-server', 'unexpected MCP server name')
+  assert(init.protocolVersion === LEGACY_PROTOCOL_VERSION, 'legacy compatibility should negotiate MCP 2025-11-25')
+
+  let list: JsonObject
   if (REQUIRE_MCP_2026_LIVE) {
-    assert(init.protocolVersion === '2026-07-28', 'Codex plugin should negotiate MCP 2026-07-28')
+    const discovery = await postRpc(endpoint, 'server/discover', {}, true)
+    assert(Array.isArray(discovery.supportedVersions), 'server/discover should return supportedVersions')
+    assert(
+      discovery.supportedVersions.includes(MODERN_PROTOCOL_VERSION),
+      'Codex plugin should advertise MCP 2026-07-28',
+    )
+    assert(discovery.resultType === 'complete', 'server/discover should return a complete modern result')
+    assertRecord(discovery._meta, 'server/discover should return modern result metadata')
+    assertRecord(discovery._meta['io.modelcontextprotocol/serverInfo'], 'server/discover should return server identity')
+    assert(
+      (discovery._meta['io.modelcontextprotocol/serverInfo'] as JsonObject).name === 'sqd-portal-mcp-server',
+      'server/discover should identify the SQD Portal MCP server',
+    )
+    list = await postRpc(endpoint, 'tools/list', {}, true)
+    assert(list.resultType === 'complete', 'modern tools/list should return a complete result')
+    assert(typeof list.ttlMs === 'number', 'modern tools/list should expose ttlMs')
+    assert(list.cacheScope === 'public' || list.cacheScope === 'private', 'modern tools/list should expose cacheScope')
+  } else {
+    list = await postRpc(endpoint, 'tools/list', {})
   }
 
-  const list = await postRpc(endpoint, 'tools/list', {})
   assert(Array.isArray(list.tools), 'tools/list should return tools array')
   const toolNames = new Set(list.tools.map((tool) => (tool as JsonObject).name))
   assert(
