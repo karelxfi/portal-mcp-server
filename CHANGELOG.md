@@ -1,16 +1,6 @@
 # Changelog
 
-## [0.8.1] - Unreleased
-
-Portal MCP v0.8.1 starts the move to a smaller, stateless MCP `2026-07-28` core while preserving the factual 28-tool surface.
-
-### Maintenance
-- **Dead-code removal** — removed unregistered tool implementations and abandoned helper modules that were still compiled despite never appearing in the MCP catalog.
-- **Clean package builds** — build output is removed before compilation so deleted modules cannot remain in the published tarball.
-- **Lean-surface gate** — CI now rejects unreachable runtime modules and tool registration functions that are never connected to the public registry.
-- **Protocol migration plan** — added explicit TypeScript SDK v2, stateless discovery, cacheable catalogs, modern cancellation, connector observability, and legacy-client exit gates to the v0.8.x roadmap.
-
-## [0.8.0] - 2026-08-27
+## [0.8.0] - Unreleased
 
 Portal MCP v0.8.0 focuses on reliable interactive queries, faster common investigations, and clearer partial-result reporting. Existing connection and authentication behavior is unchanged.
 
@@ -25,6 +15,12 @@ Portal MCP v0.8.0 focuses on reliable interactive queries, faster common investi
 - **Native Tron classification** — Tron networks now use their native Portal timestamp query shape and return clear unsupported-tool guidance instead of malformed EVM requests.
 - **High-error live regression gate** — release tests now repeat wallet, time-series, EVM transaction/log/token-transfer, and Solana transaction calls without automatic retries and enforce an interactive latency ceiling.
 - **Dependency maintenance** — refreshed compatible runtime and test dependencies; the release tree reports no known npm audit findings.
+
+### Lean platform foundation
+- **Dead-code removal** — removed unregistered tool implementations and abandoned helper modules that were still compiled despite never appearing in the MCP catalog.
+- **Clean package builds** — build output is removed before compilation so deleted modules cannot remain in the published tarball.
+- **Lean-surface gate** — CI now rejects unreachable runtime modules and tool registration functions that are never connected to the public registry.
+- **Release plan correction** — consolidated the MCP 2026 migration, complete metrics, hardening, AI-client distribution, and sustained reliability proof into the actual v0.8.0 release candidate while hosted production remains v0.7.9.
 
 ### Codex plugin
 - Added a repo-local Codex plugin wrapper for the hosted SQD Portal MCP endpoint.

@@ -7,7 +7,7 @@ This directory records completed release plans and proposed follow-on roadmaps.
 | Plan | Title | Status |
 |---|---|---|
 | 001 | v0.7.9 factual UX release hardening | Done |
-| 002 | v0.8.x reliability, lean MCP 2026 core, and AI plugin roadmap | Active |
+| 002 | v0.8.0 MCP 2026 production platform and AI ecosystem release | Active |
 
 ## Completed v0.7.9 Scope
 
