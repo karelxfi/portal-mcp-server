@@ -1188,7 +1188,8 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
 
       if (chainType === 'solana' && ['transaction_count', 'unique_addresses', 'tps', 'avg_fee', 'success_rate', 'slots_per_hour'].includes(metric)) {
         const head = await getBlockHead(dataset)
-        const solanaResult = await computeSolanaTimeSeries({
+        const durationSeconds = parseTimeframeToSeconds(duration)
+        const loadSolanaSeries = () => computeSolanaTimeSeries({
           dataset,
           metric:
             metric === 'unique_addresses'
@@ -1206,13 +1207,30 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
               }
             : {}),
         })
+        const getSolanaCoverage = (result: Awaited<ReturnType<typeof loadSolanaSeries>>) => {
+          const filledBuckets = result.time_series.filter((point) => point.slots_in_bucket > 0).length
+          const observedCoveragePct = durationSeconds > 0
+            ? result.observed_span_seconds / durationSeconds
+            : 1
+          return {
+            filledBuckets,
+            observedCoveragePct,
+            hasCoverageGap: observedCoveragePct < 0.98 || filledBuckets < result.expected_buckets * 0.8,
+          }
+        }
 
-        const filledBuckets = solanaResult.time_series.filter((point) => point.slots_in_bucket > 0).length
-        const durationSeconds = parseTimeframeToSeconds(duration)
-        const observedCoveragePct = durationSeconds > 0
-          ? solanaResult.observed_span_seconds / durationSeconds
-          : 1
-        const hasCoverageGap = observedCoveragePct < 0.98 || filledBuckets < solanaResult.expected_buckets * 0.8
+        let solanaResult = await loadSolanaSeries()
+        let solanaCoverage = getSolanaCoverage(solanaResult)
+
+        // Moving Solana heads can briefly expose sparse stream coverage under bursty MCP traffic.
+        // Retry one bounded interactive scan before surfacing an actionable coverage error.
+        if (solanaCoverage.hasCoverageGap && durationSeconds <= INTERACTIVE_TIME_SERIES_WINDOW_SECONDS) {
+          await new Promise((resolve) => setTimeout(resolve, 250))
+          solanaResult = await loadSolanaSeries()
+          solanaCoverage = getSolanaCoverage(solanaResult)
+        }
+
+        const { filledBuckets, observedCoveragePct, hasCoverageGap } = solanaCoverage
         if (hasCoverageGap) {
           throw new ActionableError('Solana bucket coverage was incomplete, so no time-series chart was returned.', [
             'Use a shorter duration, such as "past 1h" or "past 6h".',
