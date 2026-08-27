@@ -7,8 +7,9 @@
 //
 // Schema of the output (stable across this skill's versions):
 // {
-//   meta: { label, sourceFile, parsedAt, totalLines, parsedLines, skippedLines,
-//           earliestTs, latestTs, earliestTsMs, latestTsMs, live, parserVersion },
+//   meta: { label, sourceFile, parsedAt, captureStartedAt, captureTimeSource,
+//           totalLines, parsedLines, skippedLines, earliestTs, latestTs,
+//           earliestTsMs, latestTsMs, live, parserVersion },
 //   services: {
 //     "<service-name>": {
 //       name, loggerFamily,
@@ -29,7 +30,7 @@ import fs from "node:fs";
 import readline from "node:readline";
 import path from "node:path";
 
-const PARSER_VERSION = 3;
+const PARSER_VERSION = 4;
 
 // Line shape:  <service> <ISO-TS>Z <LEVEL> <logger> <message...>
 const LINE_RX =
@@ -94,6 +95,19 @@ async function main() {
     process.exit(2);
   }
   const label = args.label || path.basename(input, path.extname(input));
+  const parserStartedAtMs = Date.now();
+  const captureStartPath = args["capture-start"] || `${input}.capture-start`;
+  let captureStartedAtMs = parserStartedAtMs;
+  let captureTimeSource = "parser-start-fallback";
+  if (fs.existsSync(captureStartPath)) {
+    const captureStartedAt = fs.readFileSync(captureStartPath, "utf8").trim();
+    const parsedCaptureStartedAtMs = Date.parse(captureStartedAt);
+    if (Number.isNaN(parsedCaptureStartedAtMs)) {
+      throw new Error(`invalid capture-start timestamp in ${captureStartPath}`);
+    }
+    captureStartedAtMs = parsedCaptureStartedAtMs;
+    captureTimeSource = "fetch-start";
+  }
 
   fs.mkdirSync(path.dirname(output), { recursive: true });
 
@@ -219,8 +233,7 @@ async function main() {
     }
   }
 
-  const now = Date.now();
-  const live = latestTs != null && (now - latestTs) < 60_000;
+  const live = latestTs != null && latestTs >= captureStartedAtMs - 60_000;
 
   if (parsedLines === 0) {
     throw new Error(`no recognizable SQD log lines in ${input}`);
@@ -231,6 +244,9 @@ async function main() {
       label,
       sourceFile: path.resolve(input),
       parsedAt: new Date().toISOString(),
+      captureStartedAt: new Date(captureStartedAtMs).toISOString(),
+      captureStartedAtMs,
+      captureTimeSource,
       parserVersion: PARSER_VERSION,
       totalLines,
       parsedLines,

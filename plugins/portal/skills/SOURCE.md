@@ -3,7 +3,7 @@
 These skills are bundled from `subsquid-labs/skills` so Codex, Claude, and Grok receive the same maintained guidance alongside the SQD tools.
 
 - Repository: `https://github.com/subsquid-labs/skills`
-- Commit: `7dcf48d5cf9021a076c518e5606e12cc62b15d3b`
+- Commit: `87ee592a9dc4e2886ac91db30b65448c38d9c0ce`
 - Synced: `2026-08-27`
 - Packaging normalization: trailing spaces were removed from the generated report wrapper.
 

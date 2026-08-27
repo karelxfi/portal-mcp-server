@@ -62,6 +62,24 @@ printf 'test: fetch accepts a successful child process\n' >&2
 env PATH="$FAKE_BIN_DIR:$PATH" SQD_PERF_FAKE_LOGS_EXIT=0 SQD_PERF_MAX_ATTEMPTS=1 SQD_PERF_BACKOFF=0 SQD_PERF_EXPECT_TIMEOUT=1 \
   bash "$SKILL_DIR/scripts/fetch-logs.sh" org/name@hash 2026-01-01T00:00:00Z "$TEST_TMP_DIR/success.log"
 [ -e "$TEST_TMP_DIR/success.log.done" ] || fail "fetch did not write a completion sentinel"
+[ -e "$TEST_TMP_DIR/success.log.capture-start" ] || fail "fetch did not preserve its start time"
+
+printf 'test: fetch accepts a one-line capture and parser uses fetch-start liveness\n' >&2
+env PATH="$FAKE_BIN_DIR:$PATH" SQD_PERF_FAKE_LOGS_EXIT=0 SQD_PERF_FAKE_SHORT=1 SQD_PERF_MAX_ATTEMPTS=1 SQD_PERF_BACKOFF=0 SQD_PERF_EXPECT_TIMEOUT=1 \
+  bash "$SKILL_DIR/scripts/fetch-logs.sh" org/quiet@hash 2026-01-01T00:00:00Z "$TEST_TMP_DIR/short.log"
+[ -e "$TEST_TMP_DIR/short.log.done" ] || fail "fetch rejected a valid one-line capture"
+[ -e "$TEST_TMP_DIR/short.log.capture-start" ] || fail "short capture omitted fetch-start metadata"
+printf '2026-01-01T00:00:30Z\n' > "$TEST_TMP_DIR/short.log.capture-start"
+node "$SKILL_DIR/scripts/parse.mjs" \
+  --input "$TEST_TMP_DIR/short.log" \
+  --output "$TEST_TMP_DIR/short.json" \
+  --label short
+node -e '
+  const parsed = JSON.parse(require("fs").readFileSync(process.argv[1]));
+  if (!parsed.meta.live) process.exit(1);
+  if (parsed.meta.captureTimeSource !== "fetch-start") process.exit(1);
+  if (parsed.meta.captureStartedAt !== "2026-01-01T00:00:30.000Z") process.exit(1);
+' "$TEST_TMP_DIR/short.json" || fail "parser measured liveness at parse time instead of fetch start"
 
 printf 'test: fetch and parser accept ANSI-colored CLI output\n' >&2
 env PATH="$FAKE_BIN_DIR:$PATH" SQD_PERF_FAKE_LOGS_EXIT=0 SQD_PERF_FAKE_ANSI=1 SQD_PERF_MAX_ATTEMPTS=1 SQD_PERF_BACKOFF=0 SQD_PERF_EXPECT_TIMEOUT=1 \
@@ -142,4 +160,53 @@ grep -q 'experimental.*fetch failed' "$REPORT_DIR/report.md" || fail "Markdown f
 grep -q 'candidate.*parse failed' "$REPORT_DIR/report.md" || fail "Markdown parse failure is missing"
 node "$TESTS_DIR/assert-report.mjs" "$REPORT_DIR/report.html"
 
-printf '{"status":"ok","tests":9}\n'
+printf 'test: report excludes idle-tail rates and honors raw-range overrides\n' >&2
+EDGE_REPORT_DIR="$TEST_TMP_DIR/edge-report-run"
+mkdir -p "$EDGE_REPORT_DIR/parsed"
+cat > "$EDGE_REPORT_DIR/compare-syncs.json" <<'JSON'
+{
+  "createdAt": "2026-01-01T00:00:00Z",
+  "downtimeThresholdSec": 120,
+  "breakpointsOverride": [900],
+  "indexers": [
+    { "ref": "org/edge-a@abc", "since": "2026-01-01T00:00:00Z", "label": "edge-a" },
+    { "ref": "org/edge-b@def", "since": "2026-01-01T00:00:00Z", "label": "edge-b" }
+  ]
+}
+JSON
+cat > "$TEST_TMP_DIR/edge-a.log" <<'LOG'
+api 2026-01-01T00:00:00.000Z INFO sqd:processor 100 / 1000, rate: 10 blocks/sec, mapping: 10 blocks/sec, 10 items/sec, eta: 90s
+api 2026-01-01T00:00:10.000Z INFO sqd:processor 500 / 1000, rate: 10 blocks/sec, mapping: 10 blocks/sec, 10 items/sec, eta: 50s
+api 2026-01-01T00:00:20.000Z INFO sqd:processor 995 / 1000, rate: 10 blocks/sec, mapping: 10 blocks/sec, 10 items/sec, eta: 0s
+api 2026-01-01T00:05:00.000Z INFO sqd:processor 995 / 1000, rate: 1000 blocks/sec, mapping: 1000 blocks/sec, 1000 items/sec, eta: 0s
+api 2026-01-01T00:10:00.000Z INFO sqd:processor 1000 / 1000, rate: 1000 blocks/sec, mapping: 1000 blocks/sec, 1000 items/sec, eta: 0s
+LOG
+cat > "$TEST_TMP_DIR/edge-b.log" <<'LOG'
+api 2026-01-01T00:00:00.000Z INFO sqd:processor 100 / 1000, rate: 10 blocks/sec, mapping: 10 blocks/sec, 10 items/sec, eta: 90s
+api 2026-01-01T00:00:10.000Z INFO sqd:processor 500 / 1000, rate: 10 blocks/sec, mapping: 10 blocks/sec, 10 items/sec, eta: 50s
+api 2026-01-01T00:00:20.000Z INFO sqd:processor 995 / 1000, rate: 10 blocks/sec, mapping: 10 blocks/sec, 10 items/sec, eta: 0s
+api 2026-01-01T00:05:00.000Z INFO sqd:processor 995 / 1000, rate: 1 blocks/sec, mapping: 1 blocks/sec, 1 items/sec, eta: 0s
+api 2026-01-01T00:10:00.000Z INFO sqd:processor 1000 / 1000, rate: 1 blocks/sec, mapping: 1 blocks/sec, 1 items/sec, eta: 0s
+LOG
+node "$SKILL_DIR/scripts/parse.mjs" --input "$TEST_TMP_DIR/edge-a.log" --output "$EDGE_REPORT_DIR/parsed/edge-a.json" --label edge-a
+node "$SKILL_DIR/scripts/parse.mjs" --input "$TEST_TMP_DIR/edge-b.log" --output "$EDGE_REPORT_DIR/parsed/edge-b.json" --label edge-b
+printf '[]\n' > "$EDGE_REPORT_DIR/failures.json"
+node "$SKILL_DIR/scripts/report.mjs" --run-dir "$EDGE_REPORT_DIR" --breakpoints 900
+if grep -q 'Likely the dominant bottleneck' "$EDGE_REPORT_DIR/report.md"; then
+  fail "rate finding included post-catchup idle-tail samples"
+fi
+node -e '
+  const lines = require("fs").readFileSync(process.argv[1], "utf8").split("\n");
+  const templateLine = lines.findIndex(line => line.includes("type=\"__bundler/template\"") && line.trim().startsWith("<script"));
+  const inner = JSON.parse(lines[templateLine + 1]);
+  const openTag = "<script id=\"__REPORT_DATA__\" type=\"application/json\">";
+  const openAt = inner.indexOf(openTag, inner.indexOf("-->") + 3);
+  const closeAt = inner.indexOf("</script>", openAt + openTag.length);
+  const data = JSON.parse(inner.slice(openAt + openTag.length, closeAt));
+  const service = data.services.find(item => item.name === "api");
+  if (!service || service.breakpoints.length !== 1) process.exit(1);
+  if (service.breakpoints[0].block !== 1000) process.exit(1);
+  if (!service.breakpoints[0].perIndexer["edge-a"].reached || !service.breakpoints[0].perIndexer["edge-b"].reached) process.exit(1);
+' "$EDGE_REPORT_DIR/report.html" || fail "override breakpoint was truncated to the catch-up range"
+
+printf '{"status":"ok","tests":11}\n'

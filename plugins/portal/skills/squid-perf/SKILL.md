@@ -3,7 +3,7 @@ name: squid-perf
 description: Compare sync-time performance across one or more Squid SDK deployments. Fetches logs via sqd CLI, parses per-service progress, and generates a self-contained HTML report plus a Markdown summary with wall-clock/active-time/downtime breakdowns at percentage-based block breakpoints. Supports single-indexer mode (metrics only, no comparison). Use when the user invokes "/squid-perf", asks to compare Squid deployment sync times, or references squid performance profiling.
 metadata:
   author: subsquid
-  version: "1.1.5"
+  version: "1.1.6"
   category: core
 ---
 
@@ -25,7 +25,7 @@ These are settled — don't ask the user again unless they change something.
 - **Block alignment:** assume all compared indexers cover the same block ranges (user's stated assumption). Use relative-from-first-log per deployment. If detected ranges diverge noticeably across deployments for a given service, emit a loud warning in the summary but still render.
 - **Tier of metrics extracted:**
   - Tier 1 (always): `sqd:processor` / `sqd:batch-processor` progress lines → `(ts, current_block, target_block, rate, mapping_rate, items_per_sec, eta)`.
-  - Tier 2 (always if present): `sqd:multicall` latency lines, restarts (detected via `current_block` going backward), and warning/error/critical lines (capped at 1000/service).
+  - Tier 2 (always if present): `sqd:multicall` latency lines, restarts (detected via `current_block` going backward), and warning/error/critical totals. Detailed warning/error samples are capped at 1000/service.
   - Tier 3 (auto-discovered): any logger namespace appearing ≥10 times in ALL compared deployments for the SAME service; extract numeric fields; render as a small stats table (count, mean, median, p95).
 - **Breakpoint selection:** percentage-based — 10 evenly-spaced breakpoints at 10%, 20%, ..., 100% of each service's **effective range**, where effective range = `(catchupBlock - firstBlock)`. `catchupBlock` = first progress row where `current >= target - 10` (indexer reached chain tip). Anything past this is steady-state, not sync, and is **excluded** from the metric.
   - Rationale: fraction-based clips (e.g., "99.9% of observed range") fail when the idle tail has many progress rows but few blocks — a deployment synced in 4 min and idled 10 days ends up with 99.9% of its blocks still inside the sync phase but 100% of the time inside the tail.
@@ -40,7 +40,7 @@ These are settled — don't ask the user again unless they change something.
   ```
   ./squid-perf-output/
   ├── cache/
-  │   └── <ref-slug>__<since>.log (+ .done sentinel)
+  │   └── <ref-slug>__<since>.log (+ .capture-start metadata and .done sentinel)
   ├── <ISO-timestamp>/
   │   ├── compare-syncs.json
   │   ├── parsed/<ref-slug>.json
@@ -113,10 +113,11 @@ For each indexer in the resolved config, compute:
 - `cache_path = ./squid-perf-output/cache/<cache_name>`
 - `slug = <cache_name without the .log suffix>`
 - `sentinel_path = <cache_path>.done`
+- `capture_start_path = <cache_path>.capture-start`
 
 The helper combines a readable prefix with a SHA-256 suffix from the complete ref. Do not recreate only the readable prefix: refs such as `a-b/c@d` and `a/b-c@d` collapse to the same sanitized text, while the hash suffix keeps their cache, parsed, and sentinel paths distinct.
 
-If `sentinel_path` exists and `--force-refresh` is NOT set: skip fetch, reuse cache.
+If `sentinel_path` and `capture_start_path` both exist and `--force-refresh` is NOT set: skip fetch, reuse cache. A legacy cache without capture-start metadata must be fetched again so live-state detection remains accurate.
 
 Otherwise, launch the fetches **in parallel** using the agent's available shell/background mechanism — one process per indexer:
 
@@ -129,6 +130,7 @@ Wait for each process to finish. Do not add proactive polling sleeps when the ru
 The fetch script handles:
 - Retry logic (3× with 10s backoff).
 - Writes to `<cache_path>.partial` then atomic rename + `.done` sentinel on success.
+- Persists the successful attempt's fetch-start time to `<capture_start_path>` before writing the sentinel.
 - On permanent failure: exits non-zero with a clear error on stderr.
 
 After all fetches return:
@@ -148,6 +150,7 @@ node <skill-dir>/scripts/parse.mjs \
 ```
 
 The parser streams the log and emits structured JSON per service. See `scripts/parse.mjs` for the exact schema it produces. `errorCount` counts every WARN/ERROR line while `errors` retains at most 1,000 detailed samples.
+The parser reads `<cache_path>.capture-start` automatically and measures live state against fetch start, not parser wall-clock time.
 
 If parse fails for a deployment: record, continue. If all fail: stop with error.
 

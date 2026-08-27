@@ -190,11 +190,12 @@ function computeDowntimeMs(progressRows, startTsMs, endTsMs, downtimeThresholdMs
   return downtime;
 }
 
-function computeIntervalStats(progressRows, fromBlock, toBlock) {
+function computeIntervalStats(progressRows, fromBlock, toBlock, maxTsMs = null) {
   const rateArr = [], mapArr = [], itemsArr = [];
   for (const row of progressRows) {
     const cur = row[1];
     if (cur < fromBlock || cur > toBlock) continue;
+    if (maxTsMs != null && row[0] > maxTsMs) continue;
     if (row[3] != null) rateArr.push(row[3]);
     if (row[4] != null) mapArr.push(row[4]);
     if (row[5] != null) itemsArr.push(row[5]);
@@ -373,6 +374,7 @@ function compute(config, parsed, downtimeThresholdSec, breakpointsOverride) {
       ? intersectionServiceNames.includes(serviceName)
       : parsed.every(p => p.services[serviceName]);
     let minEffectiveRange = Infinity;
+    let minRawRange = Infinity;
     const deploymentFirstBlocks = [];
 
     for (const p of parsed) {
@@ -434,13 +436,15 @@ function compute(config, parsed, downtimeThresholdSec, breakpointsOverride) {
       }
 
       const effectiveRange = effectiveLastBlock - firstBlock;
+      const rawRange = lastBlock - firstBlock;
       if (effectiveRange > 0) minEffectiveRange = Math.min(minEffectiveRange, effectiveRange);
+      if (rawRange > 0) minRawRange = Math.min(minRawRange, rawRange);
       deploymentFirstBlocks.push(firstBlock);
 
       perDeployment[p.meta.label] = {
         firstBlock, lastBlock, effectiveLastBlock,
         range: effectiveRange,
-        rawRange: lastBlock - firstBlock,
+        rawRange,
         catchup,                 // { tsMs, block, target, rowIndex } or null
         catchupWallMs,           // ms from first progress to catchup, or null
         stillSyncing,
@@ -464,7 +468,10 @@ function compute(config, parsed, downtimeThresholdSec, breakpointsOverride) {
     if (!hasSyncData) {
       breakpoints = [];
     } else if (breakpointsOverride) {
-      const refRange = inIntersection ? minEffectiveRange : Object.values(perDeployment).find(d => d && !d.nonSync)?.range ?? 0;
+      const onlyDeployment = Object.values(perDeployment).find(d => d && !d.nonSync);
+      const refRange = inIntersection && isFinite(minRawRange)
+        ? minRawRange
+        : (onlyDeployment?.rawRange ?? 0);
       breakpoints = breakpointsOverride.filter(b => b <= refRange);
       if (breakpoints.length === 0 || (refRange > 0 && breakpoints[breakpoints.length - 1] !== refRange)) {
         breakpoints.push(refRange);
@@ -674,10 +681,18 @@ function compute(config, parsed, downtimeThresholdSec, breakpointsOverride) {
       }
 
       // Rate composition: which rate metric diverges most.
-      // Compare avg rate vs avg mapping vs items across deployments, over the whole range.
+      // Compare avg rate vs avg mapping vs items across deployments, restricted
+      // to the effective sync range so a long idle tail cannot skew the finding.
       const rateBlobs = labels.map(l => {
-        const rows = s.perDeployment[l].progressRows;
-        const stats = computeIntervalStats(rows, s.perDeployment[l].firstBlock, s.perDeployment[l].lastBlock);
+        const deployment = s.perDeployment[l];
+        const stats = computeIntervalStats(
+          deployment.progressRows,
+          deployment.firstBlock,
+          deployment.effectiveLastBlock,
+          deployment.catchup != null && !deployment.wasAlreadyCaughtUp
+            ? deployment.catchup.tsMs
+            : null,
+        );
         return { label: l, ...stats };
       });
       if (rateBlobs.length >= 2) {

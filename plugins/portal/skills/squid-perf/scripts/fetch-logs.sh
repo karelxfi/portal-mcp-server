@@ -9,6 +9,7 @@
 #
 # Contract:
 #   - Writes to "${out_path}.partial" first, renames atomically on success.
+#   - Writes fetch-start time to "${out_path}.capture-start" on success.
 #   - Writes "${out_path}.done" sentinel only on full success.
 #   - Retries 3× with 10s backoff on failure.
 #   - Exits 0 on success, non-zero on permanent failure (with error on stderr).
@@ -38,9 +39,11 @@ mkdir -p "$OUT_DIR"
 
 PARTIAL="${OUT_PATH}.partial"
 SENTINEL="${OUT_PATH}.done"
+CAPTURE_START="${OUT_PATH}.capture-start"
+CAPTURE_START_PARTIAL="${CAPTURE_START}.partial"
 
 # Remove stale sentinel (if a prior aborted run left it) — shouldn't happen but be safe.
-rm -f "$SENTINEL"
+rm -f "$SENTINEL" "$CAPTURE_START" "$CAPTURE_START_PARTIAL"
 
 PAGE_SIZE="${SQD_PERF_PAGE_SIZE:-10000}"
 MAX_ATTEMPTS="${SQD_PERF_MAX_ATTEMPTS:-3}"
@@ -62,6 +65,7 @@ has_recognizable_log_line() {
 
 attempt=1
 while [ "$attempt" -le "$MAX_ATTEMPTS" ]; do
+  capture_started_at="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
   printf "fetch-logs [%s] attempt %d/%d — since=%s\n" "$REF" "$attempt" "$MAX_ATTEMPTS" "$SINCE" >&2
 
   : > "$PARTIAL"
@@ -99,16 +103,19 @@ while [ "$attempt" -le "$MAX_ATTEMPTS" ]; do
     rc=$?
   fi
 
-  # Heuristic for success: exit ok, enough content, at least one recognizable
-  # Cloud log line, and no obvious auth/error-only response.
+  # Success requires a clean child exit, at least one recognizable Cloud log
+  # line, and no obvious auth/error-only response. Quiet deployments may emit
+  # only a handful of valid lines.
   line_count=$(wc -l < "$PARTIAL" 2>/dev/null | tr -d ' ')
   line_count="${line_count:-0}"
 
-  if [ "$rc" -eq 0 ] && [ "$line_count" -gt 5 ] \
-     && has_recognizable_log_line "$PARTIAL" \
+  if [ "$rc" -eq 0 ] && has_recognizable_log_line "$PARTIAL" \
      && ! grep -qE '^(Error|error:|ERR_|Not authorized|Unauthenticated|please run.*auth)' "$PARTIAL"; then
-    # success path — atomic rename + sentinel
+    # Success path: publish the log and capture timestamp, then write the
+    # sentinel last so cache readers never accept incomplete metadata.
     mv -f "$PARTIAL" "$OUT_PATH"
+    printf '%s\n' "$capture_started_at" > "$CAPTURE_START_PARTIAL"
+    mv -f "$CAPTURE_START_PARTIAL" "$CAPTURE_START"
     rm -f "${PARTIAL}.err"
     : > "$SENTINEL"
     printf "fetch-logs [%s] ok — %s lines → %s\n" "$REF" "$line_count" "$OUT_PATH" >&2
