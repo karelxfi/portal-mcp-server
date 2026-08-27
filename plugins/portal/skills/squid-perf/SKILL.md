@@ -3,7 +3,7 @@ name: squid-perf
 description: Compare sync-time performance across one or more Squid SDK deployments. Fetches logs via sqd CLI, parses per-service progress, and generates a self-contained HTML report plus a Markdown summary with wall-clock/active-time/downtime breakdowns at percentage-based block breakpoints. Supports single-indexer mode (metrics only, no comparison). Use when the user invokes "/squid-perf", asks to compare Squid deployment sync times, or references squid performance profiling.
 metadata:
   author: subsquid
-  version: "1.1.10"
+  version: "1.1.11"
   category: core
 ---
 

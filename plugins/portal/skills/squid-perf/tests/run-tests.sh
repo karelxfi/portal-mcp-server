@@ -408,6 +408,56 @@ node -e '
   if (tier3?.perIndexer?.capped?.mean !== 10 || tier3?.perIndexer?.capped?.p95 !== 10) process.exit(1);
 ' "$CAP_REPORT_DIR/report.html" || fail "idle-tail sample cap displaced the measured sync samples"
 
+printf 'test: interval boundaries are exclusive and percentiles use nearest rank\n' >&2
+STATS_REPORT_DIR="$TEST_TMP_DIR/stats-report-run"
+mkdir -p "$STATS_REPORT_DIR/parsed"
+cat > "$STATS_REPORT_DIR/compare-syncs.json" <<'JSON'
+{
+  "createdAt": "2026-01-01T00:00:00Z",
+  "downtimeThresholdSec": 120,
+  "breakpointsOverride": null,
+  "indexers": [
+    { "ref": "org/stats@abc", "since": "2026-01-01T00:00:00Z", "label": "stats" }
+  ]
+}
+JSON
+{
+  printf 'api 2026-01-01T00:00:00.000Z INFO sqd:processor 100 / 1000, rate: 999 blocks/sec\n'
+  for i in $(seq 1 20); do
+    printf 'api 2026-01-01T00:00:00.%03dZ INFO sqd:stage completed batch in %sms\n' "$((100 + i))" "$i"
+  done
+  for i in $(seq 1 10); do
+    target=1000
+    if [ "$i" -eq 10 ]; then target=110; fi
+    printf 'api 2026-01-01T00:00:%02d.000Z INFO sqd:processor %s / %s, rate: %s blocks/sec\n' "$i" "$((100 + i))" "$target" "$i"
+    if [ "$i" -le 2 ]; then
+      printf 'api 2026-01-01T00:00:%02d.100Z INFO sqd:multicall processed batch %s at block %s: 1 chunks, 1 groups, 1 total calls, %sms\n' "$i" "$i" "$((100 + i))" "$((i * 10))"
+    fi
+  done
+} > "$TEST_TMP_DIR/stats.log"
+node "$SKILL_DIR/scripts/parse.mjs" --input "$TEST_TMP_DIR/stats.log" --output "$STATS_REPORT_DIR/parsed/stats.json" --label stats
+printf '[]\n' > "$STATS_REPORT_DIR/failures.json"
+node "$SKILL_DIR/scripts/report.mjs" --run-dir "$STATS_REPORT_DIR"
+grep -Fq '| 0% → 10% (1 blocks) | 1.0 blk/s · map — · items — |' "$STATS_REPORT_DIR/report.md" \
+  || fail "first interval included the initial-boundary rate sample"
+grep -Fq '| 10% → 20% (1 blocks) | 2.0 blk/s · map — · items — |' "$STATS_REPORT_DIR/report.md" \
+  || fail "second interval reused the prior-boundary rate sample"
+grep -Fq '| 10% → 20% (1 blocks) | 1 calls · avg 20ms · p95 20ms' "$STATS_REPORT_DIR/report.md" \
+  || fail "second interval reused the prior-boundary multicall sample"
+node -e '
+  const lines = require("fs").readFileSync(process.argv[1], "utf8").split("\n");
+  const templateLine = lines.findIndex(line => line.includes("type=\"__bundler/template\"") && line.trim().startsWith("<script"));
+  const inner = JSON.parse(lines[templateLine + 1]);
+  const openTag = "<script id=\"__REPORT_DATA__\" type=\"application/json\">";
+  const openAt = inner.indexOf(openTag, inner.indexOf("-->") + 3);
+  const closeAt = inner.indexOf("</script>", openAt + openTag.length);
+  const data = JSON.parse(inner.slice(openAt + openTag.length, closeAt));
+  const tier3 = data.services.find(item => item.name === "api")?.tier3
+    ?.find(item => item.namespace === "sqd:stage" && item.field === "ms")
+    ?.perIndexer?.stats;
+  if (!tier3 || tier3.count !== 20 || tier3.median !== 10 || tier3.p95 !== 19) process.exit(1);
+' "$STATS_REPORT_DIR/report.html" || fail "nearest-rank Tier 3 percentiles are incorrect"
+
 printf 'test: report warns when ending coverage ranges diverge\n' >&2
 RANGE_REPORT_DIR="$TEST_TMP_DIR/range-report-run"
 mkdir -p "$RANGE_REPORT_DIR/parsed"
@@ -482,4 +532,4 @@ node -e '
   if (breakpoints[0].perIndexer.short?.block !== 101) process.exit(1);
 ' "$SHORT_REPORT_DIR/report.html" || fail "short sync range produced zero or duplicate breakpoints"
 
-printf '{"status":"ok","tests":17}\n'
+printf '{"status":"ok","tests":18}\n'

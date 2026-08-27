@@ -226,7 +226,7 @@ function assertManifest() {
   }
   const skillsSource = readFileSync(SKILLS_SOURCE_PATH, 'utf8')
   assert(
-    skillsSource.includes('aa30dc82d98874e139bb7b5da8f8e482e0924217'),
+    skillsSource.includes('f71022bebf9809a8cea5749b7765ec7dd47eb44a'),
     'bundled skills should record the verified upstream commit',
   )
   assertOptionalAsset(PLUGIN_ROOT, manifest.interface.composerIcon, 'interface.composerIcon')

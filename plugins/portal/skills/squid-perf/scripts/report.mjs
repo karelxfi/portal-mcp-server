@@ -197,7 +197,9 @@ function computeIntervalStats(progressRows, fromBlock, toBlock) {
   const rateArr = [], mapArr = [], itemsArr = [];
   for (const row of progressRows) {
     const cur = row[1];
-    if (cur < fromBlock || cur > toBlock) continue;
+    // Adjacent intervals are (fromBlock, toBlock], so a boundary sample belongs
+    // only to the interval it completes rather than being counted twice.
+    if (cur <= fromBlock || cur > toBlock) continue;
     if (row[3] != null) rateArr.push(row[3]);
     if (row[4] != null) mapArr.push(row[4]);
     if (row[5] != null) itemsArr.push(row[5]);
@@ -260,7 +262,7 @@ function tier3SamplesInMeasurementWindow(samples, deployment) {
 function multicallStatsInRange(multicall, fromBlock, toBlock) {
   const latencies = [], callCounts = [];
   for (const mc of multicall) {
-    if (mc.block < fromBlock || mc.block > toBlock) continue;
+    if (mc.block <= fromBlock || mc.block > toBlock) continue;
     latencies.push(mc.latencyMs);
     callCounts.push(mc.calls);
   }
@@ -338,7 +340,8 @@ function sum(arr) {
 function percentile(arr, p) {
   if (!arr || arr.length === 0) return null;
   const sorted = [...arr].sort((a, b) => a - b);
-  const i = Math.min(sorted.length - 1, Math.floor(p * sorted.length));
+  // Nearest-rank percentile converted to a zero-based array index.
+  const i = Math.min(sorted.length - 1, Math.max(0, Math.ceil(p * sorted.length) - 1));
   return sorted[i];
 }
 
