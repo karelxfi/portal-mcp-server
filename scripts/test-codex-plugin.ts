@@ -201,7 +201,7 @@ function assertManifest() {
   assertRecord(manifest.interface, 'plugin interface must be an object')
   assert(manifest.interface.displayName === 'SQD', 'plugin display name should be SQD')
   assert(
-    manifest.interface.shortDescription === 'Explore live and historical blockchain data across 130+ networks.',
+    manifest.interface.shortDescription === 'Query blockchain data across 140+ networks.',
     'plugin short description should lead with broad network coverage',
   )
   const publicCopy = [
@@ -212,7 +212,7 @@ function assertManifest() {
   ].join(' ')
   for (const phrase of [
     'blockchain',
-    '130+ networks',
+    '140+ networks',
     'Ethereum',
     'Base',
     'Solana',
@@ -220,7 +220,8 @@ function assertManifest() {
     'Tron',
     'Polkadot',
     'Hyperliquid',
-    'many more',
+    'Pipes SDK',
+    'Squid SDK',
   ]) {
     assert(publicCopy.toLowerCase().includes(phrase.toLowerCase()), `plugin copy should include ${phrase}`)
   }
@@ -309,7 +310,19 @@ function assertChatgptSubmission() {
   assert(submission.app_info.category === 'DEVELOPER_TOOLS', 'ChatGPT submission category should be DEVELOPER_TOOLS')
 
   const publicCopy = `${submission.app_info.subtitle} ${submission.app_info.description}`
-  for (const phrase of ['blockchain', '130+', 'Bitcoin', 'Solana', 'Polkadot', 'Tron', 'Hyperliquid', 'many more']) {
+  for (const phrase of [
+    'blockchain',
+    '140+',
+    'Ethereum',
+    'Base',
+    'Solana',
+    'Polkadot',
+    'Bitcoin',
+    'Tron',
+    'Hyperliquid',
+    'Pipes SDK',
+    'Squid SDK',
+  ]) {
     assert(publicCopy.toLowerCase().includes(phrase.toLowerCase()), `ChatGPT submission copy should include ${phrase}`)
   }
   assert(!/[\u2014\u2013]/.test(publicCopy), 'ChatGPT submission copy should not use em or en dashes')

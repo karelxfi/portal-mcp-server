@@ -12,11 +12,11 @@ Category: `Data & Analytics`
 
 Short description:
 
-> Explore live and historical blockchain data across 130+ networks.
+> Query blockchain data across 140+ networks with SQD Portal.
 
 Long description:
 
-> Find 130+ blockchain networks in SQD, then explore the data available for each network. Ask about wallets, transactions, token transfers, smart contracts, network activity, and markets across Ethereum, Base, Solana, Bitcoin, Polkadot, Hyperliquid, and many more. Check SQD's live catalog for Tron availability. No account or login is required.
+> Query blockchain data across 140+ networks with SQD Portal, including Ethereum, Base, Solana, Polkadot, Bitcoin, Tron, and Hyperliquid. The SQD plugin also includes Pipes SDK and Squid SDK skills for building, migrating, troubleshooting, and improving blockchain data projects.
 
 Starter prompts:
 
@@ -55,8 +55,8 @@ For a new version or listing change, use the connector submission portal in the 
 - Connection model: one URL for every user
 - Authentication: none
 - Name: `SQD`
-- Tagline: `Explore blockchain data across 130+ networks`
-- Description: use the long description in this packet
+- Tagline: `Query blockchain data across 140+ networks`
+- Description: `Query blockchain data across 140+ networks with SQD Portal, including Ethereum, Base, Solana, Polkadot, Bitcoin, Tron, and Hyperliquid.`
 - Documentation: `https://docs.sqd.dev/en/ai/claude-connector`
 - Privacy: `https://sqd.dev/imprint/`
 - Support: `https://sqd.dev/contact/`
@@ -92,7 +92,7 @@ Do not upload screenshots. SQD does not ship a plugin user interface in this rel
 
 Suggested initial release notes:
 
-> Initial SQD plugin submission. SQD finds 130+ blockchain networks and provides read-only access to the live and historical data available for each. It covers Ethereum, Base, Solana, Bitcoin, Polkadot, Hyperliquid, and many more, while its live catalog shows current Tron availability. It requires no account or login.
+> Initial SQD plugin submission. Query blockchain data across 140+ networks with SQD Portal, including Ethereum, Base, Solana, Polkadot, Bitcoin, Tron, and Hyperliquid. The plugin also includes Pipes SDK and Squid SDK skills for building, migrating, troubleshooting, and improving blockchain data projects.
 
 ### Positive review tests
 
@@ -121,7 +121,7 @@ Add this entry to `.grok-plugin/marketplace.json` after the SQD source change is
 ```json
 {
   "name": "sqd",
-  "description": "SQD helps Grok find 130+ blockchain networks and explore the live and historical data available for each. Analyze wallets, transactions, token transfers, smart contracts, network activity, and markets across Ethereum, Base, Solana, Bitcoin, Polkadot, Hyperliquid, and many more, and check current Tron availability.",
+  "description": "Query blockchain data across 140+ networks with SQD Portal, including Ethereum, Base, Solana, Polkadot, Bitcoin, Tron, and Hyperliquid. The SQD plugin also includes Pipes SDK and Squid SDK skills for building, migrating, troubleshooting, and improving blockchain data projects.",
   "category": "development",
   "source": {
     "source": "url",

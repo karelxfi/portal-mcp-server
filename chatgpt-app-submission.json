@@ -4,7 +4,7 @@
   "app_info": {
     "display_name": "SQD",
     "subtitle": "Explore blockchain data",
-    "description": "SQD helps users find 130+ blockchain networks and explore the live and historical data available for each. Review wallet and transaction activity, inspect token transfers and smart contracts, and analyze markets across Ethereum, Base, Bitcoin, Solana, Polkadot, Hyperliquid, and many more. Check SQD's live catalog for Tron availability. SQD is read-only and requires no login.",
+    "description": "Query blockchain data across 140+ networks with SQD Portal, including Ethereum, Base, Solana, Polkadot, Bitcoin, Tron, and Hyperliquid. The SQD plugin also includes Pipes SDK and Squid SDK skills for building, migrating, troubleshooting, and improving blockchain data projects.",
     "category": "DEVELOPER_TOOLS"
   },
   "tools": {
