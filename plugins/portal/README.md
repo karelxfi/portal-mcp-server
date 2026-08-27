@@ -6,7 +6,7 @@ The plugin uses the public SQD endpoint at `https://portal.sqd.dev/mcp`. No acco
 
 The packaged server runtime uses stateless HTTP and negotiates MCP 2026-07-28, matching the current Claude rollout. Set `REQUIRE_MCP_2026_LIVE=1` when running the plugin checks after deployment to verify the public endpoint.
 
-It also includes the four official SQD agent skills for Portal, Pipes SDK, Portal migration, and indexer performance. The bundled snapshot comes from `subsquid-labs/skills` at commit `4c8360b9606887cfb05b9d2eb13e4e1663d9ca20`; see `skills/SOURCE.md`.
+It also includes the four official SQD agent skills for Portal, Pipes SDK, Portal migration, and indexer performance. The bundled snapshot comes from `subsquid-labs/skills` at commit `06936ddfa9ae423638e187d8e9ac5d1f831095a8`; see `skills/SOURCE.md`.
 
 ## Name and logo
 

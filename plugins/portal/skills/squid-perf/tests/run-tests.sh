@@ -423,6 +423,68 @@ node -e '
   if (!stats || stats.count !== 10 || stats.mean !== 1 || stats.median !== 1 || stats.p95 !== 1) process.exit(1);
 ' "$OVERRIDE_RESTART_DIR/report.html" || fail "override Tier 3 statistics included pre-restart samples"
 
+printf 'test: sync services preserve diagnostics from deployments without progress\n' >&2
+STARTUP_DIAGNOSTICS_DIR="$TEST_TMP_DIR/startup-diagnostics-run"
+mkdir -p "$STARTUP_DIAGNOSTICS_DIR/parsed"
+cat > "$STARTUP_DIAGNOSTICS_DIR/compare-syncs.json" <<'JSON'
+{
+  "createdAt": "2026-01-01T00:00:00Z",
+  "downtimeThresholdSec": 120,
+  "breakpointsOverride": null,
+  "indexers": [
+    { "ref": "org/healthy@abc", "since": "2026-01-01T00:00:00Z", "label": "healthy" },
+    { "ref": "org/startup-failed@def", "since": "2026-01-01T00:00:00Z", "label": "startup-failed" }
+  ]
+}
+JSON
+{
+  printf 'api 2026-01-01T00:00:00.000Z INFO sqd:processor 100 / 1000, rate: 10 blocks/sec\n'
+  for i in $(seq 1 10); do
+    printf 'api 2026-01-01T00:00:01.%06dZ INFO sqd:stage completed healthy batch in 10ms\n' "$i"
+  done
+  printf 'api 2026-01-01T00:00:02.000Z INFO sqd:processor 1000 / 1000, rate: 10 blocks/sec\n'
+} > "$TEST_TMP_DIR/startup-healthy.log"
+{
+  printf 'api 2026-01-01T00:00:00.000Z ERROR sqd:db connection failed before processor startup\n'
+  printf 'api 2026-01-01T00:00:00.500Z INFO sqd:multicall processed startup 0 at block 0: 1 chunks, 1 groups, 1 total calls, 250ms\n'
+  for i in $(seq 1 10); do
+    printf 'api 2026-01-01T00:00:01.%06dZ INFO sqd:stage completed failing startup in 100ms\n' "$i"
+  done
+} > "$TEST_TMP_DIR/startup-failed.log"
+node "$SKILL_DIR/scripts/parse.mjs" \
+  --input "$TEST_TMP_DIR/startup-healthy.log" \
+  --output "$STARTUP_DIAGNOSTICS_DIR/parsed/healthy.json" \
+  --label healthy
+node "$SKILL_DIR/scripts/parse.mjs" \
+  --input "$TEST_TMP_DIR/startup-failed.log" \
+  --output "$STARTUP_DIAGNOSTICS_DIR/parsed/startup-failed.json" \
+  --label startup-failed
+printf '[]\n' > "$STARTUP_DIAGNOSTICS_DIR/failures.json"
+node "$SKILL_DIR/scripts/report.mjs" --run-dir "$STARTUP_DIAGNOSTICS_DIR"
+grep -Fq "\`startup-failed\` — 1 WARN/ERROR line(s) in \`api\`." "$STARTUP_DIAGNOSTICS_DIR/report.md" \
+  || fail "startup failure warning was omitted"
+grep -Fq '### Diagnostic-only multicall stats' "$STARTUP_DIAGNOSTICS_DIR/report.md" \
+  || fail "diagnostic-only multicall section was omitted from Markdown"
+grep -Fq '| startup-failed | 1 | 250ms | 250ms | 1 |' "$STARTUP_DIAGNOSTICS_DIR/report.md" \
+  || fail "diagnostic-only multicall values were omitted from Markdown"
+node -e '
+  const lines = require("fs").readFileSync(process.argv[1], "utf8").split("\n");
+  const templateLine = lines.findIndex(line => line.includes("type=\"__bundler/template\"") && line.trim().startsWith("<script"));
+  const inner = JSON.parse(lines[templateLine + 1]);
+  const openTag = "<script id=\"__REPORT_DATA__\" type=\"application/json\">";
+  const openAt = inner.indexOf(openTag, inner.indexOf("-->") + 3);
+  const closeAt = inner.indexOf("</script>", openAt + openTag.length);
+  const data = JSON.parse(inner.slice(openAt + openTag.length, closeAt));
+  const service = [...data.services, ...data.soloServices].find(item => item.name === "api");
+  const failedTier2 = service?.tier2?.["startup-failed"];
+  if (!failedTier2 || failedTier2.errors !== 1 || failedTier2.multicallMeanMs !== 250 || failedTier2.multicallP95Ms !== 250) process.exit(1);
+  if (service.breakpoints.some(bp => bp.perIndexer?.["startup-failed"] != null)) process.exit(1);
+  const tier3 = service.tier3.find(item => item.namespace === "sqd:stage" && item.field === "ms");
+  const failedStats = tier3?.perIndexer?.["startup-failed"];
+  if (!failedStats || failedStats.count !== 10 || failedStats.mean !== 100 || failedStats.p95 !== 100) process.exit(1);
+  if (!data.warnings.some(warning => warning.message.includes("startup-failed") && warning.message.includes("1 WARN/ERROR"))) process.exit(1);
+' "$STARTUP_DIAGNOSTICS_DIR/report.html" || fail "startup diagnostics were dropped from the report payload"
+
 printf 'test: reverse captures retain sync samples after a full idle-tail sample cap\n' >&2
 CAP_REPORT_DIR="$TEST_TMP_DIR/cap-report-run"
 mkdir -p "$CAP_REPORT_DIR/parsed"
@@ -588,4 +650,4 @@ node -e '
   if (breakpoints[0].perIndexer.short?.block !== 101) process.exit(1);
 ' "$SHORT_REPORT_DIR/report.html" || fail "short sync range produced zero or duplicate breakpoints"
 
-printf '{"status":"ok","tests":20}\n'
+printf '{"status":"ok","tests":21}\n'

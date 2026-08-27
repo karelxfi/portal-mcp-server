@@ -332,6 +332,26 @@ function nonSyncLastTsMs(s) {
   return candidates.length ? Math.max(...candidates) : null;
 }
 
+function nonSyncSnapshot(s) {
+  const first = nonSyncFirstTsMs(s);
+  const last = nonSyncLastTsMs(s);
+  let lineCount = s.errorCount || 0;
+  lineCount += (s.multicall || []).length;
+  for (const t3 of Object.values(s.tier3 || {})) lineCount += (t3.count || 0);
+  return {
+    nonSync: true,
+    firstTsMs: first,
+    lastTsMs: last,
+    spanMs: (first != null && last != null) ? last - first : null,
+    lineCount,
+    tier3: s.tier3 || {},
+    multicall: s.multicall || [],
+    errors: s.errors || [],
+    errorCount: s.errorCount || 0,
+    levelCounts: s.levelCounts || null,
+  };
+}
+
 function avg(arr) {
   if (!arr || arr.length === 0) return null;
   return sum(arr) / arr.length;
@@ -444,27 +464,14 @@ function compute(config, parsed, downtimeThresholdSec, breakpointsOverride) {
       if (!hasSyncData) {
         // Non-sync service: no progress rows in any deployment. Build a reduced
         // snapshot from tier-3, multicall, errors, and overall time range.
-        const first = nonSyncFirstTsMs(s);
-        const last  = nonSyncLastTsMs(s);
-        let lineCount = s.errorCount || 0;
-        lineCount += (s.multicall || []).length;
-        for (const t3 of Object.values(s.tier3 || {})) lineCount += (t3.count || 0);
-        perDeployment[p.meta.label] = {
-          nonSync: true,
-          firstTsMs: first,
-          lastTsMs:  last,
-          spanMs:    (first != null && last != null) ? last - first : null,
-          lineCount,
-          tier3:      s.tier3 || {},
-          multicall:  s.multicall || [],
-          errors:     s.errors || [],
-          errorCount: s.errorCount || 0,
-          levelCounts: s.levelCounts || null,
-        };
+        perDeployment[p.meta.label] = nonSyncSnapshot(s);
         continue;
       }
       if (s.progressCount === 0) {
-        perDeployment[p.meta.label] = null;
+        // Another deployment proved this is a sync service, but this one never
+        // reached its first progress row. Keep startup diagnostics visible while
+        // excluding this deployment from breakpoint and rate comparisons.
+        perDeployment[p.meta.label] = nonSyncSnapshot(s);
         continue;
       }
       // After a restart, measure the final uninterrupted processor segment.
@@ -854,8 +861,7 @@ function compute(config, parsed, downtimeThresholdSec, breakpointsOverride) {
       warnings.push(`\`${p.meta.label}\` — last log timestamp is within 60s of fetch time (deployment was running live).`);
     }
     for (const [name, s] of Object.entries(p.services)) {
-      if (s.progressCount === 0) continue;
-      if ((s.restarts || []).length > 0) {
+      if (s.progressCount > 0 && (s.restarts || []).length > 0) {
         warnings.push(`\`${p.meta.label}\` — ${s.restarts.length} restart(s) detected in \`${name}\` (current block went backward). Sync timings use the final uninterrupted segment.`);
       }
       if (s.errorCount > 0) {
@@ -1131,20 +1137,18 @@ function mapServiceForReport(s, breakpointsOverride) {
       ?? (d?.errors || []).filter(e => e.level === "WARN" || e.level === "WARNING").length;
     const errorCount = d?.levelCounts?.error
       ?? (d?.errors || []).filter(e => e.level === "ERROR" || e.level === "CRITICAL" || e.level === "FATAL").length;
-    if (!d || d.nonSync) {
-      tier2[label] = {
-        restarts: 0,
-        errors: errorCount,
-        warns: warningCount,
-      };
+    if (!d) {
+      tier2[label] = { restarts: 0, errors: errorCount, warns: warningCount };
       continue;
     }
-    const tier2Multicall = breakpointsOverride == null
-      ? multicallsThroughCatchup(d)
-      : (d.multicall || []);
+    const tier2Multicall = d.nonSync
+      ? (d.multicall || [])
+      : breakpointsOverride == null
+        ? multicallsThroughCatchup(d)
+        : (d.multicall || []);
     const latencies = tier2Multicall.map(m => m.latencyMs).filter(x => x != null);
     const entry = {
-      restarts: (d.restarts || []).length,
+      restarts: d.nonSync ? 0 : (d.restarts || []).length,
       errors: errorCount,
       warns: warningCount,
     };
@@ -1480,6 +1484,34 @@ function renderMd({ config, parsed, compute, failures, runId, htmlRelPath }) {
           row.push(`${mc.invocations} calls · avg ${mc.avgLatencyMs.toFixed(0)}ms · p95 ${mc.p95LatencyMs}ms · ${formatShortNumber(mc.totalCalls)} eth_calls`);
         }
         lines.push(`| ${row.map(escapeMd).join(" | ")} |`);
+      }
+      lines.push("");
+    }
+
+    // Deployments that never emitted processor progress cannot be assigned to
+    // block intervals, but their retained multicall samples are still useful
+    // startup diagnostics and must remain visible in the Markdown report.
+    const diagnosticMulticall = {};
+    for (const label of labels) {
+      const dep = svc.perDeployment[label];
+      if (!dep?.nonSync) continue;
+      const samples = (dep.multicall || []).filter(sample => sample.latencyMs != null);
+      if (samples.length === 0) continue;
+      const latencies = samples.map(sample => sample.latencyMs);
+      diagnosticMulticall[label] = {
+        invocations: samples.length,
+        avgLatencyMs: avg(latencies),
+        p95LatencyMs: percentile(latencies, 0.95),
+        totalCalls: sum(samples.map(sample => sample.calls || 0)),
+      };
+    }
+    if (Object.keys(diagnosticMulticall).length > 0) {
+      lines.push(`### Diagnostic-only multicall stats`);
+      lines.push(`_These deployments emitted multicall records but no processor progress, so the samples are not assigned to block intervals._\n`);
+      lines.push(`| Deployment | Samples | Average | p95 | Total calls |`);
+      lines.push(`| ---------- | ------- | ------- | --- | ----------- |`);
+      for (const [label, stats] of Object.entries(diagnosticMulticall)) {
+        lines.push(`| ${escapeMd(label)} | ${stats.invocations} | ${stats.avgLatencyMs.toFixed(0)}ms | ${stats.p95LatencyMs.toFixed(0)}ms | ${formatShortNumber(stats.totalCalls)} |`);
       }
       lines.push("");
     }
