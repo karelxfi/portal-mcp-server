@@ -1,6 +1,6 @@
 # SQD Plugin Directory Submission
 
-This is the source packet for SQD's OpenAI, Claude, and Grok directory listings.
+This is the source packet for SQD's OpenAI, Claude, Grok, Gemini, and Cursor directory listings.
 
 ## Public listing
 
@@ -164,3 +164,40 @@ Grok chat already accepts SQD as a Custom connector using `https://portal.sqd.de
 1. Publish SQD in the Grok Build marketplace.
 2. Document the Custom connector setup for Grok chat.
 3. Use the public marketplace listing and measured adoption when asking xAI to consider SQD for the consumer connector catalog.
+
+## Gemini CLI extension gallery
+
+Gemini CLI installs the generated `sqd.tar.gz` release asset. The archive keeps `gemini-extension.json` at its root and includes the same four official SQD skills from `plugins/portal/skills`.
+
+Publish with these steps:
+
+1. Run `npm run test:gemini-extension`.
+2. Run `npm run package:gemini`.
+3. Upload `dist/gemini/sqd.tar.gz` as the only custom asset on the matching GitHub release.
+4. Add the `gemini-cli-extension` GitHub topic to the public repository.
+5. Confirm the manifest version matches the release tag.
+6. Install from `https://github.com/subsquid-labs/portal-mcp-server` and confirm the SQD server and all four skills load.
+
+Gemini indexes tagged public repositories with that topic daily. No separate submission form or pull request is required.
+
+The internal extension identifier is `sqd` because Gemini requires lowercase names. The public product name remains `SQD` in the repository, description, documentation, and MCP server name.
+
+## Cursor Marketplace
+
+The repository-root `.cursor-plugin/marketplace.json` points at `plugins/portal`. The Cursor manifest in that folder reuses the existing `skills/`, `.mcp.json`, and black SQD logo without copying them.
+
+Use these listing values:
+
+- Display name: `SQD`
+- Plugin identifier: `sqd`
+- Repository: `https://github.com/subsquid-labs/portal-mcp-server`
+- Website: `https://sqd.dev/portal/`
+- Documentation: `https://docs.sqd.dev/en/ai/mcp-server`
+- Support: `https://sqd.dev/contact/`
+- Logo: `plugins/portal/assets/sqd-logo.svg`
+- Authentication: none
+- Components: one read-only MCP server and four skills
+- Short description: `Query blockchain data across 140+ networks with SQD Portal.`
+- Long description: `Query blockchain data across 140+ networks with SQD Portal, including Ethereum, Base, Solana, Polkadot, Bitcoin, Tron, and Hyperliquid. The SQD plugin also includes Pipes SDK and Squid SDK skills for building, migrating, troubleshooting, and improving blockchain data projects.`
+
+Before submitting at `https://cursor.com/marketplace/publish`, run `npm run test:cursor-plugin` and test the plugin locally in Cursor. Cursor reviews every public marketplace submission.

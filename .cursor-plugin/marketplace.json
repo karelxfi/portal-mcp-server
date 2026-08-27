@@ -1,0 +1,17 @@
+{
+  "name": "sqd",
+  "owner": {
+    "name": "Subsquid Labs"
+  },
+  "metadata": {
+    "description": "SQD plugins for blockchain data across 140+ networks, plus Pipes SDK and Squid SDK skills.",
+    "version": "0.8.0"
+  },
+  "plugins": [
+    {
+      "name": "sqd",
+      "source": "./plugins/portal",
+      "description": "Query blockchain data across 140+ networks with SQD Portal, including Ethereum, Base, Solana, Polkadot, Bitcoin, Tron, and Hyperliquid. The SQD plugin also includes Pipes SDK and Squid SDK skills for building, migrating, troubleshooting, and improving blockchain data projects."
+    }
+  ]
+}
