@@ -1,6 +1,6 @@
 # SQD Plugin
 
-SQD lets Codex, ChatGPT, Claude, and Grok find 130+ blockchain networks and explore the live and historical data available for each. It can answer questions about wallets, transactions, token transfers, smart contracts, network activity, and markets across Ethereum, Base, Solana, Bitcoin, Polkadot, Hyperliquid, and many more. Its live catalog also shows current Tron availability.
+Query blockchain data across 140+ networks with SQD Portal, including Ethereum, Base, Solana, Polkadot, Bitcoin, Tron, and Hyperliquid. The SQD plugin also includes Pipes SDK and Squid SDK skills for building, migrating, troubleshooting, and improving blockchain data projects.
 
 The plugin uses the public SQD endpoint at `https://portal.sqd.dev/mcp`. No account or login is required.
 

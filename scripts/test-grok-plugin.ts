@@ -24,7 +24,8 @@ function assertClaudeCompatiblePackage() {
   assert(manifest.name === 'portal', 'Grok-compatible plugin name should be portal')
   assert(manifest.displayName === 'SQD', 'Grok-compatible plugin display name should be SQD')
   assert(
-    manifest.description === 'Explore live and historical blockchain data across 130+ networks with SQD.',
+    manifest.description ===
+      'Query blockchain data across 140+ networks with SQD Portal, including Ethereum, Base, Solana, Polkadot, Bitcoin, Tron, and Hyperliquid. The SQD plugin also includes Pipes SDK and Squid SDK skills for building, migrating, troubleshooting, and improving blockchain data projects.',
     'Grok-compatible copy should lead with broad network coverage',
   )
   assert(!/[\u2014\u2013]/.test(JSON.stringify(manifest)), 'Grok-compatible copy should not use em or en dashes')

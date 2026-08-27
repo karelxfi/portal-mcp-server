@@ -119,7 +119,8 @@ function getEndpoint() {
   assert(manifest.name === 'portal', 'Claude plugin name should be portal')
   assert(manifest.displayName === 'SQD', 'Claude plugin display name should be SQD')
   assert(
-    manifest.description === 'Explore live and historical blockchain data across 130+ networks with SQD.',
+    manifest.description ===
+      'Query blockchain data across 140+ networks with SQD Portal, including Ethereum, Base, Solana, Polkadot, Bitcoin, Tron, and Hyperliquid. The SQD plugin also includes Pipes SDK and Squid SDK skills for building, migrating, troubleshooting, and improving blockchain data projects.',
     'Claude plugin description should lead with broad network coverage',
   )
   assert(!/[\u2014\u2013]/.test(JSON.stringify(manifest)), 'Claude plugin copy should not use em or en dashes')
@@ -154,7 +155,7 @@ function assertDirectoryListing() {
     'Claude submission packet should record the public SQD connector listing',
   )
   assert(
-    submission.includes('Tagline: `Explore blockchain data across 130+ networks`'),
+    submission.includes('Tagline: `Query blockchain data across 140+ networks`'),
     'Claude submission packet should keep the broad coverage tagline',
   )
   assert(submission.includes('Authentication: none'), 'Claude submission packet should declare no authentication')
