@@ -84,7 +84,7 @@ function assertMarketplace() {
   const entry = marketplace.plugins.find((plugin) => plugin?.name === 'portal') as JsonObject | undefined
   assertRecord(entry, 'Claude marketplace should include portal')
   assert(entry.source === './plugins/portal', 'Claude marketplace portal source should point at ./plugins/portal')
-  assert(entry.displayName === 'SQD Portal', 'Claude marketplace display name should be SQD Portal')
+  assert(entry.displayName === 'SQD', 'Claude marketplace display name should be SQD')
   assert(entry.version === '0.8.0', 'Claude marketplace plugin entry version should be 0.8.0')
   assertNoCommittedSecretOrLocalPath(marketplace)
 }
@@ -92,7 +92,9 @@ function assertMarketplace() {
 function getEndpoint() {
   const manifest = readJson(PLUGIN_JSON_PATH)
   assert(manifest.name === 'portal', 'Claude plugin name should be portal')
-  assert(manifest.displayName === 'SQD Portal', 'Claude plugin display name should be SQD Portal')
+  assert(manifest.displayName === 'SQD', 'Claude plugin display name should be SQD')
+  assert(manifest.description === 'Explore live and historical blockchain data with SQD.', 'Claude plugin description should use plain listing copy')
+  assert(!/[\u2014\u2013]/.test(JSON.stringify(manifest)), 'Claude plugin copy should not use em or en dashes')
   assert(manifest.version === '0.8.0', 'Claude plugin version should be 0.8.0')
   assert(manifest.mcpServers === './.mcp.json', 'Claude plugin should reference ./.mcp.json')
   assert(existsSync(resolve(PLUGIN_ROOT, '.mcp.json')), 'Claude plugin MCP config should exist')

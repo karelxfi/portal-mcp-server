@@ -1,8 +1,8 @@
 {
   "name": "portal",
-  "displayName": "SQD Portal",
+  "displayName": "SQD",
   "version": "0.8.0",
-  "description": "Read validated onchain data from Claude Code through SQD Portal.",
+  "description": "Explore live and historical blockchain data with SQD.",
   "author": {
     "name": "Subsquid Labs"
   },
@@ -12,14 +12,17 @@
   "keywords": [
     "sqd",
     "subsquid",
-    "portal",
-    "mcp",
     "blockchain",
-    "analytics",
-    "evm",
+    "blockchain data",
+    "blockchain analytics",
+    "crypto analytics",
+    "ethereum",
+    "base",
     "solana",
     "bitcoin",
-    "hyperliquid"
+    "hyperliquid",
+    "smart contracts",
+    "wallet activity"
   ],
   "mcpServers": "./.mcp.json"
 }

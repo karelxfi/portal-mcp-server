@@ -1,7 +1,7 @@
 {
   "name": "portal",
   "version": "0.8.0",
-  "description": "Read validated onchain data through SQD Portal from Codex.",
+  "description": "Explore live and historical blockchain data with SQD.",
   "author": {
     "name": "Subsquid Labs",
     "url": "https://sqd.dev/"
@@ -12,20 +12,23 @@
   "keywords": [
     "sqd",
     "subsquid",
-    "portal",
-    "mcp",
     "blockchain",
-    "analytics",
-    "evm",
+    "blockchain data",
+    "blockchain analytics",
+    "crypto analytics",
+    "ethereum",
+    "base",
     "solana",
     "bitcoin",
-    "hyperliquid"
+    "hyperliquid",
+    "smart contracts",
+    "wallet activity"
   ],
   "mcpServers": "./.mcp.json",
   "interface": {
-    "displayName": "SQD Portal",
-    "shortDescription": "Read validated onchain data from Codex.",
-    "longDescription": "Connect Codex to the hosted SQD Portal MCP server for read-only blockchain data. Discover networks, resolve tokens and contracts, inspect wallet or contract activity, and run analytics across EVM, Solana, Bitcoin, Substrate, and Hyperliquid data.",
+    "displayName": "SQD",
+    "shortDescription": "Explore blockchain data across Ethereum, Base, Solana, Bitcoin, and Hyperliquid.",
+    "longDescription": "Ask SQD about wallets, transactions, token transfers, smart contracts, network activity, and Hyperliquid trades. Explore live and historical blockchain data across Ethereum, Base, Solana, Bitcoin, Polkadot, and other supported networks. No account or login is required.",
     "developerName": "Subsquid Labs",
     "category": "Data & Analytics",
     "capabilities": [
@@ -35,13 +38,13 @@
     "websiteURL": "https://sqd.dev/portal/",
     "privacyPolicyURL": "https://sqd.dev/imprint/",
     "defaultPrompt": [
-      "Show me the last 200 BTC perp fills on Hyperliquid.",
-      "How many transactions landed on Base in the past 2h?",
-      "Who sent the most USDC on Base in the past hour?"
+      "Show the latest Hyperliquid BTC trades.",
+      "How many transactions were on Base in the past two hours?",
+      "Show the largest USDC transfers on Ethereum in the past hour."
     ],
     "brandColor": "#08090A",
     "composerIcon": "./assets/sqd-composer-icon.svg",
     "logo": "./assets/sqd-logo.svg",
-    "logoDark": "./assets/sqd-logo-dark.svg"
+    "logoDark": "./assets/sqd-logo.svg"
   }
 }

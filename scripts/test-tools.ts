@@ -22,11 +22,25 @@ const FIRST_CHOICE_TOOLS = new Set([
   'portal_get_time_series',
 ])
 
-function assertCatalogUx(tools: Array<{ name: string; description?: string }>) {
+function assertCatalogUx(tools: Array<{
+  name: string
+  title?: string
+  description?: string
+  annotations?: {
+    readOnlyHint?: boolean
+    destructiveHint?: boolean
+    openWorldHint?: boolean
+  }
+}>) {
   const publicTools = tools.filter((tool) => !tool.name.startsWith('portal_debug_'))
   const advancedTools = tools.filter((tool) => tool.name.startsWith('portal_debug_'))
 
   for (const tool of publicTools) {
+    assert(typeof tool.title === 'string' && tool.title.length > 0, `${tool.name} should expose a plain-language title`)
+    assert(!tool.title.includes('portal_'), `${tool.name} title should not expose its internal identifier`)
+    assert(tool.annotations?.readOnlyHint === true, `${tool.name} should be marked read-only`)
+    assert(tool.annotations?.destructiveHint === false, `${tool.name} should be marked non-destructive`)
+    assert(tool.annotations?.openWorldHint === false, `${tool.name} should not claim it changes public internet state`)
     const description = tool.description ?? ''
     assert(description.includes('COMMON USER ASKS:'), `${tool.name} description should include COMMON USER ASKS`)
     assert(description.includes('WHEN TO USE:'), `${tool.name} description should include WHEN TO USE`)
@@ -40,6 +54,10 @@ function assertCatalogUx(tools: Array<{ name: string; description?: string }>) {
   }
 
   for (const tool of advancedTools) {
+    assert(typeof tool.title === 'string' && tool.title.length > 0, `${tool.name} should expose a plain-language title`)
+    assert(tool.annotations?.readOnlyHint === true, `${tool.name} should be marked read-only`)
+    assert(tool.annotations?.destructiveHint === false, `${tool.name} should be marked non-destructive`)
+    assert(tool.annotations?.openWorldHint === false, `${tool.name} should not claim it changes public internet state`)
     const description = tool.description ?? ''
     assert(description.includes('ADVANCED:'), `${tool.name} description should be clearly marked ADVANCED`)
     assert(description.includes('COMMON USER ASKS:'), `${tool.name} description should include COMMON USER ASKS`)

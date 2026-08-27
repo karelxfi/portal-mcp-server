@@ -22,6 +22,9 @@ function assertRecord(value: unknown, message: string): asserts value is JsonObj
 function assertClaudeCompatiblePackage() {
   const manifest = readJson(`${PLUGIN_ROOT}/.claude-plugin/plugin.json`)
   assert(manifest.name === 'portal', 'Grok-compatible plugin name should be portal')
+  assert(manifest.displayName === 'SQD', 'Grok-compatible plugin display name should be SQD')
+  assert(manifest.description === 'Explore live and historical blockchain data with SQD.', 'Grok-compatible copy should be plain')
+  assert(!/[\u2014\u2013]/.test(JSON.stringify(manifest)), 'Grok-compatible copy should not use em or en dashes')
   assert(manifest.version === '0.8.0', 'Grok-compatible plugin version should be 0.8.0')
   assert(manifest.mcpServers === './.mcp.json', 'Grok-compatible plugin should reference ./.mcp.json')
   assert(!existsSync(`${PLUGIN_ROOT}/.grok-plugin`), 'Do not invent a Grok-only manifest format')
