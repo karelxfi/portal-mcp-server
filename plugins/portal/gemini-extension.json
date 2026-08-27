@@ -1,0 +1,11 @@
+{
+  "name": "sqd",
+  "version": "0.8.0",
+  "description": "Explore blockchain data across 140+ networks with SQD, including Ethereum, Base, Solana, Polkadot, Bitcoin, Tron, Hyperliquid, and more. Includes Portal, Pipes SDK, and Squid SDK skills.",
+  "mcpServers": {
+    "SQD": {
+      "httpUrl": "https://portal.sqd.dev/mcp",
+      "timeout": 60000
+    }
+  }
+}

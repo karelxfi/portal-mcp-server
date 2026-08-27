@@ -1,0 +1,33 @@
+{
+  "name": "sqd",
+  "displayName": "SQD",
+  "version": "0.8.0",
+  "description": "Query blockchain data across 140+ networks with SQD Portal, including Ethereum, Base, Solana, Polkadot, Bitcoin, Tron, and Hyperliquid. The SQD plugin also includes Pipes SDK and Squid SDK skills for building, migrating, troubleshooting, and improving blockchain data projects.",
+  "author": {
+    "name": "Subsquid Labs"
+  },
+  "homepage": "https://docs.sqd.dev/en/ai/mcp-server",
+  "repository": "https://github.com/subsquid-labs/portal-mcp-server",
+  "license": "MIT",
+  "keywords": [
+    "sqd",
+    "subsquid",
+    "blockchain",
+    "blockchain data",
+    "blockchain analytics",
+    "crypto analytics",
+    "ethereum",
+    "base",
+    "solana",
+    "bitcoin",
+    "tron",
+    "polkadot",
+    "hyperliquid",
+    "multi-chain",
+    "smart contracts",
+    "wallet activity"
+  ],
+  "logo": "assets/sqd-logo.svg",
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json"
+}

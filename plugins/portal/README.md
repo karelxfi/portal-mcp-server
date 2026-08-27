@@ -45,6 +45,22 @@ grok plugin install --trust ./plugins/portal
 
 For Grok chat, add a Custom connector at `grok.com/connectors` and enter `https://portal.sqd.dev/mcp` with no authentication.
 
+## Gemini CLI
+
+Install SQD from its public GitHub release:
+
+```bash
+gemini extensions install https://github.com/subsquid-labs/portal-mcp-server
+```
+
+The release archive contains this manifest, the public SQD MCP connection, and the same four skills. No API key or extension setting is required.
+
+## Cursor
+
+Open **Customize** in Cursor, search for `SQD`, and install the plugin for your user or project. Until the public listing is approved, add this repository as a marketplace or link `plugins/portal` as a local plugin.
+
+Cursor loads the public SQD MCP connection and the same four skills. No API key or plugin variable is required.
+
 ## Starter prompts
 
 - Which blockchain networks can SQD query?
@@ -57,12 +73,14 @@ For Grok chat, add a Custom connector at `grok.com/connectors` and enter `https:
 npm run test:plugin
 npm run test:claude-plugin
 npm run test:grok-plugin
+npm run test:gemini-extension
+npm run test:cursor-plugin
 ```
 
-The checks validate the name, black logo, listing copy, marketplace files, hosted endpoint, and Grok compatibility.
+The checks validate the name, black logo, listing copy, marketplace files, hosted endpoint, Gemini archive, Cursor package, and Grok compatibility.
 
 ## Public directory submission
 
-See [DIRECTORY_SUBMISSION.md](./DIRECTORY_SUBMISSION.md) for the exact OpenAI, Claude, and xAI publication routes, listing copy, review tests, and remaining owner actions.
+See [DIRECTORY_SUBMISSION.md](./DIRECTORY_SUBMISSION.md) for the exact OpenAI, Claude, xAI, Gemini, and Cursor publication routes, listing copy, review tests, and remaining owner actions.
 
 Do not commit credentials, personal paths, or private endpoints to this package.
