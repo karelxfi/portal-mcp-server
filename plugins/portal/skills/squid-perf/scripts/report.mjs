@@ -235,9 +235,9 @@ function multicallsThroughCatchup(deployment) {
   );
 }
 
-function tier3SamplesInMeasurementWindow(samples, deployment) {
+function tier3SamplesFromMeasurementStart(samples, deployment) {
   const start = deployment.progressRows?.[0];
-  let bounded = start == null ? samples : samples.filter(sample =>
+  return start == null ? samples : samples.filter(sample =>
     sample.tsMs > start[0]
     || (
       sample.tsMs === start[0]
@@ -246,6 +246,10 @@ function tier3SamplesInMeasurementWindow(samples, deployment) {
       && sample.sequence >= start[7]
     )
   );
+}
+
+function tier3SamplesInMeasurementWindow(samples, deployment) {
+  const bounded = tier3SamplesFromMeasurementStart(samples, deployment);
   if (deployment.catchup == null || deployment.wasAlreadyCaughtUp) return bounded;
   const { tsMs, sequence } = deployment.catchup;
   return bounded.filter(sample =>
@@ -660,14 +664,21 @@ function compute(config, parsed, downtimeThresholdSec, breakpointsOverride) {
       for (const [label, dep] of Object.entries(perDeployment)) {
         if (!dep) continue;
         const t3 = dep.tier3[logger];
-        const measurementCandidates = Array.isArray(t3.syncSamples)
+        const rawSamples = t3.samples || [];
+        const measurementCandidates = !breakpointsOverride && Array.isArray(t3.syncSamples)
           ? t3.syncSamples
-          : (t3.samples || []);
-        const samples = !dep.nonSync && !breakpointsOverride
-          ? tier3SamplesInMeasurementWindow(measurementCandidates, dep)
-          : (t3.samples || []);
+          : rawSamples;
+        const samples = dep.nonSync
+          ? rawSamples
+          : breakpointsOverride
+            ? dep.restarts?.length > 0
+              ? Array.isArray(t3.postRestartSamples)
+                ? t3.postRestartSamples
+                : tier3SamplesFromMeasurementStart(measurementCandidates, dep)
+              : measurementCandidates
+            : tier3SamplesInMeasurementWindow(measurementCandidates, dep);
         tier3[logger][label] = {
-          count: !dep.nonSync && !breakpointsOverride ? samples.length : t3.count,
+          count: dep.nonSync ? t3.count : samples.length,
           stats: tier3Aggregate(samples),
         };
       }

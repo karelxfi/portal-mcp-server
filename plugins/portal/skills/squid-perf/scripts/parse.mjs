@@ -23,7 +23,8 @@
 //       errors: [{ tsMs, level, logger, message }, ...]  // capped at 1000
 //       tier3: { "<logger>": { count,
 //         samples: [{ tsMs, sequence, fields: {unit: value, ...} }, ...],
-//         syncSamples?: [{ tsMs, sequence, fields: {unit: value, ...} }, ...] } }
+//         syncSamples?: [{ tsMs, sequence, fields: {unit: value, ...} }, ...],
+//         postRestartSamples?: [{ tsMs, sequence, fields: {unit: value, ...} }, ...] } }
 //     }
 //   }
 // }
@@ -32,7 +33,7 @@ import fs from "node:fs";
 import readline from "node:readline";
 import path from "node:path";
 
-const PARSER_VERSION = 9;
+const PARSER_VERSION = 10;
 
 // Line shape:  <service> <ISO-TS>Z <LEVEL> <logger> <message...>
 const LINE_RX =
@@ -381,12 +382,16 @@ async function main() {
     const end = catchupRow === start ? null : catchupRow;
     syncWindows.set(name, {
       direction: serviceDirections.get(name) || 1,
+      hasRestart: latestRestart != null,
       startTsMs: start[0],
       startSequence: start[7],
       endTsMs: end?.[0] ?? null,
       endSequence: end?.[7] ?? null,
     });
-    for (const t3 of Object.values(service.tier3)) t3.syncSamples = [];
+    for (const t3 of Object.values(service.tier3)) {
+      t3.syncSamples = [];
+      if (latestRestart != null) t3.postRestartSamples = [];
+    }
   }
 
   if (syncWindows.size > 0) {
@@ -405,7 +410,11 @@ async function main() {
       const logger = match[4];
       if (ERROR_LEVELS.has(level) || PROGRESS_LOGGERS.has(logger) || logger === "sqd:multicall") continue;
       const t3 = out.services[serviceName].tier3[logger];
-      if (!t3 || t3.syncSamples.length >= MAX_TIER3_SAMPLES) continue;
+      if (!t3) continue;
+      const needsSyncSample = t3.syncSamples.length < MAX_TIER3_SAMPLES;
+      const needsPostRestartSample = window.hasRestart
+        && t3.postRestartSamples.length < MAX_TIER3_SAMPLES;
+      if (!needsSyncSample && !needsPostRestartSample) continue;
       const tsMs = Date.parse(match[2]);
       if (Number.isNaN(tsMs)) continue;
       const sequence = window.direction < 0 ? -sourceOrdinal : sourceOrdinal;
@@ -414,14 +423,19 @@ async function main() {
       const atOrBeforeEnd = window.endTsMs == null
         || tsMs < window.endTsMs
         || (tsMs === window.endTsMs && sequence <= window.endSequence);
-      if (!atOrAfterStart || !atOrBeforeEnd) continue;
+      if (!atOrAfterStart) continue;
       const fields = parseTier3Fields(match[5]);
-      if (Object.keys(fields).length > 0) t3.syncSamples.push({ tsMs, sequence, fields });
+      if (Object.keys(fields).length === 0) continue;
+      const sample = { tsMs, sequence, fields };
+      if (needsSyncSample && atOrBeforeEnd) t3.syncSamples.push(sample);
+      if (needsPostRestartSample) t3.postRestartSamples.push(sample);
     }
     for (const service of Object.values(out.services)) {
       for (const t3 of Object.values(service.tier3)) {
-        if (!Array.isArray(t3.syncSamples)) continue;
-        t3.syncSamples.sort((a, b) => a.tsMs - b.tsMs || a.sequence - b.sequence);
+        for (const samples of [t3.syncSamples, t3.postRestartSamples]) {
+          if (!Array.isArray(samples)) continue;
+          samples.sort((a, b) => a.tsMs - b.tsMs || a.sequence - b.sequence);
+        }
       }
     }
   }

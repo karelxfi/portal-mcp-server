@@ -64,6 +64,17 @@ env PATH="$FAKE_BIN_DIR:$PATH" SQD_PERF_FAKE_LOGS_EXIT=0 SQD_PERF_MAX_ATTEMPTS=1
 [ -e "$TEST_TMP_DIR/success.log.done" ] || fail "fetch did not write a completion sentinel"
 [ -e "$TEST_TMP_DIR/success.log.capture-start" ] || fail "fetch did not preserve its start time"
 
+printf 'test: fetch passes ref and since values to Expect without Tcl evaluation\n' >&2
+REF_INJECTION_MARKER="$TEST_TMP_DIR/ref-injection-ran"
+SINCE_INJECTION_MARKER="$TEST_TMP_DIR/since-injection-ran"
+REF_PAYLOAD="x}; exec touch $REF_INJECTION_MARKER; #"
+SINCE_PAYLOAD="2026-01-01T00:00:00Z}; exec touch $SINCE_INJECTION_MARKER; #"
+env PATH="$FAKE_BIN_DIR:$PATH" SQD_PERF_FAKE_LOGS_EXIT=0 SQD_PERF_MAX_ATTEMPTS=1 SQD_PERF_BACKOFF=0 SQD_PERF_EXPECT_TIMEOUT=1 \
+  bash "$SKILL_DIR/scripts/fetch-logs.sh" "$REF_PAYLOAD" "$SINCE_PAYLOAD" "$TEST_TMP_DIR/safe-arguments.log"
+[ -e "$TEST_TMP_DIR/safe-arguments.log.done" ] || fail "fetch rejected opaque ref and since arguments"
+[ ! -e "$REF_INJECTION_MARKER" ] || fail "Expect evaluated the ref as Tcl source"
+[ ! -e "$SINCE_INJECTION_MARKER" ] || fail "Expect evaluated since as Tcl source"
+
 printf 'test: fetch accepts a one-line capture and parser uses fetch-start liveness\n' >&2
 env PATH="$FAKE_BIN_DIR:$PATH" SQD_PERF_FAKE_LOGS_EXIT=0 SQD_PERF_FAKE_SHORT=1 SQD_PERF_MAX_ATTEMPTS=1 SQD_PERF_BACKOFF=0 SQD_PERF_EXPECT_TIMEOUT=1 \
   bash "$SKILL_DIR/scripts/fetch-logs.sh" org/quiet@hash 2026-01-01T00:00:00Z "$TEST_TMP_DIR/short.log"
@@ -367,6 +378,51 @@ node -e '
   }
 ' "$EDGE_REPORT_DIR/report.html" || fail "override breakpoint was truncated to the catch-up range"
 
+printf 'test: override Tier 3 statistics exclude samples before the latest restart\n' >&2
+OVERRIDE_RESTART_DIR="$TEST_TMP_DIR/override-restart-run"
+mkdir -p "$OVERRIDE_RESTART_DIR/parsed"
+cat > "$OVERRIDE_RESTART_DIR/compare-syncs.json" <<'JSON'
+{
+  "createdAt": "2026-01-01T00:00:00Z",
+  "downtimeThresholdSec": 120,
+  "breakpointsOverride": [100],
+  "indexers": [
+    { "ref": "org/restarted@abc", "since": "2026-01-01T00:00:00Z", "label": "restarted" }
+  ]
+}
+JSON
+{
+  printf 'api 2026-01-01T00:00:00.000Z INFO sqd:processor 100 / 1000, rate: 10 blocks/sec\n'
+  for i in $(seq 1 1001); do
+    printf 'api 2026-01-01T00:00:01.%06dZ INFO sqd:stage completed pre-restart batch in 100ms\n' "$i"
+  done
+  printf 'api 2026-01-01T00:00:11.000Z INFO sqd:processor 500 / 1000, rate: 10 blocks/sec\n'
+  printf 'api 2026-01-01T00:00:12.000Z INFO sqd:processor 200 / 1000, rate: 10 blocks/sec\n'
+  for i in $(seq 1 10); do
+    printf 'api 2026-01-01T00:00:13.%06dZ INFO sqd:stage completed post-restart batch in 1ms\n' "$i"
+  done
+  printf 'api 2026-01-01T00:00:23.000Z INFO sqd:processor 300 / 1000, rate: 10 blocks/sec\n'
+} > "$TEST_TMP_DIR/override-restart.log"
+node "$SKILL_DIR/scripts/parse.mjs" \
+  --input "$TEST_TMP_DIR/override-restart.log" \
+  --output "$OVERRIDE_RESTART_DIR/parsed/restarted.json" \
+  --label restarted
+printf '[]\n' > "$OVERRIDE_RESTART_DIR/failures.json"
+node "$SKILL_DIR/scripts/report.mjs" --run-dir "$OVERRIDE_RESTART_DIR" --breakpoints 100
+node -e '
+  const lines = require("fs").readFileSync(process.argv[1], "utf8").split("\n");
+  const templateLine = lines.findIndex(line => line.includes("type=\"__bundler/template\"") && line.trim().startsWith("<script"));
+  const inner = JSON.parse(lines[templateLine + 1]);
+  const openTag = "<script id=\"__REPORT_DATA__\" type=\"application/json\">";
+  const openAt = inner.indexOf(openTag, inner.indexOf("-->") + 3);
+  const closeAt = inner.indexOf("</script>", openAt + openTag.length);
+  const data = JSON.parse(inner.slice(openAt + openTag.length, closeAt));
+  const tier3 = data.services.find(item => item.name === "api")?.tier3
+    .find(item => item.namespace === "sqd:stage" && item.field === "ms");
+  const stats = tier3?.perIndexer?.restarted;
+  if (!stats || stats.count !== 10 || stats.mean !== 1 || stats.median !== 1 || stats.p95 !== 1) process.exit(1);
+' "$OVERRIDE_RESTART_DIR/report.html" || fail "override Tier 3 statistics included pre-restart samples"
+
 printf 'test: reverse captures retain sync samples after a full idle-tail sample cap\n' >&2
 CAP_REPORT_DIR="$TEST_TMP_DIR/cap-report-run"
 mkdir -p "$CAP_REPORT_DIR/parsed"
@@ -532,4 +588,4 @@ node -e '
   if (breakpoints[0].perIndexer.short?.block !== 101) process.exit(1);
 ' "$SHORT_REPORT_DIR/report.html" || fail "short sync range produced zero or duplicate breakpoints"
 
-printf '{"status":"ok","tests":18}\n'
+printf '{"status":"ok","tests":20}\n'

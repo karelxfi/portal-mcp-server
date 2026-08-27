@@ -74,30 +74,36 @@ while [ "$attempt" -le "$MAX_ATTEMPTS" ]; do
   #  - Spawns sqd logs, paginates by sending "it\r" whenever CLI prompts.
   #  - Breaks on EOF (all pages fetched) or timeout (stuck).
   #  - log_user 1 so output streams to stdout -> captured to $PARTIAL.
-  if expect -c "
-    set timeout ${EXPECT_TIMEOUT}
+  # shellcheck disable=SC2016 # Tcl expands these variables inside Expect.
+  if env \
+    SQD_PERF_EXPECT_REF="$REF" \
+    SQD_PERF_EXPECT_SINCE="$SINCE" \
+    SQD_PERF_EXPECT_PAGE_SIZE="$PAGE_SIZE" \
+    SQD_PERF_EXPECT_TIMEOUT_VALUE="$EXPECT_TIMEOUT" \
+    expect -c '
+    set timeout $env(SQD_PERF_EXPECT_TIMEOUT_VALUE)
     log_user 1
-    spawn -noecho sqd logs -r {$REF} --pageSize ${PAGE_SIZE} --since {$SINCE}
+    spawn -noecho sqd logs -r $env(SQD_PERF_EXPECT_REF) --pageSize $env(SQD_PERF_EXPECT_PAGE_SIZE) --since $env(SQD_PERF_EXPECT_SINCE)
     set stuck 0
     while 1 {
       expect {
-        -re {type \"it\" to fetch more logs} { send \"it\r\"; set stuck 0 }
+        -re {type "it" to fetch more logs} { send "it\r"; set stuck 0 }
         -re {Error|error:|ERR_|ECONNREFUSED|ENOTFOUND} { set stuck 1; continue }
         eof { break }
         timeout {
           incr stuck
-          if {\$stuck >= 2} { break }
+          if {$stuck >= 2} { break }
         }
       }
     }
     catch {close}
     set wait_rc [catch {wait} wait_result]
-    if {\$wait_rc != 0} { exit 1 }
-    if {[lindex \$wait_result 2] != 0} { exit 1 }
-    set child_rc [lindex \$wait_result 3]
-    if {\$child_rc != 0} { exit \$child_rc }
+    if {$wait_rc != 0} { exit 1 }
+    if {[lindex $wait_result 2] != 0} { exit 1 }
+    set child_rc [lindex $wait_result 3]
+    if {$child_rc != 0} { exit $child_rc }
     exit 0
-  " > "$PARTIAL" 2> "${PARTIAL}.err"; then
+  ' > "$PARTIAL" 2> "${PARTIAL}.err"; then
     rc=0
   else
     rc=$?
