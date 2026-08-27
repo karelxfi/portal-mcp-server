@@ -1,6 +1,6 @@
 # SQD Plugin Directory Submission
 
-This is the source packet for submitting SQD to the OpenAI Plugins Directory and the Grok Build Plugin Marketplace.
+This is the source packet for SQD's OpenAI, Claude, and Grok directory listings.
 
 ## Public listing
 
@@ -27,6 +27,9 @@ Starter prompts:
 Public URLs:
 
 - Website: `https://sqd.dev/portal/`
+- Documentation: `https://docs.sqd.dev/en/ai/mcp-server`
+- Claude setup guide: `https://docs.sqd.dev/en/ai/claude-connector`
+- Claude listing: `https://claude.ai/directory/connectors/sqd`
 - Support: `https://sqd.dev/contact/`
 - Privacy: `https://sqd.dev/imprint/`
 - Terms candidate requiring owner approval: `https://cloud.sqd.dev/terms.pdf`
@@ -36,11 +39,40 @@ Logo: use `https://sqd.dev/brand/Symbol_bl-bg.svg`. It is the canonical white SQ
 
 Do not add Robinhood Chain to the published listing until it appears in the live SQD network catalog and a real query passes. Once live, add `Robinhood Chain` to the description, prompt tests, and discovery checks together.
 
+## Claude directory
+
+SQD is already published in the Claude Connectors Directory at `https://claude.ai/directory/connectors/sqd`. The public SQD documentation links to that listing and describes the no-login connection flow.
+
+The hosted connector and the installable Claude Code plugin are complementary:
+
+- The directory listing connects Claude on web, desktop, and mobile to `https://portal.sqd.dev/mcp`.
+- The package in this repository gives Claude Code the same hosted MCP server plus the four official SQD skills.
+
+For a new version or listing change, use the connector submission portal in the publishing Claude Team or Enterprise organization's settings. The submitter must be an Owner, Primary Owner, or a member with the Directory permission. Use these values:
+
+- Server URL: `https://portal.sqd.dev/mcp`
+- Transport: Streamable HTTP
+- Connection model: one URL for every user
+- Authentication: none
+- Name: `SQD`
+- Tagline: `Explore blockchain data across 130+ networks`
+- Description: use the long description in this packet
+- Documentation: `https://docs.sqd.dev/en/ai/claude-connector`
+- Privacy: `https://sqd.dev/imprint/`
+- Support: `https://sqd.dev/contact/`
+- Icon: use the canonical black-background SQD logo
+- Setup requirement: no account, login, or API key
+- Data handling: SQD's own public read-only blockchain data API; no health data or sponsored content
+
+Before submitting an update, confirm that Claude syncs all 28 tools, every tool has a title and the applicable annotations, and each tool passes an end-to-end call. No carousel screenshots are needed because SQD v0.8.0 does not ship an MCP App UI.
+
 ## OpenAI directory
 
 OpenAI uses one Plugins Directory for both ChatGPT and Codex. Submit SQD as a plugin with MCP through the OpenAI Platform plugin submission portal.
 
 Import the repository-root `chatgpt-app-submission.json` file into the submission form. It covers all 28 public tools, their safety labels and justifications, five positive review tests, and three negative review tests.
+
+The 28 tools do not currently declare MCP `outputSchema` values. OpenAI does not require them for submission, and the submission JSON must not invent them. Add real schemas in a future release only together with matching structured tool results.
 
 Owner actions required before submission:
 
