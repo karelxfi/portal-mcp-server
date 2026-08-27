@@ -14,12 +14,37 @@ import {
   timestampToBlock,
 } from '../dist/helpers/timeframe.js'
 
-const REALTIME_MATRIX_CONCURRENCY = 5
+const REALTIME_MATRIX_CONCURRENCY = 3
 
 function assert(condition: boolean, message: string) {
   if (!condition) {
     throw new Error(`Assertion failed: ${message}`)
   }
+}
+
+async function retryPortalProbe<T>(
+  probe: () => Promise<T>,
+  accept: (value: T) => boolean = () => true,
+): Promise<T> {
+  let lastError: Error | undefined
+  let lastValue: T | undefined
+
+  for (let attempt = 1; attempt <= 4; attempt += 1) {
+    try {
+      const value = await probe()
+      lastValue = value
+      if (accept(value)) return value
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error))
+    }
+
+    if (attempt < 4) {
+      await new Promise((resolve) => setTimeout(resolve, attempt * 750))
+    }
+  }
+
+  if (lastValue !== undefined) return lastValue
+  throw lastError ?? new Error('Portal probe failed without a result')
 }
 
 async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
@@ -76,8 +101,11 @@ async function assertHyperliquidFillsExactTimestampLookup() {
   assert(Number.isFinite(headTimestamp) && headTimestamp > 1_000_000_000, 'Hyperliquid fills head timestamp should resolve from block.timestamp')
 
   const targetTimestamp = headTimestamp - 300
-  const exactProbeBlock = await timestampToBlock(dataset, targetTimestamp)
-  const fiveMinuteWindow = await resolveTimeframeOrBlocks({ dataset, timeframe: '5m' })
+  const exactProbeBlock = await retryPortalProbe(() => timestampToBlock(dataset, targetTimestamp))
+  const fiveMinuteWindow = await retryPortalProbe(
+    () => resolveTimeframeOrBlocks({ dataset, timeframe: '5m' }),
+    (window) => window.from_lookup?.resolution === 'exact',
+  )
 
   assert(fiveMinuteWindow.to_block === head.number, '5m Hyperliquid fills window should anchor to the cached latest block')
   assert(fiveMinuteWindow.from_block < fiveMinuteWindow.to_block, '5m Hyperliquid fills window should produce an ordered block range')
@@ -85,7 +113,10 @@ async function assertHyperliquidFillsExactTimestampLookup() {
   assert(fiveMinuteWindow.from_lookup.block_number === fiveMinuteWindow.from_block, '5m Hyperliquid fills lookup metadata should match the resolved window')
   assert(exactProbeBlock <= head.number, 'Hyperliquid fills timestamp endpoint should return a block at or before head')
 
-  const directLookup = await resolveBlockAtTimestamp(dataset, targetTimestamp)
+  const directLookup = await retryPortalProbe(
+    () => resolveBlockAtTimestamp(dataset, targetTimestamp),
+    (lookup) => lookup.resolution === 'exact',
+  )
   assert(directLookup.resolution === 'exact', 'Hyperliquid fills timestamp lookup should use the exact Portal endpoint')
   assert(directLookup.block_number <= head.number, 'Hyperliquid fills direct lookup should not exceed indexed head')
 
@@ -163,8 +194,11 @@ async function main() {
   assert(Number.isFinite(headTimestamp) && headTimestamp > 1_000_000_000, 'Solana head timestamp should resolve from block.timestamp')
 
   const targetTimestamp = headTimestamp - 3600
-  const exactFromBlock = await timestampToBlock(dataset, targetTimestamp)
-  const oneHourWindow = await resolveTimeframeOrBlocks({ dataset, timeframe: '1h' })
+  const exactFromBlock = await retryPortalProbe(() => timestampToBlock(dataset, targetTimestamp))
+  const oneHourWindow = await retryPortalProbe(
+    () => resolveTimeframeOrBlocks({ dataset, timeframe: '1h' }),
+    (window) => window.from_lookup?.resolution === 'exact',
+  )
 
   assert(oneHourWindow.to_block === head.number, '1h Solana window should anchor to the cached latest slot')
   assert(oneHourWindow.from_lookup?.resolution === 'exact', '1h Solana window should use Portal timestamp lookup from the head timestamp')
