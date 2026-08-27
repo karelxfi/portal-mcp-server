@@ -39,25 +39,56 @@ async function callTool(client: Client, name: string, args: Record<string, unkno
   }
 }
 
-async function fetchJson(url: string, options?: RequestInit) {
-  const response = await fetch(url, options)
-  const text = await response.text()
-  if (!response.ok) {
-    throw new Error(`HTTP ${response.status} from ${url}: ${text.slice(0, 300)}`)
+async function callExactTimestampLookup(client: Client, timestamp: string | number) {
+  let lookup = await callTool(client, 'portal_debug_resolve_time_to_block', {
+    network: 'polkadot',
+    timestamp,
+  })
+
+  if (!lookup.isError && extractJson(lookup.text).resolution !== 'exact') {
+    await new Promise((resolve) => setTimeout(resolve, 500))
+    lookup = await callTool(client, 'portal_debug_resolve_time_to_block', {
+      network: 'polkadot',
+      timestamp,
+    })
   }
-  return JSON.parse(text)
+
+  return lookup
+}
+
+async function fetchPortalWithRetry(url: string, options?: RequestInit) {
+  let lastError: Error | undefined
+
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      const response = await fetch(url, options)
+      const text = await response.text()
+      if (response.ok) return text
+
+      lastError = new Error(`HTTP ${response.status} from ${url}: ${text.slice(0, 300)}`)
+      if (response.status !== 429 && response.status < 500) throw lastError
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error))
+    }
+
+    if (attempt < 3) {
+      await new Promise((resolve) => setTimeout(resolve, attempt * 500))
+    }
+  }
+
+  throw lastError ?? new Error(`Failed to fetch ${url}`)
+}
+
+async function fetchJson(url: string, options?: RequestInit) {
+  return JSON.parse(await fetchPortalWithRetry(url, options))
 }
 
 async function fetchNdjson(url: string, body: Record<string, unknown>) {
-  const response = await fetch(url, {
+  const text = await fetchPortalWithRetry(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   })
-  const text = await response.text()
-  if (!response.ok) {
-    throw new Error(`HTTP ${response.status} from ${url}: ${text.slice(0, 300)}`)
-  }
 
   return text
     .split('\n')
@@ -128,20 +159,14 @@ async function main() {
     assert(typeof headData.number === 'number' && headData.number > 1_000_000, 'polkadot head should be a recent block number')
     console.log(`PASS  portal_get_head -> head ${headData.number}`)
 
-    const olderLookup = await callTool(client, 'portal_debug_resolve_time_to_block', {
-      network: 'polkadot',
-      timestamp: POLKADOT_OLD_TIMESTAMP_ISO,
-    })
+    const olderLookup = await callExactTimestampLookup(client, POLKADOT_OLD_TIMESTAMP_ISO)
     assert(!olderLookup.isError, 'older Substrate timestamp lookup should succeed')
     const olderLookupData = extractJson(olderLookup.text)
     assert(olderLookupData.resolution === 'exact', 'older Substrate timestamp lookup should be exact')
     assert(olderLookupData.block_number === 9992550, 'older Substrate timestamp lookup should resolve expected block')
     console.log('PASS  portal_debug_resolve_time_to_block -> older ISO timestamp resolves exactly')
 
-    const millisLookup = await callTool(client, 'portal_debug_resolve_time_to_block', {
-      network: 'polkadot',
-      timestamp: POLKADOT_RECENT_TIMESTAMP_MS,
-    })
+    const millisLookup = await callExactTimestampLookup(client, POLKADOT_RECENT_TIMESTAMP_MS)
     assert(!millisLookup.isError, 'millisecond Substrate timestamp lookup should succeed')
     const millisLookupData = extractJson(millisLookup.text)
     assert(millisLookupData.resolution === 'exact', 'millisecond Substrate timestamp lookup should stay exact after normalization')
