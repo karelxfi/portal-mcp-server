@@ -67,24 +67,26 @@ async function assertRealtimeTimestampMatrix() {
   const datasets = await getDatasets()
   const realtimeDatasets = datasets.filter((dataset) => dataset.real_time)
 
-  const rows = await mapLimit(realtimeDatasets, REALTIME_MATRIX_CONCURRENCY, async (dataset) => {
-    const head = await getBlockHead(dataset.dataset)
-    const headTimestamp = await getHeadTimestamp(dataset.dataset, head.number)
-    const window = await resolveTimeframeOrBlocks({ dataset: dataset.dataset, timeframe: '1h' })
+  const rows = await mapLimit(realtimeDatasets, REALTIME_MATRIX_CONCURRENCY, (dataset) =>
+    retryPortalProbe(async () => {
+      const head = await getBlockHead(dataset.dataset)
+      const headTimestamp = await getHeadTimestamp(dataset.dataset, head.number)
+      const window = await resolveTimeframeOrBlocks({ dataset: dataset.dataset, timeframe: '1h' })
 
-    assert(Number.isFinite(headTimestamp) && headTimestamp > 1_000_000_000, `${dataset.dataset} should expose a latest block timestamp`)
-    assert(window.to_block === head.number, `${dataset.dataset} 1h window should anchor to the latest indexed head`)
-    assert(window.from_block <= window.to_block, `${dataset.dataset} 1h window should be ordered`)
+      assert(Number.isFinite(headTimestamp) && headTimestamp > 1_000_000_000, `${dataset.dataset} should expose a latest block timestamp`)
+      assert(window.to_block === head.number, `${dataset.dataset} 1h window should anchor to the latest indexed head`)
+      assert(window.from_block <= window.to_block, `${dataset.dataset} 1h window should be ordered`)
 
-    return {
-      dataset: dataset.dataset,
-      kind: dataset.metadata?.kind ?? 'unknown',
-      head: head.number,
-      headTimestamp,
-      fromBlock: window.from_block,
-      toBlock: window.to_block,
-    }
-  })
+      return {
+        dataset: dataset.dataset,
+        kind: dataset.metadata?.kind ?? 'unknown',
+        head: head.number,
+        headTimestamp,
+        fromBlock: window.from_block,
+        toBlock: window.to_block,
+      }
+    }),
+  )
 
   const byKind = rows.reduce<Record<string, number>>((acc, row) => {
     acc[row.kind] = (acc[row.kind] ?? 0) + 1
