@@ -148,9 +148,8 @@ Do not document a package-runner fallback until the package is actually publishe
 package was not available in the public npm registry during the v0.8.0 plugin work.
 
 Docker is useful for self-hosted HTTP mode, not as the first Codex stdio fallback. The public
-`subsquid/portal-mcp-server:0.7.9` image was linux/amd64-only during the v0.8.0 plugin work, and
-`subsquid/portal-mcp-server:0.8.0` was not published yet. Add a multi-arch image before promoting
-Docker as the local plugin path for Apple Silicon users.
+`subsquid/portal-mcp-server` image is linux/amd64-only for v0.8.0. Add a multi-arch image before
+promoting Docker as the local plugin path for Apple Silicon users.
 
 Stdio safety rule: stdout is the MCP transport. Keep runtime logs on stderr, and do not add
 `console.log` or other stdout writes to the stdio entrypoint or helpers used by `dist/index.js`.
