@@ -9,7 +9,7 @@ RUN corepack enable \
   && pnpm install --frozen-lockfile
 
 COPY . .
-RUN pnpm run build
+RUN pnpm exec tsc
 
 FROM node:24-alpine
 
