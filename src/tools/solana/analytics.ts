@@ -1,4 +1,6 @@
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
+import type { McpServer } from '@modelcontextprotocol/server'
+
+import { registerPortalTool } from '../../helpers/mcp-registration.js'
 import { z } from 'zod'
 
 import { resolveDataset, validateBlockRange } from '../../cache/datasets.js'
@@ -277,7 +279,7 @@ function getProgramName(id: string): string {
 }
 
 export function registerSolanaAnalyticsTool(server: McpServer) {
-  server.tool(
+  registerPortalTool(server,
     'portal_solana_get_analytics',
     buildToolDescription('portal_solana_get_analytics'),
     {

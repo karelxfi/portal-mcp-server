@@ -1,4 +1,6 @@
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
+import type { McpServer } from '@modelcontextprotocol/server'
+
+import { registerPortalTool } from '../../helpers/mcp-registration.js'
 import { z } from 'zod'
 
 import { resolveDataset, validateBlockRange } from '../../cache/datasets.js'
@@ -59,7 +61,7 @@ function sortCalls(items: SubstrateCallItem[]) {
 }
 
 export function registerSubstrateQueryCallsTool(server: McpServer) {
-  server.tool(
+  registerPortalTool(server,
     'portal_substrate_query_calls',
     buildToolDescription('portal_substrate_query_calls'),
     {

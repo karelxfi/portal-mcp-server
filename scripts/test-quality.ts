@@ -1,7 +1,7 @@
 #!/usr/bin/env tsx
 
 import { readFileSync } from 'node:fs'
-import type { Client } from '@modelcontextprotocol/sdk/client/index.js'
+import type { Client } from '@modelcontextprotocol/client'
 
 import { TOOL_SPECS, loadToolTestContext } from './tool-manifest.ts'
 import {

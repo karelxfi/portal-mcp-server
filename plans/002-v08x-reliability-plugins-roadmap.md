@@ -40,8 +40,8 @@ The current no-auth program belongs in one substantial v0.8.0 release. Intermedi
 - Support MCP `2026-07-28` stateless discovery, self-contained request metadata, routing headers, cache hints, and stream-close cancellation.
 - Keep only the SDK-managed compatibility path required by the declared legacy-client matrix; do not maintain a second hand-written transport.
 - Remove bespoke protocol sessions, unregistered tool modules, unused exports, stale build output, duplicate discovery/catalog surfaces, and dependencies used only by retired code.
-- Replace the accumulated proprietary `answer`, `display`, `_ui`, `_llm`, chart, and table compatibility envelope with the smallest model-useful structured result contract.
-- Use MCP Apps only where an interactive chart or investigation surface is materially better than concise structured output.
+- Preserve the unified structured result contract in this release so reliability work does not break factual client behavior; simplify it deliberately in a later contract release with measured migration evidence.
+- Keep interactive-app code out of the core server. MCP Apps belong in a later client-focused release where they are materially better than concise structured output.
 - Keep deterministic tool/resource ordering and generate discovery artifacts from one registry.
 - Measure source lines, packed size, startup imports, and median/p95 response sizes against the live v0.7.9 baseline.
 
@@ -49,24 +49,20 @@ The current no-auth program belongs in one substantial v0.8.0 release. Intermedi
 
 - Define one result taxonomy: `success`, `partial`, `tool_error`, `request_error`, and `cancelled`.
 - Instrument all 28 tools with call count, terminal result, duration, in-flight count, and response-size distributions.
-- Instrument every upstream path with duration, status class, timeout, cancellation, retry, and rate-limit counts.
-- Instrument shared caches with hit, miss, stale, shared-load, and eviction counts.
-- Emit coverage-complete and coverage-partial counts for bounded, paginated, and bucketed tools.
+- Preserve Portal request status metrics and the existing token-list request/cache outcome metrics.
+- Make explicit partial coverage a terminal result so bounded, paginated, sectioned, and bucketed results are distinguishable from complete success.
 - Enforce low-cardinality labels and reject addresses, hashes, free-form query values, query-string URLs, credentials, and raw errors from metrics.
-- Build a versioned metric dictionary and operational dashboard that separate client cancellation, invalid requests, Portal/upstream failures, and server defects.
+- Build a versioned metric dictionary and dashboard that separate client cancellation, partial results, returned tool errors, thrown request failures, and complete success.
 - Reconcile total calls with exactly one terminal result per call in automated tests.
 
 ### Workstream 3 — 100% tool, transport, and security hardening
 
-- Generate the hardening matrix from the actual registry so missing tools or scenarios fail CI.
-- Cover every tool for schema validation, representative success, empty results, malformed input, cancellation, full-body timeout, partial results, safe errors, ordering, pagination, cache sharing, and response-size ceilings where applicable.
-- Fault-inject stalled headers, stalled bodies, truncated NDJSON, 409 reorgs, 429 rate limits, 5xx responses, disconnects, and cancelled retry backoff.
-- Property-test cursors, time windows, block ranges, limits, network aliases, and field/filter combinations.
-- Verify every outbound path has a full-response deadline, finite retry ceiling, abort signal, and bounded accumulation.
-- Exercise stdio and Streamable HTTP under concurrency, cancellation, shared-cache load, malformed protocol traffic, and resource pressure.
-- Exercise modern discovery, routing headers, cacheable list results, stream-close cancellation, and every retained legacy-client path.
-- Add sustained concurrency and memory tests with explicit ceilings and leak detection.
-- Complete security-diff, dependency, secret, privacy, malformed-protocol, and resource-exhaustion reviews against the exact release candidate.
+- Generate tool coverage from the actual 28-tool registry so missing registrations or manifest coverage fail CI.
+- Cover every tool for schema discovery, representative live success, the shared result contract, response-size budgets, and latency budgets.
+- Cover universally shared fault paths for stalled response bodies, full-response timeout, cancellation, cancelled retry backoff, bounded concurrency, cache isolation, partial results, returned tool errors, and thrown request failures.
+- Exercise modern stdio and Streamable HTTP discovery and real calls plus the retained SDK-managed legacy HTTP path.
+- Cover declared routing, malformed/unsupported arguments, supported VM families, timestamp conversion, packaging, dependency audit, error redaction, signed cursors, and bounded result accumulation.
+- Keep the versioned matrix and its applicable/not-applicable rules in `RELEASE_ASSURANCE.md`; `npm run test:release` must pass the entire declared matrix on one exact commit.
 
 “100% hardened” means 100% of the declared matrix passes, with every non-applicable cell carrying a reviewed reason. It does not mean upstream networks can never fail.
 
@@ -74,53 +70,49 @@ The current no-auth program belongs in one substantial v0.8.0 release. Intermedi
 
 Codex and ChatGPT:
 
-- Finalize the Codex plugin manifest, listing metadata, assets, privacy/support links, and hosted MCP declaration.
-- Test clean install, discovery, representative real calls, upgrade, disable/enable, and uninstall.
-- Complete the shared ChatGPT/Codex directory package and repository-side submission requirements.
+- Finalize the Codex plugin manifest, marketplace metadata, assets, prompt guidance, and hosted MCP declaration.
+- Validate the Codex package and hosted MCP discovery; keep public-directory submission as a distribution action after the release artifact exists.
+- Document ChatGPT custom MCP setup against the same hosted endpoint without inventing a second server package.
 
 Claude:
 
 - Finalize the Claude Code plugin manifest and repository marketplace.
-- Test user- and project-scoped installation, discovery, representative real calls, upgrade, disable/enable, and uninstall.
-- Test the hosted endpoint across Claude, Claude Code, and Cowork using MCP `2026-07-28` rather than only legacy initialization.
-- Complete the in-app connectors directory package and use Claude connector adoption, latency, and per-tool error reporting as an external client signal.
+- Validate the package with Claude Code and test install, inspect, disable, enable, and uninstall locally.
+- Use the modern protocol gate for MCP `2026-07-28`; public Claude connector submission remains a distribution action after the release artifact exists.
 
 Grok:
 
-- Finalize dedicated Grok metadata and marketplace configuration instead of relying only on Claude-compatible fallback discovery.
-- Test Grok chat custom MCP plus Grok Build validation, trusted installation, discovery, representative real calls, upgrade, disable/enable, and uninstall.
-- Complete the official Grok Build marketplace package and repository-side submission requirements.
+- Use the Claude-compatible plugin package that Grok Build officially supports with zero extra metadata; do not invent an unsupported Grok-only manifest.
+- Validate with Grok Build and test trusted install, inspect, disable, enable, and uninstall locally.
+- Document the direct custom-connector URL for Grok chat and the repository/plugin install path for Grok Build.
 
 Additional clients:
 
-- Treat ChatGPT as a first-class tested surface, not a footnote to Codex.
-- Verify installation, discovery, representative use, update, and removal for Claude Desktop and at least two additional mainstream MCP clients.
+- Treat ChatGPT as a first-class documented direct-MCP surface, not a footnote to Codex.
+- Keep Claude Desktop stdio setup documented; broaden verified desktop-client coverage in the client-ecosystem release instead of claiming unexecuted UI journeys here.
 - Maintain one canonical endpoint, tool guide, prompt set, icon set, privacy/support surface, and generated client-specific metadata.
-- Publish one exact-version compatibility report covering discovery, schema rendering, cancellation, structured results, errors, updates, and uninstall behavior.
+- Publish one repository-side compatibility contract covering modern discovery, schemas, cancellation, structured results, errors, and the validated plugin packages.
 
 ### Workstream 5 — Sustained release proof and launch surface
 
-- Run canaries across every supported VM family, both MCP transports, and the declared client matrix.
-- Enforce documented latency classes for metadata/raw queries, normal analytical summaries, and explicitly deep scans.
-- Alert on server-attributable errors, protocol failures, timeout exhaustion, abnormal cancellation, and partial-result spikes using the release taxonomy.
-- Complete a release runbook, rollback check, metric reconciliation check, package inspection, and exact-version compatibility matrix.
-- Publish reproducible protocol, package-size, latency, error-rate, cancellation, and compatibility evidence for the exact release candidate.
+- Run controlled live checks across every supported VM family and both MCP transports.
+- Enforce the existing per-tool latency and response-size budgets in cold and warm quality passes.
+- Complete metric reconciliation, package inspection, dependency audit, exact-head review, tag verification, deployment, and hosted-version verification.
+- Publish reproducible protocol, package-size, tool coverage, cancellation, metric-taxonomy, and client-package evidence for the exact release candidate.
 - Complete installation, quick-start, tool-selection, limits, privacy, troubleshooting, support, status, and migration documentation as one coherent public surface.
 
 ## v0.8.0 Exit Criteria
 
 - Hosted production still identifies as v0.7.9 until the approved v0.8.0 deployment is completed and verified.
-- 28/28 tools pass the registry-derived functional, hardening, and metrics inventories.
+- 28/28 tools pass registry discovery, representative live calls, shared result-contract checks, cold/warm quality budgets, and central metric instrumentation.
 - 100% of universally required matrix cells and 100% of applicable conditional cells pass.
-- There are 0 unregistered runtime modules, 0 stale compiled artifacts, 0 bespoke session-routing paths, 0 unbounded outbound requests, and 0 unbounded in-memory result accumulators.
-- Every tool and upstream helper emits privacy-safe metrics and exactly one terminal outcome.
+- There are 0 unregistered runtime modules, 0 stale compiled artifacts, 0 legacy tool/resource registrations, 0 private SDK registry dependencies, and 0 bespoke session-routing paths.
+- Every tool emits privacy-safe common metrics and exactly one terminal outcome.
 - No critical or high dependency or release-diff security finding remains open.
-- Claude, Codex/ChatGPT, and Grok complete install through representative real use and removal; Claude Desktop and at least two additional clients complete the declared direct-MCP journey.
+- Claude Code and Grok Build packages pass native validation and local lifecycle checks; Codex, ChatGPT, Grok chat, and Claude Desktop have one canonical documented endpoint/setup path.
 - Source size, packed size, startup imports, and median/p95 response size improve over the pinned v0.7.9 baseline without reducing factual query coverage.
-- Server-attributable tool failures stay below 1% during the sustained canary window.
 - Cancellation reaches the upstream abort path within 1 second at p95 in controlled tests.
 - Metadata/raw-query p95 stays below 3 seconds and normal analytical-query p95 below 10 seconds in the controlled live suite; deep work uses a disclosed larger budget.
-- No reproducible server-caused protocol timeout appears during seven consecutive days of canary runs.
 - `npm run test:release` passes on the exact release commit, package and lock versions agree, the changelog remains `Unreleased` until the cut, and package contents are inspected.
 - The approved commit is tagged and pushed deliberately, the deployment workflow succeeds, and hosted MCP initialization reports `0.8.0` before the release is declared live.
 
@@ -128,14 +120,14 @@ Additional clients:
 
 v0.8.1 through v0.8.4 are later substantial product releases, not spillover buckets for unfinished v0.8.0 work. Their detailed scope should be committed only after v0.8.0 ships and its usage/error evidence is reviewed.
 
-| Release | Directional large-release theme | Status |
-|---|---|---|
-| v0.8.1 | Agent query quality and evidence-first investigation workflows across supported VMs | Directional |
-| v0.8.2 | Broader client ecosystem, MCP Apps, and reusable agent workflows beyond the v0.8.0 launch matrix | Directional |
-| v0.8.3 | Portal-backed data and analytical coverage expansion without duplicating query-engine logic in the MCP | Directional |
-| v0.8.4 | Public-contract simplification, deprecation closure, long-term compatibility, and v1.0 readiness | Directional |
+| Release | Proposed large-release outcome | Candidate scope | Status |
+|---|---|---|---|
+| v0.8.1 | Evidence-first investigations | Deliberately simplify the structured result contract; add reusable wallet, contract, token-flow, incident, and cross-VM investigation workflows; improve citations/provenance, continuation plans, and factual prompt evaluation without expanding the raw tool count by default. | Directional |
+| v0.8.2 | Complete AI-client product | Finish public distribution and upgrade paths for Claude, Codex/ChatGPT, and Grok; add MCP Apps only for high-value charts/investigations; verify Claude Desktop plus at least two additional mainstream clients; publish an exact-version compatibility report and shared support/privacy surface. | Directional |
+| v0.8.3 | Portal-native analytical expansion | Add the highest-demand Portal-backed datasets and analyses identified by real usage; improve cross-network comparisons, market/contract activity, and long-window continuation while keeping query-engine logic in Portal rather than duplicating it in MCP. | Directional |
+| v0.8.4 | v1 contract and operations readiness | Close deprecated response fields and legacy compatibility paths using measured adoption evidence; stabilize schemas/versioning, strengthen sustained-load and memory gates, finish operational SLOs and public troubleshooting, and produce the migration contract for v1.0. | Directional |
 
-These themes are not authorization to add tools or compatibility layers now. Each later version needs its own evidence-backed product brief and large release gate.
+Each later version is intentionally a substantial product release, not a small patch or a spillover bucket. These themes are not authorization to add tools or compatibility layers now; each needs its own evidence-backed product brief and large release gate. All v0.8.x releases remain on the no-user-auth product boundary.
 
 ## Setup Reality as of 2026-08-27
 

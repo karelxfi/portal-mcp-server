@@ -1,4 +1,6 @@
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
+import type { McpServer } from '@modelcontextprotocol/server'
+
+import { registerPortalTool } from '../../helpers/mcp-registration.js'
 import { z } from 'zod'
 
 import { getBlockHead, resolveDataset } from '../../cache/datasets.js'
@@ -35,7 +37,7 @@ import { normalizeEvmAddress } from '../../helpers/validation.js'
 export function registerGetContractActivityTool(server: McpServer) {
   const FAST_MODE_BLOCK_CAP = 3000
 
-  server.tool(
+  registerPortalTool(server,
     'portal_evm_get_contract_activity',
     buildToolDescription('portal_evm_get_contract_activity'),
     {

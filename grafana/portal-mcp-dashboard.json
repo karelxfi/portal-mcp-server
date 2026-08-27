@@ -164,8 +164,8 @@
       },
       "targets": [
         {
-          "expr": "sum by (tool) (increase(mcp_tool_calls_total{status=\"error\",tool=~\"$tool\"}[$__interval]))",
-          "legendFormat": "{{tool}}",
+          "expr": "sum by (tool, status) (increase(mcp_tool_calls_total{status=~\"tool_error|request_error\",tool=~\"$tool\"}[$__interval]))",
+          "legendFormat": "{{tool}} {{status}}",
           "refId": "A"
         }
       ],
@@ -655,7 +655,7 @@
       },
       "targets": [
         {
-          "expr": "{app=\"sqd-portal-mcp\", event=\"mcp_tool_call\", status=\"error\"} | json | tool=~\"$tool\"",
+          "expr": "{app=\"sqd-portal-mcp\", event=\"mcp_tool_call\", status=~\"tool_error|request_error\"} | json | tool=~\"$tool\"",
           "queryType": "range",
           "refId": "A"
         }

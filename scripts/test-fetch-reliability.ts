@@ -3,9 +3,9 @@
 import { createServer } from 'node:http'
 import type { Socket } from 'node:net'
 
-import { Client } from '@modelcontextprotocol/sdk/client/index.js'
-import { StdioClientTransport, getDefaultEnvironment } from '@modelcontextprotocol/sdk/client/stdio.js'
-import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
+import { Client } from '@modelcontextprotocol/client'
+import { StdioClientTransport, getDefaultEnvironment } from '@modelcontextprotocol/client/stdio'
+import { InMemoryTransport } from '@modelcontextprotocol/server'
 
 import { createQueryCache } from '../src/cache/query-cache.js'
 import { scanBoundedBlockRange } from '../src/helpers/bounded-search.js'
@@ -19,6 +19,7 @@ import {
   sleep,
 } from '../src/helpers/fetch.js'
 import { runWithPortalRequestSignal } from '../src/helpers/request-context.js'
+import { registerPortalTool } from '../src/helpers/mcp-registration.js'
 import { toolCallsTotal, toolErrorsTotal } from '../src/metrics.js'
 import { createPortalServer } from '../src/server.js'
 
@@ -277,7 +278,6 @@ async function main() {
             limit_per_type: 3,
           },
         },
-        undefined,
         { timeout: 5_000 },
       )
       const elapsedMs = Date.now() - startedAt
@@ -302,13 +302,33 @@ async function main() {
     }
 
     const mcpServer = createPortalServer()
-    mcpServer.tool('__test_cancel_portal_fetch', {}, async () => {
+    registerPortalTool(mcpServer, '__test_cancel_portal_fetch', 'Cancellation propagation test.', {}, async () => {
       await portalFetchStream(`${baseUrl}/mcp-cancel-stall`, {}, { timeout: 5_000, retries: 0 })
       return { content: [{ type: 'text' as const, text: 'unexpected success' }] }
     })
-    mcpServer.tool('__test_cancel_no_args', async () => {
+    registerPortalTool(mcpServer, '__test_cancel_no_args', 'No-argument cancellation propagation test.', {}, async () => {
       await portalFetchStream(`${baseUrl}/mcp-no-args-cancel-stall`, {}, { timeout: 5_000, retries: 0 })
       return { content: [{ type: 'text' as const, text: 'unexpected success' }] }
+    })
+    registerPortalTool(mcpServer, '__test_success_outcome', 'Complete outcome metric test.', {}, async () => ({
+      content: [{ type: 'text' as const, text: JSON.stringify({ value: 1 }) }],
+      structuredContent: { value: 1 },
+    }))
+    registerPortalTool(mcpServer, '__test_partial_outcome', 'Partial outcome metric test.', {}, async () => ({
+      content: [
+        {
+          type: 'text' as const,
+          text: JSON.stringify({ value: 1, _coverage: { window_complete: false } }),
+        },
+      ],
+      structuredContent: { value: 1, _coverage: { window_complete: false } },
+    }))
+    registerPortalTool(mcpServer, '__test_tool_error_outcome', 'Returned tool error metric test.', {}, async () => ({
+      isError: true,
+      content: [{ type: 'text' as const, text: 'Fixture tool error' }],
+    }))
+    registerPortalTool(mcpServer, '__test_request_error_outcome', 'Thrown request error metric test.', {}, async () => {
+      throw new Error('Fixture request failure')
     })
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
     const client = new Client({ name: 'fetch-reliability-test', version: '1.0.0' })
@@ -322,7 +342,7 @@ async function main() {
       await expectFastFailure(
         'MCP handler propagates client cancellation to Portal fetches',
         () =>
-          client.callTool({ name: '__test_cancel_portal_fetch', arguments: {} }, undefined, {
+          client.callTool({ name: '__test_cancel_portal_fetch', arguments: {} }, {
             signal: mcpCancellation.signal,
             timeout: 2_000,
           }),
@@ -333,6 +353,14 @@ async function main() {
           ),
         750,
       )
+
+      const successResult = await client.callTool({ name: '__test_success_outcome', arguments: {} })
+      assert(!successResult.isError, 'complete fixture should return a successful MCP result')
+      const partialResult = await client.callTool({ name: '__test_partial_outcome', arguments: {} })
+      assert(!partialResult.isError, 'partial fixture should remain a usable MCP result')
+      const toolErrorResult = await client.callTool({ name: '__test_tool_error_outcome', arguments: {} })
+      assert(toolErrorResult.isError, 'tool-error fixture should return isError=true')
+      await client.callTool({ name: '__test_request_error_outcome', arguments: {} }).catch(() => undefined)
 
       const cancellationDeadline = Date.now() + 750
       while (closedRequests <= closedBeforeMcpCancellation && Date.now() < cancellationDeadline) {
@@ -345,7 +373,7 @@ async function main() {
       await expectFastFailure(
         'no-argument MCP tools also propagate client cancellation',
         () =>
-          client.callTool({ name: '__test_cancel_no_args', arguments: {} }, undefined, {
+          client.callTool({ name: '__test_cancel_no_args', arguments: {} }, {
             signal: noArgsCancellation.signal,
             timeout: 2_000,
           }),
@@ -372,7 +400,34 @@ async function main() {
         !errorMetrics.values.some((value) => String(value.labels.tool).startsWith('__test_cancel')),
         'MCP cancellations should not increment tool error counters',
       )
-      console.log('PASS  MCP cancellations are classified separately from tool errors')
+      const expectedOutcomes = new Map([
+        ['__test_success_outcome', 'success'],
+        ['__test_partial_outcome', 'partial'],
+        ['__test_tool_error_outcome', 'tool_error'],
+        ['__test_request_error_outcome', 'request_error'],
+        ['__test_cancel_portal_fetch', 'cancelled'],
+        ['__test_cancel_no_args', 'cancelled'],
+      ])
+      for (const [tool, expectedStatus] of expectedOutcomes) {
+        const values = toolMetrics.values.filter((value) => value.labels.tool === tool)
+        const terminalCount = values.reduce((total, value) => total + value.value, 0)
+        assert(terminalCount === 1, `${tool} should have exactly one terminal outcome, observed ${terminalCount}`)
+        assert(
+          values.some((value) => value.labels.status === expectedStatus && value.value === 1),
+          `${tool} should be classified as ${expectedStatus}`,
+        )
+      }
+      for (const tool of ['__test_tool_error_outcome', '__test_request_error_outcome']) {
+        assert(
+          errorMetrics.values.some((value) => value.labels.tool === tool && value.value === 1),
+          `${tool} should increment the tool error counter once`,
+        )
+      }
+      assert(
+        !errorMetrics.values.some((value) => value.labels.tool === '__test_partial_outcome'),
+        'partial results should not increment tool error counters',
+      )
+      console.log('PASS  every MCP invocation records exactly one five-state terminal outcome')
     } finally {
       await client.close()
       await mcpServer.close()

@@ -1,4 +1,6 @@
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
+import type { McpServer } from '@modelcontextprotocol/server'
+
+import { registerPortalTool } from '../../helpers/mcp-registration.js'
 import { z } from 'zod'
 
 import { resolveDataset, validateBlockRange } from '../../cache/datasets.js'
@@ -369,7 +371,7 @@ function decorateHyperliquidAnalyticsPresentation(response: Record<string, any>)
 }
 
 export function registerHyperliquidAnalyticsTool(server: McpServer) {
-  server.tool(
+  registerPortalTool(server,
     'portal_hyperliquid_get_analytics',
     buildToolDescription('portal_hyperliquid_get_analytics'),
     {

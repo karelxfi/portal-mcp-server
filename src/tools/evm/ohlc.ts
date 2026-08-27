@@ -1,4 +1,6 @@
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
+import type { McpServer } from '@modelcontextprotocol/server'
+
+import { registerPortalTool } from '../../helpers/mcp-registration.js'
 import { keccak_256 } from '@noble/hashes/sha3'
 import { z } from 'zod'
 
@@ -884,7 +886,7 @@ function isTimeoutLikeMessage(message: string) {
 }
 
 export function registerEvmOhlcTool(server: McpServer) {
-  server.tool(
+  registerPortalTool(server,
     'portal_evm_get_ohlc',
     buildToolDescription('portal_evm_get_ohlc'),
     {

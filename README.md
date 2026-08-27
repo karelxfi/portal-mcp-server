@@ -6,6 +6,8 @@ Thin MCP wrapper around the [SQD Portal API](https://portal.sqd.dev) for blockch
 
 This server does not index chains itself. It validates user input, maps it onto Portal requests, and returns MCP-friendly responses.
 
+v0.8.0 supports the stateless MCP `2026-07-28` protocol over HTTP and stdio, while retaining the SDK-managed legacy negotiation path for clients still rolling out the revision. No SQD account, API key, or client credential is required.
+
 ## Current public surface
 
 - `25` public tools
@@ -126,7 +128,8 @@ The server exposes a structured tool-selection guide for client builders:
 
 - MCP resource `sqd://tools` returns grouped tool metadata, examples, starting points, and integration notes.
 - MCP resource `sqd://tools/{name}` returns the guide entry for one tool, for example `sqd://tools/portal_get_time_series`.
-- HTTP `GET /tools` or `GET /tools.json` returns the live tool catalog with input schemas plus the same structured guide metadata.
+
+Tool and resource discovery stays on the MCP protocol itself. The server does not maintain a duplicate HTTP catalog.
 
 ## Codex plugin
 
@@ -151,6 +154,27 @@ claude plugin install portal@sqd
 ```
 
 Open a new Claude Code session after installing so the SQD MCP tools are loaded.
+
+## Grok
+
+Grok chat can use SQD as a custom connector:
+
+1. Open `grok.com/connectors`.
+2. Choose **New Connector**, then **Custom**.
+3. Enter `https://portal.sqd.dev/mcp` as the MCP server URL.
+4. Leave authentication unset for v0.8.0.
+
+Grok Build reads Claude Code plugins directly, so it uses the same package rather than a made-up Grok-only manifest:
+
+```bash
+grok plugin install --trust subsquid-labs/portal-mcp-server#plugins/portal
+```
+
+The v0.8.0 release gate validates the package with both Claude Code and Grok Build, and exercises install, inspect, disable, enable, and uninstall locally.
+
+## ChatGPT
+
+In a workspace with custom MCP apps enabled, open **Settings → Apps → Create**, enter `https://portal.sqd.dev/mcp`, choose no authentication, scan the tools, and create the draft app. The server is read-only and does not require user credentials in v0.8.0.
 
 ## Claude Desktop
 
@@ -178,26 +202,30 @@ Add an entry like this to `claude_desktop_config.json`:
 
 ## HTTP Deployment Notes
 
-HTTP mode exposes health state at `/health` and read-only tool discovery at `/tools` and `/tools.json`.
+HTTP mode exposes MCP at `/` and `/mcp`, with health state at `/health`.
 
-- Set `MCP_HTTP_BEARER_TOKEN` to require `Authorization: Bearer <token>` for `POST /` and `POST /mcp`.
-- `/health` and read-only `GET /tools` / `GET /tools.json` remain public.
+- MCP and health are public in v0.8.0. User authentication is deferred to a unified `auth.sqd.dev` flow in v0.9.0.
+- Tool and resource discovery use the MCP protocol; retired `/tools` and `/tools.json` routes return `404`.
 - Set `MCP_CURSOR_SECRET` in production so pagination cursors are signed with a deployment-specific secret. Local development uses a deterministic fallback for convenience.
 
 Useful environment variables:
 
-- `MCP_HTTP_BEARER_TOKEN` to protect HTTP MCP POSTs
 - `MCP_CURSOR_SECRET` to sign pagination cursors
 
 ## Tests
 
+The [v0.8.0 release-assurance contract](RELEASE_ASSURANCE.md) defines the complete hardening matrix, five-state terminal outcome taxonomy, metric dictionary, privacy boundary, and exact automated gates. “100%” refers to every applicable cell in that declared matrix, not a claim that upstream networks can never fail.
+
 ```bash
 npm test
+npm run test:protocol
 npm run test:tools
 npm run test:routing
 npm run test:substrate
 npm run test:timestamps
 npm run test:plugin
+npm run test:claude-plugin
+npm run test:grok-plugin
 npm run test:conversations
 npm run test:negative
 npm run test:quality

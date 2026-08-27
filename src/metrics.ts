@@ -30,7 +30,7 @@ serverInfo.set(
 
 export const toolCallsTotal = new Counter({
   name: 'mcp_tool_calls_total',
-  help: 'Total number of MCP tool invocations',
+  help: 'Total MCP tool invocations, with exactly one terminal outcome per invocation',
   labelNames: ['tool', 'status', 'transport', 'server_version'] as const,
   registers: [register],
 })

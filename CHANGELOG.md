@@ -2,15 +2,23 @@
 
 ## [0.8.0] - Unreleased
 
-Portal MCP v0.8.0 focuses on reliable interactive queries, faster common investigations, and clearer partial-result reporting. Existing connection and authentication behavior is unchanged.
+Portal MCP v0.8.0 is the large no-auth reliability and ecosystem release. It modernizes the protocol/runtime, removes accumulated dead surfaces, preserves the 28-tool factual query product, and requires no SQD account or API key.
+
+### MCP 2026 platform
+- **Stable SDK v2** — migrated from the monolithic MCP TypeScript SDK v1 to the stable split v2 server, client, and Node packages with Zod v4.
+- **Stateless MCP 2026** — HTTP now uses `createMcpHandler` and stdio uses `serveStdio`, negotiating MCP `2026-07-28` while retaining the SDK-managed legacy compatibility path.
+- **One protocol surface** — removed bespoke MCP session plumbing and the duplicate `/tools` HTTP catalog; tool and resource discovery now use the protocol registry directly.
+- **Modern resource metadata** — registered developer guides and schemas with MCP v2 resource metadata and cache hints.
+- **Protocol release gate** — added modern discovery, tool/resource listing, real tool calls, both transports, legacy fallback, and no-client-credential regression coverage.
 
 ### Reliability
 - **End-to-end cancellation** — active Portal and enrichment requests now stop promptly when an MCP client cancels, including during retry backoff and response-body reads.
-- **Accurate error reporting** — cancelled requests are classified separately from tool failures so error metrics better reflect actionable server problems.
+- **Reconciled terminal metrics** — every invocation records exactly one of `success`, `partial`, `tool_error`, `request_error`, or `cancelled`; only actual tool/request failures increment the error counter.
 - **Complete request timeouts** — JSON and NDJSON timeouts now cover the full response body instead of ending when response headers arrive.
 - **Isolated cache loads** — cancellation of one in-flight cached query no longer fails unrelated callers requesting the same data.
 - **Bounded sparse log searches** — large filtered latest-log queries use small concurrent chunks, inspect at most 25,000 recent blocks by default, and disclose any unscanned portion of the requested window. Callers can opt into deeper coverage with `max_scan_blocks`.
 - **Faster wallet summaries** — recent EVM wallet sections scan concurrently, all VM wallet queries use an interactive single-attempt budget, and EVM summaries return explicitly marked partial results when an individual section is temporarily unavailable.
+- **Bounded Hyperliquid wallet windows** — fast Hyperliquid wallet summaries use a disclosed block-time estimate and larger wallet-filtered chunks inside the 2,000-block cap, avoiding sequential boundary lookups and tiny scans that could exhaust the interactive call budget under concurrent load.
 - **Bounded OHLC backfill** — optional Uniswap v4 metadata discovery and historical candle backfill now stay within interactive request budgets; incomplete backfill returns honest partial coverage instead of exceeding the MCP timeout.
 - **Native Tron classification** — Tron networks now use their native Portal timestamp query shape and return clear unsupported-tool guidance instead of malformed EVM requests.
 - **High-error live regression gate** — release tests now repeat wallet, time-series, EVM transaction/log/token-transfer, and Solana transaction calls without automatic retries and enforce an interactive latency ceiling.
@@ -20,6 +28,8 @@ Portal MCP v0.8.0 focuses on reliable interactive queries, faster common investi
 - **Dead-code removal** — removed unregistered tool implementations and abandoned helper modules that were still compiled despite never appearing in the MCP catalog.
 - **Clean package builds** — build output is removed before compilation so deleted modules cannot remain in the published tarball.
 - **Lean-surface gate** — CI now rejects unreachable runtime modules and tool registration functions that are never connected to the public registry.
+- **One instrumented registry** — all 28 tools use the same MCP v2 registration surface, and CI rejects legacy registrations, private SDK registry access, bespoke sessions, and registration bypasses.
+- **Declared assurance matrix** — added a versioned release contract covering 28/28 tools, both transports, five terminal outcomes, negative paths, supported VM families, client packages, dependency checks, and package boundaries.
 - **Release plan correction** — consolidated the MCP 2026 migration, complete metrics, hardening, AI-client distribution, and sustained reliability proof into the actual v0.8.0 release candidate while hosted production remains v0.7.9.
 
 ### Codex plugin
@@ -33,6 +43,8 @@ Portal MCP v0.8.0 focuses on reliable interactive queries, faster common investi
 - Added a Claude Code plugin marketplace and manifest so Claude users can install `portal@sqd`.
 - Added `npm run test:plugin` to validate the plugin manifest, marketplace wiring, optional asset paths, and a hosted MCP smoke check before release.
 - Added `npm run test:claude-plugin` to validate the Claude Code plugin manifest, marketplace wiring, and hosted MCP smoke check before release.
+- Added `npm run test:grok-plugin` and verified Grok Build's official Claude-plugin compatibility path, including install, inspect, disable, enable, and uninstall.
+- Documented credential-free custom MCP setup for Grok chat and ChatGPT.
 
 **Full Changelog**: https://github.com/subsquid-labs/portal-mcp-server/compare/v0.7.9...v0.8.0
 
@@ -63,7 +75,7 @@ Portal MCP v0.7.9 is focused on developer and agent ergonomics for natural block
 ### Factual UX and safety hardening
 - **Estimated-window provenance** — relative timeframe fallbacks now carry machine-readable estimated block-window provenance in `_freshness.estimated_timeframe`, plus user-facing notices when timestamp lookup was unsupported or unavailable.
 - **Coverage honesty** — bounded contract-activity previews now distinguish requested and analyzed block bounds and mark partial windows as incomplete instead of presenting fast-mode scans as full-window analysis.
-- **HTTP MCP protection** — deployments can set `MCP_HTTP_BEARER_TOKEN` to require bearer auth for `POST /` and `POST /mcp`; `/health` and read-only `/tools` remain public.
+- **No temporary API-key path** — removed the provisional MCP bearer-token branch so v0.8.0 stays credential-free; unified user authentication is deferred to v0.9.0.
 - **Redacted errors** — actionable errors now strip URL query strings, redact authorization-like fields, and summarize Portal query bodies instead of echoing full request material.
 - **Signed cursors** — pagination cursors are HMAC-signed and revalidated on decode, so edited or unsigned cursors fail with actionable guidance.
 - **Structured tool results** — tools now return the unified envelope in MCP `structuredContent` while keeping an equivalent compact JSON text fallback for older clients.

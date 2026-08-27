@@ -1,4 +1,6 @@
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
+import type { McpServer } from '@modelcontextprotocol/server'
+
+import { registerPortalTool } from '../../helpers/mcp-registration.js'
 import { z } from 'zod'
 
 import { resolveDataset, validateBlockRange } from '../../cache/datasets.js'
@@ -82,7 +84,7 @@ export function registerQuerySolanaTransactionsTool(server: McpServer) {
       return String(left.tx_hash ?? '').localeCompare(String(right.tx_hash ?? ''))
     })
 
-  server.tool(
+  registerPortalTool(server,
     'portal_solana_query_transactions',
     buildToolDescription('portal_solana_query_transactions'),
     {

@@ -1,5 +1,4 @@
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
-import { ResourceTemplate } from '@modelcontextprotocol/sdk/server/mcp.js'
+import { type McpServer, ResourceTemplate } from '@modelcontextprotocol/server'
 
 import { getDatasets, resolveDataset } from '../cache/datasets.js'
 import { EVENT_SIGNATURES, PORTAL_URL } from '../constants/index.js'
@@ -84,20 +83,28 @@ function buildDeveloperToolGuide() {
       {
         ask: 'Investigate this wallet or suspicious address',
         start_with: 'portal_get_wallet_summary',
-        then_use: ['portal_evm_query_transactions', 'portal_evm_query_token_transfers', 'portal_solana_query_transactions', 'portal_hyperliquid_query_fills'],
-        reason: 'Wallet summary returns fund_flow, counterparties, largest movements, and investigation pivots before raw record drill-down.',
+        then_use: [
+          'portal_evm_query_transactions',
+          'portal_evm_query_token_transfers',
+          'portal_solana_query_transactions',
+          'portal_hyperliquid_query_fills',
+        ],
+        reason:
+          'Wallet summary returns fund_flow, counterparties, largest movements, and investigation pivots before raw record drill-down.',
       },
       {
         ask: 'Trace USDC or token outflows',
         start_with: 'portal_resolve_entity',
         then_use: ['portal_evm_query_token_transfers', 'portal_get_wallet_summary'],
-        reason: 'Resolve the token symbol first, then query exact transfer evidence and summarize the sender or recipient wallet.',
+        reason:
+          'Resolve the token symbol first, then query exact transfer evidence and summarize the sender or recipient wallet.',
       },
       {
         ask: 'Explain why network or contract activity spiked',
         start_with: 'portal_get_time_series',
         then_use: ['portal_evm_query_logs', 'portal_evm_query_transactions', 'portal_evm_get_contract_activity'],
-        reason: 'Use complete buckets to find the spike, then pivot into exact logs, transactions, or contract activity.',
+        reason:
+          'Use complete buckets to find the spike, then pivot into exact logs, transactions, or contract activity.',
       },
       {
         ask: 'What did this contract do recently?',
@@ -121,21 +128,27 @@ function buildDeveloperToolGuide() {
 }
 
 export function registerSchemaResource(server: McpServer) {
-  server.resource('tool-guide', 'sqd://tools', async (uri) => {
-    return {
-      contents: [
-        {
-          uri: uri.href,
-          mimeType: 'application/json',
-          text: JSON.stringify(buildDeveloperToolGuide(), null, 2),
-        },
-      ],
-    }
-  })
+  server.registerResource(
+    'tool-guide',
+    'sqd://tools',
+    { mimeType: 'application/json', cacheHint: { ttlMs: 300_000, cacheScope: 'public' } },
+    async (uri) => {
+      return {
+        contents: [
+          {
+            uri: uri.href,
+            mimeType: 'application/json',
+            text: JSON.stringify(buildDeveloperToolGuide(), null, 2),
+          },
+        ],
+      }
+    },
+  )
 
-  server.resource(
+  server.registerResource(
     'tool-guide-entry',
     new ResourceTemplate('sqd://tools/{name}', { list: undefined }),
+    { mimeType: 'application/json', cacheHint: { ttlMs: 300_000, cacheScope: 'public' } },
     async (uri, { name }) => {
       const toolName = Array.isArray(name) ? name[0] : name
       const tool = getToolGuideEntry(toolName)
@@ -156,23 +169,29 @@ export function registerSchemaResource(server: McpServer) {
   )
 
   // Resource: List all datasets
-  server.resource('datasets', 'sqd://datasets', async (uri) => {
-    const datasets = await getDatasets()
-    return {
-      contents: [
-        {
-          uri: uri.href,
-          mimeType: 'application/json',
-          text: JSON.stringify(datasets, null, 2),
-        },
-      ],
-    }
-  })
+  server.registerResource(
+    'datasets',
+    'sqd://datasets',
+    { mimeType: 'application/json', cacheHint: { ttlMs: 60_000, cacheScope: 'public' } },
+    async (uri) => {
+      const datasets = await getDatasets()
+      return {
+        contents: [
+          {
+            uri: uri.href,
+            mimeType: 'application/json',
+            text: JSON.stringify(datasets, null, 2),
+          },
+        ],
+      }
+    },
+  )
 
   // Resource: Dataset info template
-  server.resource(
+  server.registerResource(
     'dataset-info',
     new ResourceTemplate('sqd://datasets/{name}', { list: undefined }),
+    { mimeType: 'application/json', cacheHint: { ttlMs: 30_000, cacheScope: 'public' } },
     async (uri, { name }) => {
       let datasetName = Array.isArray(name) ? name[0] : name
       datasetName = await resolveDataset(datasetName)
@@ -191,148 +210,158 @@ export function registerSchemaResource(server: McpServer) {
   )
 
   // Resource: EVM API Schema
-  server.resource('schema-evm', 'sqd://schema/evm', async (uri) => {
-    const schema = {
-      description: 'SQD Portal EVM API Documentation',
-      version: npmVersion,
-      endpoints: {
-        blocks: {
-          description: 'Query block data',
-          fields: Object.keys(buildEvmBlockFields(true)),
-          filters: ['number', 'hash'],
-        },
-        transactions: {
-          description: 'Query transaction data',
-          fields: Object.keys(buildEvmTransactionFields(true)),
-          filters: ['from', 'to', 'sighash', 'firstNonce', 'lastNonce'],
-          relatedData: ['logs', 'traces', 'stateDiffs'],
-        },
-        logs: {
-          description: 'Query event logs',
-          fields: Object.keys(buildEvmLogFields()),
-          filters: ['address', 'topic0', 'topic1', 'topic2', 'topic3'],
-          relatedData: ['transaction', 'transactionTraces', 'transactionLogs'],
-        },
-        traces: {
-          description: 'Query internal transactions/traces',
-          fields: Object.keys(buildEvmTraceFields()),
-          filters: [
-            'type',
-            'callFrom',
-            'callTo',
-            'callSighash',
-            'suicideRefundAddress',
-            'rewardAuthor',
-            'createResultAddress',
-          ],
-          relatedData: ['transaction', 'transactionLogs', 'subtraces', 'parents'],
-        },
-        stateDiffs: {
-          description: 'Query state changes',
-          fields: Object.keys(buildEvmStateDiffFields()),
-          filters: ['address', 'key', 'kind'],
-          kindValues: {
-            '=': 'exists (no change)',
-            '+': 'created',
-            '*': 'modified',
-            '-': 'deleted',
+  server.registerResource(
+    'schema-evm',
+    'sqd://schema/evm',
+    { mimeType: 'application/json', cacheHint: { ttlMs: 300_000, cacheScope: 'public' } },
+    async (uri) => {
+      const schema = {
+        description: 'SQD Portal EVM API Documentation',
+        version: npmVersion,
+        endpoints: {
+          blocks: {
+            description: 'Query block data',
+            fields: Object.keys(buildEvmBlockFields(true)),
+            filters: ['number', 'hash'],
+          },
+          transactions: {
+            description: 'Query transaction data',
+            fields: Object.keys(buildEvmTransactionFields(true)),
+            filters: ['from', 'to', 'sighash', 'firstNonce', 'lastNonce'],
+            relatedData: ['logs', 'traces', 'stateDiffs'],
+          },
+          logs: {
+            description: 'Query event logs',
+            fields: Object.keys(buildEvmLogFields()),
+            filters: ['address', 'topic0', 'topic1', 'topic2', 'topic3'],
+            relatedData: ['transaction', 'transactionTraces', 'transactionLogs'],
+          },
+          traces: {
+            description: 'Query internal transactions/traces',
+            fields: Object.keys(buildEvmTraceFields()),
+            filters: [
+              'type',
+              'callFrom',
+              'callTo',
+              'callSighash',
+              'suicideRefundAddress',
+              'rewardAuthor',
+              'createResultAddress',
+            ],
+            relatedData: ['transaction', 'transactionLogs', 'subtraces', 'parents'],
+          },
+          stateDiffs: {
+            description: 'Query state changes',
+            fields: Object.keys(buildEvmStateDiffFields()),
+            filters: ['address', 'key', 'kind'],
+            kindValues: {
+              '=': 'exists (no change)',
+              '+': 'created',
+              '*': 'modified',
+              '-': 'deleted',
+            },
           },
         },
-      },
-      l2Fields: [
-        'l1Fee',
-        'l1FeeScalar',
-        'l1GasPrice',
-        'l1GasUsed',
-        'l1BlobBaseFee',
-        'l1BlobBaseFeeScalar',
-        'l1BaseFeeScalar',
-        'l1BlockNumber',
-      ],
-      eventSignatures: EVENT_SIGNATURES,
-    }
-    return {
-      contents: [
-        {
-          uri: uri.href,
-          mimeType: 'application/json',
-          text: JSON.stringify(schema, null, 2),
-        },
-      ],
-    }
-  })
+        l2Fields: [
+          'l1Fee',
+          'l1FeeScalar',
+          'l1GasPrice',
+          'l1GasUsed',
+          'l1BlobBaseFee',
+          'l1BlobBaseFeeScalar',
+          'l1BaseFeeScalar',
+          'l1BlockNumber',
+        ],
+        eventSignatures: EVENT_SIGNATURES,
+      }
+      return {
+        contents: [
+          {
+            uri: uri.href,
+            mimeType: 'application/json',
+            text: JSON.stringify(schema, null, 2),
+          },
+        ],
+      }
+    },
+  )
 
   // Resource: Solana API Schema
-  server.resource('schema-solana', 'sqd://schema/solana', async (uri) => {
-    const schema = {
-      description: 'SQD Portal Solana API Documentation',
-      version: npmVersion,
-      endpoints: {
-        instructions: {
-          description: 'Query instruction data',
-          fields: Object.keys(buildSolanaInstructionFields(true)),
-          filters: [
-            'programId',
-            'd1',
-            'd2',
-            'd4',
-            'd8',
-            'a0-a15 (account positions)',
-            'mentionsAccount',
-            'isCommitted',
-            'transactionFeePayer',
-          ],
-          discriminatorInfo: {
-            d1: '1-byte discriminator (0x-prefixed hex)',
-            d2: '2-byte discriminator (0x-prefixed hex)',
-            d4: '4-byte discriminator (0x-prefixed hex)',
-            d8: '8-byte discriminator - Anchor standard (0x-prefixed hex)',
+  server.registerResource(
+    'schema-solana',
+    'sqd://schema/solana',
+    { mimeType: 'application/json', cacheHint: { ttlMs: 300_000, cacheScope: 'public' } },
+    async (uri) => {
+      const schema = {
+        description: 'SQD Portal Solana API Documentation',
+        version: npmVersion,
+        endpoints: {
+          instructions: {
+            description: 'Query instruction data',
+            fields: Object.keys(buildSolanaInstructionFields(true)),
+            filters: [
+              'programId',
+              'd1',
+              'd2',
+              'd4',
+              'd8',
+              'a0-a15 (account positions)',
+              'mentionsAccount',
+              'isCommitted',
+              'transactionFeePayer',
+            ],
+            discriminatorInfo: {
+              d1: '1-byte discriminator (0x-prefixed hex)',
+              d2: '2-byte discriminator (0x-prefixed hex)',
+              d4: '4-byte discriminator (0x-prefixed hex)',
+              d8: '8-byte discriminator - Anchor standard (0x-prefixed hex)',
+            },
+            relatedData: [
+              'transaction',
+              'transactionBalances',
+              'transactionTokenBalances',
+              'transactionInstructions',
+              'innerInstructions',
+              'logs',
+            ],
           },
-          relatedData: [
-            'transaction',
-            'transactionBalances',
-            'transactionTokenBalances',
-            'transactionInstructions',
-            'innerInstructions',
-            'logs',
-          ],
+          transactions: {
+            description: 'Query transaction data',
+            fields: Object.keys(buildSolanaTransactionFields()),
+            filters: ['feePayer', 'isCommitted'],
+          },
+          balances: {
+            description: 'Query SOL balance changes',
+            fields: Object.keys(buildSolanaBalanceFields()),
+            filters: ['account'],
+          },
+          tokenBalances: {
+            description: 'Query SPL token balance changes',
+            fields: Object.keys(buildSolanaTokenBalanceFields()),
+            filters: ['account', 'mint', 'owner', 'preProgramId', 'postProgramId'],
+          },
+          logs: {
+            description: 'Query log messages',
+            fields: Object.keys(buildSolanaLogFields()),
+            filters: ['programId', 'kind'],
+            kindValues: ['log', 'data', 'other'],
+          },
+          rewards: {
+            description: 'Query block rewards',
+            fields: Object.keys(buildSolanaRewardFields()),
+            filters: ['pubkey'],
+          },
         },
-        transactions: {
-          description: 'Query transaction data',
-          fields: Object.keys(buildSolanaTransactionFields()),
-          filters: ['feePayer', 'isCommitted'],
-        },
-        balances: {
-          description: 'Query SOL balance changes',
-          fields: Object.keys(buildSolanaBalanceFields()),
-          filters: ['account'],
-        },
-        tokenBalances: {
-          description: 'Query SPL token balance changes',
-          fields: Object.keys(buildSolanaTokenBalanceFields()),
-          filters: ['account', 'mint', 'owner', 'preProgramId', 'postProgramId'],
-        },
-        logs: {
-          description: 'Query log messages',
-          fields: Object.keys(buildSolanaLogFields()),
-          filters: ['programId', 'kind'],
-          kindValues: ['log', 'data', 'other'],
-        },
-        rewards: {
-          description: 'Query block rewards',
-          fields: Object.keys(buildSolanaRewardFields()),
-          filters: ['pubkey'],
-        },
-      },
-    }
-    return {
-      contents: [
-        {
-          uri: uri.href,
-          mimeType: 'application/json',
-          text: JSON.stringify(schema, null, 2),
-        },
-      ],
-    }
-  })
+      }
+      return {
+        contents: [
+          {
+            uri: uri.href,
+            mimeType: 'application/json',
+            text: JSON.stringify(schema, null, 2),
+          },
+        ],
+      }
+    },
+  )
 }

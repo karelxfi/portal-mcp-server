@@ -1,7 +1,7 @@
 #!/usr/bin/env tsx
 
-import { Client } from '@modelcontextprotocol/sdk/client/index.js'
-import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
+import { Client } from '@modelcontextprotocol/client'
+import { StdioClientTransport } from '@modelcontextprotocol/client/stdio'
 
 const POLKADOT_OLD_TIMESTAMP_ISO = '2022-04-23T12:03:06Z'
 const POLKADOT_OLD_TIMESTAMP_SECONDS = 1650715386

@@ -1,7 +1,14 @@
-import { datasetQueriesTotal, observabilityExportsTotal, toolErrorsTotal, toolIntentCallsTotal, toolResponseSizeBytes, userQueryCapturedTotal } from './metrics.js'
 import { detectChainType } from './helpers/chain.js'
 import { ActionableError, RequestCancelledError, sanitizeText } from './helpers/errors.js'
 import { getToolContract } from './helpers/tool-ux.js'
+import {
+  datasetQueriesTotal,
+  observabilityExportsTotal,
+  toolErrorsTotal,
+  toolIntentCallsTotal,
+  toolResponseSizeBytes,
+  userQueryCapturedTotal,
+} from './metrics.js'
 import { npmVersion } from './version.js'
 
 export type TransportKind = 'stdio' | 'http'
@@ -11,21 +18,21 @@ export type RuntimeRequestContext = {
   requestId?: string
   clientName?: string
   clientVersion?: string
-  sessionId?: string
+  protocolVersion?: string
   userQuery?: string
   userAgent?: string
   forwardedFor?: string
 }
 
-type ToolEventStatus = 'success' | 'error' | 'cancelled'
+export type ToolEventStatus = 'success' | 'partial' | 'tool_error' | 'request_error' | 'cancelled'
 
 type ObservabilityEvent = {
   event: 'mcp_tool_call'
   timestamp: string
   invocation_id: string
   request_id?: string
-  session_id?: string
   transport: TransportKind
+  protocol_version?: string
   server_version: string
   tool: string
   audience?: string
@@ -83,7 +90,11 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
 }
 
 function parseResultPayload(result: unknown): Record<string, unknown> | undefined {
-  const content = asRecord(result)?.content
+  const resultRecord = asRecord(result)
+  const structuredContent = asRecord(resultRecord?.structuredContent)
+  if (structuredContent) return structuredContent
+
+  const content = resultRecord?.content
   if (!Array.isArray(content) || content.length === 0) return undefined
   const first = asRecord(content[0])
   if (!first || typeof first.text !== 'string') return undefined
@@ -93,6 +104,42 @@ function parseResultPayload(result: unknown): Record<string, unknown> | undefine
   } catch {
     return undefined
   }
+}
+
+function resultError(result: unknown): Error | undefined {
+  const resultRecord = asRecord(result)
+  if (resultRecord?.isError !== true) return undefined
+
+  const content = resultRecord.content
+  if (!Array.isArray(content)) return new Error('MCP tool returned an error result')
+  const text = content
+    .map((item) => asRecord(item)?.text)
+    .find((value): value is string => typeof value === 'string' && value.length > 0)
+  return new Error(text || 'MCP tool returned an error result')
+}
+
+function isPartialPayload(payload: Record<string, unknown> | undefined): boolean {
+  if (!payload) return false
+  if (payload.partial === true || payload.result_complete === false || payload.window_complete === false) return true
+
+  const coverage = asRecord(payload._coverage)
+  if (coverage?.window_complete === false || coverage?.result_complete === false) return true
+
+  const sectionStatus = asRecord(payload.section_status)
+  return Boolean(sectionStatus && Object.values(sectionStatus).some((status) => status === 'unavailable'))
+}
+
+export function classifyToolOutcome(params: {
+  result?: unknown
+  error?: unknown
+  cancelled?: boolean
+}): ToolEventStatus {
+  const { result, error, cancelled = false } = params
+  if (cancelled || error instanceof RequestCancelledError) return 'cancelled'
+  if (error !== undefined) return 'request_error'
+  if (asRecord(result)?.isError === true) return 'tool_error'
+  if (isPartialPayload(parseResultPayload(result))) return 'partial'
+  return 'success'
 }
 
 function getResponseSizeBytes(result: unknown): number | undefined {
@@ -109,12 +156,16 @@ function classifyVm(toolName: string, args: Record<string, unknown>, payload?: R
   }
 
   const candidateNetwork =
-    (typeof args.network === 'string' ? args.network : undefined)
-    ?? (typeof args.dataset === 'string' ? args.dataset : undefined)
-    ?? (typeof payload?._meta === 'object' && payload._meta !== null && typeof (payload._meta as Record<string, unknown>).network === 'string'
+    (typeof args.network === 'string' ? args.network : undefined) ??
+    (typeof args.dataset === 'string' ? args.dataset : undefined) ??
+    (typeof payload?._meta === 'object' &&
+    payload._meta !== null &&
+    typeof (payload._meta as Record<string, unknown>).network === 'string'
       ? String((payload._meta as Record<string, unknown>).network)
-      : undefined)
-    ?? (typeof payload?._meta === 'object' && payload._meta !== null && typeof (payload._meta as Record<string, unknown>).dataset === 'string'
+      : undefined) ??
+    (typeof payload?._meta === 'object' &&
+    payload._meta !== null &&
+    typeof (payload._meta as Record<string, unknown>).dataset === 'string'
       ? String((payload._meta as Record<string, unknown>).dataset)
       : undefined)
 
@@ -133,8 +184,8 @@ function extractNetwork(args: Record<string, unknown>, payload?: Record<string, 
   if (typeof payload?.network === 'string') return payload.network
 
   const direct =
-    (typeof args.network === 'string' ? args.network : undefined)
-    ?? (typeof args.dataset === 'string' ? args.dataset : undefined)
+    (typeof args.network === 'string' ? args.network : undefined) ??
+    (typeof args.dataset === 'string' ? args.dataset : undefined)
   if (direct) return direct
 
   return undefined
@@ -163,7 +214,18 @@ function classifyErrorType(error: unknown): string {
 function summarizeArgs(args: Record<string, unknown>): Record<string, unknown> {
   const summary: Record<string, unknown> = {}
 
-  const scalarKeys = ['network', 'vm', 'timeframe', 'duration', 'interval', 'metric', 'mode', 'response_format', 'group_by', 'type']
+  const scalarKeys = [
+    'network',
+    'vm',
+    'timeframe',
+    'duration',
+    'interval',
+    'metric',
+    'mode',
+    'response_format',
+    'group_by',
+    'type',
+  ]
   for (const key of scalarKeys) {
     const value = args[key]
     if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
@@ -345,20 +407,20 @@ export function recordToolOutcome(params: {
   durationMs: number
   runtime: RuntimeRequestContext
   invocationId: string
+  status?: ToolEventStatus
 }) {
   const { toolName, args, result, error, durationMs, runtime, invocationId } = params
   const payload = result ? parseResultPayload(result) : undefined
   const toolContract = getToolContract(toolName)
   const network = extractNetwork(args, payload)
   const vm = classifyVm(toolName, args, payload)
-  const status: ToolEventStatus = error instanceof RequestCancelledError ? 'cancelled' : error ? 'error' : 'success'
+  const status = params.status ?? classifyToolOutcome({ result, error })
+  const effectiveError = error ?? (status === 'tool_error' ? resultError(result) : undefined)
   const responseSizeBytes = result ? getResponseSizeBytes(result) : undefined
   const responseFormat =
-    (typeof args.response_format === 'string' ? args.response_format : undefined)
-    ?? extractExecutionField(payload, 'response_format')
-  const mode =
-    (typeof args.mode === 'string' ? args.mode : undefined)
-    ?? extractExecutionField(payload, 'mode')
+    (typeof args.response_format === 'string' ? args.response_format : undefined) ??
+    extractExecutionField(payload, 'response_format')
+  const mode = (typeof args.mode === 'string' ? args.mode : undefined) ?? extractExecutionField(payload, 'mode')
   const sanitizedUserQuery = runtime.userQuery ? sanitizeText(runtime.userQuery) : undefined
 
   if (network) {
@@ -377,11 +439,11 @@ export function recordToolOutcome(params: {
     toolResponseSizeBytes.observe({ tool: toolName, transport: runtime.transport }, responseSizeBytes)
   }
 
-  if (error && status === 'error') {
+  if (effectiveError && (status === 'tool_error' || status === 'request_error')) {
     toolErrorsTotal.inc({
       tool: toolName,
       transport: runtime.transport,
-      error_type: classifyErrorType(error),
+      error_type: classifyErrorType(effectiveError),
     })
   }
 
@@ -397,8 +459,8 @@ export function recordToolOutcome(params: {
     timestamp: new Date().toISOString(),
     invocation_id: invocationId,
     ...(runtime.requestId ? { request_id: runtime.requestId } : {}),
-    ...(runtime.sessionId ? { session_id: runtime.sessionId } : {}),
     transport: runtime.transport,
+    ...(runtime.protocolVersion ? { protocol_version: runtime.protocolVersion } : {}),
     server_version: npmVersion,
     tool: toolName,
     ...(toolContract?.audience ? { audience: toolContract.audience } : {}),
@@ -416,12 +478,15 @@ export function recordToolOutcome(params: {
     ...(mode ? { mode } : {}),
     args_summary: summarizeArgs(args),
     ...(OBS_CAPTURE_USER_QUERY && sanitizedUserQuery ? { user_query: truncateText(sanitizedUserQuery, 400) } : {}),
-    ...(error
+    ...(effectiveError
       ? {
           error: {
-            type: classifyErrorType(error),
-            message: truncateText(sanitizeText(error instanceof Error ? error.message : String(error)), 280),
-            actionable: error instanceof ActionableError,
+            type: classifyErrorType(effectiveError),
+            message: truncateText(
+              sanitizeText(effectiveError instanceof Error ? effectiveError.message : String(effectiveError)),
+              280,
+            ),
+            actionable: effectiveError instanceof ActionableError,
           },
         }
       : {}),

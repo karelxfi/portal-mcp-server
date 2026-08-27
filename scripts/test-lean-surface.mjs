@@ -67,7 +67,42 @@ if (unusedRegistrations.length > 0) {
   throw new Error(`Unregistered tool implementations:\n${unusedRegistrations.map((item) => `- ${item}`).join('\n')}`)
 }
 
+const bannedRuntimePatterns = [
+  ['monolithic MCP SDK import', /@modelcontextprotocol\/sdk/],
+  ['legacy server.tool registration', /\.tool\s*\(/],
+  ['legacy server.resource registration', /\.resource\s*\(/],
+  ['private SDK tool registry access', /_registeredTools/],
+  ['bespoke MCP session state', /\bsessionId\b/],
+]
+for (const [label, pattern] of bannedRuntimePatterns) {
+  const matches = [...sources.entries()]
+    .filter(([, source]) => pattern.test(source))
+    .map(([file]) => relative('.', file))
+  if (matches.length > 0) {
+    throw new Error(`Lean MCP surface still contains ${label}:\n${matches.map((file) => `- ${file}`).join('\n')}`)
+  }
+}
+
+const toolSources = [...sources.entries()].filter(([file]) => file.startsWith(resolve('src/tools')))
+const portalRegistrationCount = toolSources.reduce(
+  (total, [, source]) => total + [...source.matchAll(/registerPortalTool\s*\(/g)].length,
+  0,
+)
+if (portalRegistrationCount !== 28) {
+  throw new Error(`Expected all 28 tools on registerPortalTool(), found ${portalRegistrationCount}`)
+}
+const directToolRegistrations = toolSources
+  .filter(([, source]) => /server\.registerTool\s*\(/.test(source))
+  .map(([file]) => relative('.', file))
+if (directToolRegistrations.length > 0) {
+  throw new Error(
+    `Tool modules bypass the instrumented registration surface:\n${directToolRegistrations
+      .map((file) => `- ${file}`)
+      .join('\n')}`,
+  )
+}
+
 const sourceLines = [...sources.values()].reduce((total, source) => total + source.split('\n').length, 0)
 console.log(
-  `Lean surface OK: ${files.length} reachable runtime modules, ${sourceLines} source lines, 0 unused registrations`,
+  `Lean surface OK: ${files.length} reachable runtime modules, ${sourceLines} source lines, 28/28 instrumented registrations, 0 legacy surfaces`,
 )

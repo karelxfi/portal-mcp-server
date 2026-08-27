@@ -1,13 +1,14 @@
 #!/usr/bin/env tsx
 
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
+import { type ChildProcessWithoutNullStreams, spawn } from 'node:child_process'
 import { readFile } from 'node:fs/promises'
 import { setTimeout as sleep } from 'node:timers/promises'
+
+import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client'
 
 const PORT = 3197
 const BASE_URL = `http://localhost:${PORT}`
 const METRICS_TOKEN = 'test-metrics-token'
-const MCP_TOKEN = 'test-mcp-token'
 const OBS_USER_QUERY_SECRET = 'obs-user-query-secret'
 const OBS_USER_QUERY_BEARER = 'obs-user-query-bearer'
 const OBS_USER_QUERY = `show https://example.test/path?access_token=${OBS_USER_QUERY_SECRET} with Authorization: Bearer ${OBS_USER_QUERY_BEARER}`
@@ -50,7 +51,6 @@ async function postRpc(id: number, method: string, params: Record<string, unknow
     headers: {
       'Content-Type': 'application/json',
       Accept: 'application/json, text/event-stream',
-      Authorization: `Bearer ${MCP_TOKEN}`,
       'x-mcp-client-name': 'metrics-smoke',
       'x-mcp-client-version': '1.0.0',
       'x-mcp-user-query': OBS_USER_QUERY,
@@ -64,14 +64,14 @@ async function postRpc(id: number, method: string, params: Record<string, unknow
   return parsed
 }
 
-async function assertMcpHttpAuth() {
+async function assertPublicHttpSurface() {
   const health = await fetch(`${BASE_URL}/health`)
   assert(health.ok, `Public /health should stay reachable, got ${health.status}`)
 
   const tools = await fetch(`${BASE_URL}/tools`)
-  assert(tools.ok, `Public /tools should stay reachable, got ${tools.status}`)
+  assert(tools.status === 404, `Retired duplicate /tools endpoint should return 404, got ${tools.status}`)
 
-  const missingAuth = await fetch(`${BASE_URL}/mcp`, {
+  const publicMcp = await fetch(`${BASE_URL}/mcp`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -79,25 +79,37 @@ async function assertMcpHttpAuth() {
     },
     body: JSON.stringify({ jsonrpc: '2.0', id: 900, method: 'tools/list', params: {} }),
   })
-  const missingAuthText = await missingAuth.text()
-  assert(missingAuth.status === 401, `Anonymous MCP POST should be blocked, got ${missingAuth.status}`)
-  const missingAuthJson = JSON.parse(missingAuthText)
-  assert(missingAuthJson?.jsonrpc === '2.0', 'Unauthorized MCP response should be JSON-RPC compatible')
-  assert(missingAuthJson?.error?.message === 'Unauthorized.', 'Unauthorized MCP response should use a generic message')
+  assert(publicMcp.ok, `Anonymous MCP POST should stay available in v0.8.0, got ${publicMcp.status}`)
+}
 
-  const badToken = 'wrong-mcp-token-that-must-not-echo'
-  const badAuth = await fetch(`${BASE_URL}/`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Accept: 'application/json, text/event-stream',
-      Authorization: `Bearer ${badToken}`,
+async function assertModernHttpProtocol() {
+  const transport = new StreamableHTTPClientTransport(new URL(`${BASE_URL}/mcp`), {
+    requestInit: {
+      headers: {
+        'x-mcp-client-name': 'modern-http-smoke',
+        'x-mcp-client-version': '0.8.0',
+      },
     },
-    body: JSON.stringify({ jsonrpc: '2.0', id: 901, method: 'tools/list', params: {} }),
   })
-  const badAuthText = await badAuth.text()
-  assert(badAuth.status === 401, `Bad-token MCP POST should be blocked, got ${badAuth.status}`)
-  assert(!badAuthText.includes(badToken), 'Unauthorized MCP response should not echo bearer tokens')
+  const client = new Client(
+    { name: 'modern-http-smoke', version: '0.8.0' },
+    { versionNegotiation: { mode: 'auto', probe: { timeoutMs: 5_000 } } },
+  )
+
+  await client.connect(transport)
+  try {
+    assert(client.getProtocolEra() === 'modern', `HTTP should negotiate modern era, got ${client.getProtocolEra()}`)
+    assert(
+      client.getNegotiatedProtocolVersion() === '2026-07-28',
+      `HTTP should negotiate 2026-07-28, got ${client.getNegotiatedProtocolVersion()}`,
+    )
+    const { tools } = await client.listTools()
+    assert(tools.length === 28, `Modern HTTP tools/list expected 28 tools, got ${tools.length}`)
+    const result = await client.callTool({ name: 'portal_get_head', arguments: { network: 'base' } })
+    assert(!result.isError, 'Modern HTTP portal_get_head should succeed')
+  } finally {
+    await client.close()
+  }
 }
 
 function getHelpMetricNames(metricsText: string): Set<string> {
@@ -136,7 +148,10 @@ async function assertDashboardMetricNames(metricsText: string) {
   }
 
   visit(dashboard)
-  assert(missing.size === 0, `Grafana dashboard references unknown Prometheus metrics: ${Array.from(missing).join(', ')}`)
+  assert(
+    missing.size === 0,
+    `Grafana dashboard references unknown Prometheus metrics: ${Array.from(missing).join(', ')}`,
+  )
 }
 
 function assertUserQueryRedacted() {
@@ -145,7 +160,10 @@ function assertUserQueryRedacted() {
   assert(!stderrText.includes(OBS_USER_QUERY_SECRET), 'Captured user_query should not expose URL query secrets')
   assert(!stderrText.includes(OBS_USER_QUERY_BEARER), 'Captured user_query should not expose bearer secrets')
   assert(!stderrText.includes('?access_token='), 'Captured user_query should strip URL query strings')
-  assert(stderrText.includes('https://example.test/path'), 'Captured user_query should retain the non-sensitive URL path')
+  assert(
+    stderrText.includes('https://example.test/path'),
+    'Captured user_query should retain the non-sensitive URL path',
+  )
   assert(stderrText.includes('[REDACTED]'), 'Captured user_query should mark redacted sensitive content')
 }
 
@@ -158,7 +176,6 @@ async function main() {
       ...process.env,
       PORT: String(PORT),
       METRICS_BEARER_TOKEN: METRICS_TOKEN,
-      MCP_HTTP_BEARER_TOKEN: MCP_TOKEN,
       OBS_CAPTURE_USER_QUERY: 'true',
       OBS_LOG_JSON: 'true',
     },
@@ -173,7 +190,8 @@ async function main() {
   })
 
   await waitForHealth()
-  await assertMcpHttpAuth()
+  await assertPublicHttpSurface()
+  await assertModernHttpProtocol()
   await postRpc(1, 'initialize', {
     protocolVersion: '2024-11-05',
     capabilities: {},
@@ -198,18 +216,43 @@ async function main() {
   const metricsText = await authorizedMetrics.text()
 
   assert(metricsText.includes('mcp_server_info{'), 'Metrics should expose mcp_server_info')
-  assert(metricsText.includes('mcp_tool_calls_total{tool="portal_get_head",status="success",transport="http"'), 'Metrics should count the HTTP tool call')
-  assert(metricsText.includes('mcp_client_requests_total{transport="http",client_name="metrics-smoke",client_version="1.0.0"'), 'Metrics should count the declared HTTP client')
-  assert(metricsText.includes('mcp_dataset_queries_total{dataset="base-mainnet",vm="evm"}'), 'Dataset metrics should use canonical network and vm labels')
-  assert(!metricsText.includes('mcp_dataset_queries_total{dataset="base-mainnet"}'), 'Dataset metrics should not emit unlabeled vm series')
-  assert(!metricsText.includes('mcp_dataset_queries_total{dataset="base",vm="evm"}'), 'Dataset metrics should not use network aliases for successful calls')
-  assert(metricsText.includes('mcp_token_list_requests_total{source="coingecko_token_list",chain="base",status="success"'), 'Metrics should count token-list fetch success')
-  assert(metricsText.includes('mcp_token_list_cache_events_total{source="coingecko_token_list",chain="base",event="'), 'Metrics should expose token-list cache events')
+  assert(
+    metricsText.includes('mcp_tool_calls_total{tool="portal_get_head",status="success",transport="http"'),
+    'Metrics should count the HTTP tool call',
+  )
+  assert(
+    metricsText.includes(
+      'mcp_client_requests_total{transport="http",client_name="metrics-smoke",client_version="1.0.0"',
+    ),
+    'Metrics should count the declared HTTP client',
+  )
+  assert(
+    metricsText.includes('mcp_dataset_queries_total{dataset="base-mainnet",vm="evm"}'),
+    'Dataset metrics should use canonical network and vm labels',
+  )
+  assert(
+    !metricsText.includes('mcp_dataset_queries_total{dataset="base-mainnet"}'),
+    'Dataset metrics should not emit unlabeled vm series',
+  )
+  assert(
+    !metricsText.includes('mcp_dataset_queries_total{dataset="base",vm="evm"}'),
+    'Dataset metrics should not use network aliases for successful calls',
+  )
+  assert(
+    metricsText.includes('mcp_token_list_requests_total{source="coingecko_token_list",chain="base",status="success"'),
+    'Metrics should count token-list fetch success',
+  )
+  assert(
+    metricsText.includes('mcp_token_list_cache_events_total{source="coingecko_token_list",chain="base",event="'),
+    'Metrics should expose token-list cache events',
+  )
 
   assertUserQueryRedacted()
   await assertDashboardMetricNames(metricsText)
 
-  console.log('PASS  MCP POST bearer auth blocks anonymous/bad tokens while keeping /health and /tools public')
+  console.log('PASS  /health and MCP remain public with no client credential setup')
+  console.log('PASS  MCP 2026-07-28 negotiates and calls tools over stateless HTTP')
+  console.log('PASS  Retired duplicate /tools endpoint stays removed')
   console.log('PASS  OBS_CAPTURE_USER_QUERY emits sanitized user_query text')
   console.log('PASS  /metrics blocks anonymous access and accepts bearer auth')
   console.log('PASS  /metrics emits canonical tool, client, Portal, dataset, and token-list series')

@@ -1,4 +1,6 @@
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
+import type { McpServer } from '@modelcontextprotocol/server'
+
+import { registerPortalTool } from '../../helpers/mcp-registration.js'
 import { z } from 'zod'
 
 import { getBlockHead, resolveDataset } from '../../cache/datasets.js'
@@ -141,7 +143,7 @@ function createRecentTransactionsCursor(
 }
 
 export function registerGetRecentTransactionsTool(server: McpServer) {
-  server.tool(
+  registerPortalTool(server,
     'portal_get_recent_activity',
     buildToolDescription('portal_get_recent_activity'),
     {

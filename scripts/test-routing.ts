@@ -1,7 +1,7 @@
 #!/usr/bin/env tsx
 
-import { Client } from '@modelcontextprotocol/sdk/client/index.js'
-import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
+import { Client } from '@modelcontextprotocol/client'
+import { StdioClientTransport } from '@modelcontextprotocol/client/stdio'
 
 import { getToolContract } from '../src/helpers/tool-ux.ts'
 import { ROUTING_EVAL_CASES } from './routing-manifest.ts'

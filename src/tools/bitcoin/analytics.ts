@@ -1,4 +1,6 @@
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
+import type { McpServer } from '@modelcontextprotocol/server'
+
+import { registerPortalTool } from '../../helpers/mcp-registration.js'
 import { z } from 'zod'
 
 import { resolveDataset, validateBlockRange } from '../../cache/datasets.js'
@@ -85,7 +87,7 @@ export function registerBitcoinAnalyticsTool(server: McpServer) {
   const FAST_MODE_MAX_BLOCKS = 72
   const DEEP_MODE_MAX_BLOCKS = 200
 
-  server.tool(
+  registerPortalTool(server,
     'portal_bitcoin_get_analytics',
     buildToolDescription('portal_bitcoin_get_analytics'),
     {

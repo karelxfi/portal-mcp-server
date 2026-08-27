@@ -1,4 +1,6 @@
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
+import type { McpServer } from '@modelcontextprotocol/server'
+
+import { registerPortalTool } from '../../helpers/mcp-registration.js'
 import { z } from 'zod'
 
 import { getBlockHead, resolveDataset } from '../../cache/datasets.js'
@@ -24,7 +26,14 @@ import { decodeCursor, encodeCursor, paginateAscendingItems } from '../../helper
 import { buildWalletPipesRecipe } from '../../helpers/pipes-recipe.js'
 import { type ResponseFormat, resolveDefaultResponseFormat } from '../../helpers/response-modes.js'
 import { buildQueryFreshness, buildSectionCoverage } from '../../helpers/result-metadata.js'
-import { type TimestampInput, describeTimeWindowInput, resolveTimeframeOrBlocks } from '../../helpers/timeframe.js'
+import {
+  type TimestampInput,
+  describeTimeWindowInput,
+  estimateBlockTime,
+  getTimestampWindowNotices,
+  parseTimeframeToSeconds,
+  resolveTimeframeOrBlocks,
+} from '../../helpers/timeframe.js'
 import { buildExecutionMetadata, buildToolDescription } from '../../helpers/tool-ux.js'
 import {
   buildMetricCard,
@@ -1071,7 +1080,7 @@ function buildWalletLlmOverrides(vm: 'evm' | 'solana' | 'bitcoin' | 'hyperliquid
 export function registerGetWalletSummaryTool(server: McpServer) {
   const FAST_MODE_BLOCK_CAP = 3000
 
-  server.tool(
+  registerPortalTool(server,
     'portal_get_wallet_summary',
     buildToolDescription('portal_get_wallet_summary'),
     {
@@ -1952,8 +1961,32 @@ async function buildNonEvmWalletSummary(params: {
   }
 
   const head = await getBlockHead(dataset)
+  const useInteractiveHyperliquidEstimate =
+    mode === 'fast' &&
+    (chainType === 'hyperliquidFills' || chainType === 'hyperliquidReplicaCmds') &&
+    from_timestamp === undefined &&
+    to_timestamp === undefined &&
+    !/^\d+$/.test(timeframe)
+  const estimatedBlockTime = estimateBlockTime(dataset, chainType)
+  const estimatedBlockCount = useInteractiveHyperliquidEstimate
+    ? Math.max(1, Math.floor(parseTimeframeToSeconds(timeframe) / estimatedBlockTime))
+    : 0
   const resolvedWindow =
-    from_timestamp !== undefined || to_timestamp !== undefined || !/^\d+$/.test(timeframe)
+    useInteractiveHyperliquidEstimate
+      ? {
+          from_block: Math.max(0, head.number - estimatedBlockCount + 1),
+          to_block: head.number,
+          range_kind: 'timeframe' as const,
+          estimated_timeframe: {
+            resolution: 'estimated' as const,
+            dataset,
+            from_block: Math.max(0, head.number - estimatedBlockCount + 1),
+            to_block: head.number,
+            estimated_block_time_seconds: estimatedBlockTime,
+            reason: 'interactive_fast_path' as const,
+          },
+        }
+      : from_timestamp !== undefined || to_timestamp !== undefined || !/^\d+$/.test(timeframe)
       ? await resolveTimeframeOrBlocks({
           dataset,
           ...(from_timestamp !== undefined || to_timestamp !== undefined
@@ -1974,6 +2007,7 @@ async function buildNonEvmWalletSummary(params: {
   let fromBlock = requestedFromBlock
   const notices = [
     'This non-EVM wallet summary currently returns a cross-chain overview rather than the richer EVM multi-section scan.',
+    ...getTimestampWindowNotices(resolvedWindow),
   ]
 
   if (mode === 'fast') {
@@ -2479,7 +2513,7 @@ async function buildNonEvmWalletSummary(params: {
     {
       itemKeys: ['fills'],
       limit: limit_per_type,
-      chunkSize: Math.max(50, Math.min(250, limit_per_type * 10)),
+      chunkSize: Math.max(500, Math.min(2_000, limit_per_type * 200)),
       maxBytes: 25 * 1024 * 1024,
       timeout: WALLET_QUERY_TIMEOUT_MS,
       retries: WALLET_QUERY_RETRIES,

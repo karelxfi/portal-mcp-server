@@ -65,6 +65,7 @@ data/
 *.md
 !README.md
 !CHANGELOG.md
+!RELEASE_ASSURANCE.md
 !LICENSE.md
 !CONTRIBUTING.md
 

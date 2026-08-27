@@ -90,7 +90,11 @@ export type EstimatedTimeframeResolution = {
   from_block: number
   to_block: number
   estimated_block_time_seconds: number
-  reason: 'timestamp_endpoint_unsupported' | 'timestamp_endpoint_down' | 'timestamp_endpoint_unavailable'
+  reason:
+    | 'timestamp_endpoint_unsupported'
+    | 'timestamp_endpoint_down'
+    | 'timestamp_endpoint_unavailable'
+    | 'interactive_fast_path'
 }
 
 export interface ResolvedBlockWindow {
@@ -722,6 +726,7 @@ export function getTimestampWindowNotices(window: unknown): string[] {
       timestamp_endpoint_unsupported: 'the timestamp endpoint is not supported for this network',
       timestamp_endpoint_down: 'the timestamp endpoint was recently unavailable for this network',
       timestamp_endpoint_unavailable: 'the exact timestamp lookup failed for this network',
+      interactive_fast_path: 'the interactive fast path uses a bounded block-time estimate',
     }[typedWindow.estimated_timeframe.reason]
     notices.push(
       `The timeframe block window was estimated as blocks ${typedWindow.estimated_timeframe.from_block}-${typedWindow.estimated_timeframe.to_block} using a ${typedWindow.estimated_timeframe.estimated_block_time_seconds}s block-time estimate because ${reason}.`,

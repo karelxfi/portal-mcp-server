@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
+import { serveStdio } from '@modelcontextprotocol/server/stdio'
 
 import { createPortalServer } from './server.js'
 
@@ -8,9 +8,11 @@ import { createPortalServer } from './server.js'
 // SQD Portal MCP Server - Node.js Entry Point
 // ============================================================================
 
-const server = createPortalServer({ transport: 'stdio' })
-
-const transport = new StdioServerTransport()
-await server.connect(transport)
+serveStdio(() => createPortalServer({ transport: 'stdio' }), {
+  legacy: 'serve',
+  onerror(error) {
+    console.error('[mcp:stdio]', error)
+  },
+})
 
 console.error('SQD Portal MCP Server running on stdio')

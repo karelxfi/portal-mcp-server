@@ -1,4 +1,4 @@
-import type { Client } from '@modelcontextprotocol/sdk/client/index.js'
+import type { Client } from '@modelcontextprotocol/client'
 
 import { EVENT_SIGNATURES } from '../src/constants/index.js'
 import { assert, callToolWithRetry, extractJson, getText, isBoundedUpstreamToolError, sleep } from './test-helpers.ts'

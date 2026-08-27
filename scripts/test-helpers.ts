@@ -1,8 +1,7 @@
 #!/usr/bin/env tsx
 
-import type { Client } from '@modelcontextprotocol/sdk/client/index.js'
-import { Client as McpClient } from '@modelcontextprotocol/sdk/client/index.js'
-import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
+import { Client as McpClient, type Client } from '@modelcontextprotocol/client'
+import { StdioClientTransport } from '@modelcontextprotocol/client/stdio'
 
 export type ConnectedTestClient = {
   client: Client

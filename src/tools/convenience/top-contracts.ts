@@ -1,4 +1,6 @@
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
+import type { McpServer } from '@modelcontextprotocol/server'
+
+import { registerPortalTool } from '../../helpers/mcp-registration.js'
 import { z } from 'zod'
 
 import { getBlockHead, resolveDataset } from '../../cache/datasets.js'
@@ -62,7 +64,7 @@ const evmAnalyticsCache = createQueryCache<{
  * Perfect for "which contracts are trending?" questions.
  */
 export function registerGetTopContractsTool(server: McpServer) {
-  server.tool(
+  registerPortalTool(server,
     'portal_evm_get_analytics',
     buildToolDescription('portal_evm_get_analytics'),
     {

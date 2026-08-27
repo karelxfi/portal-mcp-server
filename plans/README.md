@@ -13,7 +13,7 @@ This directory records completed release plans and proposed follow-on roadmaps.
 
 - Estimated relative time windows are identified as estimated in the response metadata and user-facing notices.
 - Bounded contract-activity previews distinguish requested block bounds from analyzed block bounds.
-- HTTP MCP POST calls can be protected with `MCP_HTTP_BEARER_TOKEN`, while `/health` and read-only tool discovery stay public.
+- HTTP MCP and `/health` stay public in v0.8.0; unified user authentication is deferred to v0.9.0.
 - Client-facing errors redact sensitive-looking request material and summarize large query bodies.
 - Pagination cursors are signed and rejected if unsigned, malformed, for another tool, or edited.
 - Solana transaction, Bitcoin transaction, and Hyperliquid fill limits are capped at 200; EVM limit descriptions match the same cap.

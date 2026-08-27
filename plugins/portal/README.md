@@ -2,6 +2,7 @@
 
 This directory contains the Codex plugin wrapper for the hosted SQD Portal MCP endpoint.
 It also contains the Claude Code plugin manifest for the same hosted MCP endpoint.
+Grok Build consumes that Claude-compatible package directly, while Grok chat connects to the hosted URL as a custom MCP connector.
 
 The first distribution target is the repo-local marketplace in `.agents/plugins/marketplace.json`.
 The marketplace entry points at this plugin with the stable source path `./plugins/portal`,
@@ -52,6 +53,16 @@ claude plugin install portal@sqd
 
 Open a new Claude Code session after installing so the plugin MCP server is loaded.
 
+## Grok Build Install From This Repo
+
+Grok Build is compatible with Claude Code plugin manifests, so no separate Grok-only manifest is needed:
+
+```bash
+grok plugin install --trust ./plugins/portal
+```
+
+For Grok chat, create a Custom connector at `grok.com/connectors` and use `https://portal.sqd.dev/mcp` with no authentication.
+
 ## First-use Prompts
 
 The plugin exposes these starter prompts:
@@ -67,6 +78,7 @@ Run the plugin release gate before publishing plugin changes:
 ```bash
 npm run test:plugin
 npm run test:claude-plugin
+npm run test:grok-plugin
 ```
 
 These validate the Codex and Claude Code plugin manifests, marketplace entries, optional asset
