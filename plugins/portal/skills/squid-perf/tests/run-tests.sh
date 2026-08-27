@@ -230,22 +230,46 @@ cat > "$EDGE_REPORT_DIR/compare-syncs.json" <<'JSON'
 }
 JSON
 cat > "$TEST_TMP_DIR/edge-a.log" <<'LOG'
+api 2026-01-01T00:00:00.000Z INFO sqd:stage completed startup in 9999ms
 api 2026-01-01T00:00:00.000Z INFO sqd:processor 100 / 1000, rate: 10 blocks/sec, mapping: 10 blocks/sec, 10 items/sec, eta: 90s
 api 2026-01-01T00:00:10.000Z INFO sqd:processor 500 / 1000, rate: 10 blocks/sec, mapping: 10 blocks/sec, 10 items/sec, eta: 50s
 api 2026-01-01T00:00:10.000Z INFO sqd:multicall processed sync 500 at block 500: 1 chunks, 1 groups, 1 total calls, 10ms
+api 2026-01-01T00:00:15.000Z INFO sqd:stage completed batch in 10ms
+api 2026-01-01T00:00:15.100Z INFO sqd:stage completed batch in 10ms
+api 2026-01-01T00:00:15.200Z INFO sqd:stage completed batch in 10ms
+api 2026-01-01T00:00:15.300Z INFO sqd:stage completed batch in 10ms
+api 2026-01-01T00:00:15.400Z INFO sqd:stage completed batch in 10ms
+api 2026-01-01T00:00:15.500Z INFO sqd:stage completed batch in 10ms
+api 2026-01-01T00:00:15.600Z INFO sqd:stage completed batch in 10ms
+api 2026-01-01T00:00:15.700Z INFO sqd:stage completed batch in 10ms
+api 2026-01-01T00:00:15.800Z INFO sqd:stage completed batch in 10ms
+api 2026-01-01T00:00:15.900Z INFO sqd:stage completed batch in 10ms
 api 2026-01-01T00:00:20.000Z INFO sqd:processor 995 / 1000, rate: 10 blocks/sec, mapping: 10 blocks/sec, 10 items/sec, eta: 0s
 api 2026-01-01T00:00:20.000Z INFO sqd:multicall processed idle 995 at block 995: 1 chunks, 1 groups, 1 total calls, 9999ms
+api 2026-01-01T00:00:20.000Z INFO sqd:stage completed idle batch in 9999ms
 api 2026-01-01T00:00:20.000Z INFO sqd:processor 995 / 1000, rate: 1000 blocks/sec, mapping: 1000 blocks/sec, 1000 items/sec, eta: 0s
 api 2026-01-01T00:00:20.000Z INFO sqd:processor 1000 / 1000, rate: 1000 blocks/sec, mapping: 1000 blocks/sec, 1000 items/sec, eta: 0s
 api 2026-01-01T00:05:00.000Z INFO sqd:processor 1000 / 1000, rate: 1000 blocks/sec, mapping: 1000 blocks/sec, 1000 items/sec, eta: 0s
 api 2026-01-01T00:10:00.000Z INFO sqd:processor 1000 / 1000, rate: 1000 blocks/sec, mapping: 1000 blocks/sec, 1000 items/sec, eta: 0s
 LOG
 cat > "$TEST_TMP_DIR/edge-b.log" <<'LOG'
+api 2026-01-01T00:00:00.000Z INFO sqd:stage completed startup in 9999ms
 api 2026-01-01T00:00:00.000Z INFO sqd:processor 100 / 1000, rate: 10 blocks/sec, mapping: 10 blocks/sec, 10 items/sec, eta: 90s
 api 2026-01-01T00:00:10.000Z INFO sqd:processor 500 / 1000, rate: 10 blocks/sec, mapping: 10 blocks/sec, 10 items/sec, eta: 50s
 api 2026-01-01T00:00:10.000Z INFO sqd:multicall processed sync 500 at block 500: 1 chunks, 1 groups, 1 total calls, 10ms
+api 2026-01-01T00:00:15.000Z INFO sqd:stage completed batch in 10ms
+api 2026-01-01T00:00:15.100Z INFO sqd:stage completed batch in 10ms
+api 2026-01-01T00:00:15.200Z INFO sqd:stage completed batch in 10ms
+api 2026-01-01T00:00:15.300Z INFO sqd:stage completed batch in 10ms
+api 2026-01-01T00:00:15.400Z INFO sqd:stage completed batch in 10ms
+api 2026-01-01T00:00:15.500Z INFO sqd:stage completed batch in 10ms
+api 2026-01-01T00:00:15.600Z INFO sqd:stage completed batch in 10ms
+api 2026-01-01T00:00:15.700Z INFO sqd:stage completed batch in 10ms
+api 2026-01-01T00:00:15.800Z INFO sqd:stage completed batch in 10ms
+api 2026-01-01T00:00:15.900Z INFO sqd:stage completed batch in 10ms
 api 2026-01-01T00:00:20.000Z INFO sqd:processor 995 / 1000, rate: 10 blocks/sec, mapping: 10 blocks/sec, 10 items/sec, eta: 0s
 api 2026-01-01T00:00:20.000Z INFO sqd:multicall processed idle 995 at block 995: 1 chunks, 1 groups, 1 total calls, 9999ms
+api 2026-01-01T00:00:20.000Z INFO sqd:stage completed idle batch in 9999ms
 api 2026-01-01T00:00:20.000Z INFO sqd:processor 995 / 1000, rate: 1 blocks/sec, mapping: 1 blocks/sec, 1 items/sec, eta: 0s
 api 2026-01-01T00:00:20.000Z INFO sqd:processor 1000 / 1000, rate: 1 blocks/sec, mapping: 1 blocks/sec, 1 items/sec, eta: 0s
 api 2026-01-01T00:05:00.000Z INFO sqd:processor 1000 / 1000, rate: 1 blocks/sec, mapping: 1 blocks/sec, 1 items/sec, eta: 0s
@@ -279,6 +303,9 @@ node -e '
     if (!progress || progress.at(-1)?.block !== 995 || progress.at(-1)?.t !== 20) process.exit(1);
     if (service.tier2?.[label]?.multicallMeanMs !== 10) process.exit(1);
     if (service.tier2?.[label]?.multicallP95Ms !== 10) process.exit(1);
+    const tier3 = service.tier3.find(item => item.namespace === "sqd:stage" && item.field === "ms");
+    if (tier3?.perIndexer?.[label]?.count !== 10) process.exit(1);
+    if (tier3?.perIndexer?.[label]?.mean !== 10 || tier3?.perIndexer?.[label]?.p95 !== 10) process.exit(1);
   }
 ' "$EDGE_REPORT_DIR/report.html" || fail "HTML summary included post-catchup idle-tail samples"
 node -e '
@@ -290,6 +317,10 @@ node -e '
       service.progressSchema = service.progressSchema.slice(0, 7);
       service.progressRows = service.progressRows.map(row => row.slice(0, 7));
       for (const sample of service.multicall) delete sample.sequence;
+      for (const t3 of Object.values(service.tier3 || {})) {
+        delete t3.syncSamples;
+        for (const sample of t3.samples || []) delete sample.sequence;
+      }
       for (const restart of service.restarts) delete restart.sequence;
     }
     fs.writeFileSync(file, JSON.stringify(parsed));
@@ -308,8 +339,11 @@ node -e '
   for (const label of ["edge-a", "edge-b"]) {
     if (service.tier2?.[label]?.multicallMeanMs !== 10) process.exit(1);
     if (service.tier2?.[label]?.multicallP95Ms !== 10) process.exit(1);
+    const tier3 = service.tier3.find(item => item.namespace === "sqd:stage" && item.field === "ms");
+    if (tier3?.perIndexer?.[label]?.count !== 10) process.exit(1);
+    if (tier3?.perIndexer?.[label]?.mean !== 10 || tier3?.perIndexer?.[label]?.p95 !== 10) process.exit(1);
   }
-' "$EDGE_REPORT_DIR/report.html" || fail "legacy parsed report included an ambiguous catchup-boundary multicall"
+' "$EDGE_REPORT_DIR/report.html" || fail "legacy parsed report included ambiguous catchup-boundary samples"
 if grep -Fq '9999ms' "$EDGE_REPORT_DIR/report.md"; then
   fail "legacy parsed interval included an ambiguous catchup-boundary multicall"
 fi
@@ -327,7 +361,52 @@ node -e '
   if (service.breakpoints[0].block !== 1000) process.exit(1);
   if (!service.breakpoints[0].perIndexer["edge-a"].reached || !service.breakpoints[0].perIndexer["edge-b"].reached) process.exit(1);
   if (service.progress["edge-a"].at(-1)?.block !== 1000 || service.progress["edge-b"].at(-1)?.block !== 1000) process.exit(1);
+  const tier3 = service.tier3.find(item => item.namespace === "sqd:stage" && item.field === "ms");
+  for (const label of ["edge-a", "edge-b"]) {
+    if (tier3?.perIndexer?.[label]?.count !== 12 || tier3?.perIndexer?.[label]?.p95 !== 9999) process.exit(1);
+  }
 ' "$EDGE_REPORT_DIR/report.html" || fail "override breakpoint was truncated to the catch-up range"
+
+printf 'test: reverse captures retain sync samples after a full idle-tail sample cap\n' >&2
+CAP_REPORT_DIR="$TEST_TMP_DIR/cap-report-run"
+mkdir -p "$CAP_REPORT_DIR/parsed"
+cat > "$CAP_REPORT_DIR/compare-syncs.json" <<'JSON'
+{
+  "createdAt": "2026-01-01T00:00:00Z",
+  "downtimeThresholdSec": 120,
+  "breakpointsOverride": null,
+  "indexers": [
+    { "ref": "org/capped@abc", "since": "2026-01-01T00:00:00Z", "label": "capped" }
+  ]
+}
+JSON
+{
+  printf 'api 2026-01-01T00:00:30.000Z INFO sqd:processor 1000 / 1000, rate: 1 blocks/sec\n'
+  for i in $(seq 1 1001); do
+    printf 'api 2026-01-01T00:00:30.000Z INFO sqd:stage completed idle batch %s in 9999ms\n' "$i"
+  done
+  printf 'api 2026-01-01T00:00:20.000Z INFO sqd:processor 995 / 1000, rate: 10 blocks/sec\n'
+  for i in $(seq 1 10); do
+    printf 'api 2026-01-01T00:00:15.%03dZ INFO sqd:stage completed sync batch in 10ms\n' "$i"
+  done
+  printf 'api 2026-01-01T00:00:00.000Z INFO sqd:processor 100 / 1000, rate: 10 blocks/sec\n'
+} > "$TEST_TMP_DIR/capped-reverse.log"
+node "$SKILL_DIR/scripts/parse.mjs" --input "$TEST_TMP_DIR/capped-reverse.log" --output "$CAP_REPORT_DIR/parsed/capped.json" --label capped
+printf '[]\n' > "$CAP_REPORT_DIR/failures.json"
+node "$SKILL_DIR/scripts/report.mjs" --run-dir "$CAP_REPORT_DIR"
+node -e '
+  const lines = require("fs").readFileSync(process.argv[1], "utf8").split("\n");
+  const templateLine = lines.findIndex(line => line.includes("type=\"__bundler/template\"") && line.trim().startsWith("<script"));
+  const inner = JSON.parse(lines[templateLine + 1]);
+  const openTag = "<script id=\"__REPORT_DATA__\" type=\"application/json\">";
+  const openAt = inner.indexOf(openTag, inner.indexOf("-->") + 3);
+  const closeAt = inner.indexOf("</script>", openAt + openTag.length);
+  const data = JSON.parse(inner.slice(openAt + openTag.length, closeAt));
+  const tier3 = data.services.find(item => item.name === "api")?.tier3
+    ?.find(item => item.namespace === "sqd:stage" && item.field === "ms");
+  if (tier3?.perIndexer?.capped?.count !== 10) process.exit(1);
+  if (tier3?.perIndexer?.capped?.mean !== 10 || tier3?.perIndexer?.capped?.p95 !== 10) process.exit(1);
+' "$CAP_REPORT_DIR/report.html" || fail "idle-tail sample cap displaced the measured sync samples"
 
 printf 'test: report warns when ending coverage ranges diverge\n' >&2
 RANGE_REPORT_DIR="$TEST_TMP_DIR/range-report-run"
@@ -348,7 +427,7 @@ api 2026-01-01T00:00:00.000Z INFO sqd:processor 100 / 1000, rate: 10 blocks/sec
 api 2026-01-01T00:00:20.000Z INFO sqd:processor 995 / 1000, rate: 10 blocks/sec
 LOG
 cat > "$TEST_TMP_DIR/range-b.log" <<'LOG'
-api 2026-01-01T00:00:00.000Z INFO sqd:processor 100 / 2000, rate: 10 blocks/sec
+api 2026-01-01T00:00:00.000Z INFO sqd:processor 1100 / 2000, rate: 10 blocks/sec
 api 2026-01-01T00:00:20.000Z INFO sqd:processor 1995 / 2000, rate: 10 blocks/sec
 LOG
 node "$SKILL_DIR/scripts/parse.mjs" --input "$TEST_TMP_DIR/range-a.log" --output "$RANGE_REPORT_DIR/parsed/range-a.json" --label range-a
@@ -356,5 +435,51 @@ node "$SKILL_DIR/scripts/parse.mjs" --input "$TEST_TMP_DIR/range-b.log" --output
 printf '[]\n' > "$RANGE_REPORT_DIR/failures.json"
 node "$SKILL_DIR/scripts/report.mjs" --run-dir "$RANGE_REPORT_DIR"
 grep -Fq "starting or ending coverage differs by > 5%" "$RANGE_REPORT_DIR/report.md" || fail "ending-range divergence warning is missing"
+node -e '
+  const lines = require("fs").readFileSync(process.argv[1], "utf8").split("\n");
+  const templateLine = lines.findIndex(line => line.includes("type=\"__bundler/template\"") && line.trim().startsWith("<script"));
+  const inner = JSON.parse(lines[templateLine + 1]);
+  const openTag = "<script id=\"__REPORT_DATA__\" type=\"application/json\">";
+  const openAt = inner.indexOf(openTag, inner.indexOf("-->") + 3);
+  const closeAt = inner.indexOf("</script>", openAt + openTag.length);
+  const data = JSON.parse(inner.slice(openAt + openTag.length, closeAt));
+  const last = data.services.find(item => item.name === "api")?.breakpoints?.at(-1);
+  if (!last || last.offset !== 895 || last.block !== null) process.exit(1);
+  if (last.perIndexer["range-a"]?.block !== 995 || last.perIndexer["range-b"]?.block !== 1995) process.exit(1);
+' "$RANGE_REPORT_DIR/report.html" || fail "divergent starts were labeled with a shared absolute block"
 
-printf '{"status":"ok","tests":15}\n'
+printf 'test: short sync ranges produce unique positive breakpoints\n' >&2
+SHORT_REPORT_DIR="$TEST_TMP_DIR/short-report-run"
+mkdir -p "$SHORT_REPORT_DIR/parsed"
+cat > "$SHORT_REPORT_DIR/compare-syncs.json" <<'JSON'
+{
+  "createdAt": "2026-01-01T00:00:00Z",
+  "downtimeThresholdSec": 120,
+  "breakpointsOverride": null,
+  "indexers": [
+    { "ref": "org/short@abc", "since": "2026-01-01T00:00:00Z", "label": "short" }
+  ]
+}
+JSON
+cat > "$TEST_TMP_DIR/short-range.log" <<'LOG'
+api 2026-01-01T00:00:00.000Z INFO sqd:processor 100 / 1000, rate: 10 blocks/sec
+api 2026-01-01T00:00:01.000Z INFO sqd:processor 101 / 101, rate: 10 blocks/sec
+LOG
+node "$SKILL_DIR/scripts/parse.mjs" --input "$TEST_TMP_DIR/short-range.log" --output "$SHORT_REPORT_DIR/parsed/short.json" --label short
+printf '[]\n' > "$SHORT_REPORT_DIR/failures.json"
+node "$SKILL_DIR/scripts/report.mjs" --run-dir "$SHORT_REPORT_DIR"
+node -e '
+  const lines = require("fs").readFileSync(process.argv[1], "utf8").split("\n");
+  const templateLine = lines.findIndex(line => line.includes("type=\"__bundler/template\"") && line.trim().startsWith("<script"));
+  const inner = JSON.parse(lines[templateLine + 1]);
+  const openTag = "<script id=\"__REPORT_DATA__\" type=\"application/json\">";
+  const openAt = inner.indexOf(openTag, inner.indexOf("-->") + 3);
+  const closeAt = inner.indexOf("</script>", openAt + openTag.length);
+  const data = JSON.parse(inner.slice(openAt + openTag.length, closeAt));
+  const breakpoints = data.services.find(item => item.name === "api")?.breakpoints;
+  if (!breakpoints || breakpoints.length !== 1) process.exit(1);
+  if (breakpoints[0].offset !== 1 || breakpoints[0].block !== 101) process.exit(1);
+  if (breakpoints[0].perIndexer.short?.block !== 101) process.exit(1);
+' "$SHORT_REPORT_DIR/report.html" || fail "short sync range produced zero or duplicate breakpoints"
+
+printf '{"status":"ok","tests":17}\n'

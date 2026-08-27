@@ -21,7 +21,9 @@
 //       restarts: [{ rowIndex, tsMs, fromBlock, resumedAtBlock }, ...],
 //       errorCount, levelCounts: { warning, error },
 //       errors: [{ tsMs, level, logger, message }, ...]  // capped at 1000
-//       tier3: { "<logger>": { count, samples: [{ tsMs, fields: {unit: value, ...} }, ...] } }
+//       tier3: { "<logger>": { count,
+//         samples: [{ tsMs, sequence, fields: {unit: value, ...} }, ...],
+//         syncSamples?: [{ tsMs, sequence, fields: {unit: value, ...} }, ...] } }
 //     }
 //   }
 // }
@@ -30,7 +32,7 @@ import fs from "node:fs";
 import readline from "node:readline";
 import path from "node:path";
 
-const PARSER_VERSION = 7;
+const PARSER_VERSION = 9;
 
 // Line shape:  <service> <ISO-TS>Z <LEVEL> <logger> <message...>
 const LINE_RX =
@@ -64,6 +66,17 @@ const TIER3_NUMERIC_RX =
 const MAX_ERRORS_PER_SERVICE = 1000;
 const MAX_TIER3_SAMPLES = 1000;
 const TIER3_MIN_COUNT = 10; // below this the logger is probably too noisy / too rare to surface
+const CATCHUP_GAP_BLOCKS = 10;
+
+function parseTier3Fields(message) {
+  const fields = {};
+  for (const nm of message.matchAll(TIER3_NUMERIC_RX)) {
+    const val = parseFloat(nm[1]);
+    const unit = nm[2].toLowerCase();
+    if (!(unit in fields)) fields[unit] = val;
+  }
+  return fields;
+}
 
 function parseArgs(argv) {
   const out = {};
@@ -225,14 +238,9 @@ async function main() {
       }
       t3.count++;
       if (t3.samples.length < MAX_TIER3_SAMPLES) {
-        const fields = {};
-        for (const nm of message.matchAll(TIER3_NUMERIC_RX)) {
-          const val = parseFloat(nm[1]);
-          const unit = nm[2].toLowerCase();
-          if (!(unit in fields)) fields[unit] = val;
-        }
+        const fields = parseTier3Fields(message);
         if (Object.keys(fields).length > 0) {
-          t3.samples.push({ tsMs, fields });
+          t3.samples.push({ tsMs, sourceOrdinal: totalLines, fields });
         }
       }
     }
@@ -265,6 +273,7 @@ async function main() {
     services: {},
   };
 
+  const serviceDirections = new Map();
   for (const [name, svc] of services) {
     // `sqd logs` can emit entries in reverse chronological order, so sort all
     // time-series arrays ascending by tsMs before emitting.
@@ -279,6 +288,7 @@ async function main() {
     // With no unequal timestamps there is no evidence that input is reversed.
     // Preserve source order rather than inventing rollbacks.
     const direction = serviceInputDirection || inputTimestampDirection || 1;
+    serviceDirections.set(name, direction);
     svc.progressRows.sort((a, b) =>
       a[0] - b[0] || (direction < 0 ? b[7] - a[7] : a[7] - b[7])
     );
@@ -293,7 +303,11 @@ async function main() {
     svc.multicall.sort((a, b) => a.tsMs - b.tsMs || a.sequence - b.sequence);
     svc.errors.sort((a, b) => a.tsMs - b.tsMs);
     for (const t3 of svc.tier3.values()) {
-      t3.samples.sort((a, b) => a.tsMs - b.tsMs);
+      for (const sample of t3.samples) {
+        sample.sequence = direction < 0 ? -sample.sourceOrdinal : sample.sourceOrdinal;
+        delete sample.sourceOrdinal;
+      }
+      t3.samples.sort((a, b) => a.tsMs - b.tsMs || a.sequence - b.sequence);
     }
 
     // Restart detection in chronological order: any strict backward block jump.
@@ -336,6 +350,80 @@ async function main() {
           .map(([k, v]) => [k, v]),
       ),
     };
+  }
+
+  // Retain a second bounded Tier-3 sample drawn specifically from the measured
+  // sync window. The raw sample above preserves the historical whole-log
+  // behavior for explicit range overrides, but a newest-first capture can fill
+  // that cap with idle-tail lines before older sync lines are encountered.
+  const syncWindows = new Map();
+  for (const [name, service] of Object.entries(out.services)) {
+    if (service.progressCount === 0 || Object.keys(service.tier3).length === 0) continue;
+    const latestRestart = service.restarts.length > 0
+      ? service.restarts[service.restarts.length - 1]
+      : null;
+    const rows = latestRestart
+      ? service.progressRows.slice(latestRestart.rowIndex)
+      : service.progressRows;
+    if (rows.length === 0) continue;
+    let catchupRow = null;
+    for (const row of rows) {
+      const current = row[1];
+      const target = row[2];
+      if (target != null && target > 0 && target - current <= CATCHUP_GAP_BLOCKS) {
+        catchupRow = row;
+        break;
+      }
+    }
+    const start = rows[0];
+    // A catch-up row at index zero means the capture contains steady-state
+    // activity only, so retain the full post-start window as the report does.
+    const end = catchupRow === start ? null : catchupRow;
+    syncWindows.set(name, {
+      direction: serviceDirections.get(name) || 1,
+      startTsMs: start[0],
+      startSequence: start[7],
+      endTsMs: end?.[0] ?? null,
+      endSequence: end?.[7] ?? null,
+    });
+    for (const t3 of Object.values(service.tier3)) t3.syncSamples = [];
+  }
+
+  if (syncWindows.size > 0) {
+    const sampleStream = fs.createReadStream(input, { encoding: "utf8" });
+    const sampleLines = readline.createInterface({ input: sampleStream, crlfDelay: Infinity });
+    let sourceOrdinal = 0;
+    for await (const rawLine of sampleLines) {
+      sourceOrdinal++;
+      const line = rawLine.replace(ANSI_RX, "");
+      const match = line.match(LINE_RX);
+      if (!match) continue;
+      const serviceName = match[1];
+      const window = syncWindows.get(serviceName);
+      if (!window) continue;
+      const level = match[3];
+      const logger = match[4];
+      if (ERROR_LEVELS.has(level) || PROGRESS_LOGGERS.has(logger) || logger === "sqd:multicall") continue;
+      const t3 = out.services[serviceName].tier3[logger];
+      if (!t3 || t3.syncSamples.length >= MAX_TIER3_SAMPLES) continue;
+      const tsMs = Date.parse(match[2]);
+      if (Number.isNaN(tsMs)) continue;
+      const sequence = window.direction < 0 ? -sourceOrdinal : sourceOrdinal;
+      const atOrAfterStart = tsMs > window.startTsMs
+        || (tsMs === window.startTsMs && sequence >= window.startSequence);
+      const atOrBeforeEnd = window.endTsMs == null
+        || tsMs < window.endTsMs
+        || (tsMs === window.endTsMs && sequence <= window.endSequence);
+      if (!atOrAfterStart || !atOrBeforeEnd) continue;
+      const fields = parseTier3Fields(match[5]);
+      if (Object.keys(fields).length > 0) t3.syncSamples.push({ tsMs, sequence, fields });
+    }
+    for (const service of Object.values(out.services)) {
+      for (const t3 of Object.values(service.tier3)) {
+        if (!Array.isArray(t3.syncSamples)) continue;
+        t3.syncSamples.sort((a, b) => a.tsMs - b.tsMs || a.sequence - b.sequence);
+      }
+    }
   }
 
   fs.writeFileSync(output, JSON.stringify(out));

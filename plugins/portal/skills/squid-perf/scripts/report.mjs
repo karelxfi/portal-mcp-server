@@ -129,10 +129,13 @@ function generateBreakpoints(effectiveRange, count = BREAKPOINT_COUNT) {
   // `effectiveRange` is caller-supplied = (catchup_block - first_block) when catchup was
   // detected, else (last_block - first_block).
   if (effectiveRange <= 0) return [];
+  const actualCount = Math.min(count, Math.floor(effectiveRange));
   const out = [];
-  for (let i = 1; i <= count; i++) {
-    out.push(Math.round((effectiveRange * i) / count));
+  for (let i = 1; i <= actualCount; i++) {
+    const breakpoint = Math.max(1, Math.round((effectiveRange * i) / actualCount));
+    if (out[out.length - 1] !== breakpoint) out.push(breakpoint);
   }
+  if (out[out.length - 1] !== effectiveRange) out.push(effectiveRange);
   return out;
 }
 
@@ -230,6 +233,30 @@ function multicallsThroughCatchup(deployment) {
   );
 }
 
+function tier3SamplesInMeasurementWindow(samples, deployment) {
+  const start = deployment.progressRows?.[0];
+  let bounded = start == null ? samples : samples.filter(sample =>
+    sample.tsMs > start[0]
+    || (
+      sample.tsMs === start[0]
+      && start[7] != null
+      && sample.sequence != null
+      && sample.sequence >= start[7]
+    )
+  );
+  if (deployment.catchup == null || deployment.wasAlreadyCaughtUp) return bounded;
+  const { tsMs, sequence } = deployment.catchup;
+  return bounded.filter(sample =>
+    sample.tsMs < tsMs
+    || (
+      sample.tsMs === tsMs
+      && sequence != null
+      && sample.sequence != null
+      && sample.sequence <= sequence
+    )
+  );
+}
+
 function multicallStatsInRange(multicall, fromBlock, toBlock) {
   const latencies = [], callCounts = [];
   for (const mc of multicall) {
@@ -248,7 +275,7 @@ function multicallStatsInRange(multicall, fromBlock, toBlock) {
 }
 
 function tier3Aggregate(samples) {
-  // samples: [{ tsMs, fields: {unit: value, ...} }, ...]
+  // samples: [{ tsMs, sequence, fields: {unit: value, ...} }, ...]
   const byField = new Map();
   for (const s of samples) {
     for (const [k, v] of Object.entries(s.fields)) {
@@ -630,9 +657,15 @@ function compute(config, parsed, downtimeThresholdSec, breakpointsOverride) {
       for (const [label, dep] of Object.entries(perDeployment)) {
         if (!dep) continue;
         const t3 = dep.tier3[logger];
+        const measurementCandidates = Array.isArray(t3.syncSamples)
+          ? t3.syncSamples
+          : (t3.samples || []);
+        const samples = !dep.nonSync && !breakpointsOverride
+          ? tier3SamplesInMeasurementWindow(measurementCandidates, dep)
+          : (t3.samples || []);
         tier3[logger][label] = {
-          count: t3.count,
-          stats: tier3Aggregate(t3.samples || []),
+          count: !dep.nonSync && !breakpointsOverride ? samples.length : t3.count,
+          stats: tier3Aggregate(samples),
         };
       }
     }
@@ -1041,27 +1074,34 @@ function mapServiceForReport(s, breakpointsOverride) {
 
   const maxBp = s.breakpoints.length > 0 ? s.breakpoints[s.breakpoints.length - 1] : 0;
   const usingOverride = breakpointsOverride != null;
+  const deploymentFirstBlocks = presentIn
+    .map(label => s.perDeployment[label])
+    .filter(d => d && !d.nonSync)
+    .map(d => d.firstBlock);
+  const hasDivergentStarts = new Set(deploymentFirstBlocks).size > 1;
 
   const breakpoints = s.breakpoints.map((bp, i) => {
     const pct = usingOverride ? null : (maxBp > 0 ? Math.round((bp / maxBp) * 100) : null);
-    const block = (firstBlock ?? 0) + bp;
+    const block = hasDivergentStarts ? null : (firstBlock ?? 0) + bp;
     const perIndexer = {};
     for (const [label, d] of Object.entries(s.perDeployment)) {
       const t = s.breakpointTimings[label];
       if (!d || d.nonSync || !t) { perIndexer[label] = null; continue; }
       const bt = t[i];
+      const targetBlock = d.firstBlock + bp;
       if (!bt || bt.wallMs == null) {
-        perIndexer[label] = { wallSec: 0, activeSec: 0, downtimeSec: 0, reached: false };
+        perIndexer[label] = { block: targetBlock, wallSec: 0, activeSec: 0, downtimeSec: 0, reached: false };
         continue;
       }
       perIndexer[label] = {
+        block: targetBlock,
         wallSec: bt.wallMs / 1000,
         activeSec: bt.activeMs / 1000,
         downtimeSec: bt.downtimeMs / 1000,
         reached: true,
       };
     }
-    return { pct, block, perIndexer };
+    return { pct, offset: bp, block, perIndexer };
   });
 
   const progress = {};
@@ -1113,7 +1153,7 @@ function mapServiceForReport(s, breakpointsOverride) {
         const lab = perLabel[label];
         const fs = lab?.stats?.[field];
         perIndexer[label] = fs ? {
-          count: lab.count,
+          count: fs.count,
           mean: fs.mean,
           median: fs.median,
           p95: fs.p95,
