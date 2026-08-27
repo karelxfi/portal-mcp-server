@@ -20,6 +20,7 @@
     "base",
     "solana",
     "bitcoin",
+    "tron",
     "hyperliquid",
     "smart contracts",
     "wallet activity"
@@ -27,8 +28,8 @@
   "mcpServers": "./.mcp.json",
   "interface": {
     "displayName": "SQD",
-    "shortDescription": "Explore blockchain data across Ethereum, Base, Solana, Bitcoin, and Hyperliquid.",
-    "longDescription": "Ask SQD about wallets, transactions, token transfers, smart contracts, network activity, and Hyperliquid trades. Explore live and historical blockchain data across Ethereum, Base, Solana, Bitcoin, Polkadot, and other supported networks. No account or login is required.",
+    "shortDescription": "Explore blockchain data across Ethereum, Base, Solana, Bitcoin, Tron, and Hyperliquid.",
+    "longDescription": "Ask SQD about wallets, transactions, token transfers, smart contracts, network activity, and Hyperliquid trades. Explore live and historical blockchain data across Ethereum, Base, Solana, Bitcoin, Tron, Polkadot, and other supported networks. No account or login is required.",
     "developerName": "Subsquid Labs",
     "category": "Data & Analytics",
     "capabilities": [

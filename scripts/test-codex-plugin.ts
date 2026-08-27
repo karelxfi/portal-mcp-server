@@ -139,7 +139,7 @@ function assertManifest() {
     manifest.interface.longDescription,
     ...(manifest.interface.defaultPrompt as unknown[]),
   ].join(' ')
-  for (const phrase of ['blockchain', 'Ethereum', 'Base', 'Solana', 'Bitcoin', 'Hyperliquid']) {
+  for (const phrase of ['blockchain', 'Ethereum', 'Base', 'Solana', 'Bitcoin', 'Tron', 'Hyperliquid']) {
     assert(publicCopy.toLowerCase().includes(phrase.toLowerCase()), `plugin copy should include ${phrase}`)
   }
   assert(!/[\u2014\u2013]/.test(publicCopy), 'plugin copy should not use em or en dashes')
@@ -166,6 +166,11 @@ function assertManifest() {
     const copy = readFileSync(path, 'utf8')
     assert(!/[\u2014\u2013]/.test(copy), `${path} should not use em or en dashes`)
   }
+  const directorySubmission = readFileSync(DIRECTORY_SUBMISSION_PATH, 'utf8')
+  assert(
+    directorySubmission.includes('https://sqd.dev/brand/Symbol_bl-bg.svg'),
+    'directory submission should use the canonical public black-background SQD logo',
+  )
 }
 
 function assertMarketplace() {

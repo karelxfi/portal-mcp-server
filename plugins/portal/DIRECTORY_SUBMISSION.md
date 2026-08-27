@@ -12,11 +12,11 @@ Category: `Data & Analytics`
 
 Short description:
 
-> Explore blockchain data across Ethereum, Base, Solana, Bitcoin, and Hyperliquid.
+> Explore blockchain data across Ethereum, Base, Solana, Bitcoin, Tron, and Hyperliquid.
 
 Long description:
 
-> Ask SQD about wallets, transactions, token transfers, smart contracts, network activity, and Hyperliquid trades. Explore live and historical blockchain data across Ethereum, Base, Solana, Bitcoin, Polkadot, and other supported networks. No account or login is required.
+> Ask SQD about wallets, transactions, token transfers, smart contracts, network activity, and Hyperliquid trades. Explore live and historical blockchain data across Ethereum, Base, Solana, Bitcoin, Tron, Polkadot, and other supported networks. No account or login is required.
 
 Starter prompts:
 
@@ -32,7 +32,7 @@ Public URLs:
 - Terms candidate requiring owner approval: `https://cloud.sqd.dev/terms.pdf`
 - Public server: `https://portal.sqd.dev/mcp`
 
-Logo: upload `assets/sqd-logo.svg`. It is the white SQD symbol on a black square. Do not replace it with the white-background variant.
+Logo: use `https://sqd.dev/brand/Symbol_bl-bg.svg`. It is the canonical white SQD symbol on a black square. The package keeps a local copy at `assets/sqd-logo.svg` because installed plugin manifests require package-relative assets.
 
 Do not add Robinhood Chain to the published listing until it appears in the live SQD network catalog and a real query passes. Once live, add `Robinhood Chain` to the description, prompt tests, and discovery checks together.
 
@@ -58,7 +58,7 @@ Do not upload screenshots. SQD does not ship a plugin user interface in this rel
 
 Suggested initial release notes:
 
-> Initial SQD plugin submission. SQD provides read-only access to live and historical blockchain data across supported networks, including Ethereum, Base, Solana, Bitcoin, Polkadot, and Hyperliquid. It requires no account or login.
+> Initial SQD plugin submission. SQD provides read-only access to live and historical blockchain data across supported networks, including Ethereum, Base, Solana, Bitcoin, Tron, Polkadot, and Hyperliquid. It requires no account or login.
 
 ### Positive review tests
 
@@ -87,7 +87,7 @@ Add this entry to `.grok-plugin/marketplace.json` after the SQD source change is
 ```json
 {
   "name": "sqd",
-  "description": "SQD gives Grok live and historical blockchain data. Explore wallets, transactions, token transfers, smart contracts, network activity, and Hyperliquid trades across Ethereum, Base, Solana, Bitcoin, Polkadot, and more.",
+  "description": "SQD gives Grok live and historical blockchain data. Explore wallets, transactions, token transfers, smart contracts, network activity, and Hyperliquid trades across Ethereum, Base, Solana, Bitcoin, Tron, Polkadot, and more.",
   "category": "development",
   "source": {
     "source": "url",
@@ -102,6 +102,7 @@ Add this entry to `.grok-plugin/marketplace.json` after the SQD source change is
     "sqd blockchain",
     "sqd blockchain data",
     "sqd hyperliquid",
+    "sqd tron",
     "sqd portal"
   ],
   "domains": [
