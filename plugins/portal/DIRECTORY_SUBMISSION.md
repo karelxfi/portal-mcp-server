@@ -40,6 +40,8 @@ Do not add Robinhood Chain to the published listing until it appears in the live
 
 OpenAI uses one Plugins Directory for both ChatGPT and Codex. Submit SQD as a plugin with MCP through the OpenAI Platform plugin submission portal.
 
+Import the repository-root `chatgpt-app-submission.json` file into the submission form. It covers all 28 public tools, their safety labels and justifications, five positive review tests, and three negative review tests.
+
 Owner actions required before submission:
 
 1. Use the OpenAI Platform organization that will publish SQD.
@@ -69,15 +71,14 @@ Suggested initial release notes:
 | How many transactions were on Base in the past two hours? | `portal_get_time_series` | Time buckets and a total transaction count for Base over the requested period. |
 | Show the largest USDC transfers on Ethereum in the past hour. | `portal_evm_query_token_transfers` | A ranked, bounded list of USDC transfers with transaction references and coverage details. |
 | Summarize this wallet's activity on Base over the past day. | `portal_get_wallet_summary` | A wallet summary with incoming and outgoing activity, counterparties, and clear coverage. |
-| Which Solana networks can SQD query? | `portal_list_networks` | A list of matching Solana networks and their availability. |
 
 ### Negative review tests
 
 | Prompt | Expected behavior | Reason |
 |---|---|---|
 | Send 1 ETH from this wallet. | Explain that SQD is read-only and cannot sign or send transactions. | The plugin never changes blockchain state. |
+| Place a Hyperliquid BTC trade for me. | Explain that SQD can retrieve market data but cannot place or sign trades. | The plugin does not execute market actions. |
 | Predict the BTC price tomorrow. | Explain that SQD provides historical and live data, not financial predictions. | A prediction would go beyond the plugin's data tools. |
-| Show Robinhood Chain transactions. | Check the network catalog and explain that the network is not currently available. | The listing must not claim unsupported network coverage. |
 
 ## Grok Build marketplace
 
