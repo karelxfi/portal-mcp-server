@@ -2,9 +2,9 @@
 
 ## Status
 
-**Proposed.** This roadmap uses semantic versions: `v0.80` means `v0.8.0`, `v0.81` means `v0.8.1`, and so on through `v0.8.4`.
+**Active.** This roadmap uses semantic versions: `v0.80` means `v0.8.0`, `v0.81` means `v0.8.1`, and so on through `v0.8.4`.
 
-The sequence is outcome-driven rather than date-driven. A release moves forward only when its exit criteria pass.
+This is a five-release product program, not a sequence of engineering micro-releases. Each version combines several substantial workstreams into one coherent user-visible outcome and ships only when the complete bundle passes its exit criteria. Intermediate cleanup, protocol, metrics, plugin, and test milestones remain commits, pull requests, and canaries rather than separately published versions.
 
 ## Product Boundary
 
@@ -14,6 +14,7 @@ The sequence is outcome-driven rather than date-driven. A release moves forward 
 - Reliability, measurement, client distribution, and documentation take priority over adding more tools.
 - v0.8.1 adopts MCP `2026-07-28` through the stable TypeScript SDK v2 while retaining a tested legacy-client path only for clients that still need it.
 - Every release must delete superseded protocol adapters, unregistered tools, duplicate discovery surfaces, and unused dependencies instead of carrying them forward indefinitely.
+- A public version is not cut for one completed subsystem. If any committed workstream or release-wide gate is incomplete, the whole version waits.
 
 ## What “100% Hardened and Measured” Means
 
@@ -34,13 +35,21 @@ The final v0.8.4 gate is 100% of the declared matrix, not an ambiguous “best e
 
 | Release | Outcome | Status | Primary owner | Depends on |
 |---|---|---|---|---|
-| v0.8.0 | Stop the major timeout, cancellation, and slow-query failure modes | Complete | MCP maintainer | Full release gate |
-| v0.8.1 | Adopt the stateless MCP 2026 core, remove legacy code, and make every failure class measurable | In progress | MCP maintainer | v0.8.0 reliability baseline |
-| v0.8.2 | Finalize and test Claude, Codex/ChatGPT, and Grok distribution against the modern protocol | Not started | MCP maintainer + developer relations | v0.8.1 protocol and metrics contract |
-| v0.8.3 | Reach 100% declared hardening coverage across tools and transports | Not started | MCP maintainer | v0.8.1 metrics inventory |
-| v0.8.4 | Prove the SLOs in a sustained canary and close the v0.8.x reliability program | Not started | MCP maintainer + service owner | v0.8.2 distribution and v0.8.3 hardening |
+| v0.8.0 | Reliability foundation across the full existing MCP product | Complete | MCP maintainer | Full release gate |
+| v0.8.1 | Rebuild the protocol platform: MCP 2026, lean runtime, response redesign, complete metrics, and measurable performance | In progress | MCP maintainer | v0.8.0 reliability baseline |
+| v0.8.2 | Launch the complete AI-client ecosystem across Claude, Codex/ChatGPT, Grok, and additional tested MCP clients | Not started | MCP maintainer + developer relations | v0.8.1 platform and metrics contract |
+| v0.8.3 | Complete production hardening: every tool, transport, fault class, concurrency path, privacy boundary, and security gate | Not started | MCP maintainer | v0.8.1 metrics inventory |
+| v0.8.4 | Certify and launch the trusted unauthenticated baseline with sustained SLO proof, client compatibility, operations, and public support material | Not started | MCP maintainer + service owner | v0.8.2 distribution and v0.8.3 hardening |
 
-### v0.8.0 — Reliability foundation
+## Release Discipline
+
+- Each version is one large release candidate covering every workstream listed in its section.
+- Internal milestones use branches, commits, pull requests, dashboards, and canary deployments; they do not consume a public version number.
+- No reduced-scope release is renamed as complete. Scope can change only by updating this roadmap explicitly before the release candidate is cut.
+- A release requires one exact commit to pass its entire technical, package, client, documentation, privacy, security, and live-evidence gate.
+- Marketplace review delays may be recorded as external dependencies only after every repository-side asset and submission requirement is complete.
+
+### v0.8.0 — Full-product reliability foundation
 
 **Outcome:** common user requests complete promptly, cancellations stop real work, and partial coverage is disclosed instead of timing out or pretending to be complete.
 
@@ -64,9 +73,9 @@ Exit criteria:
 - `npm audit` reports no known findings in the release tree.
 - Package, server metadata, changelog, commit, and tag all identify v0.8.0.
 
-### v0.8.1 — Stateless, lean, and measurable core
+### v0.8.1 — MCP platform rebuild
 
-**Outcome:** the server uses the stateless MCP `2026-07-28` request model, carries no abandoned compatibility code, and explains every MCP call quantitatively without inspecting sensitive request content.
+**Outcome:** one substantial platform release replaces the protocol foundation, removes accumulated runtime weight, redesigns the response contract, establishes complete privacy-safe observability, and demonstrates lower latency and package cost without reducing factual coverage.
 
 Scope:
 
@@ -98,9 +107,9 @@ Exit criteria:
 - Metric-label cardinality and redaction gates pass in CI.
 - A private operational view can separate client cancellation, invalid requests, Portal/upstream failures, and server defects.
 
-### v0.8.2 — AI plugin and connector distribution
+### v0.8.2 — Complete AI-client ecosystem launch
 
-**Outcome:** users can discover, install, update, use, and remove SQD Portal from the major AI clients without manually reconstructing MCP configuration.
+**Outcome:** users can discover, install, update, use, and remove SQD Portal across the major AI ecosystems without manually reconstructing MCP configuration, with one consistent first-use experience and verified real tool calls everywhere.
 
 Codex and ChatGPT:
 
@@ -127,8 +136,9 @@ Grok:
 Additional reach:
 
 - Because the OpenAI listing is shared, include ChatGPT as a first-class tested surface, not a footnote to Codex.
-- Publish tested direct-MCP recipes for Claude Desktop and at least two additional mainstream MCP clients.
+- Publish and verify direct-MCP installation, update, representative-use, and removal journeys for Claude Desktop and at least two additional mainstream MCP clients.
 - Keep one canonical endpoint, tool guide, prompt set, icon set, and support page across clients; generate client-specific manifests from checked source data where possible.
+- Ship one client compatibility report covering discovery, schema rendering, cancellation, structured results, errors, updates, and uninstall behavior rather than treating manifest validation as completion.
 
 Exit criteria:
 
@@ -137,9 +147,9 @@ Exit criteria:
 - ChatGPT/Codex, Anthropic, and Grok submissions are either accepted or tracked as external review dependencies with all repository-side requirements complete.
 - Installation documentation is copy-pasteable and contains no SQD API-key step.
 
-### v0.8.3 — 100% tool and transport hardening
+### v0.8.3 — Complete production hardening and security
 
-**Outcome:** every exposed capability has declared behavior under success, bad input, upstream failure, cancellation, and bounded-resource pressure.
+**Outcome:** every exposed capability and transport has enforced behavior under success, bad input, upstream failure, cancellation, concurrency, bounded-resource pressure, privacy constraints, and adversarial input.
 
 Scope:
 
@@ -152,6 +162,7 @@ Scope:
 - Exercise both stdio and Streamable HTTP, including concurrent calls and one caller cancelling a shared cached load.
 - Exercise `server/discover`, required routing headers, cacheable list results, modern stream-close cancellation, and the SDK-negotiated legacy path.
 - Add sustained concurrency and memory tests with explicit ceilings and leak detection.
+- Complete security-diff, dependency, secret, privacy, malformed-protocol, and resource-exhaustion reviews against the exact release candidate.
 
 Exit criteria:
 
@@ -161,9 +172,9 @@ Exit criteria:
 - 0 known reproducible server-caused `RemoteProtocolError` or false `Cancelled` defects remain.
 - No critical or high security findings remain open in the release diff.
 
-### v0.8.4 — Sustained reliability proof
+### v0.8.4 — Certified unauthenticated platform launch
 
-**Outcome:** the hardened server and its client packages demonstrate stable behavior long enough to make v0.8.x the trusted unauthenticated baseline before unified auth work begins.
+**Outcome:** the hardened server, complete client ecosystem, operational metrics, documentation, and support surface demonstrate stable behavior together and become the certified unauthenticated baseline before unified auth work begins.
 
 Scope:
 
@@ -173,6 +184,8 @@ Scope:
 - Track plugin compatibility against current Claude Code, Codex, Grok Build, and the hosted connector surfaces.
 - Publish a user-facing status and troubleshooting guide with safe retry and partial-coverage guidance.
 - Complete a release runbook, rollback check, metric reconciliation check, and exact-version client matrix.
+- Publish reproducible protocol, package-size, latency, error-rate, cancellation, and compatibility evidence for the exact release candidate.
+- Complete the public installation, quick-start, tool-selection, limits, privacy, troubleshooting, support, and migration documentation as one launch surface.
 
 Target gates:
 
