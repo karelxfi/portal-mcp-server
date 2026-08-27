@@ -32,7 +32,7 @@
   "interface": {
     "displayName": "SQD",
     "shortDescription": "Explore live and historical blockchain data across 130+ networks.",
-    "longDescription": "Ask SQD about wallets, transactions, token transfers, smart contracts, network activity, and markets across 130+ networks. Query Ethereum, Base, Solana, Bitcoin, Tron, Polkadot, Hyperliquid, and many more. No account or login is required.",
+    "longDescription": "Find 130+ blockchain networks in SQD, then explore the data available for each network. Ask about wallets, transactions, token transfers, smart contracts, network activity, and markets across Ethereum, Base, Solana, Bitcoin, Polkadot, Hyperliquid, and many more. Check SQD's live catalog for Tron availability. No account or login is required.",
     "developerName": "Subsquid Labs",
     "category": "Data & Analytics",
     "capabilities": ["Interactive", "Read"],
@@ -41,7 +41,7 @@
     "defaultPrompt": [
       "Which blockchain networks can SQD query?",
       "Show the latest Hyperliquid BTC trades.",
-      "Show the latest USDT transfers on Tron."
+      "Is Tron available in SQD?"
     ],
     "brandColor": "#08090A",
     "composerIcon": "./assets/sqd-composer-icon.svg",

@@ -43,11 +43,12 @@ const PORTAL_TOOL_TITLES: Record<string, string> = {
 const READ_ONLY_TOOL_ANNOTATIONS = {
   readOnlyHint: true,
   destructiveHint: false,
-  openWorldHint: false,
+  openWorldHint: true,
 } as const
 
 function getPortalToolTitle(name: string): string {
   const title = PORTAL_TOOL_TITLES[name]
+  if (name.startsWith('__test_')) return name.slice('__test_'.length).replaceAll('_', ' ')
   if (!title) throw new Error(`Missing public title for MCP tool: ${name}`)
   return title
 }

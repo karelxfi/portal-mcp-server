@@ -1,10 +1,12 @@
 # SQD Plugin
 
-SQD lets Codex, ChatGPT, Claude, and Grok explore live and historical blockchain data across 130+ networks. It can answer questions about wallets, transactions, token transfers, smart contracts, network activity, and markets.
+SQD lets Codex, ChatGPT, Claude, and Grok find 130+ blockchain networks and explore the live and historical data available for each. It can answer questions about wallets, transactions, token transfers, smart contracts, network activity, and markets across Ethereum, Base, Solana, Bitcoin, Polkadot, Hyperliquid, and many more. Its live catalog also shows current Tron availability.
 
 The plugin uses the public SQD endpoint at `https://portal.sqd.dev/mcp`. No account or login is required.
 
-It also includes the four official SQD agent skills for Portal, Pipes SDK, Portal migration, and indexer performance. The bundled snapshot comes from `subsquid-labs/skills` at commit `e35e5bfeae24f495a5b128755e7f591c207120fb`; see `skills/SOURCE.md`.
+The packaged server runtime uses stateless HTTP and negotiates MCP 2026-07-28, matching the current Claude rollout. Set `REQUIRE_MCP_2026_LIVE=1` when running the plugin checks after deployment to verify the public endpoint.
+
+It also includes the four official SQD agent skills for Portal, Pipes SDK, Portal migration, and indexer performance. The bundled snapshot comes from `subsquid-labs/skills` at commit `7dcf48d5cf9021a076c518e5606e12cc62b15d3b`; see `skills/SOURCE.md`.
 
 ## Name and logo
 
@@ -47,7 +49,7 @@ For Grok chat, add a Custom connector at `grok.com/connectors` and enter `https:
 
 - Which blockchain networks can SQD query?
 - Show the latest Hyperliquid BTC trades.
-- Show the latest USDT transfers on Tron.
+- Is Tron available in SQD?
 
 ## Checks
 

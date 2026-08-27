@@ -109,9 +109,12 @@ Where `<run-dir>` is `./squid-perf-output/<now-ISO-Z-with-colons-replaced-by-das
 ### Phase 2 — Fetch logs (parallel Bash)
 
 For each indexer in the resolved config, compute:
-- `slug = ref.replace(/[\/@:]/g, "-")` (filesystem-safe)
-- `cache_path = ./squid-perf-output/cache/<slug>__<since-with-colons-as-dashes>.log`
+- `cache_name = node <skill-dir>/scripts/cache-key.mjs <ref> <since>`
+- `cache_path = ./squid-perf-output/cache/<cache_name>`
+- `slug = <cache_name without the .log suffix>`
 - `sentinel_path = <cache_path>.done`
+
+The helper combines a readable prefix with a SHA-256 suffix from the complete ref. Do not recreate only the readable prefix: refs such as `a-b/c@d` and `a/b-c@d` collapse to the same sanitized text, while the hash suffix keeps their cache, parsed, and sentinel paths distinct.
 
 If `sentinel_path` exists and `--force-refresh` is NOT set: skip fetch, reuse cache.
 
@@ -144,9 +147,24 @@ node <skill-dir>/scripts/parse.mjs \
   --label <label>
 ```
 
-The parser streams the log, emits structured JSON per service. See `scripts/parse.mjs` for the exact schema it produces.
+The parser streams the log and emits structured JSON per service. See `scripts/parse.mjs` for the exact schema it produces. `errorCount` counts every WARN/ERROR line while `errors` retains at most 1,000 detailed samples.
 
 If parse fails for a deployment: record, continue. If all fail: stop with error.
+
+Before rendering, write every fetch and parse failure to `<run-dir>/failures.json` as a JSON array. Use one object per failed deployment:
+
+```json
+[
+  {
+    "label": "experimental",
+    "ref": "org/indexer@hash",
+    "stage": "fetch",
+    "message": "fetch failed after retries"
+  }
+]
+```
+
+Use only `"fetch"` or `"parse"` for `stage`. Write `[]` when nothing failed. Keep `message` concise and do not include credentials. The renderer adds these failures to the HTML warning payload and the Markdown summary so a partial comparison cannot appear complete.
 
 ### Phase 4 — Compute metrics & render
 
@@ -172,7 +190,7 @@ This reads `<run-dir>/compare-syncs.json` + all `<run-dir>/parsed/*.json`, compu
    ✓ Report: ./squid-perf-output/<id>/report.html
      Markdown: ./squid-perf-output/<id>/report.md
      Cached logs: ./squid-perf-output/cache/ (re-used on next run)
-     Failed fetches: <list or "none">
+     Failed deployments: <fetch and parse failures, or "none">
    ```
 3. Mark all tasks completed.
 

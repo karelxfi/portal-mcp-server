@@ -23,6 +23,11 @@ fail() {
 command -v expect >/dev/null 2>&1 || fail "expect is required"
 command -v node >/dev/null 2>&1 || fail "node is required"
 
+printf 'test: cache keys remain distinct for colliding readable refs\n' >&2
+CACHE_KEY_ONE="$(node "$SKILL_DIR/scripts/cache-key.mjs" 'a-b/c@d' '2026-01-01T00:00:00Z')"
+CACHE_KEY_TWO="$(node "$SKILL_DIR/scripts/cache-key.mjs" 'a/b-c@d' '2026-01-01T00:00:00Z')"
+[ "$CACHE_KEY_ONE" != "$CACHE_KEY_TWO" ] || fail "cache key helper collapsed distinct refs"
+
 mkdir -p "$FAKE_BIN_DIR"
 cp "$TESTS_DIR/fixtures/fake-sqd" "$FAKE_BIN_DIR/sqd"
 chmod +x "$FAKE_BIN_DIR/sqd"
@@ -80,20 +85,61 @@ node "$SKILL_DIR/scripts/parse.mjs" \
   --label restart
 node "$TESTS_DIR/assert-parser.mjs" "$TEST_TMP_DIR/current-levels.json" "$TEST_TMP_DIR/restart.json"
 
+printf 'test: parser counts errors beyond the retained sample cap\n' >&2
+ERROR_LOG="$TEST_TMP_DIR/error-cap.log"
+for i in $(seq 1 1001); do
+  printf 'api 2026-01-01T00:00:00Z WARN sqd:test warning-%s\n' "$i"
+done > "$ERROR_LOG"
+printf 'api 2026-01-01T00:00:00Z ERROR sqd:test final-error\n' >> "$ERROR_LOG"
+node "$SKILL_DIR/scripts/parse.mjs" \
+  --input "$ERROR_LOG" \
+  --output "$TEST_TMP_DIR/error-cap.json" \
+  --label error-cap
+node -e '
+  const parsed = JSON.parse(require("fs").readFileSync(process.argv[1]));
+  const service = parsed.services.api;
+  if (service.errorCount !== 1002 || service.errors.length !== 1000) process.exit(1);
+  if (service.levelCounts.warning !== 1001 || service.levelCounts.error !== 1) process.exit(1);
+' "$TEST_TMP_DIR/error-cap.json" || fail "parser confused total errors with retained samples"
+
 printf 'test: parser and renderer produce a comparison report\n' >&2
 REPORT_DIR="$TEST_TMP_DIR/report-run"
 mkdir -p "$REPORT_DIR/parsed"
 cp "$TESTS_DIR/fixtures/compare-syncs.json" "$REPORT_DIR/compare-syncs.json"
+NOISY_BASELINE="$TEST_TMP_DIR/noisy-baseline.log"
+cp "$TESTS_DIR/fixtures/baseline.log" "$NOISY_BASELINE"
+for i in $(seq 1 1001); do
+  printf 'api 2026-01-01T00:10:00Z WARN sqd:test report-warning-%s\n' "$i"
+done >> "$NOISY_BASELINE"
+printf 'api 2026-01-01T00:10:00Z ERROR sqd:test report-error\n' >> "$NOISY_BASELINE"
 node "$SKILL_DIR/scripts/parse.mjs" \
-  --input "$TESTS_DIR/fixtures/baseline.log" \
+  --input "$NOISY_BASELINE" \
   --output "$REPORT_DIR/parsed/baseline.json" \
   --label baseline
 node "$SKILL_DIR/scripts/parse.mjs" \
   --input "$TESTS_DIR/fixtures/optimized.log" \
   --output "$REPORT_DIR/parsed/optimized.json" \
   --label optimized
+cat > "$REPORT_DIR/failures.json" <<'JSON'
+[
+  {
+    "label": "experimental",
+    "ref": "org/experimental@ghi",
+    "stage": "fetch",
+    "message": "fetch failed after retries"
+  },
+  {
+    "label": "candidate",
+    "ref": "org/candidate@jkl",
+    "stage": "parse",
+    "message": "log did not contain recognizable progress data"
+  }
+]
+JSON
 node "$SKILL_DIR/scripts/report.mjs" --run-dir "$REPORT_DIR"
 grep -q 'optimized.*2.50× faster.*baseline' "$REPORT_DIR/report.md" || fail "Markdown comparison verdict is missing"
+grep -q 'experimental.*fetch failed' "$REPORT_DIR/report.md" || fail "Markdown fetch failure is missing"
+grep -q 'candidate.*parse failed' "$REPORT_DIR/report.md" || fail "Markdown parse failure is missing"
 node "$TESTS_DIR/assert-report.mjs" "$REPORT_DIR/report.html"
 
-printf '{"status":"ok","tests":7}\n'
+printf '{"status":"ok","tests":9}\n'

@@ -18,7 +18,8 @@
 //       progressRows: [[tsMs, current, target, rate, mappingRate, itemsPerSec, etaSec], ...],
 //       multicall: [{ tsMs, operation, block, chunks, groups, calls, latencyMs }, ...],
 //       restarts: [{ tsMs, fromBlock, resumedAtBlock }, ...],
-//       errorCount, errors: [{ tsMs, level, logger, message }, ...]  // capped at 1000
+//       errorCount, levelCounts: { warning, error },
+//       errors: [{ tsMs, level, logger, message }, ...]  // capped at 1000
 //       tier3: { "<logger>": { count, samples: [{ tsMs, fields: {unit: value, ...} }, ...] } }
 //     }
 //   }
@@ -135,6 +136,8 @@ async function main() {
         progressRows: [],
         multicall: [],
         restarts: [],
+        errorCount: 0,
+        levelCounts: { warning: 0, error: 0 },
         errors: [],
         tier3: new Map(),
         firstBlock: null,
@@ -149,13 +152,18 @@ async function main() {
     if (svc.lastTsMs  === null || tsMs > svc.lastTsMs)  svc.lastTsMs  = tsMs;
 
     const isErrorLevel = ERROR_LEVELS.has(level);
-    if (isErrorLevel && svc.errors.length < MAX_ERRORS_PER_SERVICE) {
-      svc.errors.push({
-        tsMs,
-        level,
-        logger,
-        message: message.length > 500 ? message.slice(0, 500) + "…" : message,
-      });
+    if (isErrorLevel) {
+      svc.errorCount++;
+      if (level === "WARN" || level === "WARNING") svc.levelCounts.warning++;
+      else svc.levelCounts.error++;
+      if (svc.errors.length < MAX_ERRORS_PER_SERVICE) {
+        svc.errors.push({
+          tsMs,
+          level,
+          logger,
+          message: message.length > 500 ? message.slice(0, 500) + "…" : message,
+        });
+      }
     }
 
     if (PROGRESS_LOGGERS.has(logger)) {
@@ -276,7 +284,8 @@ async function main() {
       progressRows: svc.progressRows,
       multicall: svc.multicall,
       restarts: svc.restarts,
-      errorCount: svc.errors.length,
+      errorCount: svc.errorCount,
+      levelCounts: svc.levelCounts,
       errors: svc.errors,
       tier3: Object.fromEntries(
         [...svc.tier3.entries()]

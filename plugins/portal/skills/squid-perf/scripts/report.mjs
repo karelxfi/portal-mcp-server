@@ -93,6 +93,34 @@ function escapeMd(s) {
   return String(s).replace(/\|/g, "\\|");
 }
 
+function readDeploymentFailures(runDir, config) {
+  const failuresPath = path.join(runDir, "failures.json");
+  if (!fs.existsSync(failuresPath)) return [];
+
+  const value = JSON.parse(fs.readFileSync(failuresPath, "utf8"));
+  if (!Array.isArray(value)) throw new Error(`failures.json must contain an array at ${failuresPath}`);
+  const refsByLabel = new Map(config.indexers.map(i => [i.label, i.ref]));
+
+  return value.map((failure, index) => {
+    if (!failure || typeof failure !== "object" || Array.isArray(failure)) {
+      throw new Error(`failures.json entry ${index} must be an object`);
+    }
+    const label = typeof failure.label === "string" ? failure.label.trim() : "";
+    if (!label) throw new Error(`failures.json entry ${index} must include a label`);
+    const stage = failure.stage;
+    if (stage !== "fetch" && stage !== "parse") {
+      throw new Error(`failures.json entry ${index} stage must be fetch or parse`);
+    }
+    const ref = typeof failure.ref === "string" && failure.ref.trim()
+      ? failure.ref.trim()
+      : (refsByLabel.get(label) || label);
+    const message = typeof failure.message === "string" && failure.message.trim()
+      ? failure.message.trim()
+      : `${stage} failed`;
+    return { label, ref, stage, message };
+  });
+}
+
 // --------- Breakpoint generation ---------
 
 function generateBreakpoints(effectiveRange, count = BREAKPOINT_COUNT) {
@@ -371,6 +399,7 @@ function compute(config, parsed, downtimeThresholdSec, breakpointsOverride) {
           multicall:  s.multicall || [],
           errors:     s.errors || [],
           errorCount: s.errorCount || 0,
+          levelCounts: s.levelCounts || null,
         };
         continue;
       }
@@ -423,6 +452,7 @@ function compute(config, parsed, downtimeThresholdSec, breakpointsOverride) {
         restarts: s.restarts,
         errors: s.errors,
         errorCount: s.errorCount,
+        levelCounts: s.levelCounts || null,
         tier3: s.tier3 || {},
       };
     }
@@ -717,8 +747,16 @@ function compute(config, parsed, downtimeThresholdSec, breakpointsOverride) {
 // by the template contract. See the TEMPLATE CONTRACT comment inside the
 // template for the schema this function must produce.
 
-function renderHtml({ config, parsed, compute, runId, downtimeThresholdSec, breakpointsOverride }) {
-  const reportData = buildReportData({ config, parsed, compute, runId, downtimeThresholdSec, breakpointsOverride });
+function renderHtml({ config, parsed, compute, failures, runId, downtimeThresholdSec, breakpointsOverride }) {
+  const reportData = buildReportData({
+    config,
+    parsed,
+    compute,
+    failures,
+    runId,
+    downtimeThresholdSec,
+    breakpointsOverride,
+  });
   const template = fs.readFileSync(TEMPLATE_PATH, "utf8");
   return injectReportData(template, reportData);
 }
@@ -728,7 +766,7 @@ function renderHtml({ config, parsed, compute, runId, downtimeThresholdSec, brea
 // Transform compute()'s internal shape into the documented ReportData schema
 // that the template's client-side renderer expects.
 
-function buildReportData({ config, parsed, compute, runId, downtimeThresholdSec, breakpointsOverride }) {
+function buildReportData({ config, parsed, compute, failures, runId, downtimeThresholdSec, breakpointsOverride }) {
   const byLabel = new Map(parsed.map(p => [p.meta.label, p]));
   const mode = parsed.length >= 2 ? "compare" : "single";
 
@@ -754,7 +792,12 @@ function buildReportData({ config, parsed, compute, runId, downtimeThresholdSec,
     (s.inIntersection ? services : soloServices).push(mapped);
   }
 
-  const warnings = compute.warnings.map(w => structuredWarning(w));
+  const failureWarnings = failures.map(failure => ({
+    kind: `${failure.stage}-failed`,
+    label: failure.label,
+    message: `\`${failure.label}\` ${failure.stage} failed: ${failure.message}`,
+  }));
+  const warnings = [...failureWarnings, ...compute.warnings.map(w => structuredWarning(w))];
   const headline = deriveHeadline(compute, mode);
 
   return {
@@ -771,7 +814,8 @@ function buildReportData({ config, parsed, compute, runId, downtimeThresholdSec,
     soloServices,
     infraServices,
     warnings,
-    fetchFailures: [],
+    deploymentFailures: failures,
+    fetchFailures: failures.filter(failure => failure.stage === "fetch").map(failure => failure.label),
   };
 }
 
@@ -933,8 +977,10 @@ function mapServiceForReport(s, breakpointsOverride) {
 
   const tier2 = {};
   for (const [label, d] of Object.entries(s.perDeployment)) {
-    const warningCount = (d?.errors || []).filter(e => e.level === "WARN" || e.level === "WARNING").length;
-    const errorCount = (d?.errors || []).filter(e => e.level === "ERROR" || e.level === "CRITICAL" || e.level === "FATAL").length;
+    const warningCount = d?.levelCounts?.warning
+      ?? (d?.errors || []).filter(e => e.level === "WARN" || e.level === "WARNING").length;
+    const errorCount = d?.levelCounts?.error
+      ?? (d?.errors || []).filter(e => e.level === "ERROR" || e.level === "CRITICAL" || e.level === "FATAL").length;
     if (!d || d.nonSync) {
       tier2[label] = {
         restarts: 0,
@@ -1127,7 +1173,7 @@ function findRefForLabel(config, label) {
 
 // --------- MD rendering ---------
 
-function renderMd({ config, parsed, compute, runId, htmlRelPath }) {
+function renderMd({ config, parsed, compute, failures, runId, htmlRelPath }) {
   const labels = parsed.map(p => p.meta.label);
   const isComparison = parsed.length >= 2;
 
@@ -1141,6 +1187,16 @@ function renderMd({ config, parsed, compute, runId, htmlRelPath }) {
     lines.push(`- **${escapeMd(p.meta.label)}** — \`${escapeMd(ref)}\` · logs ${p.meta.earliestTs} → ${p.meta.latestTs}${live}`);
   }
   lines.push("");
+
+  if (failures.length > 0) {
+    lines.push(`### ⚠ Failed deployments`);
+    for (const failure of failures) {
+      lines.push(
+        `- **${escapeMd(failure.label)}** — \`${escapeMd(failure.ref)}\` · ${failure.stage} failed: ${escapeMd(failure.message)}`,
+      );
+    }
+    lines.push("");
+  }
 
   lines.push(`## Summary\n`);
   if (compute.findings.length > 0) {
@@ -1318,6 +1374,7 @@ async function main() {
     throw new Error(`compare-syncs.json not found at ${configPath}`);
   }
   const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
+  const failures = readDeploymentFailures(runDir, config);
 
   const parsedDir = path.join(runDir, "parsed");
   if (!fs.existsSync(parsedDir)) {
@@ -1355,12 +1412,27 @@ async function main() {
   const computed = compute(config, parsed, downtimeThresholdSec, breakpointsOverride);
 
   const runId = path.basename(runDir.replace(/\/$/, ""));
-  const html = renderHtml({ config, parsed, compute: computed, runId, downtimeThresholdSec, breakpointsOverride });
+  const html = renderHtml({
+    config,
+    parsed,
+    compute: computed,
+    failures,
+    runId,
+    downtimeThresholdSec,
+    breakpointsOverride,
+  });
   const htmlPath = path.join(runDir, "report.html");
   fs.writeFileSync(htmlPath, html);
 
   const mdPath = path.join(runDir, "report.md");
-  const md = renderMd({ config, parsed, compute: computed, runId, htmlRelPath: "./report.html" });
+  const md = renderMd({
+    config,
+    parsed,
+    compute: computed,
+    failures,
+    runId,
+    htmlRelPath: "./report.html",
+  });
   fs.writeFileSync(mdPath, md);
 
   process.stderr.write(`report ok — wrote ${htmlPath} (${formatShortNumber(html.length)} bytes) and ${mdPath}\n`);

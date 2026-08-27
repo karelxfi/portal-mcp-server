@@ -12,6 +12,16 @@
       "ref": "org/optimized@def",
       "since": "2026-01-01T00:00:00Z",
       "label": "optimized"
+    },
+    {
+      "ref": "org/experimental@ghi",
+      "since": "2026-01-01T00:00:00Z",
+      "label": "experimental"
+    },
+    {
+      "ref": "org/candidate@jkl",
+      "since": "2026-01-01T00:00:00Z",
+      "label": "candidate"
     }
   ]
 }

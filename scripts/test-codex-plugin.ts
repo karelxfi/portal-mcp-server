@@ -14,6 +14,7 @@ const DIRECTORY_SUBMISSION_PATH = `${PLUGIN_ROOT}/DIRECTORY_SUBMISSION.md`
 const SKILLS_SOURCE_PATH = `${PLUGIN_ROOT}/skills/SOURCE.md`
 const CHATGPT_SUBMISSION_PATH = 'chatgpt-app-submission.json'
 const REQUIRE_OPENAI_LIVE_METADATA = process.env.REQUIRE_OPENAI_LIVE_METADATA === '1'
+const REQUIRE_MCP_2026_LIVE = process.env.REQUIRE_MCP_2026_LIVE === '1'
 
 const EXPECTED_PUBLIC_TOOL_NAMES = [
   'portal_list_networks',
@@ -129,7 +130,7 @@ function assertPromptList(value: unknown) {
   const expectedPrompts = [
     'Which blockchain networks can SQD query?',
     'Show the latest Hyperliquid BTC trades.',
-    'Show the latest USDT transfers on Tron.',
+    'Is Tron available in SQD?',
   ]
   assert(
     JSON.stringify(value) === JSON.stringify(expectedPrompts),
@@ -225,7 +226,7 @@ function assertManifest() {
   }
   const skillsSource = readFileSync(SKILLS_SOURCE_PATH, 'utf8')
   assert(
-    skillsSource.includes('e35e5bfeae24f495a5b128755e7f591c207120fb'),
+    skillsSource.includes('7dcf48d5cf9021a076c518e5606e12cc62b15d3b'),
     'bundled skills should record the verified upstream commit',
   )
   assertOptionalAsset(PLUGIN_ROOT, manifest.interface.composerIcon, 'interface.composerIcon')
@@ -285,16 +286,7 @@ function assertChatgptSubmission() {
   assert(submission.app_info.category === 'DEVELOPER_TOOLS', 'ChatGPT submission category should be DEVELOPER_TOOLS')
 
   const publicCopy = `${submission.app_info.subtitle} ${submission.app_info.description}`
-  for (const phrase of [
-    'blockchain',
-    '130+ networks',
-    'Bitcoin',
-    'Solana',
-    'Polkadot',
-    'Tron',
-    'Hyperliquid',
-    'many more',
-  ]) {
+  for (const phrase of ['blockchain', '130+', 'Bitcoin', 'Solana', 'Polkadot', 'Tron', 'Hyperliquid', 'many more']) {
     assert(publicCopy.toLowerCase().includes(phrase.toLowerCase()), `ChatGPT submission copy should include ${phrase}`)
   }
   assert(!/[\u2014\u2013]/.test(publicCopy), 'ChatGPT submission copy should not use em or en dashes')
@@ -310,7 +302,7 @@ function assertChatgptSubmission() {
     assertRecord(tool, `ChatGPT submission should include ${toolName}`)
     assertRecord(tool.annotations, `${toolName}.annotations must be an object`)
     assert(tool.annotations.readOnlyHint === true, `${toolName} should declare readOnlyHint: true`)
-    assert(tool.annotations.openWorldHint === false, `${toolName} should declare openWorldHint: false`)
+    assert(tool.annotations.openWorldHint === true, `${toolName} should declare openWorldHint: true`)
     assert(tool.annotations.destructiveHint === false, `${toolName} should declare destructiveHint: false`)
     assertRecord(tool.justifications, `${toolName}.justifications must be an object`)
     for (const field of ['read_only_justification', 'open_world_justification', 'destructive_justification']) {
@@ -367,12 +359,15 @@ function getEndpoint() {
 
 async function assertHostedMcp(endpoint: string) {
   const init = await postRpc(endpoint, 'initialize', {
-    protocolVersion: '2024-11-05',
+    protocolVersion: '2026-07-28',
     capabilities: {},
     clientInfo: { name: 'portal-mcp-plugin-release-gate', version: '1.0.0' },
   })
   assertRecord(init.serverInfo, 'initialize should return serverInfo')
   assert(init.serverInfo.name === 'sqd-portal-mcp-server', 'unexpected MCP server name')
+  if (REQUIRE_MCP_2026_LIVE) {
+    assert(init.protocolVersion === '2026-07-28', 'Codex plugin should negotiate MCP 2026-07-28')
+  }
 
   const list = await postRpc(endpoint, 'tools/list', {})
   assert(Array.isArray(list.tools), 'tools/list should return tools array')
@@ -388,7 +383,7 @@ async function assertHostedMcp(endpoint: string) {
       assertString(value.title, `${String(value.name)} must expose a review-facing title`)
       assertRecord(value.annotations, `${String(value.name)} must expose annotations`)
       assert(value.annotations.readOnlyHint === true, `${String(value.name)} must expose readOnlyHint: true`)
-      assert(value.annotations.openWorldHint === false, `${String(value.name)} must expose openWorldHint: false`)
+      assert(value.annotations.openWorldHint === true, `${String(value.name)} must expose openWorldHint: true`)
       assert(value.annotations.destructiveHint === false, `${String(value.name)} must expose destructiveHint: false`)
     }
   }
@@ -410,7 +405,7 @@ async function main() {
   const endpoint = getEndpoint()
   await assertHostedMcp(endpoint)
   console.log(
-    `Codex plugin release gate passed: manifest, marketplace, OpenAI submission, assets, and hosted MCP smoke are valid${REQUIRE_OPENAI_LIVE_METADATA ? ' with strict live metadata' : ''}`,
+    `Codex plugin release gate passed: manifest, marketplace, OpenAI submission, assets, and hosted MCP smoke are valid${REQUIRE_OPENAI_LIVE_METADATA ? ' with strict live metadata' : ''}${REQUIRE_MCP_2026_LIVE ? ' with live MCP 2026-07-28' : ''}`,
   )
 }
 

@@ -9,6 +9,7 @@ const PLUGIN_ROOT = 'plugins/portal'
 const MARKETPLACE_PATH = '.claude-plugin/marketplace.json'
 const PLUGIN_JSON_PATH = `${PLUGIN_ROOT}/.claude-plugin/plugin.json`
 const MCP_JSON_PATH = `${PLUGIN_ROOT}/.mcp.json`
+const REQUIRE_MCP_2026_LIVE = process.env.REQUIRE_MCP_2026_LIVE === '1'
 
 function assert(condition: boolean, message: string) {
   if (!condition) {
@@ -124,12 +125,15 @@ function getEndpoint() {
 
 async function assertHostedMcp(endpoint: string) {
   const init = await postRpc(endpoint, 'initialize', {
-    protocolVersion: '2024-11-05',
+    protocolVersion: '2026-07-28',
     capabilities: {},
     clientInfo: { name: 'portal-mcp-claude-plugin-release-gate', version: '1.0.0' },
   })
   assertRecord(init.serverInfo, 'initialize should return serverInfo')
   assert(init.serverInfo.name === 'sqd-portal-mcp-server', 'unexpected MCP server name')
+  if (REQUIRE_MCP_2026_LIVE) {
+    assert(init.protocolVersion === '2026-07-28', 'Claude plugin should negotiate MCP 2026-07-28')
+  }
 
   const list = await postRpc(endpoint, 'tools/list', {})
   assert(Array.isArray(list.tools), 'tools/list should return tools array')
@@ -142,7 +146,9 @@ async function main() {
   assertMarketplace()
   const endpoint = getEndpoint()
   await assertHostedMcp(endpoint)
-  console.log('Claude plugin release gate passed: marketplace, manifest, MCP config, and hosted MCP smoke are valid')
+  console.log(
+    `Claude plugin release gate passed: marketplace, manifest, MCP config, and hosted MCP smoke are valid${REQUIRE_MCP_2026_LIVE ? ' with live MCP 2026-07-28' : ''}`,
+  )
 }
 
 await main()
