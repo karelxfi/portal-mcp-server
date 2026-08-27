@@ -9,6 +9,7 @@ const PLUGIN_ROOT = 'plugins/portal'
 const MARKETPLACE_PATH = '.claude-plugin/marketplace.json'
 const PLUGIN_JSON_PATH = `${PLUGIN_ROOT}/.claude-plugin/plugin.json`
 const MCP_JSON_PATH = `${PLUGIN_ROOT}/.mcp.json`
+const REQUIRE_MCP_2026_LIVE = process.env.REQUIRE_MCP_2026_LIVE === '1'
 
 function assert(condition: boolean, message: string) {
   if (!condition) {
@@ -84,7 +85,7 @@ function assertMarketplace() {
   const entry = marketplace.plugins.find((plugin) => plugin?.name === 'portal') as JsonObject | undefined
   assertRecord(entry, 'Claude marketplace should include portal')
   assert(entry.source === './plugins/portal', 'Claude marketplace portal source should point at ./plugins/portal')
-  assert(entry.displayName === 'SQD Portal', 'Claude marketplace display name should be SQD Portal')
+  assert(entry.displayName === 'SQD', 'Claude marketplace display name should be SQD')
   assert(entry.version === '0.8.0', 'Claude marketplace plugin entry version should be 0.8.0')
   assertNoCommittedSecretOrLocalPath(marketplace)
 }
@@ -92,10 +93,21 @@ function assertMarketplace() {
 function getEndpoint() {
   const manifest = readJson(PLUGIN_JSON_PATH)
   assert(manifest.name === 'portal', 'Claude plugin name should be portal')
-  assert(manifest.displayName === 'SQD Portal', 'Claude plugin display name should be SQD Portal')
+  assert(manifest.displayName === 'SQD', 'Claude plugin display name should be SQD')
+  assert(
+    manifest.description === 'Explore live and historical blockchain data across 130+ networks with SQD.',
+    'Claude plugin description should lead with broad network coverage',
+  )
+  assert(!/[\u2014\u2013]/.test(JSON.stringify(manifest)), 'Claude plugin copy should not use em or en dashes')
   assert(manifest.version === '0.8.0', 'Claude plugin version should be 0.8.0')
   assert(manifest.mcpServers === './.mcp.json', 'Claude plugin should reference ./.mcp.json')
   assert(existsSync(resolve(PLUGIN_ROOT, '.mcp.json')), 'Claude plugin MCP config should exist')
+  for (const skill of ['portal', 'pipes-sdk', 'migrate-to-portal', 'squid-perf']) {
+    assert(
+      existsSync(resolve(PLUGIN_ROOT, 'skills', skill, 'SKILL.md')),
+      `Claude plugin should auto-discover the ${skill} skill`,
+    )
+  }
   assertNoCommittedSecretOrLocalPath(manifest)
 
   const mcp = readJson(MCP_JSON_PATH)
@@ -113,12 +125,15 @@ function getEndpoint() {
 
 async function assertHostedMcp(endpoint: string) {
   const init = await postRpc(endpoint, 'initialize', {
-    protocolVersion: '2024-11-05',
+    protocolVersion: '2026-07-28',
     capabilities: {},
     clientInfo: { name: 'portal-mcp-claude-plugin-release-gate', version: '1.0.0' },
   })
   assertRecord(init.serverInfo, 'initialize should return serverInfo')
   assert(init.serverInfo.name === 'sqd-portal-mcp-server', 'unexpected MCP server name')
+  if (REQUIRE_MCP_2026_LIVE) {
+    assert(init.protocolVersion === '2026-07-28', 'Claude plugin should negotiate MCP 2026-07-28')
+  }
 
   const list = await postRpc(endpoint, 'tools/list', {})
   assert(Array.isArray(list.tools), 'tools/list should return tools array')
@@ -131,7 +146,9 @@ async function main() {
   assertMarketplace()
   const endpoint = getEndpoint()
   await assertHostedMcp(endpoint)
-  console.log('Claude plugin release gate passed: marketplace, manifest, MCP config, and hosted MCP smoke are valid')
+  console.log(
+    `Claude plugin release gate passed: marketplace, manifest, MCP config, and hosted MCP smoke are valid${REQUIRE_MCP_2026_LIVE ? ' with live MCP 2026-07-28' : ''}`,
+  )
 }
 
 await main()

@@ -1,79 +1,57 @@
-# SQD Portal MCP Codex Plugin
+# SQD Plugin
 
-This directory contains the Codex plugin wrapper for the hosted SQD Portal MCP endpoint.
-It also contains the Claude Code plugin manifest for the same hosted MCP endpoint.
-Grok Build consumes that Claude-compatible package directly, while Grok chat connects to the hosted URL as a custom MCP connector.
+SQD lets Codex, ChatGPT, Claude, and Grok find 130+ blockchain networks and explore the live and historical data available for each. It can answer questions about wallets, transactions, token transfers, smart contracts, network activity, and markets across Ethereum, Base, Solana, Bitcoin, Polkadot, Hyperliquid, and many more. Its live catalog also shows current Tron availability.
 
-The first distribution target is the repo-local marketplace in `.agents/plugins/marketplace.json`.
-The marketplace entry points at this plugin with the stable source path `./plugins/portal`,
-so the repository root is the marketplace root.
+The plugin uses the public SQD endpoint at `https://portal.sqd.dev/mcp`. No account or login is required.
 
-## Presentation
+The packaged server runtime uses stateless HTTP and negotiates MCP 2026-07-28, matching the current Claude rollout. Set `REQUIRE_MCP_2026_LIVE=1` when running the plugin checks after deployment to verify the public endpoint.
 
-The plugin uses official SQD brand assets from `https://sqd.dev/brand/`:
+It also includes the four official SQD agent skills for Portal, Pipes SDK, Portal migration, and indexer performance. The bundled snapshot comes from `subsquid-labs/skills` at commit `06936ddfa9ae423638e187d8e9ac5d1f831095a8`; see `skills/SOURCE.md`.
 
-- `assets/sqd-logo.svg` is the black-background SQD symbol used for light-mode plugin surfaces.
-- `assets/sqd-logo-dark.svg` is the white-background SQD symbol used for dark-mode plugin surfaces.
-- `assets/sqd-composer-icon.svg` keeps the black SQD symbol but rounds the square for small prompt
-  and composer previews.
+## Name and logo
 
-The default logo matches the GitHub-style SQD profile picture. Keep the original colors and
-proportions intact for plugin detail surfaces, and use the trimmed composer icon for compact
-preview rows where the app does not apply the same outer corner treatment.
+- The visible name is `SQD` in every client and marketplace.
+- The internal package ID remains `portal` so existing installs keep working.
+- `assets/sqd-logo.svg` is the white SQD symbol on a black square. Use it in both light and dark themes.
+- `assets/sqd-composer-icon.svg` is the same black square with rounded corners for compact views.
 
-## Codex Install From This Repo
+## Codex
 
-Register the repo-local marketplace once:
+Register this repository as a local marketplace, then install the plugin:
 
 ```bash
 codex plugin marketplace add .
-```
-
-Then install the plugin from the marketplace name in `.agents/plugins/marketplace.json`:
-
-```bash
 codex plugin add portal@sqd
 ```
 
-Open a new Codex thread after installing so Codex picks up the plugin MCP server.
+Start a new Codex task after installing it.
 
-## Claude Code Install From This Repo
-
-Register the Claude Code marketplace once:
+## Claude Code
 
 ```bash
 claude plugin marketplace add ./
-```
-
-Then install the plugin from the marketplace name in `.claude-plugin/marketplace.json`:
-
-```bash
 claude plugin install portal@sqd
 ```
 
-Open a new Claude Code session after installing so the plugin MCP server is loaded.
+Start a new Claude Code session after installing it.
 
-## Grok Build Install From This Repo
+## Grok Build
 
-Grok Build is compatible with Claude Code plugin manifests, so no separate Grok-only manifest is needed:
+Grok Build accepts the included Claude-compatible package:
 
 ```bash
 grok plugin install --trust ./plugins/portal
 ```
 
-For Grok chat, create a Custom connector at `grok.com/connectors` and use `https://portal.sqd.dev/mcp` with no authentication.
+For Grok chat, add a Custom connector at `grok.com/connectors` and enter `https://portal.sqd.dev/mcp` with no authentication.
 
-## First-use Prompts
+## Starter prompts
 
-The plugin exposes these starter prompts:
+- Which blockchain networks can SQD query?
+- Show the latest Hyperliquid BTC trades.
+- Is Tron available in SQD?
 
-- Show me the last 200 BTC perp fills on Hyperliquid.
-- How many transactions landed on Base in the past 2h?
-- Who sent the most USDC on Base in the past hour?
-
-## Release Gate
-
-Run the plugin release gate before publishing plugin changes:
+## Checks
 
 ```bash
 npm run test:plugin
@@ -81,75 +59,10 @@ npm run test:claude-plugin
 npm run test:grok-plugin
 ```
 
-These validate the Codex and Claude Code plugin manifests, marketplace entries, optional asset
-paths, and a small hosted MCP smoke check.
+The checks validate the name, black logo, listing copy, marketplace files, hosted endpoint, and Grok compatibility.
 
-## Local Iteration
+## Public directory submission
 
-The public plugin manifest should keep the release version, for example `0.8.0`, without a Codex
-cachebuster suffix.
+See [DIRECTORY_SUBMISSION.md](./DIRECTORY_SUBMISSION.md) for the exact OpenAI and xAI publication routes, listing copy, review tests, and remaining owner actions.
 
-From the repository root:
-
-```bash
-codex plugin marketplace add .
-codex plugin add portal@sqd
-```
-
-Start a new Codex thread after reinstalling. During local-only iteration, a temporary cachebuster
-suffix can be useful to force reinstall behavior, but remove it before publishing.
-
-## Current MCP Endpoint
-
-The default plugin MCP server is the hosted HTTP endpoint:
-
-```json
-{
-  "type": "http",
-  "url": "https://portal.sqd.dev/mcp"
-}
-```
-
-The checked-in MCP server key is `SQD` so Codex shows the server as `SQD` in plugin details.
-
-Do not add tenant credentials, bearer tokens, local checkout paths, or personal marketplace paths to
-the plugin manifest.
-
-## Local And Offline Fallback
-
-The default plugin should stay hosted. For local Codex development, use a checkout-local stdio
-launcher instead of npm, Docker, or vendored build output.
-
-Recommended local fallback:
-
-```bash
-npm install
-npm run build
-node dist/index.js
-```
-
-Use that build through a local-only MCP config override such as:
-
-```json
-{
-  "mcpServers": {
-    "sqd-portal-local": {
-      "cwd": "/absolute/path/to/portal-mcp-server",
-      "command": "node",
-      "args": ["dist/index.js"]
-    }
-  }
-}
-```
-
-Do not commit that local override to this plugin. The checked-in plugin remains hosted and portable.
-
-Do not document a package-runner fallback until the package is actually published to npm. The
-package was not available in the public npm registry during the v0.8.0 plugin work.
-
-Docker is useful for self-hosted HTTP mode, not as the first Codex stdio fallback. The public
-`subsquid/portal-mcp-server` image is linux/amd64-only for v0.8.0. Add a multi-arch image before
-promoting Docker as the local plugin path for Apple Silicon users.
-
-Stdio safety rule: stdout is the MCP transport. Keep runtime logs on stderr, and do not add
-`console.log` or other stdout writes to the stdio entrypoint or helpers used by `dist/index.js`.
+Do not commit credentials, personal paths, or private endpoints to this package.

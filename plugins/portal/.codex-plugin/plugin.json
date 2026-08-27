@@ -1,7 +1,7 @@
 {
   "name": "portal",
   "version": "0.8.0",
-  "description": "Read validated onchain data through SQD Portal from Codex.",
+  "description": "Explore live and historical blockchain data with SQD.",
   "author": {
     "name": "Subsquid Labs",
     "url": "https://sqd.dev/"
@@ -12,36 +12,40 @@
   "keywords": [
     "sqd",
     "subsquid",
-    "portal",
-    "mcp",
     "blockchain",
-    "analytics",
-    "evm",
+    "blockchain data",
+    "blockchain analytics",
+    "crypto analytics",
+    "ethereum",
+    "base",
     "solana",
     "bitcoin",
-    "hyperliquid"
+    "tron",
+    "polkadot",
+    "hyperliquid",
+    "multi-chain",
+    "smart contracts",
+    "wallet activity"
   ],
+  "skills": "./skills/",
   "mcpServers": "./.mcp.json",
   "interface": {
-    "displayName": "SQD Portal",
-    "shortDescription": "Read validated onchain data from Codex.",
-    "longDescription": "Connect Codex to the hosted SQD Portal MCP server for read-only blockchain data. Discover networks, resolve tokens and contracts, inspect wallet or contract activity, and run analytics across EVM, Solana, Bitcoin, Substrate, and Hyperliquid data.",
+    "displayName": "SQD",
+    "shortDescription": "Explore live and historical blockchain data across 130+ networks.",
+    "longDescription": "Find 130+ blockchain networks in SQD, then explore the data available for each network. Ask about wallets, transactions, token transfers, smart contracts, network activity, and markets across Ethereum, Base, Solana, Bitcoin, Polkadot, Hyperliquid, and many more. Check SQD's live catalog for Tron availability. No account or login is required.",
     "developerName": "Subsquid Labs",
     "category": "Data & Analytics",
-    "capabilities": [
-      "Interactive",
-      "Read"
-    ],
+    "capabilities": ["Interactive", "Read"],
     "websiteURL": "https://sqd.dev/portal/",
     "privacyPolicyURL": "https://sqd.dev/imprint/",
     "defaultPrompt": [
-      "Show me the last 200 BTC perp fills on Hyperliquid.",
-      "How many transactions landed on Base in the past 2h?",
-      "Who sent the most USDC on Base in the past hour?"
+      "Which blockchain networks can SQD query?",
+      "Show the latest Hyperliquid BTC trades.",
+      "Is Tron available in SQD?"
     ],
     "brandColor": "#08090A",
     "composerIcon": "./assets/sqd-composer-icon.svg",
     "logo": "./assets/sqd-logo.svg",
-    "logoDark": "./assets/sqd-logo-dark.svg"
+    "logoDark": "./assets/sqd-logo.svg"
   }
 }

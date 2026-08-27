@@ -1,0 +1,416 @@
+{
+  "$schema": "https://developers.openai.com/apps-sdk/schemas/chatgpt-app-submission.v1.json",
+  "schema_version": 1,
+  "app_info": {
+    "display_name": "SQD",
+    "subtitle": "Explore blockchain data",
+    "description": "SQD helps users find 130+ blockchain networks and explore the live and historical data available for each. Review wallet and transaction activity, inspect token transfers and smart contracts, and analyze markets across Ethereum, Base, Bitcoin, Solana, Polkadot, Hyperliquid, and many more. Check SQD's live catalog for Tron availability. SQD is read-only and requires no login.",
+    "category": "DEVELOPER_TOOLS"
+  },
+  "tools": {
+    "portal_list_networks": {
+      "annotations": {
+        "readOnlyHint": true,
+        "openWorldHint": true,
+        "destructiveHint": false
+      },
+      "justifications": {
+        "read_only_justification": "Retrieves blockchain network availability and does not create, update, or delete external state.",
+        "open_world_justification": "Reads current public blockchain or network catalog data through SQD, so results can include external content.",
+        "destructive_justification": "Cannot delete, overwrite, revoke, send transactions, or perform irreversible actions."
+      }
+    },
+    "portal_get_network_info": {
+      "annotations": {
+        "readOnlyHint": true,
+        "openWorldHint": true,
+        "destructiveHint": false
+      },
+      "justifications": {
+        "read_only_justification": "Retrieves blockchain network details and does not create, update, or delete external state.",
+        "open_world_justification": "Reads current public blockchain or network catalog data through SQD, so results can include external content.",
+        "destructive_justification": "Cannot delete, overwrite, revoke, send transactions, or perform irreversible actions."
+      }
+    },
+    "portal_get_head": {
+      "annotations": {
+        "readOnlyHint": true,
+        "openWorldHint": true,
+        "destructiveHint": false
+      },
+      "justifications": {
+        "read_only_justification": "Retrieves the latest available blockchain block and does not create, update, or delete external state.",
+        "open_world_justification": "Reads current public blockchain or network catalog data through SQD, so results can include external content.",
+        "destructive_justification": "Cannot delete, overwrite, revoke, send transactions, or perform irreversible actions."
+      }
+    },
+    "portal_resolve_entity": {
+      "annotations": {
+        "readOnlyHint": true,
+        "openWorldHint": true,
+        "destructiveHint": false
+      },
+      "justifications": {
+        "read_only_justification": "Resolves a public blockchain identifier and does not create, update, or delete external state.",
+        "open_world_justification": "Reads current public blockchain or network catalog data through SQD, so results can include external content.",
+        "destructive_justification": "Cannot delete, overwrite, revoke, send transactions, or perform irreversible actions."
+      }
+    },
+    "portal_get_recent_activity": {
+      "annotations": {
+        "readOnlyHint": true,
+        "openWorldHint": true,
+        "destructiveHint": false
+      },
+      "justifications": {
+        "read_only_justification": "Retrieves recent public blockchain activity and does not create, update, or delete external state.",
+        "open_world_justification": "Reads current public blockchain or network catalog data through SQD, so results can include external content.",
+        "destructive_justification": "Cannot delete, overwrite, revoke, send transactions, or perform irreversible actions."
+      }
+    },
+    "portal_get_wallet_summary": {
+      "annotations": {
+        "readOnlyHint": true,
+        "openWorldHint": true,
+        "destructiveHint": false
+      },
+      "justifications": {
+        "read_only_justification": "Summarizes public blockchain activity for an address and does not create, update, or delete external state.",
+        "open_world_justification": "Reads current public blockchain or network catalog data through SQD, so results can include external content.",
+        "destructive_justification": "Cannot delete, overwrite, revoke, send transactions, or perform irreversible actions."
+      }
+    },
+    "portal_get_time_series": {
+      "annotations": {
+        "readOnlyHint": true,
+        "openWorldHint": true,
+        "destructiveHint": false
+      },
+      "justifications": {
+        "read_only_justification": "Computes a time series from public blockchain data and does not create, update, or delete external state.",
+        "open_world_justification": "Reads current public blockchain or network catalog data through SQD, so results can include external content.",
+        "destructive_justification": "Cannot delete, overwrite, revoke, send transactions, or perform irreversible actions."
+      }
+    },
+    "portal_evm_query_logs": {
+      "annotations": {
+        "readOnlyHint": true,
+        "openWorldHint": true,
+        "destructiveHint": false
+      },
+      "justifications": {
+        "read_only_justification": "Retrieves matching smart contract logs and does not create, update, or delete external state.",
+        "open_world_justification": "Reads current public blockchain or network catalog data through SQD, so results can include external content.",
+        "destructive_justification": "Cannot delete, overwrite, revoke, send transactions, or perform irreversible actions."
+      }
+    },
+    "portal_evm_query_transactions": {
+      "annotations": {
+        "readOnlyHint": true,
+        "openWorldHint": true,
+        "destructiveHint": false
+      },
+      "justifications": {
+        "read_only_justification": "Retrieves matching blockchain transactions and does not create, update, or delete external state.",
+        "open_world_justification": "Reads current public blockchain or network catalog data through SQD, so results can include external content.",
+        "destructive_justification": "Cannot delete, overwrite, revoke, send transactions, or perform irreversible actions."
+      }
+    },
+    "portal_evm_query_token_transfers": {
+      "annotations": {
+        "readOnlyHint": true,
+        "openWorldHint": true,
+        "destructiveHint": false
+      },
+      "justifications": {
+        "read_only_justification": "Retrieves recorded token transfers and does not create, update, or delete external state.",
+        "open_world_justification": "Reads current public blockchain or network catalog data through SQD, so results can include external content.",
+        "destructive_justification": "Cannot delete, overwrite, revoke, send transactions, or perform irreversible actions."
+      }
+    },
+    "portal_evm_get_contract_deployment": {
+      "annotations": {
+        "readOnlyHint": true,
+        "openWorldHint": true,
+        "destructiveHint": false
+      },
+      "justifications": {
+        "read_only_justification": "Retrieves a smart contract deployment record and does not create, update, or delete external state.",
+        "open_world_justification": "Reads current public blockchain or network catalog data through SQD, so results can include external content.",
+        "destructive_justification": "Cannot delete, overwrite, revoke, send transactions, or perform irreversible actions."
+      }
+    },
+    "portal_evm_get_contract_activity": {
+      "annotations": {
+        "readOnlyHint": true,
+        "openWorldHint": true,
+        "destructiveHint": false
+      },
+      "justifications": {
+        "read_only_justification": "Summarizes recorded smart contract activity and does not create, update, or delete external state.",
+        "open_world_justification": "Reads current public blockchain or network catalog data through SQD, so results can include external content.",
+        "destructive_justification": "Cannot delete, overwrite, revoke, send transactions, or perform irreversible actions."
+      }
+    },
+    "portal_evm_get_analytics": {
+      "annotations": {
+        "readOnlyHint": true,
+        "openWorldHint": true,
+        "destructiveHint": false
+      },
+      "justifications": {
+        "read_only_justification": "Computes analytics from recorded blockchain activity and does not create, update, or delete external state.",
+        "open_world_justification": "Reads current public blockchain or network catalog data through SQD, so results can include external content.",
+        "destructive_justification": "Cannot delete, overwrite, revoke, send transactions, or perform irreversible actions."
+      }
+    },
+    "portal_evm_get_ohlc": {
+      "annotations": {
+        "readOnlyHint": true,
+        "openWorldHint": true,
+        "destructiveHint": false
+      },
+      "justifications": {
+        "read_only_justification": "Computes historical activity bars from blockchain data and does not create, update, or delete external state.",
+        "open_world_justification": "Reads current public blockchain or network catalog data through SQD, so results can include external content.",
+        "destructive_justification": "Cannot delete, overwrite, revoke, send transactions, or perform irreversible actions."
+      }
+    },
+    "portal_solana_query_instructions": {
+      "annotations": {
+        "readOnlyHint": true,
+        "openWorldHint": true,
+        "destructiveHint": false
+      },
+      "justifications": {
+        "read_only_justification": "Retrieves recorded Solana instructions and does not create, update, or delete external state.",
+        "open_world_justification": "Reads current public blockchain or network catalog data through SQD, so results can include external content.",
+        "destructive_justification": "Cannot delete, overwrite, revoke, send transactions, or perform irreversible actions."
+      }
+    },
+    "portal_solana_query_transactions": {
+      "annotations": {
+        "readOnlyHint": true,
+        "openWorldHint": true,
+        "destructiveHint": false
+      },
+      "justifications": {
+        "read_only_justification": "Retrieves recorded Solana transactions and does not create, update, or delete external state.",
+        "open_world_justification": "Reads current public blockchain or network catalog data through SQD, so results can include external content.",
+        "destructive_justification": "Cannot delete, overwrite, revoke, send transactions, or perform irreversible actions."
+      }
+    },
+    "portal_solana_get_analytics": {
+      "annotations": {
+        "readOnlyHint": true,
+        "openWorldHint": true,
+        "destructiveHint": false
+      },
+      "justifications": {
+        "read_only_justification": "Computes analytics from recorded Solana activity and does not create, update, or delete external state.",
+        "open_world_justification": "Reads current public blockchain or network catalog data through SQD, so results can include external content.",
+        "destructive_justification": "Cannot delete, overwrite, revoke, send transactions, or perform irreversible actions."
+      }
+    },
+    "portal_bitcoin_query_transactions": {
+      "annotations": {
+        "readOnlyHint": true,
+        "openWorldHint": true,
+        "destructiveHint": false
+      },
+      "justifications": {
+        "read_only_justification": "Retrieves recorded Bitcoin transactions and does not create, update, or delete external state.",
+        "open_world_justification": "Reads current public blockchain or network catalog data through SQD, so results can include external content.",
+        "destructive_justification": "Cannot delete, overwrite, revoke, send transactions, or perform irreversible actions."
+      }
+    },
+    "portal_bitcoin_get_analytics": {
+      "annotations": {
+        "readOnlyHint": true,
+        "openWorldHint": true,
+        "destructiveHint": false
+      },
+      "justifications": {
+        "read_only_justification": "Computes analytics from recorded Bitcoin activity and does not create, update, or delete external state.",
+        "open_world_justification": "Reads current public blockchain or network catalog data through SQD, so results can include external content.",
+        "destructive_justification": "Cannot delete, overwrite, revoke, send transactions, or perform irreversible actions."
+      }
+    },
+    "portal_substrate_query_events": {
+      "annotations": {
+        "readOnlyHint": true,
+        "openWorldHint": true,
+        "destructiveHint": false
+      },
+      "justifications": {
+        "read_only_justification": "Retrieves recorded Polkadot ecosystem events and does not create, update, or delete external state.",
+        "open_world_justification": "Reads current public blockchain or network catalog data through SQD, so results can include external content.",
+        "destructive_justification": "Cannot delete, overwrite, revoke, send transactions, or perform irreversible actions."
+      }
+    },
+    "portal_substrate_query_calls": {
+      "annotations": {
+        "readOnlyHint": true,
+        "openWorldHint": true,
+        "destructiveHint": false
+      },
+      "justifications": {
+        "read_only_justification": "Retrieves recorded Polkadot ecosystem calls and does not create, update, or delete external state.",
+        "open_world_justification": "Reads current public blockchain or network catalog data through SQD, so results can include external content.",
+        "destructive_justification": "Cannot delete, overwrite, revoke, send transactions, or perform irreversible actions."
+      }
+    },
+    "portal_substrate_get_analytics": {
+      "annotations": {
+        "readOnlyHint": true,
+        "openWorldHint": true,
+        "destructiveHint": false
+      },
+      "justifications": {
+        "read_only_justification": "Computes analytics from recorded Polkadot ecosystem activity and does not create, update, or delete external state.",
+        "open_world_justification": "Reads current public blockchain or network catalog data through SQD, so results can include external content.",
+        "destructive_justification": "Cannot delete, overwrite, revoke, send transactions, or perform irreversible actions."
+      }
+    },
+    "portal_hyperliquid_query_fills": {
+      "annotations": {
+        "readOnlyHint": true,
+        "openWorldHint": true,
+        "destructiveHint": false
+      },
+      "justifications": {
+        "read_only_justification": "Retrieves recorded Hyperliquid fills and does not place trades or change external state.",
+        "open_world_justification": "Reads current public blockchain or network catalog data through SQD, so results can include external content.",
+        "destructive_justification": "Cannot delete, overwrite, revoke, send transactions, place trades, or perform irreversible actions."
+      }
+    },
+    "portal_hyperliquid_get_analytics": {
+      "annotations": {
+        "readOnlyHint": true,
+        "openWorldHint": true,
+        "destructiveHint": false
+      },
+      "justifications": {
+        "read_only_justification": "Computes analytics from recorded Hyperliquid activity and does not place trades or change external state.",
+        "open_world_justification": "Reads current public blockchain or network catalog data through SQD, so results can include external content.",
+        "destructive_justification": "Cannot delete, overwrite, revoke, send transactions, place trades, or perform irreversible actions."
+      }
+    },
+    "portal_hyperliquid_get_ohlc": {
+      "annotations": {
+        "readOnlyHint": true,
+        "openWorldHint": true,
+        "destructiveHint": false
+      },
+      "justifications": {
+        "read_only_justification": "Computes historical Hyperliquid market bars and does not place trades or change external state.",
+        "open_world_justification": "Reads current public blockchain or network catalog data through SQD, so results can include external content.",
+        "destructive_justification": "Cannot delete, overwrite, revoke, send transactions, place trades, or perform irreversible actions."
+      }
+    },
+    "portal_debug_query_blocks": {
+      "annotations": {
+        "readOnlyHint": true,
+        "openWorldHint": true,
+        "destructiveHint": false
+      },
+      "justifications": {
+        "read_only_justification": "Retrieves a bounded block sample for diagnostics and does not create, update, or delete external state.",
+        "open_world_justification": "Reads current public blockchain or network catalog data through SQD, so results can include external content.",
+        "destructive_justification": "Cannot delete, overwrite, revoke, send transactions, or perform irreversible actions."
+      }
+    },
+    "portal_debug_resolve_time_to_block": {
+      "annotations": {
+        "readOnlyHint": true,
+        "openWorldHint": true,
+        "destructiveHint": false
+      },
+      "justifications": {
+        "read_only_justification": "Resolves a time to an available block for diagnostics and does not create, update, or delete external state.",
+        "open_world_justification": "Reads current public blockchain or network catalog data through SQD, so results can include external content.",
+        "destructive_justification": "Cannot delete, overwrite, revoke, send transactions, or perform irreversible actions."
+      }
+    },
+    "portal_debug_hyperliquid_query_replica_commands": {
+      "annotations": {
+        "readOnlyHint": true,
+        "openWorldHint": true,
+        "destructiveHint": false
+      },
+      "justifications": {
+        "read_only_justification": "Retrieves recorded Hyperliquid replica commands for diagnostics and does not execute commands or change external state.",
+        "open_world_justification": "Reads current public blockchain or network catalog data through SQD, so results can include external content.",
+        "destructive_justification": "Cannot delete, overwrite, revoke, send transactions, place trades, or perform irreversible actions."
+      }
+    }
+  },
+  "test_cases": [
+    {
+      "description": "Discover the blockchain networks available through SQD.",
+      "user_prompt": "Which blockchain networks can SQD query?",
+      "file_attachment_urls": null,
+      "tools_triggered": "portal_list_networks",
+      "expected_output": "Returns a searchable list of supported networks and their availability.",
+      "expected_output_url": null
+    },
+    {
+      "description": "Retrieve recent Hyperliquid BTC market activity.",
+      "user_prompt": "Show the latest Hyperliquid BTC trades.",
+      "file_attachment_urls": null,
+      "tools_triggered": "portal_hyperliquid_query_fills",
+      "expected_output": "Returns a bounded list of recent BTC fills with time, direction, price, size, and trader fields.",
+      "expected_output_url": null
+    },
+    {
+      "description": "Measure recent transaction activity on Base.",
+      "user_prompt": "How many transactions were on Base in the past two hours?",
+      "file_attachment_urls": null,
+      "tools_triggered": "portal_get_time_series",
+      "expected_output": "Returns time buckets and a total transaction count for Base over the requested period.",
+      "expected_output_url": null
+    },
+    {
+      "description": "Find large recent token transfers on Ethereum.",
+      "user_prompt": "Show the latest USDC transfers on Ethereum in the past hour.",
+      "file_attachment_urls": null,
+      "tools_triggered": "portal_evm_query_token_transfers",
+      "expected_output": "Returns a bounded list of recent USDC transfers with transaction references and coverage details.",
+      "expected_output_url": null
+    },
+    {
+      "description": "Summarize a public wallet's recent Base activity.",
+      "user_prompt": "Summarize 0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045 activity on Base over the past day.",
+      "file_attachment_urls": null,
+      "tools_triggered": "portal_get_wallet_summary",
+      "expected_output": "Returns incoming and outgoing activity, counterparties, and clear time and network coverage.",
+      "expected_output_url": null
+    }
+  ],
+  "negative_test_cases": [
+    {
+      "description": "Do not trigger SQD for a request to send a transaction.",
+      "user_prompt": "Send 1 ETH from my wallet.",
+      "file_attachment_urls": null,
+      "tools_triggered": null,
+      "expected_output": "Explain that SQD is read-only and cannot sign or send transactions.",
+      "expected_output_url": null
+    },
+    {
+      "description": "Do not trigger SQD for a request to place a trade.",
+      "user_prompt": "Place a Hyperliquid BTC trade for me.",
+      "file_attachment_urls": null,
+      "tools_triggered": null,
+      "expected_output": "Explain that SQD can retrieve market data but cannot place or sign trades.",
+      "expected_output_url": null
+    },
+    {
+      "description": "Do not trigger SQD for price predictions or investment advice.",
+      "user_prompt": "Predict tomorrow's BTC price and tell me whether to buy.",
+      "file_attachment_urls": null,
+      "tools_triggered": null,
+      "expected_output": "Explain that SQD provides historical and live blockchain data, not predictions or investment advice.",
+      "expected_output_url": null
+    }
+  ]
+}

@@ -68,6 +68,8 @@ data/
 !RELEASE_ASSURANCE.md
 !LICENSE.md
 !CONTRIBUTING.md
+!plugins/*/skills/**/*.md
+!plugins/*/skills/**/*.log
 
 # Environment files with secrets
 .env

@@ -1,0 +1,4 @@
+api 2026-01-01T00:00:00.000Z INFO app processed 1 items
+api 2026-01-01T00:00:01.000Z NOTICE app queued 2 items
+api 2026-01-01T00:00:02.000Z WARNING sqd:processor retrying request
+api 2026-01-01T00:00:03.000Z CRITICAL sqd:multicall request failed

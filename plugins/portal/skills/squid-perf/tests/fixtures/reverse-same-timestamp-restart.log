@@ -1,0 +1,5 @@
+api 2026-01-01T00:00:20.000Z INFO sqd:processor 4500 / 10000, rate: 10 blocks/sec
+api 2026-01-01T00:00:10.000Z INFO sqd:processor 4000 / 10000, rate: 10 blocks/sec
+api 2026-01-01T00:00:10.000Z INFO sqd:multicall processed between 6000 at block 6000: 1 chunks, 1 groups, 1 total calls, 10ms
+api 2026-01-01T00:00:10.000Z INFO sqd:processor 8000 / 10000, rate: 10 blocks/sec
+api 2026-01-01T00:00:00.000Z INFO sqd:processor 5000 / 10000, rate: 10 blocks/sec

@@ -9,6 +9,43 @@ const PLUGIN_ROOT = 'plugins/portal'
 const MARKETPLACE_PATH = '.agents/plugins/marketplace.json'
 const PLUGIN_JSON_PATH = `${PLUGIN_ROOT}/.codex-plugin/plugin.json`
 const MCP_JSON_PATH = `${PLUGIN_ROOT}/.mcp.json`
+const README_PATH = `${PLUGIN_ROOT}/README.md`
+const DIRECTORY_SUBMISSION_PATH = `${PLUGIN_ROOT}/DIRECTORY_SUBMISSION.md`
+const SKILLS_SOURCE_PATH = `${PLUGIN_ROOT}/skills/SOURCE.md`
+const CHATGPT_SUBMISSION_PATH = 'chatgpt-app-submission.json'
+const REQUIRE_OPENAI_LIVE_METADATA = process.env.REQUIRE_OPENAI_LIVE_METADATA === '1'
+const REQUIRE_MCP_2026_LIVE = process.env.REQUIRE_MCP_2026_LIVE === '1'
+
+const EXPECTED_PUBLIC_TOOL_NAMES = [
+  'portal_list_networks',
+  'portal_get_network_info',
+  'portal_get_head',
+  'portal_resolve_entity',
+  'portal_get_recent_activity',
+  'portal_get_wallet_summary',
+  'portal_get_time_series',
+  'portal_evm_query_logs',
+  'portal_evm_query_transactions',
+  'portal_evm_query_token_transfers',
+  'portal_evm_get_contract_deployment',
+  'portal_evm_get_contract_activity',
+  'portal_evm_get_analytics',
+  'portal_evm_get_ohlc',
+  'portal_solana_query_instructions',
+  'portal_solana_query_transactions',
+  'portal_solana_get_analytics',
+  'portal_bitcoin_query_transactions',
+  'portal_bitcoin_get_analytics',
+  'portal_substrate_query_events',
+  'portal_substrate_query_calls',
+  'portal_substrate_get_analytics',
+  'portal_hyperliquid_query_fills',
+  'portal_hyperliquid_get_analytics',
+  'portal_hyperliquid_get_ohlc',
+  'portal_debug_query_blocks',
+  'portal_debug_resolve_time_to_block',
+  'portal_debug_hyperliquid_query_replica_commands',
+] as const
 
 function assert(condition: boolean, message: string) {
   if (!condition) {
@@ -61,23 +98,28 @@ function assertSquareLogoVariants(pluginRoot: string, interfaceConfig: JsonObjec
   const darkSurfaceLogo = readFileSync(resolve(pluginRoot, interfaceConfig.logoDark), 'utf8')
   assert(
     lightSurfaceLogo.includes('<rect width="305" height="305" transform="translate(0.117798 0.453125)" fill="black"/>'),
-    'interface.logo must use the black-background SQD square symbol'
+    'interface.logo must use the black-background SQD square symbol',
   )
   assert(lightSurfaceLogo.includes('fill="white"'), 'interface.logo must contain the white SQD mark')
   assert(
-    darkSurfaceLogo.includes('<rect width="305" height="305" transform="translate(0.117798 0.453125)" fill="white"/>'),
-    'interface.logoDark must use the white-background SQD square symbol'
+    darkSurfaceLogo.includes('<rect width="305" height="305" transform="translate(0.117798 0.453125)" fill="black"/>'),
+    'interface.logoDark must use the black-background SQD square symbol',
   )
-  assert(darkSurfaceLogo.includes('fill="black"'), 'interface.logoDark must contain the black SQD mark')
+  assert(darkSurfaceLogo.includes('fill="white"'), 'interface.logoDark must contain the white SQD mark')
 }
 
 function assertComposerIcon(pluginRoot: string, value: unknown) {
   assertString(value, 'interface.composerIcon must be a string')
-  assert(value === './assets/sqd-composer-icon.svg', 'plugin should use the trimmed SQD composer icon in prompt previews')
+  assert(
+    value === './assets/sqd-composer-icon.svg',
+    'plugin should use the trimmed SQD composer icon in prompt previews',
+  )
   const composerIcon = readFileSync(resolve(pluginRoot, value), 'utf8')
   assert(
-    composerIcon.includes('<rect width="305" height="305" rx="42" transform="translate(0.117798 0.453125)" fill="black"/>'),
-    'interface.composerIcon must use a softened black SQD square for prompt previews'
+    composerIcon.includes(
+      '<rect width="305" height="305" rx="42" transform="translate(0.117798 0.453125)" fill="black"/>',
+    ),
+    'interface.composerIcon must use a softened black SQD square for prompt previews',
   )
   assert(composerIcon.includes('fill="white"'), 'interface.composerIcon must contain the white SQD mark')
 }
@@ -86,11 +128,14 @@ function assertPromptList(value: unknown) {
   assert(Array.isArray(value), 'interface.defaultPrompt must be an array')
   assert(value.length > 0 && value.length <= 3, 'interface.defaultPrompt must contain 1-3 prompts')
   const expectedPrompts = [
-    'Show me the last 200 BTC perp fills on Hyperliquid.',
-    'How many transactions landed on Base in the past 2h?',
-    'Who sent the most USDC on Base in the past hour?',
+    'Which blockchain networks can SQD query?',
+    'Show the latest Hyperliquid BTC trades.',
+    'Is Tron available in SQD?',
   ]
-  assert(JSON.stringify(value) === JSON.stringify(expectedPrompts), 'interface.defaultPrompt should stay concrete and analysis-oriented')
+  assert(
+    JSON.stringify(value) === JSON.stringify(expectedPrompts),
+    'interface.defaultPrompt should stay concrete and analysis-oriented',
+  )
   for (const [index, prompt] of value.entries()) {
     assertString(prompt, `interface.defaultPrompt[${index}] must be a non-empty string`)
     assert(prompt.length <= 128, `interface.defaultPrompt[${index}] must be at most 128 characters`)
@@ -128,15 +173,62 @@ function assertManifest() {
   const manifest = readJson(PLUGIN_JSON_PATH)
   assert(manifest.name === 'portal', 'plugin name should be portal')
   assert(manifest.version === '0.8.0', 'plugin version should be the public release version')
+  assert(manifest.skills === './skills/', 'plugin should load the bundled official SQD skills')
   assert(manifest.mcpServers === './.mcp.json', 'plugin should reference ./.mcp.json')
   assertRecord(manifest.interface, 'plugin interface must be an object')
-  assert(manifest.interface.displayName === 'SQD Portal', 'plugin display name should be polished for end users')
-  assert(manifest.interface.websiteURL === 'https://sqd.dev/portal/', 'plugin website should point at the SQD Portal product page')
-  assert(manifest.interface.privacyPolicyURL === 'https://sqd.dev/imprint/', 'plugin privacy policy should point at SQD imprint/privacy page')
+  assert(manifest.interface.displayName === 'SQD', 'plugin display name should be SQD')
+  assert(
+    manifest.interface.shortDescription === 'Explore live and historical blockchain data across 130+ networks.',
+    'plugin short description should lead with broad network coverage',
+  )
+  const publicCopy = [
+    manifest.description,
+    manifest.interface.shortDescription,
+    manifest.interface.longDescription,
+    ...(manifest.interface.defaultPrompt as unknown[]),
+  ].join(' ')
+  for (const phrase of [
+    'blockchain',
+    '130+ networks',
+    'Ethereum',
+    'Base',
+    'Solana',
+    'Bitcoin',
+    'Tron',
+    'Polkadot',
+    'Hyperliquid',
+    'many more',
+  ]) {
+    assert(publicCopy.toLowerCase().includes(phrase.toLowerCase()), `plugin copy should include ${phrase}`)
+  }
+  assert(!/[\u2014\u2013]/.test(publicCopy), 'plugin copy should not use em or en dashes')
+  assert(!/\b(onchain|EVM|Substrate|MCP)\b/.test(publicCopy), 'plugin copy should avoid unexplained jargon')
+  assert(
+    manifest.interface.websiteURL === 'https://sqd.dev/portal/',
+    'plugin website should point at the SQD Portal product page',
+  )
+  assert(
+    manifest.interface.privacyPolicyURL === 'https://sqd.dev/imprint/',
+    'plugin privacy policy should point at SQD imprint/privacy page',
+  )
   assert(manifest.interface.brandColor === '#08090A', 'plugin brand color should match SQD surface black')
-  assert(manifest.interface.logo === './assets/sqd-logo.svg', 'plugin should use the black SQD square logo in light mode')
-  assert(manifest.interface.logoDark === './assets/sqd-logo-dark.svg', 'plugin should use the white SQD square logo in dark mode')
+  assert(
+    manifest.interface.logo === './assets/sqd-logo.svg',
+    'plugin should use the black SQD square logo in light mode',
+  )
+  assert(
+    manifest.interface.logoDark === './assets/sqd-logo.svg',
+    'plugin should keep the black SQD square logo in dark mode',
+  )
   assertPromptList(manifest.interface.defaultPrompt)
+  for (const skill of ['portal', 'pipes-sdk', 'migrate-to-portal', 'squid-perf']) {
+    assert(existsSync(resolve(PLUGIN_ROOT, 'skills', skill, 'SKILL.md')), `plugin should bundle the ${skill} skill`)
+  }
+  const skillsSource = readFileSync(SKILLS_SOURCE_PATH, 'utf8')
+  assert(
+    skillsSource.includes('06936ddfa9ae423638e187d8e9ac5d1f831095a8'),
+    'bundled skills should record the verified upstream commit',
+  )
   assertOptionalAsset(PLUGIN_ROOT, manifest.interface.composerIcon, 'interface.composerIcon')
   assertOptionalAsset(PLUGIN_ROOT, manifest.interface.logo, 'interface.logo')
   assertOptionalAsset(PLUGIN_ROOT, manifest.interface.logoDark, 'interface.logoDark')
@@ -145,9 +237,21 @@ function assertManifest() {
   const screenshots = manifest.interface.screenshots
   if (screenshots !== undefined) {
     assert(Array.isArray(screenshots), 'interface.screenshots must be an array when present')
-    screenshots.forEach((screenshot, index) => assertOptionalAsset(PLUGIN_ROOT, screenshot, `interface.screenshots[${index}]`))
+    screenshots.forEach((screenshot, index) =>
+      assertOptionalAsset(PLUGIN_ROOT, screenshot, `interface.screenshots[${index}]`),
+    )
   }
   assertNoCommittedSecretOrLocalPath(manifest)
+
+  for (const path of [README_PATH, DIRECTORY_SUBMISSION_PATH]) {
+    const copy = readFileSync(path, 'utf8')
+    assert(!/[\u2014\u2013]/.test(copy), `${path} should not use em or en dashes`)
+  }
+  const directorySubmission = readFileSync(DIRECTORY_SUBMISSION_PATH, 'utf8')
+  assert(
+    directorySubmission.includes('https://sqd.dev/brand/Symbol_bl-bg.svg'),
+    'directory submission should use the canonical public black-background SQD logo',
+  )
 }
 
 function assertMarketplace() {
@@ -167,6 +271,78 @@ function assertMarketplace() {
   assert(entry.category === 'Data & Analytics', 'marketplace category should be Data & Analytics')
 }
 
+function assertChatgptSubmission() {
+  const submission = readJson(CHATGPT_SUBMISSION_PATH)
+  assert(
+    submission.$schema === 'https://developers.openai.com/apps-sdk/schemas/chatgpt-app-submission.v1.json',
+    'ChatGPT submission should use the official v1 schema',
+  )
+  assert(submission.schema_version === 1, 'ChatGPT submission schema_version should be 1')
+  assertRecord(submission.app_info, 'ChatGPT submission app_info must be an object')
+  assert(submission.app_info.display_name === 'SQD', 'ChatGPT submission display name should be SQD')
+  assertString(submission.app_info.subtitle, 'ChatGPT submission subtitle must be a string')
+  assert(submission.app_info.subtitle.length <= 30, 'ChatGPT submission subtitle must be at most 30 characters')
+  assertString(submission.app_info.description, 'ChatGPT submission description must be a string')
+  assert(submission.app_info.category === 'DEVELOPER_TOOLS', 'ChatGPT submission category should be DEVELOPER_TOOLS')
+
+  const publicCopy = `${submission.app_info.subtitle} ${submission.app_info.description}`
+  for (const phrase of ['blockchain', '130+', 'Bitcoin', 'Solana', 'Polkadot', 'Tron', 'Hyperliquid', 'many more']) {
+    assert(publicCopy.toLowerCase().includes(phrase.toLowerCase()), `ChatGPT submission copy should include ${phrase}`)
+  }
+  assert(!/[\u2014\u2013]/.test(publicCopy), 'ChatGPT submission copy should not use em or en dashes')
+  assert(!/\b(onchain|EVM|Substrate|MCP)\b/.test(publicCopy), 'ChatGPT submission copy should avoid unexplained jargon')
+
+  assertRecord(submission.tools, 'ChatGPT submission tools must be an object')
+  assert(
+    JSON.stringify(Object.keys(submission.tools).sort()) === JSON.stringify([...EXPECTED_PUBLIC_TOOL_NAMES].sort()),
+    'ChatGPT submission should cover exactly the 28 public tools',
+  )
+  for (const toolName of EXPECTED_PUBLIC_TOOL_NAMES) {
+    const tool = submission.tools[toolName]
+    assertRecord(tool, `ChatGPT submission should include ${toolName}`)
+    assertRecord(tool.annotations, `${toolName}.annotations must be an object`)
+    assert(tool.annotations.readOnlyHint === true, `${toolName} should declare readOnlyHint: true`)
+    assert(tool.annotations.openWorldHint === true, `${toolName} should declare openWorldHint: true`)
+    assert(tool.annotations.destructiveHint === false, `${toolName} should declare destructiveHint: false`)
+    assertRecord(tool.justifications, `${toolName}.justifications must be an object`)
+    for (const field of ['read_only_justification', 'open_world_justification', 'destructive_justification']) {
+      assertString(tool.justifications[field], `${toolName}.${field} must be a non-empty string`)
+      assert(
+        (tool.justifications[field] as string).trim().endsWith('.'),
+        `${toolName}.${field} should be one complete sentence`,
+      )
+    }
+  }
+
+  assert(Array.isArray(submission.test_cases), 'ChatGPT submission test_cases must be an array')
+  assert(submission.test_cases.length === 5, 'ChatGPT submission should include exactly 5 positive test cases')
+  for (const [index, value] of submission.test_cases.entries()) {
+    assertRecord(value, `test_cases[${index}] must be an object`)
+    assertString(value.description, `test_cases[${index}].description must be a string`)
+    assertString(value.user_prompt, `test_cases[${index}].user_prompt must be a string`)
+    assert(
+      EXPECTED_PUBLIC_TOOL_NAMES.includes(value.tools_triggered as (typeof EXPECTED_PUBLIC_TOOL_NAMES)[number]),
+      `test_cases[${index}].tools_triggered must be an exact public tool name`,
+    )
+    assertString(value.expected_output, `test_cases[${index}].expected_output must be a string`)
+    assert(value.file_attachment_urls === null, `test_cases[${index}] should not include file attachments`)
+    assert(value.expected_output_url === null, `test_cases[${index}] should not include an output URL`)
+  }
+
+  assert(Array.isArray(submission.negative_test_cases), 'ChatGPT submission negative_test_cases must be an array')
+  assert(submission.negative_test_cases.length === 3, 'ChatGPT submission should include exactly 3 negative test cases')
+  for (const [index, value] of submission.negative_test_cases.entries()) {
+    assertRecord(value, `negative_test_cases[${index}] must be an object`)
+    assertString(value.description, `negative_test_cases[${index}].description must be a string`)
+    assertString(value.user_prompt, `negative_test_cases[${index}].user_prompt must be a string`)
+    assert(value.tools_triggered === null, `negative_test_cases[${index}].tools_triggered must be null`)
+    assertString(value.expected_output, `negative_test_cases[${index}].expected_output must be a string`)
+    assert(value.file_attachment_urls === null, `negative_test_cases[${index}] should not include file attachments`)
+    assert(value.expected_output_url === null, `negative_test_cases[${index}] should not include an output URL`)
+  }
+  assertNoCommittedSecretOrLocalPath(submission)
+}
+
 function getEndpoint() {
   const mcp = readJson(MCP_JSON_PATH)
   assertRecord(mcp.mcpServers, '.mcp.json mcpServers must be an object')
@@ -183,18 +359,34 @@ function getEndpoint() {
 
 async function assertHostedMcp(endpoint: string) {
   const init = await postRpc(endpoint, 'initialize', {
-    protocolVersion: '2024-11-05',
+    protocolVersion: '2026-07-28',
     capabilities: {},
     clientInfo: { name: 'portal-mcp-plugin-release-gate', version: '1.0.0' },
   })
   assertRecord(init.serverInfo, 'initialize should return serverInfo')
   assert(init.serverInfo.name === 'sqd-portal-mcp-server', 'unexpected MCP server name')
+  if (REQUIRE_MCP_2026_LIVE) {
+    assert(init.protocolVersion === '2026-07-28', 'Codex plugin should negotiate MCP 2026-07-28')
+  }
 
   const list = await postRpc(endpoint, 'tools/list', {})
   assert(Array.isArray(list.tools), 'tools/list should return tools array')
   const toolNames = new Set(list.tools.map((tool) => (tool as JsonObject).name))
-  assert(toolNames.has('portal_list_networks'), 'tools/list should include portal_list_networks')
-  assert(toolNames.has('portal_resolve_entity'), 'tools/list should include portal_resolve_entity')
+  assert(
+    toolNames.size === EXPECTED_PUBLIC_TOOL_NAMES.length &&
+      EXPECTED_PUBLIC_TOOL_NAMES.every((name) => toolNames.has(name)),
+    'tools/list should expose exactly the 28 reviewed public tools',
+  )
+  if (REQUIRE_OPENAI_LIVE_METADATA) {
+    for (const value of list.tools) {
+      assertRecord(value, 'each live MCP tool must be an object')
+      assertString(value.title, `${String(value.name)} must expose a review-facing title`)
+      assertRecord(value.annotations, `${String(value.name)} must expose annotations`)
+      assert(value.annotations.readOnlyHint === true, `${String(value.name)} must expose readOnlyHint: true`)
+      assert(value.annotations.openWorldHint === true, `${String(value.name)} must expose openWorldHint: true`)
+      assert(value.annotations.destructiveHint === false, `${String(value.name)} must expose destructiveHint: false`)
+    }
+  }
 
   const discovery = await postRpc(endpoint, 'tools/call', {
     name: 'portal_list_networks',
@@ -209,9 +401,12 @@ async function assertHostedMcp(endpoint: string) {
 async function main() {
   assertManifest()
   assertMarketplace()
+  assertChatgptSubmission()
   const endpoint = getEndpoint()
   await assertHostedMcp(endpoint)
-  console.log('Codex plugin release gate passed: manifest, marketplace, assets, and hosted MCP smoke are valid')
+  console.log(
+    `Codex plugin release gate passed: manifest, marketplace, OpenAI submission, assets, and hosted MCP smoke are valid${REQUIRE_OPENAI_LIVE_METADATA ? ' with strict live metadata' : ''}${REQUIRE_MCP_2026_LIVE ? ' with live MCP 2026-07-28' : ''}`,
+  )
 }
 
 await main()
