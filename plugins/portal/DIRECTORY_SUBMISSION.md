@@ -12,17 +12,17 @@ Category: `Data & Analytics`
 
 Short description:
 
-> Explore blockchain data across Ethereum, Base, Solana, Bitcoin, Tron, and Hyperliquid.
+> Explore live and historical blockchain data across 130+ networks.
 
 Long description:
 
-> Ask SQD about wallets, transactions, token transfers, smart contracts, network activity, and Hyperliquid trades. Explore live and historical blockchain data across Ethereum, Base, Solana, Bitcoin, Tron, Polkadot, and other supported networks. No account or login is required.
+> Ask SQD about wallets, transactions, token transfers, smart contracts, network activity, and markets across 130+ networks. Query Ethereum, Base, Solana, Bitcoin, Tron, Polkadot, Hyperliquid, and many more. No account or login is required.
 
 Starter prompts:
 
-1. Show the latest Hyperliquid BTC trades.
-2. How many transactions were on Base in the past two hours?
-3. Show the largest USDC transfers on Ethereum in the past hour.
+1. Which blockchain networks can SQD query?
+2. Show the latest Hyperliquid BTC trades.
+3. Show the latest USDT transfers on Tron.
 
 Public URLs:
 
@@ -58,12 +58,13 @@ Do not upload screenshots. SQD does not ship a plugin user interface in this rel
 
 Suggested initial release notes:
 
-> Initial SQD plugin submission. SQD provides read-only access to live and historical blockchain data across supported networks, including Ethereum, Base, Solana, Bitcoin, Tron, Polkadot, and Hyperliquid. It requires no account or login.
+> Initial SQD plugin submission. SQD provides read-only access to live and historical blockchain data across 130+ networks, including Ethereum, Base, Solana, Bitcoin, Tron, Polkadot, Hyperliquid, and many more. It requires no account or login.
 
 ### Positive review tests
 
 | Prompt | Expected tool | Expected result |
 |---|---|---|
+| Which blockchain networks can SQD query? | `portal_list_networks` | A searchable list of supported networks and their availability. |
 | Show the latest Hyperliquid BTC trades. | `portal_hyperliquid_query_fills` | A bounded list of BTC trades with time, direction, price, size, and trader fields. |
 | How many transactions were on Base in the past two hours? | `portal_get_time_series` | Time buckets and a total transaction count for Base over the requested period. |
 | Show the largest USDC transfers on Ethereum in the past hour. | `portal_evm_query_token_transfers` | A ranked, bounded list of USDC transfers with transaction references and coverage details. |
@@ -87,7 +88,7 @@ Add this entry to `.grok-plugin/marketplace.json` after the SQD source change is
 ```json
 {
   "name": "sqd",
-  "description": "SQD gives Grok live and historical blockchain data. Explore wallets, transactions, token transfers, smart contracts, network activity, and Hyperliquid trades across Ethereum, Base, Solana, Bitcoin, Tron, Polkadot, and more.",
+  "description": "SQD gives Grok live and historical blockchain data across 130+ networks. Explore wallets, transactions, token transfers, smart contracts, network activity, and markets across Ethereum, Base, Solana, Bitcoin, Tron, Polkadot, Hyperliquid, and many more.",
   "category": "development",
   "source": {
     "source": "url",

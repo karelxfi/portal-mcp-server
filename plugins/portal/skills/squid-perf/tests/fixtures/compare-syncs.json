@@ -1,0 +1,17 @@
+{
+  "createdAt": "2026-01-01T00:00:00Z",
+  "downtimeThresholdSec": 120,
+  "breakpointsOverride": null,
+  "indexers": [
+    {
+      "ref": "org/baseline@abc",
+      "since": "2026-01-01T00:00:00Z",
+      "label": "baseline"
+    },
+    {
+      "ref": "org/optimized@def",
+      "since": "2026-01-01T00:00:00Z",
+      "label": "optimized"
+    }
+  ]
+}

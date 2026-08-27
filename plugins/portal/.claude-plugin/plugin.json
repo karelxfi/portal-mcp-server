@@ -2,7 +2,7 @@
   "name": "portal",
   "displayName": "SQD",
   "version": "0.8.0",
-  "description": "Explore live and historical blockchain data with SQD.",
+  "description": "Explore live and historical blockchain data across 130+ networks with SQD.",
   "author": {
     "name": "Subsquid Labs"
   },
@@ -21,7 +21,9 @@
     "solana",
     "bitcoin",
     "tron",
+    "polkadot",
     "hyperliquid",
+    "multi-chain",
     "smart contracts",
     "wallet activity"
   ],

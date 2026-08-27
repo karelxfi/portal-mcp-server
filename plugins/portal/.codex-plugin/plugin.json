@@ -21,27 +21,27 @@
     "solana",
     "bitcoin",
     "tron",
+    "polkadot",
     "hyperliquid",
+    "multi-chain",
     "smart contracts",
     "wallet activity"
   ],
+  "skills": "./skills/",
   "mcpServers": "./.mcp.json",
   "interface": {
     "displayName": "SQD",
-    "shortDescription": "Explore blockchain data across Ethereum, Base, Solana, Bitcoin, Tron, and Hyperliquid.",
-    "longDescription": "Ask SQD about wallets, transactions, token transfers, smart contracts, network activity, and Hyperliquid trades. Explore live and historical blockchain data across Ethereum, Base, Solana, Bitcoin, Tron, Polkadot, and other supported networks. No account or login is required.",
+    "shortDescription": "Explore live and historical blockchain data across 130+ networks.",
+    "longDescription": "Ask SQD about wallets, transactions, token transfers, smart contracts, network activity, and markets across 130+ networks. Query Ethereum, Base, Solana, Bitcoin, Tron, Polkadot, Hyperliquid, and many more. No account or login is required.",
     "developerName": "Subsquid Labs",
     "category": "Data & Analytics",
-    "capabilities": [
-      "Interactive",
-      "Read"
-    ],
+    "capabilities": ["Interactive", "Read"],
     "websiteURL": "https://sqd.dev/portal/",
     "privacyPolicyURL": "https://sqd.dev/imprint/",
     "defaultPrompt": [
+      "Which blockchain networks can SQD query?",
       "Show the latest Hyperliquid BTC trades.",
-      "How many transactions were on Base in the past two hours?",
-      "Show the largest USDC transfers on Ethereum in the past hour."
+      "Show the latest USDT transfers on Tron."
     ],
     "brandColor": "#08090A",
     "composerIcon": "./assets/sqd-composer-icon.svg",

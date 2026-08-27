@@ -93,11 +93,20 @@ function getEndpoint() {
   const manifest = readJson(PLUGIN_JSON_PATH)
   assert(manifest.name === 'portal', 'Claude plugin name should be portal')
   assert(manifest.displayName === 'SQD', 'Claude plugin display name should be SQD')
-  assert(manifest.description === 'Explore live and historical blockchain data with SQD.', 'Claude plugin description should use plain listing copy')
+  assert(
+    manifest.description === 'Explore live and historical blockchain data across 130+ networks with SQD.',
+    'Claude plugin description should lead with broad network coverage',
+  )
   assert(!/[\u2014\u2013]/.test(JSON.stringify(manifest)), 'Claude plugin copy should not use em or en dashes')
   assert(manifest.version === '0.8.0', 'Claude plugin version should be 0.8.0')
   assert(manifest.mcpServers === './.mcp.json', 'Claude plugin should reference ./.mcp.json')
   assert(existsSync(resolve(PLUGIN_ROOT, '.mcp.json')), 'Claude plugin MCP config should exist')
+  for (const skill of ['portal', 'pipes-sdk', 'migrate-to-portal', 'squid-perf']) {
+    assert(
+      existsSync(resolve(PLUGIN_ROOT, 'skills', skill, 'SKILL.md')),
+      `Claude plugin should auto-discover the ${skill} skill`,
+    )
+  }
   assertNoCommittedSecretOrLocalPath(manifest)
 
   const mcp = readJson(MCP_JSON_PATH)

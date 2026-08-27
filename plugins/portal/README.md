@@ -1,8 +1,10 @@
 # SQD Plugin
 
-SQD lets Codex, ChatGPT, Claude, and Grok explore live and historical blockchain data. It can answer questions about wallets, transactions, token transfers, smart contracts, network activity, and Hyperliquid trades.
+SQD lets Codex, ChatGPT, Claude, and Grok explore live and historical blockchain data across 130+ networks. It can answer questions about wallets, transactions, token transfers, smart contracts, network activity, and markets.
 
 The plugin uses the public SQD endpoint at `https://portal.sqd.dev/mcp`. No account or login is required.
+
+It also includes the four official SQD agent skills for Portal, Pipes SDK, Portal migration, and indexer performance. The bundled snapshot comes from `subsquid-labs/skills` at commit `e35e5bfeae24f495a5b128755e7f591c207120fb`; see `skills/SOURCE.md`.
 
 ## Name and logo
 
@@ -43,9 +45,9 @@ For Grok chat, add a Custom connector at `grok.com/connectors` and enter `https:
 
 ## Starter prompts
 
+- Which blockchain networks can SQD query?
 - Show the latest Hyperliquid BTC trades.
-- How many transactions were on Base in the past two hours?
-- Show the largest USDC transfers on Ethereum in the past hour.
+- Show the latest USDT transfers on Tron.
 
 ## Checks
 

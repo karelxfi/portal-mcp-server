@@ -1,0 +1,305 @@
+#!/usr/bin/env node
+// squid-perf / parse.mjs
+// Stream a raw squid logs file and emit structured JSON per service.
+//
+// Usage:
+//   node parse.mjs --input <raw-log-path> --output <json-path> --label <str>
+//
+// Schema of the output (stable across this skill's versions):
+// {
+//   meta: { label, sourceFile, parsedAt, totalLines, parsedLines, skippedLines,
+//           earliestTs, latestTs, earliestTsMs, latestTsMs, live, parserVersion },
+//   services: {
+//     "<service-name>": {
+//       name, loggerFamily,
+//       firstBlock, lastBlock, firstTsMs, lastTsMs,
+//       firstProgressTsMs, lastProgressTsMs, progressCount,
+//       progressSchema: ["tsMs","current","target","rate","mappingRate","itemsPerSec","etaSec"],
+//       progressRows: [[tsMs, current, target, rate, mappingRate, itemsPerSec, etaSec], ...],
+//       multicall: [{ tsMs, operation, block, chunks, groups, calls, latencyMs }, ...],
+//       restarts: [{ tsMs, fromBlock, resumedAtBlock }, ...],
+//       errorCount, errors: [{ tsMs, level, logger, message }, ...]  // capped at 1000
+//       tier3: { "<logger>": { count, samples: [{ tsMs, fields: {unit: value, ...} }, ...] } }
+//     }
+//   }
+// }
+
+import fs from "node:fs";
+import readline from "node:readline";
+import path from "node:path";
+
+const PARSER_VERSION = 3;
+
+// Line shape:  <service> <ISO-TS>Z <LEVEL> <logger> <message...>
+const LINE_RX =
+  /^(\S+)\s+(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z)\s+(TRACE|DEBUG|INFO|NOTICE|WARN|WARNING|ERROR|CRITICAL|FATAL)\s+(\S+)\s+(.*)$/;
+
+// `sqd logs` emits ANSI color escape codes (\x1b[NNm). Strip them before matching.
+const ANSI_RX = /\x1b\[[0-9;]*m/g;
+
+// Progress message: "107000000 / 454805370, rate: 4 blocks/sec, mapping: 18 blocks/sec, 11 items/sec, eta: 0s"
+// Tolerant: rate/mapping/items/eta may each be absent in older CLIs.
+const PROGRESS_RX =
+  /^(\d+)\s*\/\s*(\d+)(?:,\s*rate:\s*(\d+(?:\.\d+)?)\s*blocks\/sec)?(?:,\s*mapping:\s*(\d+(?:\.\d+)?)\s*blocks\/sec)?(?:,\s*(\d+(?:\.\d+)?)\s*items\/sec)?(?:,\s*eta:\s*(\S+))?/;
+
+const PROGRESS_LOGGERS = new Set([
+  "sqd:processor",
+  "sqd:batch-processor",
+  "sqd:source-processor",
+]);
+
+const ERROR_LEVELS = new Set(["WARN", "WARNING", "ERROR", "CRITICAL", "FATAL"]);
+
+// Multicall: "processed loadOnchainMarketsInfo 454805261 at block 454805261: 131 chunks, 130 groups, 10010 total calls, 4536ms"
+const MULTICALL_RX =
+  /^processed\s+(\S+)\s+(\d+)\s+at\s+block\s+(\d+):\s+(\d+)\s+chunks?,\s+(\d+)\s+groups?,\s+(\d+)\s+total\s+calls?,\s+(\d+)\s*ms/;
+
+// Tier-3: extract "<number><unit>" and "<number> <unit>" pairs for any known unit.
+const TIER3_NUMERIC_RX =
+  /(\d+(?:\.\d+)?)\s*(ms|sec|seconds|blocks?|items?|calls?|chunks?|groups?|bytes?|kb|mb|gb|rows?|entities|prices|orders|trades|stats|fees|infos|actions)(?!\w)/gi;
+
+// Keep per-service errors & tier-3 samples bounded.
+const MAX_ERRORS_PER_SERVICE = 1000;
+const MAX_TIER3_SAMPLES = 1000;
+const TIER3_MIN_COUNT = 10; // below this the logger is probably too noisy / too rare to surface
+
+function parseArgs(argv) {
+  const out = {};
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a.startsWith("--")) {
+      out[a.slice(2)] = argv[i + 1];
+      i++;
+    }
+  }
+  return out;
+}
+
+function parseEta(str) {
+  if (!str) return null;
+  let total = 0;
+  for (const m of str.matchAll(/(\d+)\s*(d|h|m|s)/g)) {
+    total += parseInt(m[1], 10) * ({ d: 86400, h: 3600, m: 60, s: 1 }[m[2]] ?? 0);
+  }
+  return Number.isFinite(total) ? total : null;
+}
+
+async function main() {
+  const args = parseArgs(process.argv.slice(2));
+  const input = args.input;
+  const output = args.output;
+  if (!input || !output) {
+    process.stderr.write("usage: parse.mjs --input <path> --output <path> [--label <str>]\n");
+    process.exit(2);
+  }
+  const label = args.label || path.basename(input, path.extname(input));
+
+  fs.mkdirSync(path.dirname(output), { recursive: true });
+
+  const services = new Map();
+  let totalLines = 0, parsedLines = 0, skipped = 0;
+  let earliestTs = null, latestTs = null;
+
+  const stream = fs.createReadStream(input, { encoding: "utf8" });
+  const rl = readline.createInterface({ input: stream, crlfDelay: Infinity });
+
+  for await (const rawLine of rl) {
+    totalLines++;
+    const stripped = rawLine.length > 0 && rawLine.charCodeAt(rawLine.length - 1) === 13
+      ? rawLine.slice(0, -1)
+      : rawLine;
+    const line = stripped.indexOf("\x1b") === -1 ? stripped : stripped.replace(ANSI_RX, "");
+    if (!line) { skipped++; continue; }
+
+    const m = line.match(LINE_RX);
+    if (!m) { skipped++; continue; }
+
+    const service = m[1];
+    const tsStr = m[2];
+    const level = m[3];
+    const logger = m[4];
+    const message = m[5];
+
+    const tsMs = Date.parse(tsStr);
+    if (Number.isNaN(tsMs)) { skipped++; continue; }
+
+    parsedLines++;
+    if (earliestTs === null || tsMs < earliestTs) earliestTs = tsMs;
+    if (latestTs === null || tsMs > latestTs) latestTs = tsMs;
+
+    let svc = services.get(service);
+    if (!svc) {
+      svc = {
+        name: service,
+        loggerFamily: null,
+        progressRows: [],
+        multicall: [],
+        restarts: [],
+        errors: [],
+        tier3: new Map(),
+        firstBlock: null,
+        lastBlock: null,
+        firstTsMs: null,
+        lastTsMs: null,
+      };
+      services.set(service, svc);
+    }
+
+    if (svc.firstTsMs === null || tsMs < svc.firstTsMs) svc.firstTsMs = tsMs;
+    if (svc.lastTsMs  === null || tsMs > svc.lastTsMs)  svc.lastTsMs  = tsMs;
+
+    const isErrorLevel = ERROR_LEVELS.has(level);
+    if (isErrorLevel && svc.errors.length < MAX_ERRORS_PER_SERVICE) {
+      svc.errors.push({
+        tsMs,
+        level,
+        logger,
+        message: message.length > 500 ? message.slice(0, 500) + "…" : message,
+      });
+    }
+
+    if (PROGRESS_LOGGERS.has(logger)) {
+      if (!svc.loggerFamily) svc.loggerFamily = logger;
+      const pm = message.match(PROGRESS_RX);
+      if (pm) {
+        const current = parseInt(pm[1], 10);
+        const target = parseInt(pm[2], 10);
+        const rate = pm[3] != null ? parseFloat(pm[3]) : null;
+        const mappingRate = pm[4] != null ? parseFloat(pm[4]) : null;
+        const itemsPerSec = pm[5] != null ? parseFloat(pm[5]) : null;
+        const etaSec = pm[6] != null ? parseEta(pm[6]) : null;
+
+        if (svc.firstBlock === null || current < svc.firstBlock) svc.firstBlock = current;
+        if (svc.lastBlock  === null || current > svc.lastBlock)  svc.lastBlock  = current;
+
+        // Restart detection happens AFTER sorting by tsMs (see below), since
+        // `sqd logs` may emit lines in reverse chronological order.
+        svc.progressRows.push([tsMs, current, target, rate, mappingRate, itemsPerSec, etaSec]);
+      }
+    } else if (logger === "sqd:multicall") {
+      const mm = message.match(MULTICALL_RX);
+      if (mm) {
+        svc.multicall.push({
+          tsMs,
+          operation: mm[1],
+          block: parseInt(mm[3], 10),
+          chunks: parseInt(mm[4], 10),
+          groups: parseInt(mm[5], 10),
+          calls: parseInt(mm[6], 10),
+          latencyMs: parseInt(mm[7], 10),
+        });
+      }
+    } else if (!isErrorLevel) {
+      // Tier-3: any non-progress, non-multicall, non-error INFO line.
+      let t3 = svc.tier3.get(logger);
+      if (!t3) {
+        t3 = { count: 0, samples: [] };
+        svc.tier3.set(logger, t3);
+      }
+      t3.count++;
+      if (t3.samples.length < MAX_TIER3_SAMPLES) {
+        const fields = {};
+        for (const nm of message.matchAll(TIER3_NUMERIC_RX)) {
+          const val = parseFloat(nm[1]);
+          const unit = nm[2].toLowerCase();
+          if (!(unit in fields)) fields[unit] = val;
+        }
+        if (Object.keys(fields).length > 0) {
+          t3.samples.push({ tsMs, fields });
+        }
+      }
+    }
+  }
+
+  const now = Date.now();
+  const live = latestTs != null && (now - latestTs) < 60_000;
+
+  if (parsedLines === 0) {
+    throw new Error(`no recognizable SQD log lines in ${input}`);
+  }
+
+  const out = {
+    meta: {
+      label,
+      sourceFile: path.resolve(input),
+      parsedAt: new Date().toISOString(),
+      parserVersion: PARSER_VERSION,
+      totalLines,
+      parsedLines,
+      skippedLines: skipped,
+      earliestTs: earliestTs != null ? new Date(earliestTs).toISOString() : null,
+      latestTs:   latestTs   != null ? new Date(latestTs).toISOString()   : null,
+      earliestTsMs: earliestTs,
+      latestTsMs: latestTs,
+      live,
+    },
+    services: {},
+  };
+
+  for (const [name, svc] of services) {
+    // `sqd logs` can emit entries in reverse chronological order, so sort all
+    // time-series arrays ascending by tsMs before emitting.
+    svc.progressRows.sort((a, b) => a[0] - b[0]);
+    svc.multicall.sort((a, b) => a.tsMs - b.tsMs);
+    svc.errors.sort((a, b) => a.tsMs - b.tsMs);
+    for (const t3 of svc.tier3.values()) {
+      t3.samples.sort((a, b) => a.tsMs - b.tsMs);
+    }
+
+    // Restart detection in chronological order: consecutive progress rows where
+    // `current` drops by more than RESTART_THRESHOLD_BLOCKS.
+    const RESTART_THRESHOLD_BLOCKS = 1000;
+    for (let i = 1; i < svc.progressRows.length; i++) {
+      const prev = svc.progressRows[i - 1];
+      const curr = svc.progressRows[i];
+      if (curr[1] < prev[1] - RESTART_THRESHOLD_BLOCKS) {
+        svc.restarts.push({
+          tsMs: curr[0],
+          fromBlock: prev[1],
+          resumedAtBlock: curr[1],
+        });
+      }
+    }
+
+    const progressCount = svc.progressRows.length;
+    out.services[name] = {
+      name,
+      loggerFamily: svc.loggerFamily,
+      firstBlock: progressCount ? svc.progressRows[0][1] : null,
+      lastBlock: svc.lastBlock,
+      firstTsMs: svc.firstTsMs,
+      lastTsMs:  svc.lastTsMs,
+      firstProgressTsMs: progressCount ? svc.progressRows[0][0] : null,
+      lastProgressTsMs:  progressCount ? svc.progressRows[progressCount - 1][0] : null,
+      progressCount,
+      progressSchema: ["tsMs", "current", "target", "rate", "mappingRate", "itemsPerSec", "etaSec"],
+      progressRows: svc.progressRows,
+      multicall: svc.multicall,
+      restarts: svc.restarts,
+      errorCount: svc.errors.length,
+      errors: svc.errors,
+      tier3: Object.fromEntries(
+        [...svc.tier3.entries()]
+          .filter(([, v]) => v.count >= TIER3_MIN_COUNT)
+          .map(([k, v]) => [k, v]),
+      ),
+    };
+  }
+
+  fs.writeFileSync(output, JSON.stringify(out));
+
+  const totalProgress = Object.values(out.services).reduce((a, s) => a + s.progressCount, 0);
+  const serviceSummary = Object.values(out.services)
+    .map(s => `${s.name}=${s.progressCount}`)
+    .join(", ");
+
+  process.stderr.write(
+    `parse [${label}] ok — ${parsedLines}/${totalLines} lines parsed, ${skipped} skipped, ` +
+    `${Object.keys(out.services).length} services, ${totalProgress} progress rows [${serviceSummary}]\n`
+  );
+}
+
+main().catch(err => {
+  process.stderr.write(`parse: ${err && err.stack ? err.stack : err}\n`);
+  process.exit(1);
+});

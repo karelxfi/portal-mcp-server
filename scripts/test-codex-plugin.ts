@@ -11,6 +11,7 @@ const PLUGIN_JSON_PATH = `${PLUGIN_ROOT}/.codex-plugin/plugin.json`
 const MCP_JSON_PATH = `${PLUGIN_ROOT}/.mcp.json`
 const README_PATH = `${PLUGIN_ROOT}/README.md`
 const DIRECTORY_SUBMISSION_PATH = `${PLUGIN_ROOT}/DIRECTORY_SUBMISSION.md`
+const SKILLS_SOURCE_PATH = `${PLUGIN_ROOT}/skills/SOURCE.md`
 
 function assert(condition: boolean, message: string) {
   if (!condition) {
@@ -63,23 +64,28 @@ function assertSquareLogoVariants(pluginRoot: string, interfaceConfig: JsonObjec
   const darkSurfaceLogo = readFileSync(resolve(pluginRoot, interfaceConfig.logoDark), 'utf8')
   assert(
     lightSurfaceLogo.includes('<rect width="305" height="305" transform="translate(0.117798 0.453125)" fill="black"/>'),
-    'interface.logo must use the black-background SQD square symbol'
+    'interface.logo must use the black-background SQD square symbol',
   )
   assert(lightSurfaceLogo.includes('fill="white"'), 'interface.logo must contain the white SQD mark')
   assert(
     darkSurfaceLogo.includes('<rect width="305" height="305" transform="translate(0.117798 0.453125)" fill="black"/>'),
-    'interface.logoDark must use the black-background SQD square symbol'
+    'interface.logoDark must use the black-background SQD square symbol',
   )
   assert(darkSurfaceLogo.includes('fill="white"'), 'interface.logoDark must contain the white SQD mark')
 }
 
 function assertComposerIcon(pluginRoot: string, value: unknown) {
   assertString(value, 'interface.composerIcon must be a string')
-  assert(value === './assets/sqd-composer-icon.svg', 'plugin should use the trimmed SQD composer icon in prompt previews')
+  assert(
+    value === './assets/sqd-composer-icon.svg',
+    'plugin should use the trimmed SQD composer icon in prompt previews',
+  )
   const composerIcon = readFileSync(resolve(pluginRoot, value), 'utf8')
   assert(
-    composerIcon.includes('<rect width="305" height="305" rx="42" transform="translate(0.117798 0.453125)" fill="black"/>'),
-    'interface.composerIcon must use a softened black SQD square for prompt previews'
+    composerIcon.includes(
+      '<rect width="305" height="305" rx="42" transform="translate(0.117798 0.453125)" fill="black"/>',
+    ),
+    'interface.composerIcon must use a softened black SQD square for prompt previews',
   )
   assert(composerIcon.includes('fill="white"'), 'interface.composerIcon must contain the white SQD mark')
 }
@@ -88,11 +94,14 @@ function assertPromptList(value: unknown) {
   assert(Array.isArray(value), 'interface.defaultPrompt must be an array')
   assert(value.length > 0 && value.length <= 3, 'interface.defaultPrompt must contain 1-3 prompts')
   const expectedPrompts = [
+    'Which blockchain networks can SQD query?',
     'Show the latest Hyperliquid BTC trades.',
-    'How many transactions were on Base in the past two hours?',
-    'Show the largest USDC transfers on Ethereum in the past hour.',
+    'Show the latest USDT transfers on Tron.',
   ]
-  assert(JSON.stringify(value) === JSON.stringify(expectedPrompts), 'interface.defaultPrompt should stay concrete and analysis-oriented')
+  assert(
+    JSON.stringify(value) === JSON.stringify(expectedPrompts),
+    'interface.defaultPrompt should stay concrete and analysis-oriented',
+  )
   for (const [index, prompt] of value.entries()) {
     assertString(prompt, `interface.defaultPrompt[${index}] must be a non-empty string`)
     assert(prompt.length <= 128, `interface.defaultPrompt[${index}] must be at most 128 characters`)
@@ -130,26 +139,62 @@ function assertManifest() {
   const manifest = readJson(PLUGIN_JSON_PATH)
   assert(manifest.name === 'portal', 'plugin name should be portal')
   assert(manifest.version === '0.8.0', 'plugin version should be the public release version')
+  assert(manifest.skills === './skills/', 'plugin should load the bundled official SQD skills')
   assert(manifest.mcpServers === './.mcp.json', 'plugin should reference ./.mcp.json')
   assertRecord(manifest.interface, 'plugin interface must be an object')
   assert(manifest.interface.displayName === 'SQD', 'plugin display name should be SQD')
+  assert(
+    manifest.interface.shortDescription === 'Explore live and historical blockchain data across 130+ networks.',
+    'plugin short description should lead with broad network coverage',
+  )
   const publicCopy = [
     manifest.description,
     manifest.interface.shortDescription,
     manifest.interface.longDescription,
     ...(manifest.interface.defaultPrompt as unknown[]),
   ].join(' ')
-  for (const phrase of ['blockchain', 'Ethereum', 'Base', 'Solana', 'Bitcoin', 'Tron', 'Hyperliquid']) {
+  for (const phrase of [
+    'blockchain',
+    '130+ networks',
+    'Ethereum',
+    'Base',
+    'Solana',
+    'Bitcoin',
+    'Tron',
+    'Polkadot',
+    'Hyperliquid',
+    'many more',
+  ]) {
     assert(publicCopy.toLowerCase().includes(phrase.toLowerCase()), `plugin copy should include ${phrase}`)
   }
   assert(!/[\u2014\u2013]/.test(publicCopy), 'plugin copy should not use em or en dashes')
   assert(!/\b(onchain|EVM|Substrate|MCP)\b/.test(publicCopy), 'plugin copy should avoid unexplained jargon')
-  assert(manifest.interface.websiteURL === 'https://sqd.dev/portal/', 'plugin website should point at the SQD Portal product page')
-  assert(manifest.interface.privacyPolicyURL === 'https://sqd.dev/imprint/', 'plugin privacy policy should point at SQD imprint/privacy page')
+  assert(
+    manifest.interface.websiteURL === 'https://sqd.dev/portal/',
+    'plugin website should point at the SQD Portal product page',
+  )
+  assert(
+    manifest.interface.privacyPolicyURL === 'https://sqd.dev/imprint/',
+    'plugin privacy policy should point at SQD imprint/privacy page',
+  )
   assert(manifest.interface.brandColor === '#08090A', 'plugin brand color should match SQD surface black')
-  assert(manifest.interface.logo === './assets/sqd-logo.svg', 'plugin should use the black SQD square logo in light mode')
-  assert(manifest.interface.logoDark === './assets/sqd-logo.svg', 'plugin should keep the black SQD square logo in dark mode')
+  assert(
+    manifest.interface.logo === './assets/sqd-logo.svg',
+    'plugin should use the black SQD square logo in light mode',
+  )
+  assert(
+    manifest.interface.logoDark === './assets/sqd-logo.svg',
+    'plugin should keep the black SQD square logo in dark mode',
+  )
   assertPromptList(manifest.interface.defaultPrompt)
+  for (const skill of ['portal', 'pipes-sdk', 'migrate-to-portal', 'squid-perf']) {
+    assert(existsSync(resolve(PLUGIN_ROOT, 'skills', skill, 'SKILL.md')), `plugin should bundle the ${skill} skill`)
+  }
+  const skillsSource = readFileSync(SKILLS_SOURCE_PATH, 'utf8')
+  assert(
+    skillsSource.includes('e35e5bfeae24f495a5b128755e7f591c207120fb'),
+    'bundled skills should record the verified upstream commit',
+  )
   assertOptionalAsset(PLUGIN_ROOT, manifest.interface.composerIcon, 'interface.composerIcon')
   assertOptionalAsset(PLUGIN_ROOT, manifest.interface.logo, 'interface.logo')
   assertOptionalAsset(PLUGIN_ROOT, manifest.interface.logoDark, 'interface.logoDark')
@@ -158,7 +203,9 @@ function assertManifest() {
   const screenshots = manifest.interface.screenshots
   if (screenshots !== undefined) {
     assert(Array.isArray(screenshots), 'interface.screenshots must be an array when present')
-    screenshots.forEach((screenshot, index) => assertOptionalAsset(PLUGIN_ROOT, screenshot, `interface.screenshots[${index}]`))
+    screenshots.forEach((screenshot, index) =>
+      assertOptionalAsset(PLUGIN_ROOT, screenshot, `interface.screenshots[${index}]`),
+    )
   }
   assertNoCommittedSecretOrLocalPath(manifest)
 

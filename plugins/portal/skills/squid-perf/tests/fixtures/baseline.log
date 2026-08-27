@@ -1,0 +1,5 @@
+api 2026-01-01T00:00:00.000Z INFO sqd:processor 100 / 1000, rate: 10 blocks/sec, mapping: 8 blocks/sec, 2 items/sec, eta: 90s
+api 2026-01-01T00:00:10.000Z INFO sqd:processor 300 / 1000, rate: 20 blocks/sec, mapping: 18 blocks/sec, 3 items/sec, eta: 70s
+api 2026-01-01T00:00:20.000Z WARNING sqd:processor retrying request
+api 2026-01-01T00:00:30.000Z INFO sqd:processor 600 / 1000, rate: 30 blocks/sec, mapping: 28 blocks/sec, 4 items/sec, eta: 40s
+api 2026-01-01T00:00:50.000Z INFO sqd:processor 995 / 1000, rate: 20 blocks/sec, mapping: 19 blocks/sec, 5 items/sec, eta: 0s
