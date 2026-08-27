@@ -111,11 +111,30 @@ node "$SKILL_DIR/scripts/parse.mjs" \
   --input "$TESTS_DIR/fixtures/same-timestamp-restart.log" \
   --output "$TEST_TMP_DIR/same-timestamp-restart.json" \
   --label same-timestamp-restart
+node "$SKILL_DIR/scripts/parse.mjs" \
+  --input "$TESTS_DIR/fixtures/reverse-same-timestamp-restart.log" \
+  --output "$TEST_TMP_DIR/reverse-same-timestamp-restart.json" \
+  --label reverse-same-timestamp-restart
+cat > "$TEST_TMP_DIR/same-timestamp-only.log" <<'LOG'
+api 2026-01-01T00:00:10.000Z INFO sqd:processor 100 / 1000, rate: 10 blocks/sec
+api 2026-01-01T00:00:10.000Z INFO sqd:processor 200 / 1000, rate: 10 blocks/sec
+api 2026-01-01T00:00:10.000Z INFO sqd:processor 300 / 1000, rate: 10 blocks/sec
+LOG
+node "$SKILL_DIR/scripts/parse.mjs" \
+  --input "$TEST_TMP_DIR/same-timestamp-only.log" \
+  --output "$TEST_TMP_DIR/same-timestamp-only.json" \
+  --label same-timestamp-only
+node -e '
+  const service = JSON.parse(require("fs").readFileSync(process.argv[1])).services.api;
+  if (service.progressRows.map(row => row[1]).join(",") !== "100,200,300") process.exit(1);
+  if (service.restarts.length !== 0) process.exit(1);
+' "$TEST_TMP_DIR/same-timestamp-only.json" || fail "parser reversed an unknown-direction same-timestamp capture"
 node "$TESTS_DIR/assert-parser.mjs" \
   "$TEST_TMP_DIR/current-levels.json" \
   "$TEST_TMP_DIR/restart.json" \
   "$TEST_TMP_DIR/small-restart.json" \
-  "$TEST_TMP_DIR/same-timestamp-restart.json"
+  "$TEST_TMP_DIR/same-timestamp-restart.json" \
+  "$TEST_TMP_DIR/reverse-same-timestamp-restart.json"
 
 printf 'test: report keeps a nonnegative final-segment range after restart\n' >&2
 RESTART_REPORT_DIR="$TEST_TMP_DIR/restart-report-run"
@@ -126,15 +145,18 @@ cat > "$RESTART_REPORT_DIR/compare-syncs.json" <<'JSON'
   "downtimeThresholdSec": 120,
   "breakpointsOverride": null,
   "indexers": [
-    { "ref": "org/restart@abc", "since": "2026-01-01T00:00:00Z", "label": "same-timestamp-restart" }
+    { "ref": "org/restart@abc", "since": "2026-01-01T00:00:00Z", "label": "reverse-same-timestamp-restart" }
   ]
 }
 JSON
-cp "$TEST_TMP_DIR/same-timestamp-restart.json" "$RESTART_REPORT_DIR/parsed/same-timestamp-restart.json"
+cp "$TEST_TMP_DIR/reverse-same-timestamp-restart.json" "$RESTART_REPORT_DIR/parsed/reverse-same-timestamp-restart.json"
 printf '[]\n' > "$RESTART_REPORT_DIR/failures.json"
 node "$SKILL_DIR/scripts/report.mjs" --run-dir "$RESTART_REPORT_DIR"
 grep -Fq '100% (500 blocks)' "$RESTART_REPORT_DIR/report.md" || fail "restart report omitted the final 500-block segment"
 grep -Fq 'Sync timings use the final uninterrupted segment.' "$RESTART_REPORT_DIR/report.md" || fail "restart report omitted the segment warning"
+if grep -Fq 'p95 10ms' "$RESTART_REPORT_DIR/report.md"; then
+  fail "restart report included a same-timestamp pre-restart multicall"
+fi
 
 printf 'test: parser counts errors beyond the retained sample cap\n' >&2
 ERROR_LOG="$TEST_TMP_DIR/error-cap.log"
@@ -200,7 +222,7 @@ cat > "$EDGE_REPORT_DIR/compare-syncs.json" <<'JSON'
 {
   "createdAt": "2026-01-01T00:00:00Z",
   "downtimeThresholdSec": 120,
-  "breakpointsOverride": [900],
+  "breakpointsOverride": null,
   "indexers": [
     { "ref": "org/edge-a@abc", "since": "2026-01-01T00:00:00Z", "label": "edge-a" },
     { "ref": "org/edge-b@def", "since": "2026-01-01T00:00:00Z", "label": "edge-b" }
@@ -210,24 +232,88 @@ JSON
 cat > "$TEST_TMP_DIR/edge-a.log" <<'LOG'
 api 2026-01-01T00:00:00.000Z INFO sqd:processor 100 / 1000, rate: 10 blocks/sec, mapping: 10 blocks/sec, 10 items/sec, eta: 90s
 api 2026-01-01T00:00:10.000Z INFO sqd:processor 500 / 1000, rate: 10 blocks/sec, mapping: 10 blocks/sec, 10 items/sec, eta: 50s
+api 2026-01-01T00:00:10.000Z INFO sqd:multicall processed sync 500 at block 500: 1 chunks, 1 groups, 1 total calls, 10ms
 api 2026-01-01T00:00:20.000Z INFO sqd:processor 995 / 1000, rate: 10 blocks/sec, mapping: 10 blocks/sec, 10 items/sec, eta: 0s
-api 2026-01-01T00:05:00.000Z INFO sqd:processor 995 / 1000, rate: 1000 blocks/sec, mapping: 1000 blocks/sec, 1000 items/sec, eta: 0s
+api 2026-01-01T00:00:20.000Z INFO sqd:multicall processed idle 995 at block 995: 1 chunks, 1 groups, 1 total calls, 9999ms
+api 2026-01-01T00:00:20.000Z INFO sqd:processor 995 / 1000, rate: 1000 blocks/sec, mapping: 1000 blocks/sec, 1000 items/sec, eta: 0s
+api 2026-01-01T00:00:20.000Z INFO sqd:processor 1000 / 1000, rate: 1000 blocks/sec, mapping: 1000 blocks/sec, 1000 items/sec, eta: 0s
+api 2026-01-01T00:05:00.000Z INFO sqd:processor 1000 / 1000, rate: 1000 blocks/sec, mapping: 1000 blocks/sec, 1000 items/sec, eta: 0s
 api 2026-01-01T00:10:00.000Z INFO sqd:processor 1000 / 1000, rate: 1000 blocks/sec, mapping: 1000 blocks/sec, 1000 items/sec, eta: 0s
 LOG
 cat > "$TEST_TMP_DIR/edge-b.log" <<'LOG'
 api 2026-01-01T00:00:00.000Z INFO sqd:processor 100 / 1000, rate: 10 blocks/sec, mapping: 10 blocks/sec, 10 items/sec, eta: 90s
 api 2026-01-01T00:00:10.000Z INFO sqd:processor 500 / 1000, rate: 10 blocks/sec, mapping: 10 blocks/sec, 10 items/sec, eta: 50s
+api 2026-01-01T00:00:10.000Z INFO sqd:multicall processed sync 500 at block 500: 1 chunks, 1 groups, 1 total calls, 10ms
 api 2026-01-01T00:00:20.000Z INFO sqd:processor 995 / 1000, rate: 10 blocks/sec, mapping: 10 blocks/sec, 10 items/sec, eta: 0s
-api 2026-01-01T00:05:00.000Z INFO sqd:processor 995 / 1000, rate: 1 blocks/sec, mapping: 1 blocks/sec, 1 items/sec, eta: 0s
+api 2026-01-01T00:00:20.000Z INFO sqd:multicall processed idle 995 at block 995: 1 chunks, 1 groups, 1 total calls, 9999ms
+api 2026-01-01T00:00:20.000Z INFO sqd:processor 995 / 1000, rate: 1 blocks/sec, mapping: 1 blocks/sec, 1 items/sec, eta: 0s
+api 2026-01-01T00:00:20.000Z INFO sqd:processor 1000 / 1000, rate: 1 blocks/sec, mapping: 1 blocks/sec, 1 items/sec, eta: 0s
+api 2026-01-01T00:05:00.000Z INFO sqd:processor 1000 / 1000, rate: 1 blocks/sec, mapping: 1 blocks/sec, 1 items/sec, eta: 0s
 api 2026-01-01T00:10:00.000Z INFO sqd:processor 1000 / 1000, rate: 1 blocks/sec, mapping: 1 blocks/sec, 1 items/sec, eta: 0s
 LOG
 node "$SKILL_DIR/scripts/parse.mjs" --input "$TEST_TMP_DIR/edge-a.log" --output "$EDGE_REPORT_DIR/parsed/edge-a.json" --label edge-a
 node "$SKILL_DIR/scripts/parse.mjs" --input "$TEST_TMP_DIR/edge-b.log" --output "$EDGE_REPORT_DIR/parsed/edge-b.json" --label edge-b
 printf '[]\n' > "$EDGE_REPORT_DIR/failures.json"
-node "$SKILL_DIR/scripts/report.mjs" --run-dir "$EDGE_REPORT_DIR" --breakpoints 900
+node "$SKILL_DIR/scripts/report.mjs" --run-dir "$EDGE_REPORT_DIR"
 if grep -q 'Likely the dominant bottleneck' "$EDGE_REPORT_DIR/report.md"; then
   fail "rate finding included post-catchup idle-tail samples"
 fi
+if grep -Fq '257.5 blk/s' "$EDGE_REPORT_DIR/report.md" || grep -Fq '7.8 blk/s' "$EDGE_REPORT_DIR/report.md"; then
+  fail "interval rate table included post-catchup idle-tail samples"
+fi
+grep -Fq 'p95 10ms' "$EDGE_REPORT_DIR/report.md" || fail "sync multicall sample is missing"
+if grep -Fq '9999ms' "$EDGE_REPORT_DIR/report.md"; then
+  fail "interval multicall statistics included a same-timestamp idle-tail sample"
+fi
+node -e '
+  const lines = require("fs").readFileSync(process.argv[1], "utf8").split("\n");
+  const templateLine = lines.findIndex(line => line.includes("type=\"__bundler/template\"") && line.trim().startsWith("<script"));
+  const inner = JSON.parse(lines[templateLine + 1]);
+  const openTag = "<script id=\"__REPORT_DATA__\" type=\"application/json\">";
+  const openAt = inner.indexOf(openTag, inner.indexOf("-->") + 3);
+  const closeAt = inner.indexOf("</script>", openAt + openTag.length);
+  const data = JSON.parse(inner.slice(openAt + openTag.length, closeAt));
+  const service = data.services.find(item => item.name === "api");
+  for (const label of ["edge-a", "edge-b"]) {
+    const progress = service?.progress?.[label];
+    if (!progress || progress.at(-1)?.block !== 995 || progress.at(-1)?.t !== 20) process.exit(1);
+    if (service.tier2?.[label]?.multicallMeanMs !== 10) process.exit(1);
+    if (service.tier2?.[label]?.multicallP95Ms !== 10) process.exit(1);
+  }
+' "$EDGE_REPORT_DIR/report.html" || fail "HTML summary included post-catchup idle-tail samples"
+node -e '
+  const fs = require("fs");
+  for (const file of process.argv.slice(1)) {
+    const parsed = JSON.parse(fs.readFileSync(file));
+    parsed.meta.parserVersion = 6;
+    for (const service of Object.values(parsed.services)) {
+      service.progressSchema = service.progressSchema.slice(0, 7);
+      service.progressRows = service.progressRows.map(row => row.slice(0, 7));
+      for (const sample of service.multicall) delete sample.sequence;
+      for (const restart of service.restarts) delete restart.sequence;
+    }
+    fs.writeFileSync(file, JSON.stringify(parsed));
+  }
+' "$EDGE_REPORT_DIR/parsed/edge-a.json" "$EDGE_REPORT_DIR/parsed/edge-b.json"
+node "$SKILL_DIR/scripts/report.mjs" --run-dir "$EDGE_REPORT_DIR"
+node -e '
+  const lines = require("fs").readFileSync(process.argv[1], "utf8").split("\n");
+  const templateLine = lines.findIndex(line => line.includes("type=\"__bundler/template\"") && line.trim().startsWith("<script"));
+  const inner = JSON.parse(lines[templateLine + 1]);
+  const openTag = "<script id=\"__REPORT_DATA__\" type=\"application/json\">";
+  const openAt = inner.indexOf(openTag, inner.indexOf("-->") + 3);
+  const closeAt = inner.indexOf("</script>", openAt + openTag.length);
+  const data = JSON.parse(inner.slice(openAt + openTag.length, closeAt));
+  const service = data.services.find(item => item.name === "api");
+  for (const label of ["edge-a", "edge-b"]) {
+    if (service.tier2?.[label]?.multicallMeanMs !== 10) process.exit(1);
+    if (service.tier2?.[label]?.multicallP95Ms !== 10) process.exit(1);
+  }
+' "$EDGE_REPORT_DIR/report.html" || fail "legacy parsed report included an ambiguous catchup-boundary multicall"
+if grep -Fq '9999ms' "$EDGE_REPORT_DIR/report.md"; then
+  fail "legacy parsed interval included an ambiguous catchup-boundary multicall"
+fi
+node "$SKILL_DIR/scripts/report.mjs" --run-dir "$EDGE_REPORT_DIR" --breakpoints 900
 node -e '
   const lines = require("fs").readFileSync(process.argv[1], "utf8").split("\n");
   const templateLine = lines.findIndex(line => line.includes("type=\"__bundler/template\"") && line.trim().startsWith("<script"));
@@ -240,6 +326,35 @@ node -e '
   if (!service || service.breakpoints.length !== 1) process.exit(1);
   if (service.breakpoints[0].block !== 1000) process.exit(1);
   if (!service.breakpoints[0].perIndexer["edge-a"].reached || !service.breakpoints[0].perIndexer["edge-b"].reached) process.exit(1);
+  if (service.progress["edge-a"].at(-1)?.block !== 1000 || service.progress["edge-b"].at(-1)?.block !== 1000) process.exit(1);
 ' "$EDGE_REPORT_DIR/report.html" || fail "override breakpoint was truncated to the catch-up range"
 
-printf '{"status":"ok","tests":14}\n'
+printf 'test: report warns when ending coverage ranges diverge\n' >&2
+RANGE_REPORT_DIR="$TEST_TMP_DIR/range-report-run"
+mkdir -p "$RANGE_REPORT_DIR/parsed"
+cat > "$RANGE_REPORT_DIR/compare-syncs.json" <<'JSON'
+{
+  "createdAt": "2026-01-01T00:00:00Z",
+  "downtimeThresholdSec": 120,
+  "breakpointsOverride": null,
+  "indexers": [
+    { "ref": "org/range-a@abc", "since": "2026-01-01T00:00:00Z", "label": "range-a" },
+    { "ref": "org/range-b@def", "since": "2026-01-01T00:00:00Z", "label": "range-b" }
+  ]
+}
+JSON
+cat > "$TEST_TMP_DIR/range-a.log" <<'LOG'
+api 2026-01-01T00:00:00.000Z INFO sqd:processor 100 / 1000, rate: 10 blocks/sec
+api 2026-01-01T00:00:20.000Z INFO sqd:processor 995 / 1000, rate: 10 blocks/sec
+LOG
+cat > "$TEST_TMP_DIR/range-b.log" <<'LOG'
+api 2026-01-01T00:00:00.000Z INFO sqd:processor 100 / 2000, rate: 10 blocks/sec
+api 2026-01-01T00:00:20.000Z INFO sqd:processor 1995 / 2000, rate: 10 blocks/sec
+LOG
+node "$SKILL_DIR/scripts/parse.mjs" --input "$TEST_TMP_DIR/range-a.log" --output "$RANGE_REPORT_DIR/parsed/range-a.json" --label range-a
+node "$SKILL_DIR/scripts/parse.mjs" --input "$TEST_TMP_DIR/range-b.log" --output "$RANGE_REPORT_DIR/parsed/range-b.json" --label range-b
+printf '[]\n' > "$RANGE_REPORT_DIR/failures.json"
+node "$SKILL_DIR/scripts/report.mjs" --run-dir "$RANGE_REPORT_DIR"
+grep -Fq "starting or ending coverage differs by > 5%" "$RANGE_REPORT_DIR/report.md" || fail "ending-range divergence warning is missing"
+
+printf '{"status":"ok","tests":15}\n'

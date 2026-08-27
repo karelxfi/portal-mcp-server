@@ -15,9 +15,9 @@
 //       name, loggerFamily,
 //       firstBlock, lastBlock, firstTsMs, lastTsMs,
 //       firstProgressTsMs, lastProgressTsMs, progressCount,
-//       progressSchema: ["tsMs","current","target","rate","mappingRate","itemsPerSec","etaSec"],
-//       progressRows: [[tsMs, current, target, rate, mappingRate, itemsPerSec, etaSec], ...],
-//       multicall: [{ tsMs, operation, block, chunks, groups, calls, latencyMs }, ...],
+//       progressSchema: ["tsMs","current","target","rate","mappingRate","itemsPerSec","etaSec","sequence"],
+//       progressRows: [[tsMs, current, target, rate, mappingRate, itemsPerSec, etaSec, sequence], ...],
+//       multicall: [{ tsMs, sequence, operation, block, chunks, groups, calls, latencyMs }, ...],
 //       restarts: [{ rowIndex, tsMs, fromBlock, resumedAtBlock }, ...],
 //       errorCount, levelCounts: { warning, error },
 //       errors: [{ tsMs, level, logger, message }, ...]  // capped at 1000
@@ -30,7 +30,7 @@ import fs from "node:fs";
 import readline from "node:readline";
 import path from "node:path";
 
-const PARSER_VERSION = 5;
+const PARSER_VERSION = 7;
 
 // Line shape:  <service> <ISO-TS>Z <LEVEL> <logger> <message...>
 const LINE_RX =
@@ -114,6 +114,8 @@ async function main() {
   const services = new Map();
   let totalLines = 0, parsedLines = 0, skipped = 0;
   let earliestTs = null, latestTs = null;
+  let previousInputTsMs = null;
+  let inputTimestampDirection = 0;
 
   const stream = fs.createReadStream(input, { encoding: "utf8" });
   const rl = readline.createInterface({ input: stream, crlfDelay: Infinity });
@@ -139,6 +141,10 @@ async function main() {
     if (Number.isNaN(tsMs)) { skipped++; continue; }
 
     parsedLines++;
+    if (inputTimestampDirection === 0 && previousInputTsMs != null && tsMs !== previousInputTsMs) {
+      inputTimestampDirection = Math.sign(tsMs - previousInputTsMs);
+    }
+    previousInputTsMs = tsMs;
     if (earliestTs === null || tsMs < earliestTs) earliestTs = tsMs;
     if (latestTs === null || tsMs > latestTs) latestTs = tsMs;
 
@@ -191,13 +197,17 @@ async function main() {
 
         // Restart detection happens AFTER sorting by tsMs (see below), since
         // `sqd logs` may emit lines in reverse chronological order.
-        svc.progressRows.push([tsMs, current, target, rate, mappingRate, itemsPerSec, etaSec]);
+        // Keep the input ordinal internally. `sqd logs` is normally newest-first,
+        // including rows that share a timestamp, so a timestamp-only stable sort
+        // can preserve those equal-timestamp rows in the wrong order.
+        svc.progressRows.push([tsMs, current, target, rate, mappingRate, itemsPerSec, etaSec, totalLines]);
       }
     } else if (logger === "sqd:multicall") {
       const mm = message.match(MULTICALL_RX);
       if (mm) {
         svc.multicall.push({
           tsMs,
+          sourceOrdinal: totalLines,
           operation: mm[1],
           block: parseInt(mm[3], 10),
           chunks: parseInt(mm[4], 10),
@@ -258,8 +268,29 @@ async function main() {
   for (const [name, svc] of services) {
     // `sqd logs` can emit entries in reverse chronological order, so sort all
     // time-series arrays ascending by tsMs before emitting.
-    svc.progressRows.sort((a, b) => a[0] - b[0]);
-    svc.multicall.sort((a, b) => a.tsMs - b.tsMs);
+    let serviceInputDirection = 0;
+    for (let i = 1; i < svc.progressRows.length; i++) {
+      const tsDelta = svc.progressRows[i][0] - svc.progressRows[i - 1][0];
+      if (tsDelta !== 0) {
+        serviceInputDirection = Math.sign(tsDelta);
+        break;
+      }
+    }
+    // With no unequal timestamps there is no evidence that input is reversed.
+    // Preserve source order rather than inventing rollbacks.
+    const direction = serviceInputDirection || inputTimestampDirection || 1;
+    svc.progressRows.sort((a, b) =>
+      a[0] - b[0] || (direction < 0 ? b[7] - a[7] : a[7] - b[7])
+    );
+    svc.progressRows = svc.progressRows.map(row => [
+      ...row.slice(0, 7),
+      direction < 0 ? -row[7] : row[7],
+    ]);
+    for (const sample of svc.multicall) {
+      sample.sequence = direction < 0 ? -sample.sourceOrdinal : sample.sourceOrdinal;
+      delete sample.sourceOrdinal;
+    }
+    svc.multicall.sort((a, b) => a.tsMs - b.tsMs || a.sequence - b.sequence);
     svc.errors.sort((a, b) => a.tsMs - b.tsMs);
     for (const t3 of svc.tier3.values()) {
       t3.samples.sort((a, b) => a.tsMs - b.tsMs);
@@ -274,6 +305,7 @@ async function main() {
         svc.restarts.push({
           rowIndex: i,
           tsMs: curr[0],
+          sequence: curr[7],
           fromBlock: prev[1],
           resumedAtBlock: curr[1],
         });
@@ -291,7 +323,7 @@ async function main() {
       firstProgressTsMs: progressCount ? svc.progressRows[0][0] : null,
       lastProgressTsMs:  progressCount ? svc.progressRows[progressCount - 1][0] : null,
       progressCount,
-      progressSchema: ["tsMs", "current", "target", "rate", "mappingRate", "itemsPerSec", "etaSec"],
+      progressSchema: ["tsMs", "current", "target", "rate", "mappingRate", "itemsPerSec", "etaSec", "sequence"],
       progressRows: svc.progressRows,
       multicall: svc.multicall,
       restarts: svc.restarts,

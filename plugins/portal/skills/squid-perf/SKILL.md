@@ -3,7 +3,7 @@ name: squid-perf
 description: Compare sync-time performance across one or more Squid SDK deployments. Fetches logs via sqd CLI, parses per-service progress, and generates a self-contained HTML report plus a Markdown summary with wall-clock/active-time/downtime breakdowns at percentage-based block breakpoints. Supports single-indexer mode (metrics only, no comparison). Use when the user invokes "/squid-perf", asks to compare Squid deployment sync times, or references squid performance profiling.
 metadata:
   author: subsquid
-  version: "1.1.7"
+  version: "1.1.8"
   category: core
 ---
 
@@ -208,7 +208,7 @@ This reads `<run-dir>/compare-syncs.json` + all `<run-dir>/parsed/*.json`, compu
 - **Parse fails:** treat like fetch failure for that deployment.
 - **Interrupted (Ctrl-C):** partial cache files have no `.done` sentinel, so next run re-fetches. Never treat a partial as complete.
 - **Live deployment:** if a deployment's most recent log is within 60s of fetch start, flag `"live": true` in parsed JSON; renderer prints a warning.
-- **Range divergence:** if two deployments' first-block or max-block differ by > 5% for the same service, emit a warning banner in summary.
+- **Range divergence:** if two deployments' starting blocks, effective sync ranges, or raw captured ranges differ by > 5% for the same service, emit a warning banner in summary.
 - **Service missing from some deployments:** intersection only for comparison tables; solo section per missing service; warning in summary.
 
 ---
