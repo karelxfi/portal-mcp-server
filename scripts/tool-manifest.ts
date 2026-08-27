@@ -727,41 +727,51 @@ export const TOOL_SPECS: ToolSpec[] = [
       expectPresentation(data, 'portal_get_time_series base', { chartDataKey: 'time_series', tableId: 'main' })
     },
     validateFollowUp: async (_text, client) => {
-      const [compareResult, groupedResult, solanaResult, bitcoinResult, hyperliquidResult] = await Promise.all([
-        callToolWithRetry(client, 'portal_get_time_series', {
-          network: 'base',
-          metric: 'transaction_count',
-          interval: '5m',
-          duration: '1h',
-          compare_previous: true,
-        }),
-        callToolWithRetry(client, 'portal_get_time_series', {
-          network: 'base',
-          metric: 'transaction_count',
-          interval: '5m',
-          duration: '1h',
-          group_by: 'contract',
-          group_limit: 3,
-        }),
-        callToolWithRetry(client, 'portal_get_time_series', {
-          network: 'solana-mainnet',
-          metric: 'tps',
-          interval: '5m',
-          duration: '1h',
-        }),
-        callToolWithRetry(client, 'portal_get_time_series', {
-          network: 'bitcoin-mainnet',
-          metric: 'block_size_bytes',
-          interval: '1h',
-          duration: '24h',
-        }),
-        callToolWithRetry(client, 'portal_get_time_series', {
-          network: 'hyperliquid-fills',
-          metric: 'volume',
-          interval: '5m',
-          duration: 'in last 38 mins',
-        }),
-      ])
+      // Exercise the five variants without creating an artificial cross-network
+      // burst that competes with each tool's own bounded upstream concurrency.
+      const compareResult = await callToolWithRetry(client, 'portal_get_time_series', {
+        network: 'base',
+        metric: 'transaction_count',
+        interval: '5m',
+        duration: '1h',
+        compare_previous: true,
+      })
+      const groupedResult = await callToolWithRetry(client, 'portal_get_time_series', {
+        network: 'base',
+        metric: 'transaction_count',
+        interval: '5m',
+        duration: '1h',
+        group_by: 'contract',
+        group_limit: 3,
+      })
+      const solanaResult = await callToolWithRetry(client, 'portal_get_time_series', {
+        network: 'solana-mainnet',
+        metric: 'tps',
+        interval: '5m',
+        duration: '1h',
+      })
+      const bitcoinResult = await callToolWithRetry(client, 'portal_get_time_series', {
+        network: 'bitcoin-mainnet',
+        metric: 'block_size_bytes',
+        interval: '1h',
+        duration: '24h',
+      })
+      const hyperliquidResult = await callToolWithRetry(client, 'portal_get_time_series', {
+        network: 'hyperliquid-fills',
+        metric: 'volume',
+        interval: '5m',
+        duration: 'in last 38 mins',
+      })
+
+      for (const [label, result] of [
+        ['compare_previous', compareResult],
+        ['grouped', groupedResult],
+        ['solana', solanaResult],
+        ['bitcoin', bitcoinResult],
+        ['hyperliquid', hyperliquidResult],
+      ] as const) {
+        assert(!result.isError, `portal_get_time_series ${label} failed: ${result.text.slice(0, 240)}`)
+      }
 
       const compareData = compareResult.data
       assert(Array.isArray(compareData.current_series), 'Expected current_series')
