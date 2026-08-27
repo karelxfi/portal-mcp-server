@@ -63,6 +63,6 @@ The checks validate the name, black logo, listing copy, marketplace files, hoste
 
 ## Public directory submission
 
-See [DIRECTORY_SUBMISSION.md](./DIRECTORY_SUBMISSION.md) for the exact OpenAI and xAI publication routes, listing copy, review tests, and remaining owner actions.
+See [DIRECTORY_SUBMISSION.md](./DIRECTORY_SUBMISSION.md) for the exact OpenAI, Claude, and xAI publication routes, listing copy, review tests, and remaining owner actions.
 
 Do not commit credentials, personal paths, or private endpoints to this package.

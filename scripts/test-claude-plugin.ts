@@ -9,6 +9,7 @@ const PLUGIN_ROOT = 'plugins/portal'
 const MARKETPLACE_PATH = '.claude-plugin/marketplace.json'
 const PLUGIN_JSON_PATH = `${PLUGIN_ROOT}/.claude-plugin/plugin.json`
 const MCP_JSON_PATH = `${PLUGIN_ROOT}/.mcp.json`
+const DIRECTORY_SUBMISSION_PATH = `${PLUGIN_ROOT}/DIRECTORY_SUBMISSION.md`
 const REQUIRE_MCP_2026_LIVE = process.env.REQUIRE_MCP_2026_LIVE === '1'
 
 function assert(condition: boolean, message: string) {
@@ -123,6 +124,24 @@ function getEndpoint() {
   return server.url
 }
 
+function assertDirectoryListing() {
+  const submission = readFileSync(DIRECTORY_SUBMISSION_PATH, 'utf8')
+  assert(
+    submission.includes('https://claude.ai/directory/connectors/sqd'),
+    'Claude submission packet should record the public SQD connector listing',
+  )
+  assert(
+    submission.includes('Tagline: `Explore blockchain data across 130+ networks`'),
+    'Claude submission packet should keep the broad coverage tagline',
+  )
+  assert(submission.includes('Authentication: none'), 'Claude submission packet should declare no authentication')
+  assert(
+    submission.includes('canonical black-background SQD logo'),
+    'Claude submission packet should use the canonical black-background logo',
+  )
+  assert(!/[\u2014\u2013]/.test(submission), 'Claude submission packet should not use em or en dashes')
+}
+
 async function assertHostedMcp(endpoint: string) {
   const init = await postRpc(endpoint, 'initialize', {
     protocolVersion: '2026-07-28',
@@ -144,6 +163,7 @@ async function assertHostedMcp(endpoint: string) {
 
 async function main() {
   assertMarketplace()
+  assertDirectoryListing()
   const endpoint = getEndpoint()
   await assertHostedMcp(endpoint)
   console.log(
