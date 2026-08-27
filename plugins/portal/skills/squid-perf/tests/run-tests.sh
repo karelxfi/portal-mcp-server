@@ -101,7 +101,40 @@ node "$SKILL_DIR/scripts/parse.mjs" \
   --input "$TESTS_DIR/fixtures/restart.log" \
   --output "$TEST_TMP_DIR/restart.json" \
   --label restart
-node "$TESTS_DIR/assert-parser.mjs" "$TEST_TMP_DIR/current-levels.json" "$TEST_TMP_DIR/restart.json"
+printf 'test: parser counts small backward jumps and keeps the chronological final block\n' >&2
+node "$SKILL_DIR/scripts/parse.mjs" \
+  --input "$TESTS_DIR/fixtures/small-restart.log" \
+  --output "$TEST_TMP_DIR/small-restart.json" \
+  --label small-restart
+printf 'test: parser preserves restart position when timestamps match\n' >&2
+node "$SKILL_DIR/scripts/parse.mjs" \
+  --input "$TESTS_DIR/fixtures/same-timestamp-restart.log" \
+  --output "$TEST_TMP_DIR/same-timestamp-restart.json" \
+  --label same-timestamp-restart
+node "$TESTS_DIR/assert-parser.mjs" \
+  "$TEST_TMP_DIR/current-levels.json" \
+  "$TEST_TMP_DIR/restart.json" \
+  "$TEST_TMP_DIR/small-restart.json" \
+  "$TEST_TMP_DIR/same-timestamp-restart.json"
+
+printf 'test: report keeps a nonnegative final-segment range after restart\n' >&2
+RESTART_REPORT_DIR="$TEST_TMP_DIR/restart-report-run"
+mkdir -p "$RESTART_REPORT_DIR/parsed"
+cat > "$RESTART_REPORT_DIR/compare-syncs.json" <<'JSON'
+{
+  "createdAt": "2026-01-01T00:00:00Z",
+  "downtimeThresholdSec": 120,
+  "breakpointsOverride": null,
+  "indexers": [
+    { "ref": "org/restart@abc", "since": "2026-01-01T00:00:00Z", "label": "same-timestamp-restart" }
+  ]
+}
+JSON
+cp "$TEST_TMP_DIR/same-timestamp-restart.json" "$RESTART_REPORT_DIR/parsed/same-timestamp-restart.json"
+printf '[]\n' > "$RESTART_REPORT_DIR/failures.json"
+node "$SKILL_DIR/scripts/report.mjs" --run-dir "$RESTART_REPORT_DIR"
+grep -Fq '100% (500 blocks)' "$RESTART_REPORT_DIR/report.md" || fail "restart report omitted the final 500-block segment"
+grep -Fq 'Sync timings use the final uninterrupted segment.' "$RESTART_REPORT_DIR/report.md" || fail "restart report omitted the segment warning"
 
 printf 'test: parser counts errors beyond the retained sample cap\n' >&2
 ERROR_LOG="$TEST_TMP_DIR/error-cap.log"
@@ -209,4 +242,4 @@ node -e '
   if (!service.breakpoints[0].perIndexer["edge-a"].reached || !service.breakpoints[0].perIndexer["edge-b"].reached) process.exit(1);
 ' "$EDGE_REPORT_DIR/report.html" || fail "override breakpoint was truncated to the catch-up range"
 
-printf '{"status":"ok","tests":11}\n'
+printf '{"status":"ok","tests":14}\n'

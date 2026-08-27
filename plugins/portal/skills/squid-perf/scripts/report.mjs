@@ -409,11 +409,33 @@ function compute(config, parsed, downtimeThresholdSec, breakpointsOverride) {
         perDeployment[p.meta.label] = null;
         continue;
       }
-      const firstBlock = s.firstBlock;
-      const lastBlock = s.lastBlock;
+      // After a restart, measure the final uninterrupted processor segment.
+      // Reusing the pre-restart rows can produce an old first-crossing time or
+      // a negative range when the capture ends below its original first block.
+      const restarts = s.restarts || [];
+      const latestRestart = restarts.length > 0 ? restarts[restarts.length - 1] : null;
+      let restartRowIndex = latestRestart?.rowIndex;
+      if (latestRestart && !Number.isInteger(restartRowIndex)) {
+        restartRowIndex = s.progressRows.findIndex((row, index) =>
+          index > 0
+          && row[0] === latestRestart.tsMs
+          && row[1] === latestRestart.resumedAtBlock
+          && s.progressRows[index - 1][1] === latestRestart.fromBlock
+        );
+      }
+      const progressRows = latestRestart
+        ? s.progressRows.slice(restartRowIndex >= 0 ? restartRowIndex : 0)
+        : s.progressRows;
+      const firstBlock = progressRows[0][1];
+      const lastBlock = progressRows[progressRows.length - 1][1];
+      const firstProgressTsMs = progressRows[0][0];
+      const lastProgressTsMs = progressRows[progressRows.length - 1][0];
+      const multicall = latestRestart
+        ? (s.multicall || []).filter(sample => sample.tsMs >= latestRestart.tsMs)
+        : s.multicall;
 
       // Catchup detection: first progress row within CATCHUP_GAP_BLOCKS of target.
-      const catchup = findCatchupPoint(s.progressRows);
+      const catchup = findCatchupPoint(progressRows);
       let effectiveLastBlock = lastBlock;
       let stillSyncing = false;
       let wasAlreadyCaughtUp = false;
@@ -427,7 +449,7 @@ function compute(config, parsed, downtimeThresholdSec, breakpointsOverride) {
           wasAlreadyCaughtUp = true;
         } else {
           effectiveLastBlock = catchup.block;
-          catchupWallMs = catchup.tsMs - s.firstProgressTsMs;
+          catchupWallMs = catchup.tsMs - firstProgressTsMs;
         }
       } else {
         // Never reached catchup inside the log — either still syncing at fetch time,
@@ -449,11 +471,11 @@ function compute(config, parsed, downtimeThresholdSec, breakpointsOverride) {
         catchupWallMs,           // ms from first progress to catchup, or null
         stillSyncing,
         wasAlreadyCaughtUp,
-        firstTsMs: s.firstProgressTsMs,
-        lastTsMs:  s.lastProgressTsMs,
-        progressRows: s.progressRows,
-        multicall: s.multicall,
-        restarts: s.restarts,
+        firstTsMs: firstProgressTsMs,
+        lastTsMs:  lastProgressTsMs,
+        progressRows,
+        multicall,
+        restarts,
         errors: s.errors,
         errorCount: s.errorCount,
         levelCounts: s.levelCounts || null,
@@ -728,7 +750,7 @@ function compute(config, parsed, downtimeThresholdSec, breakpointsOverride) {
     for (const [name, s] of Object.entries(p.services)) {
       if (s.progressCount === 0) continue;
       if ((s.restarts || []).length > 0) {
-        warnings.push(`\`${p.meta.label}\` — ${s.restarts.length} restart(s) detected in \`${name}\` (current block went backward).`);
+        warnings.push(`\`${p.meta.label}\` — ${s.restarts.length} restart(s) detected in \`${name}\` (current block went backward). Sync timings use the final uninterrupted segment.`);
       }
       if (s.errorCount > 0) {
         warnings.push(`\`${p.meta.label}\` — ${s.errorCount} WARN/ERROR line(s) in \`${name}\`.`);

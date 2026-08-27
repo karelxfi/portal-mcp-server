@@ -3,7 +3,7 @@ name: squid-perf
 description: Compare sync-time performance across one or more Squid SDK deployments. Fetches logs via sqd CLI, parses per-service progress, and generates a self-contained HTML report plus a Markdown summary with wall-clock/active-time/downtime breakdowns at percentage-based block breakpoints. Supports single-indexer mode (metrics only, no comparison). Use when the user invokes "/squid-perf", asks to compare Squid deployment sync times, or references squid performance profiling.
 metadata:
   author: subsquid
-  version: "1.1.6"
+  version: "1.1.7"
   category: core
 ---
 
@@ -21,7 +21,7 @@ Compare sync-time performance across one or more Squid SDK deployments. Produces
 These are settled — don't ask the user again unless they change something.
 
 - **Comparison unit:** per-service (e.g., compare `settlement-arbitrum` in deployment A vs B independently of other services). Services present in every compared deployment go in comparison tables; services present in only some go in a "solo metrics" section with a warning.
-- **Sync time metric:** report **wall-clock elapsed** (headline), **active processing time** (excludes gaps > 120s — configurable via `--downtime-threshold`), and **downtime** (wall − active). All three per breakpoint.
+- **Sync time metric:** report **wall-clock elapsed** (headline), **active processing time** (excludes gaps > 120s — configurable via `--downtime-threshold`), and **downtime** (wall − active). All three per breakpoint. If a restart occurs, measure the final uninterrupted processor segment and report the full restart count separately.
 - **Block alignment:** assume all compared indexers cover the same block ranges (user's stated assumption). Use relative-from-first-log per deployment. If detected ranges diverge noticeably across deployments for a given service, emit a loud warning in the summary but still render.
 - **Tier of metrics extracted:**
   - Tier 1 (always): `sqd:processor` / `sqd:batch-processor` progress lines → `(ts, current_block, target_block, rate, mapping_rate, items_per_sec, eta)`.

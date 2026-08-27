@@ -18,7 +18,7 @@
 //       progressSchema: ["tsMs","current","target","rate","mappingRate","itemsPerSec","etaSec"],
 //       progressRows: [[tsMs, current, target, rate, mappingRate, itemsPerSec, etaSec], ...],
 //       multicall: [{ tsMs, operation, block, chunks, groups, calls, latencyMs }, ...],
-//       restarts: [{ tsMs, fromBlock, resumedAtBlock }, ...],
+//       restarts: [{ rowIndex, tsMs, fromBlock, resumedAtBlock }, ...],
 //       errorCount, levelCounts: { warning, error },
 //       errors: [{ tsMs, level, logger, message }, ...]  // capped at 1000
 //       tier3: { "<logger>": { count, samples: [{ tsMs, fields: {unit: value, ...} }, ...] } }
@@ -30,7 +30,7 @@ import fs from "node:fs";
 import readline from "node:readline";
 import path from "node:path";
 
-const PARSER_VERSION = 4;
+const PARSER_VERSION = 5;
 
 // Line shape:  <service> <ISO-TS>Z <LEVEL> <logger> <message...>
 const LINE_RX =
@@ -154,8 +154,6 @@ async function main() {
         levelCounts: { warning: 0, error: 0 },
         errors: [],
         tier3: new Map(),
-        firstBlock: null,
-        lastBlock: null,
         firstTsMs: null,
         lastTsMs: null,
       };
@@ -190,9 +188,6 @@ async function main() {
         const mappingRate = pm[4] != null ? parseFloat(pm[4]) : null;
         const itemsPerSec = pm[5] != null ? parseFloat(pm[5]) : null;
         const etaSec = pm[6] != null ? parseEta(pm[6]) : null;
-
-        if (svc.firstBlock === null || current < svc.firstBlock) svc.firstBlock = current;
-        if (svc.lastBlock  === null || current > svc.lastBlock)  svc.lastBlock  = current;
 
         // Restart detection happens AFTER sorting by tsMs (see below), since
         // `sqd logs` may emit lines in reverse chronological order.
@@ -270,14 +265,14 @@ async function main() {
       t3.samples.sort((a, b) => a.tsMs - b.tsMs);
     }
 
-    // Restart detection in chronological order: consecutive progress rows where
-    // `current` drops by more than RESTART_THRESHOLD_BLOCKS.
-    const RESTART_THRESHOLD_BLOCKS = 1000;
+    // Restart detection in chronological order: any strict backward block jump.
+    // Equal block numbers are normal while caught up and are not restarts.
     for (let i = 1; i < svc.progressRows.length; i++) {
       const prev = svc.progressRows[i - 1];
       const curr = svc.progressRows[i];
-      if (curr[1] < prev[1] - RESTART_THRESHOLD_BLOCKS) {
+      if (curr[1] < prev[1]) {
         svc.restarts.push({
+          rowIndex: i,
           tsMs: curr[0],
           fromBlock: prev[1],
           resumedAtBlock: curr[1],
@@ -290,7 +285,7 @@ async function main() {
       name,
       loggerFamily: svc.loggerFamily,
       firstBlock: progressCount ? svc.progressRows[0][1] : null,
-      lastBlock: svc.lastBlock,
+      lastBlock: progressCount ? svc.progressRows[progressCount - 1][1] : null,
       firstTsMs: svc.firstTsMs,
       lastTsMs:  svc.lastTsMs,
       firstProgressTsMs: progressCount ? svc.progressRows[0][0] : null,
