@@ -30,6 +30,7 @@ const RETRYABLE_PATTERNS = [
   /upstream/i,
   /portal server error/i,
   /rate limited/i,
+  /bucket coverage was incomplete/i,
   /fetch failed/i,
   /failed to fetch/i,
   /socket hang up/i,
