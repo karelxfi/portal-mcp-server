@@ -151,10 +151,17 @@ async function main() {
           count: profile.samples,
           intervalMs: profile.intervalMs,
           concurrency: profile.concurrency,
-          task: async () => {
-            const [baselineCall, candidateCall] = await Promise.all([
-              measure(baseline.client, spec.name, args),
+          task: async (index) => {
+            if (index % 2 === 0) {
+              const [baselineCall, candidateCall] = await Promise.all([
+                measure(baseline.client, spec.name, args),
+                measure(candidate.client, spec.name, args),
+              ])
+              return { baseline: baselineCall, candidate: candidateCall }
+            }
+            const [candidateCall, baselineCall] = await Promise.all([
               measure(candidate.client, spec.name, args),
+              measure(baseline.client, spec.name, args),
             ])
             return { baseline: baselineCall, candidate: candidateCall }
           },
