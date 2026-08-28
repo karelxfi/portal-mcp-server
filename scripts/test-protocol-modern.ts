@@ -33,6 +33,14 @@ async function main() {
       client.getDiscoverResult()?.supportedVersions?.includes('2026-07-28') === true,
       'server/discover should advertise 2026-07-28',
     )
+    const instructions = client.getInstructions()
+    assert(typeof instructions === 'string' && instructions.length > 0, 'server should expose usage instructions')
+    assert(
+      instructions.slice(0, 512).includes('portal_list_networks') &&
+        instructions.slice(0, 512).includes('_coverage') &&
+        instructions.slice(0, 512).includes('_pagination'),
+      'the first 512 instruction characters should explain discovery and completeness checks',
+    )
 
     const { tools } = await client.listTools()
     assert(tools.length === 28, `expected 28 tools, got ${tools.length}`)
@@ -54,6 +62,7 @@ async function main() {
     assert(typeof (payload.number ?? payload.block_number) === 'number', 'portal_get_head should return a block number')
 
     console.log('PASS  server/discover negotiates MCP 2026-07-28 over stdio')
+    console.log('PASS  server instructions are self-contained for Codex discovery')
     console.log('PASS  modern tools/resources discovery exposes the complete 28-tool surface')
     console.log('PASS  modern tools/call reaches SQD Portal successfully')
     console.log('\nMCP 2026 protocol QA passed')

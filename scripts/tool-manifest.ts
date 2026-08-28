@@ -535,11 +535,28 @@ export const TOOL_SPECS: ToolSpec[] = [
     prompt: "what's the actual network name for Base again",
     args: () => ({ vm: 'evm', network_type: 'mainnet', limit: 10 }),
     validate: (text) => {
+      const data = extractJson(text)
       const items = expectItems(text, 'portal_list_networks')
       assert(
         items.some((item: any) => item.vm === 'evm'),
         'Expected at least one EVM network',
       )
+      assert(data._pagination?.has_more === true, 'Expected a truthful continuation for the limited network page')
+      assert(typeof data._pagination?.next_cursor === 'string', 'Expected an executable network continuation cursor')
+      assert(data._coverage?.result_complete === false, 'Expected limited network results to be marked incomplete')
+      assert(data._coverage?.total_matching > items.length, 'Expected total matching networks to exceed the first page')
+    },
+    validateFollowUp: async (text, client) => {
+      const first = extractJson(text)
+      const second = await callToolWithRetry(client, 'portal_list_networks', {
+        cursor: first._pagination.next_cursor,
+      })
+      assert(!second.isError, 'Expected the network continuation cursor to succeed')
+      const firstNetworks = new Set(getItems(first).map((item: any) => item.network))
+      const secondNetworks = getItems(second.data).map((item: any) => item.network)
+      assert(secondNetworks.length > 0, 'Expected a second network catalog page')
+      assert(secondNetworks.every((network: string) => !firstNetworks.has(network)), 'Expected disjoint network catalog pages')
+      assert(second.data.page_offset === first.items.length, 'Expected network catalog offset to advance by the first page size')
     },
   },
   {
@@ -550,6 +567,7 @@ export const TOOL_SPECS: ToolSpec[] = [
       const data = expectKey(text, 'head', 'portal_get_network_info')
       assert(data.vm === 'evm', 'Base should resolve to an EVM network')
       assert(data.indexing?.indexed_head?.block_number === data.head?.number, 'Expected indexed head metadata')
+      assert(data._llm?.primary_path === 'answer', 'Network info should point LLMs to its answer, not an alias array')
     },
   },
   {
@@ -559,6 +577,11 @@ export const TOOL_SPECS: ToolSpec[] = [
     validate: (text) => {
       const data = extractJson(text)
       assert(typeof data.number === 'number' && data.number > 1_000_000, 'Expected a recent block number')
+      assert(data._llm?.primary_path === 'answer', 'Network head should expose an existing primary answer path')
+      const hashPivot = (data.investigation?.pivots ?? []).find((pivot: any) => pivot.field === 'hash')
+      assert(hashPivot?.use_as === 'block_hash', 'Network head hash should be labeled as a block hash pivot')
+      const numberPivot = (data.investigation?.pivots ?? []).find((pivot: any) => pivot.field === 'number')
+      assert(numberPivot?.use_as === 'from_block/to_block', 'Network head number should be reusable as a block window')
     },
   },
   {
@@ -1482,6 +1505,11 @@ export const TOOL_SPECS: ToolSpec[] = [
       expectGapDiagnostics(data, 'portal_hyperliquid_get_ohlc')
       expectOrdering(data, 'portal_hyperliquid_get_ohlc')
       expectPresentation(data, 'portal_hyperliquid_get_ohlc', { chartDataKey: 'ohlc', tableId: 'ohlc' })
+      assert(data._coverage?.result_complete === true, 'OHLC should return every bucket in the requested window')
+      assert(data._pagination?.continuation_scope === 'adjacent_window', 'OHLC cursor should be labeled as an older adjacent window')
+      if (data._coverage?.window_complete === true) {
+        assert(data.investigation?.status !== 'partial_page', 'A complete OHLC window should not be labeled as a partial page')
+      }
     },
   },
   {

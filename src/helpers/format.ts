@@ -417,6 +417,21 @@ export function formatTimestamp(timestamp: number): string {
   return date.toISOString().replace('T', ' ').split('.')[0] + ' UTC'
 }
 
+export function normalizeUnixTimestamp(value: unknown): number | undefined {
+  const numeric =
+    typeof value === 'number'
+      ? value
+      : typeof value === 'string'
+        ? Number(value)
+        : undefined
+
+  if (numeric === undefined || !Number.isFinite(numeric) || numeric <= 0) {
+    return undefined
+  }
+
+  return numeric > 1_000_000_000_000 ? Math.floor(numeric / 1000) : Math.floor(numeric)
+}
+
 export function formatTimestampRelative(timestamp: number): string {
   const now = Math.floor(Date.now() / 1000)
   const diff = now - timestamp
@@ -931,6 +946,9 @@ function collectCandidateRows(payload: RecordLike): Array<{ path: string; row: R
 }
 
 function collectInvestigationPivots(payload: RecordLike): RecordLike[] {
+  const toolContract = isRecord(payload._tool_contract) ? payload._tool_contract : undefined
+  const toolName = typeof toolContract?.name === 'string' ? toolContract.name : undefined
+  const blockResult = toolName === 'portal_get_head' || toolName === 'portal_debug_query_blocks'
   const pivotKeys: Record<string, string> = {
     address: 'address',
     contract_address: 'address',
@@ -947,13 +965,28 @@ function collectInvestigationPivots(payload: RecordLike): RecordLike[] {
     program_id: 'program_id',
     transaction_hash: 'transaction_hash',
     tx_hash: 'transaction_hash',
-    hash: 'transaction_hash',
+    hash: blockResult ? 'block_hash' : 'transaction_hash',
+    block_hash: 'block_hash',
     primary_id: 'primary_id',
   }
   const seen = new Set<string>()
   const pivots: RecordLike[] = []
 
   for (const { path, row } of collectCandidateRows(payload)) {
+    if (blockResult && typeof row.number === 'number') {
+      const text = String(row.number)
+      const dedupeKey = `number:${text}`
+      if (!seen.has(dedupeKey)) {
+        seen.add(dedupeKey)
+        pivots.push({
+          field: 'number',
+          path: `${path}.number`,
+          value: text,
+          use_as: 'from_block/to_block',
+        })
+      }
+    }
+
     for (const [key, useAs] of Object.entries(pivotKeys)) {
       const value = row[key]
       if (typeof value !== 'string' && typeof value !== 'number') continue
@@ -991,12 +1024,23 @@ function buildInvestigationGuide(payload: RecordLike): RecordLike | undefined {
   const returned = inferReturnedCount(payload, primaryPath)
   const pivots = collectInvestigationPivots(payload)
   const limitations: string[] = []
+  const continuationScope = typeof pagination?.continuation_scope === 'string'
+    ? pagination.continuation_scope
+    : 'remaining_results'
+  const resultIncomplete =
+    coverage?.result_complete === false ||
+    coverage?.window_complete === false ||
+    (coverage?.result_complete !== true && continuationScope !== 'adjacent_window' && typeof pagination?.next_cursor === 'string')
 
   if (typeof meta?.queried_blocks === 'string') {
     limitations.push(`Evidence is limited to queried blocks ${meta.queried_blocks}.`)
   }
   if (typeof pagination?.next_cursor === 'string') {
-    limitations.push('This is a preview page. Continue with _pagination.next_cursor before treating the history as complete.')
+    limitations.push(
+      continuationScope === 'adjacent_window'
+        ? 'The cursor loads an older adjacent window; use _coverage to judge completeness of this requested window.'
+        : 'This is a preview page. Continue with _pagination.next_cursor before treating the history as complete.',
+    )
   }
   if (coverage?.has_more === true || coverage?.result_complete === false || coverage?.window_complete === false) {
     limitations.push('Coverage metadata says more matching data may exist outside this response.')
@@ -1038,7 +1082,7 @@ function buildInvestigationGuide(payload: RecordLike): RecordLike | undefined {
   return {
     version: 'portal_investigation_v1',
     status:
-      typeof pagination?.next_cursor === 'string'
+      resultIncomplete
         ? 'partial_page'
         : intent === 'discover'
           ? 'reference_result'

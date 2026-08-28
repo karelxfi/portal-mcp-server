@@ -6,7 +6,7 @@ import { z } from 'zod'
 import { getBlockHead, getChainType, getDatasets, isL2Chain, resolveDataset } from '../../cache/datasets.js'
 import { PORTAL_URL } from '../../constants/index.js'
 import { portalFetch, portalFetchStream } from '../../helpers/fetch.js'
-import { formatResult, humanizeLabel } from '../../helpers/format.js'
+import { formatResult, humanizeLabel, normalizeUnixTimestamp } from '../../helpers/format.js'
 import { formatDuration, formatTimestamp } from '../../helpers/format.js'
 import { buildToolDescription } from '../../helpers/tool-ux.js'
 import type { BlockHead, DatasetMetadata } from '../../types/index.js'
@@ -81,7 +81,7 @@ async function fetchHeadTimestamp(dataset: string, chainType: string, blockNumbe
   )
 
   const first = response[0] as { header?: { timestamp?: number }; timestamp?: number } | undefined
-  return first?.header?.timestamp ?? first?.timestamp
+  return normalizeUnixTimestamp(first?.header?.timestamp ?? first?.timestamp)
 }
 
 function buildHeadLag(blockNumber: number | undefined, timestamp: number | undefined) {

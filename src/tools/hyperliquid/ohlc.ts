@@ -544,7 +544,9 @@ export function registerHyperliquidOhlcTool(server: McpServer) {
         {
           toolName: 'portal_hyperliquid_get_ohlc',
           ...(nextCursor ? { notices: ['Older candles are available via _pagination.next_cursor.'] } : {}),
-          pagination: buildPaginationInfo(expectedBuckets, ohlc.length, nextCursor),
+          pagination: buildPaginationInfo(expectedBuckets, ohlc.length, nextCursor, {
+            continuationScope: 'adjacent_window',
+          }),
           ordering: buildChronologicalPageOrdering({
             sortedBy: 'timestamp',
             continuation: nextCursor ? 'older' : 'none',

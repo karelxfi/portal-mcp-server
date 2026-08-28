@@ -17,10 +17,15 @@ import { npmVersion } from './version.js'
 // Server Factory
 // ============================================================================
 
+export const PORTAL_SERVER_INSTRUCTIONS =
+  'SQD provides read-only blockchain data from SQD Portal. Start with portal_list_networks to resolve a network, then use portal_get_network_info to check availability and freshness. Use chain-specific query tools for Ethereum-compatible networks, Tron, Solana, Bitcoin, Polkadot and other Substrate networks, and Hyperliquid. Prefer timeframe for recent windows and from_block/to_block for exact evidence. Check _coverage and _pagination before claiming completeness, and reuse _pagination.next_cursor when present. No authentication is required.'
+
 export function createPortalServer(runtimeContext: RuntimeRequestContext = { transport: 'stdio' }): McpServer {
   const server = new McpServer({
     name: 'sqd-portal-mcp-server',
     version: npmVersion,
+  }, {
+    instructions: PORTAL_SERVER_INSTRUCTIONS,
   })
 
   function instrumentToolHandler<TArgs extends unknown[]>(

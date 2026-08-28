@@ -32,6 +32,9 @@ function assertCatalogUx(
       destructiveHint?: boolean
       openWorldHint?: boolean
     }
+    inputSchema?: {
+      properties?: Record<string, { description?: string }>
+    }
   }>,
 ) {
   const publicTools = tools.filter((tool) => !tool.name.startsWith('portal_debug_'))
@@ -65,6 +68,12 @@ function assertCatalogUx(
     assert(description.includes('COMMON USER ASKS:'), `${tool.name} description should include COMMON USER ASKS`)
     assert(description.includes('WHEN TO USE:'), `${tool.name} description should include WHEN TO USE`)
     assert(description.includes('EXAMPLES:'), `${tool.name} description should include EXAMPLES`)
+  }
+
+  for (const toolName of ['portal_evm_query_transactions', 'portal_evm_query_logs']) {
+    const timeframeDescription = tools.find((tool) => tool.name === toolName)?.inputSchema?.properties?.timeframe?.description ?? ''
+    assert(timeframeDescription.includes('5m'), `${toolName} should document the supported 5m timeframe`)
+    assert(!timeframeDescription.includes('Supported:'), `${toolName} should not publish a restrictive fixed timeframe list`)
   }
 }
 
