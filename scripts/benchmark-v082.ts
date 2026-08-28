@@ -43,7 +43,7 @@ function selectedTools() {
 
 async function main() {
   const samplesPerProfile = positiveInteger(process.env.BENCHMARK_SAMPLES, 5)
-  const targetRps = positiveInteger(process.env.BENCHMARK_TARGET_RPS, 20)
+  const targetRps = positiveInteger(process.env.BENCHMARK_TARGET_RPS, 5)
   const releaseMode = process.env.BENCHMARK_RELEASE === '1'
   const tools = selectedTools()
   if (releaseMode && (tools.length !== TOOL_SPECS.length || samplesPerProfile < 50)) {

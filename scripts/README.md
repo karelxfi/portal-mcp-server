@@ -71,7 +71,7 @@ This is protocol compatibility evidence, not proof that the five installed host 
 ### `npm run benchmark:v082`
 Runs open-loop cold c1, warm c1/c4/c8, and c8 burst profiles. The artifact records intended-start queue delay, service and end-to-end latency, bytes, outcomes, version, commit, and dirty state.
 
-For a release artifact, use a clean commit, all tools, and at least 50 samples per warm profile:
+For a release artifact, use a clean commit, all tools, and at least 50 samples per warm profile. The default warm-profile arrival rate is 5 requests per second; the immediate c8 profile remains the saturation burst:
 
 ```bash
 BENCHMARK_RELEASE=1 BENCHMARK_SAMPLES=50 npm run benchmark:v082
