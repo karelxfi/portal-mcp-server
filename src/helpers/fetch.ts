@@ -1,6 +1,6 @@
 import { DEFAULT_RETRIES, DEFAULT_TIMEOUT, STREAM_TIMEOUT } from '../constants/index.js'
 import { portalRequestsTotal } from '../metrics.js'
-import { RequestCancelledError, createTimeoutError, parsePortalError, wrapError } from './errors.js'
+import { ActionableError, RequestCancelledError, createTimeoutError, parsePortalError, wrapError } from './errors.js'
 import {
   type RequestAbortContext,
   createRequestAbortContext,
@@ -9,6 +9,21 @@ import {
 } from './request-context.js'
 
 // ============================================================================
+
+const MAX_RETRY_DELAY_MS = 5_000
+
+function retryDelayMs(attempt: number, retryAfterSeconds?: string | null): number {
+  const retryAfterMs = retryAfterSeconds ? Number(retryAfterSeconds) * 1000 : Number.NaN
+  if (Number.isFinite(retryAfterMs) && retryAfterMs >= 0) {
+    return Math.min(retryAfterMs, MAX_RETRY_DELAY_MS)
+  }
+  return Math.min(2 ** attempt * 1000, MAX_RETRY_DELAY_MS)
+}
+
+async function waitForRetry(attempt: number, retries: number, delayMs = retryDelayMs(attempt)): Promise<void> {
+  if (attempt >= retries) return
+  await sleep(delayMs)
+}
 // Portal API Wrapper Functions
 // ============================================================================
 //
@@ -198,23 +213,21 @@ export async function portalFetch<T>(
       }
 
       if (response.status === 409) {
-        // Reorg detected - retry with backoff
-        lastError = new Error(
-          'Chain reorganization detected (409 Conflict). The requested block range may have been affected by a reorg. Try with a different fromBlock or use finalized blocks.',
-        )
-        const delay = Math.pow(2, attempt) * 1000
-        await sleep(delay)
+        lastError = parsePortalError(409, '409 Conflict', { url, query: body })
+        await waitForRetry(attempt, retries)
         continue
       }
 
       if (response.status === 429) {
         // Rate limited - check Retry-After header
         const retryAfter = response.headers.get('Retry-After')
-        const delay = retryAfter ? parseInt(retryAfter, 10) * 1000 : Math.pow(2, attempt) * 1000
-        lastError = new Error(
-          `Rate limited (429). ${retryAfter ? `Retry after ${retryAfter}s.` : `Retrying in ${delay}ms.`}`,
+        const delay = retryDelayMs(attempt, retryAfter)
+        lastError = parsePortalError(
+          429,
+          retryAfter ? `Retry after ${retryAfter}s` : `Retry after ${Math.ceil(delay / 1000)}s`,
+          { url, query: body },
         )
-        await sleep(delay)
+        await waitForRetry(attempt, retries, delay)
         continue
       }
 
@@ -229,15 +242,11 @@ export async function portalFetch<T>(
 
       lastError = wrapError(error, { url, attempt: attempt + 1, max_attempts: retries + 1 }) as Error
 
-      // Don't retry on client errors (except 409/429 handled above)
-      if (lastError.message.includes('HTTP 4')) {
+      if (lastError instanceof ActionableError && !lastError.retryable) {
         throw lastError
       }
 
-      if (attempt < retries) {
-        const delay = Math.pow(2, attempt) * 1000
-        await sleep(delay)
-      }
+      await waitForRetry(attempt, retries)
     } finally {
       abortContext.cleanup()
     }
@@ -290,26 +299,26 @@ export async function portalFetchStream(
       }
 
       if (response.status === 409) {
-        lastError = new Error(
-          'Chain reorganization detected (409 Conflict). The requested block range may have been affected by a reorg. Try with a different fromBlock or use finalized blocks.',
-        )
-        await sleep(Math.pow(2, attempt) * 1000)
+        lastError = parsePortalError(409, '409 Conflict', { url, query: body })
+        await waitForRetry(attempt, options.retries)
         continue
       }
 
       if (response.status === 429) {
         const retryAfter = response.headers.get('Retry-After')
-        const delay = retryAfter ? parseInt(retryAfter, 10) * 1000 : Math.pow(2, attempt) * 1000
-        lastError = new Error(
-          `Rate limited (429). ${retryAfter ? `Retry after ${retryAfter}s.` : 'Please wait before retrying.'}`,
+        const delay = retryDelayMs(attempt, retryAfter)
+        lastError = parsePortalError(
+          429,
+          retryAfter ? `Retry after ${retryAfter}s` : `Retry after ${Math.ceil(delay / 1000)}s`,
+          { url, query: body },
         )
-        await sleep(delay)
+        await waitForRetry(attempt, options.retries, delay)
         continue
       }
 
       if (response.status === 503) {
         lastError = parsePortalError(503, await response.text(), { url, query: body })
-        await sleep(Math.pow(2, attempt) * 1000)
+        await waitForRetry(attempt, options.retries)
         continue
       }
 
@@ -407,16 +416,10 @@ export async function portalFetchStream(
     } catch (error) {
       rethrowAbort(error, abortContext, timeout, { url, query: body })
 
-      const errMsg = error instanceof Error ? error.message : String(error)
-      if (errMsg.includes('HTTP 4') && !errMsg.includes('409') && !errMsg.includes('429')) {
-        throw wrapError(error, { url, query: body })
-      }
-
       lastError = wrapError(error, { url, query: body }) as Error
+      if (lastError instanceof ActionableError && !lastError.retryable) throw lastError
 
-      if (attempt < options.retries) {
-        await sleep(Math.pow(2, attempt) * 1000)
-      }
+      await waitForRetry(attempt, options.retries)
     } finally {
       abortContext.cleanup()
     }
@@ -462,26 +465,26 @@ export async function portalFetchStreamVisit(
       }
 
       if (response.status === 409) {
-        lastError = new Error(
-          'Chain reorganization detected (409 Conflict). The requested block range may have been affected by a reorg. Try with a different fromBlock or use finalized blocks.',
-        )
-        await sleep(Math.pow(2, attempt) * 1000)
+        lastError = parsePortalError(409, '409 Conflict', { url, query: body })
+        await waitForRetry(attempt, normalizedOptions.retries)
         continue
       }
 
       if (response.status === 429) {
         const retryAfter = response.headers.get('Retry-After')
-        const delay = retryAfter ? parseInt(retryAfter, 10) * 1000 : Math.pow(2, attempt) * 1000
-        lastError = new Error(
-          `Rate limited (429). ${retryAfter ? `Retry after ${retryAfter}s.` : 'Please wait before retrying.'}`,
+        const delay = retryDelayMs(attempt, retryAfter)
+        lastError = parsePortalError(
+          429,
+          retryAfter ? `Retry after ${retryAfter}s` : `Retry after ${Math.ceil(delay / 1000)}s`,
+          { url, query: body },
         )
-        await sleep(delay)
+        await waitForRetry(attempt, normalizedOptions.retries, delay)
         continue
       }
 
       if (response.status === 503) {
         lastError = parsePortalError(503, await response.text(), { url, query: body })
-        await sleep(Math.pow(2, attempt) * 1000)
+        await waitForRetry(attempt, normalizedOptions.retries)
         continue
       }
 
@@ -576,16 +579,10 @@ export async function portalFetchStreamVisit(
     } catch (error) {
       rethrowAbort(error, abortContext, timeout, { url, query: body })
 
-      const errMsg = error instanceof Error ? error.message : String(error)
-      if (errMsg.includes('HTTP 4') && !errMsg.includes('409') && !errMsg.includes('429')) {
-        throw wrapError(error, { url, query: body })
-      }
-
       lastError = wrapError(error, { url, query: body }) as Error
+      if (lastError instanceof ActionableError && !lastError.retryable) throw lastError
 
-      if (attempt < normalizedOptions.retries) {
-        await sleep(Math.pow(2, attempt) * 1000)
-      }
+      await waitForRetry(attempt, normalizedOptions.retries)
     } finally {
       abortContext.cleanup()
     }

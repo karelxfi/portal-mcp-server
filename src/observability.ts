@@ -1,13 +1,21 @@
 import { detectChainType } from './helpers/chain.js'
-import { ActionableError, RequestCancelledError, sanitizeText } from './helpers/errors.js'
+import {
+  RequestCancelledError,
+  describeToolError,
+  sanitizeText,
+  type ToolErrorCode,
+  type ToolErrorDescriptor,
+  type ToolErrorOrigin,
+} from './helpers/errors.js'
 import { getToolContract } from './helpers/tool-ux.js'
 import {
   datasetQueriesTotal,
   observabilityExportsTotal,
+  toolClientCallsTotal,
   toolErrorsTotal,
   toolIntentCallsTotal,
+  toolOutcomesTotal,
   toolResponseSizeBytes,
-  userQueryCapturedTotal,
 } from './metrics.js'
 import { npmVersion } from './version.js'
 
@@ -19,12 +27,10 @@ export type RuntimeRequestContext = {
   clientName?: string
   clientVersion?: string
   protocolVersion?: string
-  userQuery?: string
-  userAgent?: string
-  forwardedFor?: string
 }
 
 export type ToolEventStatus = 'success' | 'partial' | 'tool_error' | 'request_error' | 'cancelled'
+export type ToolResultState = 'data' | 'empty' | 'partial' | 'error' | 'cancelled' | 'unknown'
 
 type ObservabilityEvent = {
   event: 'mcp_tool_call'
@@ -40,27 +46,29 @@ type ObservabilityEvent = {
   intent?: string
   vm?: string
   network?: string
-  client_name?: string
-  client_version?: string
-  user_agent?: string
+  client_family?: string
+  client_major?: string
   duration_ms: number
   status: ToolEventStatus
   response_size_bytes?: number
   response_format?: string
   mode?: string
   args_summary?: Record<string, unknown>
-  user_query?: string
+  result_state: ToolResultState
+  error_origin: ToolErrorOrigin | 'none' | 'unknown'
+  error_code: ToolErrorCode | 'none'
   error?: {
-    type: string
-    message: string
-    actionable: boolean
+    code: ToolErrorCode
+    origin: ToolErrorOrigin
+    summary: string
+    retryable: boolean
+    retry_after_ms?: number
   }
 }
 
 const OBS_SERVICE_NAME = process.env.OBS_SERVICE_NAME || 'sqd-portal-mcp'
 const OBS_ENV = process.env.OBS_ENV || process.env.NODE_ENV || 'production'
 const OBS_LOG_JSON = process.env.OBS_LOG_JSON === 'true'
-const OBS_CAPTURE_USER_QUERY = process.env.OBS_CAPTURE_USER_QUERY === 'true'
 const GRAFANA_LOKI_URL = process.env.GRAFANA_LOKI_URL
 const GRAFANA_LOKI_USERNAME = process.env.GRAFANA_LOKI_USERNAME
 const GRAFANA_LOKI_PASSWORD = process.env.GRAFANA_LOKI_PASSWORD
@@ -106,16 +114,64 @@ function parseResultPayload(result: unknown): Record<string, unknown> | undefine
   }
 }
 
-function resultError(result: unknown): Error | undefined {
+const BOUNDED_ERROR_CODES = new Set<ToolErrorCode>([
+  'invalid_request',
+  'invalid_cursor',
+  'unknown_network',
+  'unsupported_operation',
+  'not_found',
+  'no_data',
+  'incomplete_result',
+  'response_too_large',
+  'upstream_reorg',
+  'rate_limited',
+  'upstream_unavailable',
+  'upstream_timeout',
+  'upstream_error',
+  'internal_error',
+  'cancelled',
+  'unknown_error',
+])
+const BOUNDED_ERROR_ORIGINS = new Set<ToolErrorOrigin>(['client_input', 'upstream', 'server', 'transport'])
+
+function resultErrorDescriptor(result: unknown): ToolErrorDescriptor | undefined {
   const resultRecord = asRecord(result)
   if (resultRecord?.isError !== true) return undefined
 
-  const content = resultRecord.content
-  if (!Array.isArray(content)) return new Error('MCP tool returned an error result')
-  const text = content
-    .map((item) => asRecord(item)?.text)
-    .find((value): value is string => typeof value === 'string' && value.length > 0)
-  return new Error(text || 'MCP tool returned an error result')
+  const error = asRecord(parseResultPayload(result)?.error)
+  const code = typeof error?.code === 'string' ? error.code : undefined
+  const origin = typeof error?.origin === 'string' ? error.origin : undefined
+  const summary = typeof error?.summary === 'string' ? error.summary : undefined
+  const retryable = typeof error?.retryable === 'boolean' ? error.retryable : undefined
+  const suggestions = Array.isArray(error?.suggestions)
+    ? error.suggestions.filter((value): value is string => typeof value === 'string').slice(0, 4)
+    : []
+
+  if (
+    code &&
+    BOUNDED_ERROR_CODES.has(code as ToolErrorCode) &&
+    origin &&
+    BOUNDED_ERROR_ORIGINS.has(origin as ToolErrorOrigin) &&
+    summary &&
+    retryable !== undefined
+  ) {
+    return {
+      code: code as ToolErrorCode,
+      origin: origin as ToolErrorOrigin,
+      summary,
+      retryable,
+      ...(typeof error?.retry_after_ms === 'number' ? { retryAfterMs: error.retry_after_ms } : {}),
+      suggestions,
+    }
+  }
+
+  return {
+    code: 'unknown_error',
+    origin: 'server',
+    summary: 'MCP tool returned an error result.',
+    retryable: false,
+    suggestions: [],
+  }
 }
 
 function isPartialPayload(payload: Record<string, unknown> | undefined): boolean {
@@ -140,6 +196,50 @@ export function classifyToolOutcome(params: {
   if (asRecord(result)?.isError === true) return 'tool_error'
   if (isPartialPayload(parseResultPayload(result))) return 'partial'
   return 'success'
+}
+
+const EMPTY_ARRAY_KEYS = new Set([
+  'items',
+  'transactions',
+  'logs',
+  'transfers',
+  'token_transfers',
+  'events',
+  'calls',
+  'instructions',
+  'fills',
+  'candles',
+  'blocks',
+  'points',
+  'results',
+  'series',
+])
+
+function isEmptyPayload(payload: Record<string, unknown> | undefined): boolean {
+  if (!payload) return false
+  if (payload.value === null) return true
+  if (payload.returned === 0) return true
+
+  const meta = asRecord(payload._meta)
+  if (meta?.returned === 0) return true
+
+  const resultArrays = Object.entries(payload).filter(
+    ([key, value]) => EMPTY_ARRAY_KEYS.has(key) && Array.isArray(value),
+  )
+  return resultArrays.length > 0 && resultArrays.every(([, value]) => (value as unknown[]).length === 0)
+}
+
+export function classifyToolResultState(params: {
+  status: ToolEventStatus
+  result?: unknown
+}): ToolResultState {
+  const { status, result } = params
+  if (status === 'cancelled') return 'cancelled'
+  if (status === 'tool_error' || status === 'request_error') return 'error'
+  if (status === 'partial') return 'partial'
+  const payload = parseResultPayload(result)
+  if (!payload) return 'unknown'
+  return isEmptyPayload(payload) ? 'empty' : 'data'
 }
 
 function getResponseSizeBytes(result: unknown): number | undefined {
@@ -176,18 +276,12 @@ function classifyVm(toolName: string, args: Record<string, unknown>, payload?: R
   return chainType
 }
 
-function extractNetwork(args: Record<string, unknown>, payload?: Record<string, unknown>): string | undefined {
+function extractNetwork(payload?: Record<string, unknown>): string | undefined {
   const meta = asRecord(payload?._meta)
   if (typeof meta?.network === 'string') return meta.network
   if (typeof meta?.dataset === 'string') return meta.dataset
 
   if (typeof payload?.network === 'string') return payload.network
-
-  const direct =
-    (typeof args.network === 'string' ? args.network : undefined) ??
-    (typeof args.dataset === 'string' ? args.dataset : undefined)
-  if (direct) return direct
-
   return undefined
 }
 
@@ -196,19 +290,25 @@ function extractExecutionField(payload: Record<string, unknown> | undefined, key
   return typeof execution?.[key] === 'string' ? String(execution[key]) : undefined
 }
 
-function classifyErrorType(error: unknown): string {
-  if (error instanceof RequestCancelledError) return 'cancelled'
-  if (error instanceof ActionableError) return 'actionable'
-  if (!(error instanceof Error)) return 'unknown'
-  const message = error.message.toLowerCase()
-  if (message.includes('timeout')) return 'timeout'
-  if (message.includes('rate limited') || message.includes('(429')) return 'rate_limit'
-  if (message.includes('reorganization') || message.includes('(409')) return 'reorg'
-  if (message.includes('invalid request') || message.includes('(400')) return 'validation'
-  if (message.includes('temporarily unavailable') || message.includes('(503')) return 'upstream_unavailable'
-  if (message.includes('portal server error') || message.includes('portal api error (5')) return 'upstream_error'
-  if (message.includes('not found') || message.includes('(404')) return 'not_found'
-  return 'unknown'
+function normalizeClientIdentity(name?: string, version?: string): { family: string; major: string } {
+  const normalizedName = name?.trim().toLowerCase() ?? ''
+  let family = 'unknown'
+  if (normalizedName.includes('claude') || normalizedName.includes('anthropic')) family = 'claude'
+  else if (
+    normalizedName.includes('codex') ||
+    normalizedName.includes('chatgpt') ||
+    normalizedName.includes('openai')
+  ) family = 'openai'
+  else if (normalizedName.includes('grok') || normalizedName.includes('xai')) family = 'grok'
+  else if (normalizedName.includes('gemini') || normalizedName.includes('google')) family = 'gemini'
+  else if (normalizedName.includes('cursor')) family = 'cursor'
+  else if (normalizedName.includes('vscode') || normalizedName.includes('visual studio code')) family = 'vscode'
+  else if (normalizedName.includes('windsurf')) family = 'windsurf'
+  else if (normalizedName.includes('inspector')) family = 'mcp_inspector'
+  else if (normalizedName.includes('test')) family = 'test'
+
+  const majorMatch = version?.trim().match(/^(?:v)?(\d{1,3})(?:\.|$)/i)
+  return { family, major: majorMatch ? `v${majorMatch[1]}` : 'unknown' }
 }
 
 function summarizeArgs(args: Record<string, unknown>): Record<string, unknown> {
@@ -393,7 +493,8 @@ export function getObservabilityStatus() {
     metrics: true,
     json_logs: OBS_LOG_JSON,
     loki_export: Boolean(GRAFANA_LOKI_URL),
-    captures_forwarded_user_query: OBS_CAPTURE_USER_QUERY,
+    captures_user_content: false,
+    bounded_metric_labels: true,
     service_name: OBS_SERVICE_NAME,
     environment: OBS_ENV,
   }
@@ -412,20 +513,39 @@ export function recordToolOutcome(params: {
   const { toolName, args, result, error, durationMs, runtime, invocationId } = params
   const payload = result ? parseResultPayload(result) : undefined
   const toolContract = getToolContract(toolName)
-  const network = extractNetwork(args, payload)
+  const network = extractNetwork(payload)
   const vm = classifyVm(toolName, args, payload)
   const status = params.status ?? classifyToolOutcome({ result, error })
-  const effectiveError = error ?? (status === 'tool_error' ? resultError(result) : undefined)
+  const errorDescriptor = error !== undefined ? describeToolError(error) : resultErrorDescriptor(result)
+  const resultState = classifyToolResultState({ status, result })
+  const errorOrigin = errorDescriptor?.origin ?? (status === 'request_error' ? 'unknown' : 'none')
+  const errorCode = errorDescriptor?.code ?? 'none'
+  const client = normalizeClientIdentity(runtime.clientName, runtime.clientVersion)
   const responseSizeBytes = result ? getResponseSizeBytes(result) : undefined
   const responseFormat =
     (typeof args.response_format === 'string' ? args.response_format : undefined) ??
     extractExecutionField(payload, 'response_format')
   const mode = (typeof args.mode === 'string' ? args.mode : undefined) ?? extractExecutionField(payload, 'mode')
-  const sanitizedUserQuery = runtime.userQuery ? sanitizeText(runtime.userQuery) : undefined
 
   if (network) {
     datasetQueriesTotal.inc({ dataset: network, vm })
   }
+
+  toolOutcomesTotal.inc({
+    tool: toolName,
+    status,
+    result_state: resultState,
+    error_origin: errorOrigin,
+    error_code: errorCode,
+    transport: runtime.transport,
+    server_version: npmVersion,
+  })
+
+  toolClientCallsTotal.inc({
+    transport: runtime.transport,
+    client_family: client.family,
+    client_major: client.major,
+  })
 
   if (toolContract?.intent) {
     toolIntentCallsTotal.inc({
@@ -439,18 +559,11 @@ export function recordToolOutcome(params: {
     toolResponseSizeBytes.observe({ tool: toolName, transport: runtime.transport }, responseSizeBytes)
   }
 
-  if (effectiveError && (status === 'tool_error' || status === 'request_error')) {
+  if (errorDescriptor && (status === 'tool_error' || status === 'request_error')) {
     toolErrorsTotal.inc({
       tool: toolName,
       transport: runtime.transport,
-      error_type: classifyErrorType(effectiveError),
-    })
-  }
-
-  if (OBS_CAPTURE_USER_QUERY && sanitizedUserQuery) {
-    userQueryCapturedTotal.inc({
-      transport: runtime.transport,
-      client_name: runtime.clientName || 'unknown',
+      error_type: errorDescriptor.code,
     })
   }
 
@@ -468,25 +581,27 @@ export function recordToolOutcome(params: {
     ...(toolContract?.intent ? { intent: toolContract.intent } : {}),
     ...(vm ? { vm } : {}),
     ...(network ? { network } : {}),
-    ...(runtime.clientName ? { client_name: runtime.clientName } : {}),
-    ...(runtime.clientVersion ? { client_version: runtime.clientVersion } : {}),
-    ...(runtime.userAgent ? { user_agent: runtime.userAgent } : {}),
+    client_family: client.family,
+    client_major: client.major,
     duration_ms: durationMs,
     status,
+    result_state: resultState,
+    error_origin: errorOrigin,
+    error_code: errorCode,
     ...(responseSizeBytes !== undefined ? { response_size_bytes: responseSizeBytes } : {}),
     ...(responseFormat ? { response_format: responseFormat } : {}),
     ...(mode ? { mode } : {}),
     args_summary: summarizeArgs(args),
-    ...(OBS_CAPTURE_USER_QUERY && sanitizedUserQuery ? { user_query: truncateText(sanitizedUserQuery, 400) } : {}),
-    ...(effectiveError
+    ...(errorDescriptor
       ? {
           error: {
-            type: classifyErrorType(effectiveError),
-            message: truncateText(
-              sanitizeText(effectiveError instanceof Error ? effectiveError.message : String(effectiveError)),
-              280,
-            ),
-            actionable: effectiveError instanceof ActionableError,
+            code: errorDescriptor.code,
+            origin: errorDescriptor.origin,
+            summary: truncateText(sanitizeText(errorDescriptor.summary), 280),
+            retryable: errorDescriptor.retryable,
+            ...(errorDescriptor.retryAfterMs !== undefined
+              ? { retry_after_ms: errorDescriptor.retryAfterMs }
+              : {}),
           },
         }
       : {}),

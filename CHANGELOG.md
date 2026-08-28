@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.8.1] - Unreleased
+
+Portal MCP v0.8.1 makes blockchain investigations more dependable under empty results, invalid inputs, upstream failures, and client cancellation. Responses now say what happened in a form agents can act on, while operators get privacy-safe metrics that separate useful empty or partial answers from actual failures.
+
+### Highlights
+- **Trustworthy result contracts** — network discovery, head lookups, Tron timestamps, time series, and Hyperliquid candles now report pagination, coverage, ordering, freshness, and primary evidence consistently.
+- **Actionable tool errors** — expected validation and Portal failures return stable `isError` tool results with a bounded code, origin, retry guidance, and machine-readable next steps instead of surfacing as generic protocol errors.
+- **Cancellation-safe recovery** — client cancellation still stops active Portal work promptly, does not count as a tool error, releases in-flight accounting, and leaves the next request healthy.
+- **Bounded upstream resilience** — retry waits are finite, respect a capped delay, skip waits after the final attempt, and distinguish retryable Portal failures from invalid requests that should fail immediately.
+- **Outcome metrics without prompt capture** — canonical metrics distinguish data, empty, partial, error, and cancelled results, attribute failures to client input, upstream, server, or transport, and reduce client identity to bounded families and major versions. Forwarded user questions and arbitrary client headers are never captured.
+- **One release identity** — package, registry, Codex, Claude, Grok-compatible, Gemini, and Cursor manifests now advance together and are checked against the same version.
+- **Leaner maintenance surface** — removed the obsolete prompt-taxonomy path that depended on user-query logging and kept all 28 tools on the single instrumented registry.
+
+**Full Changelog**: https://github.com/subsquid-labs/portal-mcp-server/compare/v0.8.0...v0.8.1
+
 ## [0.8.0] - 2026-08-27
 
 Portal MCP v0.8.0 is the large no-auth reliability and ecosystem release. It modernizes the protocol/runtime, removes accumulated dead surfaces, preserves the 28-tool factual query product, and requires no SQD account or API key.

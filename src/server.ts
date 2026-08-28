@@ -2,6 +2,7 @@ import { CLIENT_INFO_META_KEY, McpServer, type ServerContext } from '@modelconte
 
 import { RequestCancelledError } from './helpers/errors.js'
 import { runWithPortalRequestSignal } from './helpers/request-context.js'
+import { formatToolError } from './helpers/tool-error.js'
 import { toolCallDuration, toolCallsActive, toolCallsTotal } from './metrics.js'
 import {
   classifyToolOutcome,
@@ -80,21 +81,23 @@ export function createPortalServer(runtimeContext: RuntimeRequestContext = { tra
         })
         return result
       } catch (error) {
-        const status = classifyToolOutcome({
-          error,
-          cancelled: requestSignal?.aborted || error instanceof RequestCancelledError,
-        })
+        const cancelled = requestSignal?.aborted || error instanceof RequestCancelledError
+        const status = cancelled ? 'cancelled' : 'tool_error'
+        const toolErrorResult = cancelled ? undefined : formatToolError(error, toolName)
         toolCallsTotal.inc({ tool: toolName, status, transport: runtimeContext.transport, server_version: npmVersion })
         recordToolOutcome({
           toolName,
           args: toolArgs,
-          error: status === 'cancelled' ? new RequestCancelledError() : error,
+          ...(cancelled
+            ? { error: new RequestCancelledError() }
+            : { result: toolErrorResult }),
           durationMs: Date.now() - startedAt,
           runtime: effectiveRuntime,
           invocationId,
           status,
         })
-        throw error
+        if (cancelled) throw error
+        return toolErrorResult
       } finally {
         end()
         toolCallsActive.dec({ tool: toolName, transport: runtimeContext.transport })

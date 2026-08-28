@@ -9,7 +9,7 @@ import { InMemoryTransport } from '@modelcontextprotocol/server'
 
 import { createQueryCache } from '../src/cache/query-cache.js'
 import { scanBoundedBlockRange } from '../src/helpers/bounded-search.js'
-import { RequestCancelledError } from '../src/helpers/errors.js'
+import { ActionableError, RequestCancelledError } from '../src/helpers/errors.js'
 import { fetchExternalJson } from '../src/helpers/external-apis.js'
 import {
   portalFetch,
@@ -20,7 +20,7 @@ import {
 } from '../src/helpers/fetch.js'
 import { runWithPortalRequestSignal } from '../src/helpers/request-context.js'
 import { registerPortalTool } from '../src/helpers/mcp-registration.js'
-import { toolCallsTotal, toolErrorsTotal } from '../src/metrics.js'
+import { toolCallsTotal, toolErrorsTotal, toolOutcomesTotal } from '../src/metrics.js'
 import { createPortalServer } from '../src/server.js'
 
 function assert(condition: unknown, message: string): asserts condition {
@@ -72,6 +72,7 @@ async function main() {
   let activeRangeRequests = 0
   let maxActiveRangeRequests = 0
   let walletTokenRequests = 0
+  const failureRequests = new Map<string, number>()
   const server = createServer((req, res) => {
     req.on('close', () => {
       closedRequests += 1
@@ -150,6 +151,33 @@ async function main() {
       return
     }
 
+    if (req.url?.startsWith('/invalid-')) {
+      failureRequests.set(req.url, (failureRequests.get(req.url) ?? 0) + 1)
+      res.writeHead(400, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({ error: 'invalid fixture request' }))
+      return
+    }
+
+    if (req.url === '/rate-limit-final') {
+      failureRequests.set(req.url, (failureRequests.get(req.url) ?? 0) + 1)
+      res.writeHead(429, { 'Content-Type': 'application/json', 'Retry-After': '999' })
+      res.end(JSON.stringify({ error: 'rate limited fixture' }))
+      return
+    }
+
+    if (req.url === '/rate-limit-once') {
+      const attempt = (failureRequests.get(req.url) ?? 0) + 1
+      failureRequests.set(req.url, attempt)
+      if (attempt === 1) {
+        res.writeHead(429, { 'Content-Type': 'application/json', 'Retry-After': '0' })
+        res.end(JSON.stringify({ error: 'rate limited fixture' }))
+      } else {
+        res.writeHead(200, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ ok: true }))
+      }
+      return
+    }
+
     res.writeHead(200, { 'Content-Type': 'application/x-ndjson' })
     res.flushHeaders()
     res.write('{"number":1}\n')
@@ -176,6 +204,49 @@ async function main() {
       `recent record scanner should use concurrency 3, observed ${maxActiveRangeRequests}`,
     )
     console.log('PASS  recent record scans preserve reverse coverage with bounded concurrency')
+
+    for (const [path, action] of [
+      ['/invalid-json', () => portalFetch(`${baseUrl}/invalid-json`, { retries: 2 })],
+      ['/invalid-stream', () => portalFetchStream(`${baseUrl}/invalid-stream`, {}, { retries: 2 })],
+      [
+        '/invalid-visit',
+        () => portalFetchStreamVisit(`${baseUrl}/invalid-visit`, {}, { retries: 2, onRecord: () => undefined }),
+      ],
+    ] as const) {
+      await expectFastFailure(
+        `${path} fails without retry amplification`,
+        action,
+        (error) =>
+          assert(
+            error instanceof ActionableError &&
+              error.code === 'invalid_request' &&
+              error.origin === 'client_input' &&
+              !error.retryable,
+            `${path} should return a non-retryable client-input error`,
+          ),
+        500,
+      )
+      assert(failureRequests.get(path) === 1, `${path} should make exactly one upstream request`)
+    }
+
+    const rateLimitRecovery = await portalFetch<{ ok: boolean }>(`${baseUrl}/rate-limit-once`, { retries: 1 })
+    assert(rateLimitRecovery.ok, 'rate-limited requests should recover within their retry budget')
+    assert(failureRequests.get('/rate-limit-once') === 2, 'rate-limit recovery should use one bounded retry')
+    await expectFastFailure(
+      'final rate-limit attempt returns immediately with retry metadata',
+      () => portalFetch(`${baseUrl}/rate-limit-final`, { retries: 0 }),
+      (error) =>
+        assert(
+          error instanceof ActionableError &&
+            error.code === 'rate_limited' &&
+            error.origin === 'upstream' &&
+            error.retryable &&
+            error.retryAfterMs === 999_000,
+          'final rate-limit failure should preserve bounded attribution and Retry-After guidance',
+        ),
+      500,
+    )
+    console.log('PASS  invalid requests fail once and retryable responses stay within the declared budget')
 
     await expectFastFailure(
       'regular fetch times out while reading a stalled body',
@@ -323,12 +394,19 @@ async function main() {
       ],
       structuredContent: { value: 1, _coverage: { window_complete: false } },
     }))
+    registerPortalTool(mcpServer, '__test_empty_outcome', 'Empty outcome metric test.', {}, async () => ({
+      content: [{ type: 'text' as const, text: JSON.stringify({ items: [] }) }],
+      structuredContent: { items: [] },
+    }))
     registerPortalTool(mcpServer, '__test_tool_error_outcome', 'Returned tool error metric test.', {}, async () => ({
       isError: true,
       content: [{ type: 'text' as const, text: 'Fixture tool error' }],
     }))
     registerPortalTool(mcpServer, '__test_request_error_outcome', 'Thrown request error metric test.', {}, async () => {
       throw new Error('Fixture request failure')
+    })
+    registerPortalTool(mcpServer, '__test_actionable_error_outcome', 'Actionable error metric test.', {}, async () => {
+      throw new ActionableError('Fixture input is invalid.', ['Correct the fixture input.'])
     })
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
     const client = new Client({ name: 'fetch-reliability-test', version: '1.0.0' })
@@ -358,9 +436,24 @@ async function main() {
       assert(!successResult.isError, 'complete fixture should return a successful MCP result')
       const partialResult = await client.callTool({ name: '__test_partial_outcome', arguments: {} })
       assert(!partialResult.isError, 'partial fixture should remain a usable MCP result')
+      const emptyResult = await client.callTool({ name: '__test_empty_outcome', arguments: {} })
+      assert(!emptyResult.isError, 'empty fixture should remain a successful MCP result')
       const toolErrorResult = await client.callTool({ name: '__test_tool_error_outcome', arguments: {} })
       assert(toolErrorResult.isError, 'tool-error fixture should return isError=true')
-      await client.callTool({ name: '__test_request_error_outcome', arguments: {} }).catch(() => undefined)
+      const thrownErrorResult = await client.callTool({ name: '__test_request_error_outcome', arguments: {} })
+      assert(thrownErrorResult.isError, 'thrown handler failures should become tool errors')
+      const thrownErrorPayload = thrownErrorResult.structuredContent as Record<string, any> | undefined
+      assert(thrownErrorPayload?.error?.code === 'internal_error', 'unexpected handler failures should use internal_error')
+      assert(thrownErrorPayload?.error?.origin === 'server', 'unexpected handler failures should be attributed to server')
+      assert(
+        !JSON.stringify(thrownErrorResult).includes('Fixture request failure'),
+        'unexpected handler details should not be exposed to clients',
+      )
+      const actionableErrorResult = await client.callTool({ name: '__test_actionable_error_outcome', arguments: {} })
+      assert(actionableErrorResult.isError, 'actionable handler failures should become tool errors')
+      const actionablePayload = actionableErrorResult.structuredContent as Record<string, any> | undefined
+      assert(actionablePayload?.error?.code === 'invalid_request', 'actionable input failures need a stable code')
+      assert(actionablePayload?.error?.origin === 'client_input', 'actionable input failures need a stable origin')
 
       const cancellationDeadline = Date.now() + 750
       while (closedRequests <= closedBeforeMcpCancellation && Date.now() < cancellationDeadline) {
@@ -403,8 +496,10 @@ async function main() {
       const expectedOutcomes = new Map([
         ['__test_success_outcome', 'success'],
         ['__test_partial_outcome', 'partial'],
+        ['__test_empty_outcome', 'success'],
         ['__test_tool_error_outcome', 'tool_error'],
-        ['__test_request_error_outcome', 'request_error'],
+        ['__test_request_error_outcome', 'tool_error'],
+        ['__test_actionable_error_outcome', 'tool_error'],
         ['__test_cancel_portal_fetch', 'cancelled'],
         ['__test_cancel_no_args', 'cancelled'],
       ])
@@ -417,7 +512,11 @@ async function main() {
           `${tool} should be classified as ${expectedStatus}`,
         )
       }
-      for (const tool of ['__test_tool_error_outcome', '__test_request_error_outcome']) {
+      for (const tool of [
+        '__test_tool_error_outcome',
+        '__test_request_error_outcome',
+        '__test_actionable_error_outcome',
+      ]) {
         assert(
           errorMetrics.values.some((value) => value.labels.tool === tool && value.value === 1),
           `${tool} should increment the tool error counter once`,
@@ -427,7 +526,29 @@ async function main() {
         !errorMetrics.values.some((value) => value.labels.tool === '__test_partial_outcome'),
         'partial results should not increment tool error counters',
       )
-      console.log('PASS  every MCP invocation records exactly one five-state terminal outcome')
+      const detailedOutcomes = await toolOutcomesTotal.get()
+      const expectedDetails = [
+        ['__test_success_outcome', 'data', 'none', 'none'],
+        ['__test_empty_outcome', 'empty', 'none', 'none'],
+        ['__test_partial_outcome', 'partial', 'none', 'none'],
+        ['__test_request_error_outcome', 'error', 'server', 'internal_error'],
+        ['__test_actionable_error_outcome', 'error', 'client_input', 'invalid_request'],
+        ['__test_cancel_portal_fetch', 'cancelled', 'transport', 'cancelled'],
+      ]
+      for (const [tool, resultState, errorOrigin, errorCode] of expectedDetails) {
+        assert(
+          detailedOutcomes.values.some(
+            (value) =>
+              value.labels.tool === tool &&
+              value.labels.result_state === resultState &&
+              value.labels.error_origin === errorOrigin &&
+              value.labels.error_code === errorCode &&
+              value.value === 1,
+          ),
+          `${tool} should expose ${resultState}/${errorOrigin}/${errorCode} outcome details`,
+        )
+      }
+      console.log('PASS  every MCP invocation records one attributable terminal outcome')
     } finally {
       await client.close()
       await mcpServer.close()

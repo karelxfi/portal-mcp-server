@@ -6,6 +6,7 @@ import { existsSync, readFileSync } from 'node:fs'
 type JsonObject = Record<string, unknown>
 
 const PLUGIN_ROOT = 'plugins/portal'
+const RELEASE_VERSION = readJson('package.json').version
 
 function assert(condition: boolean, message: string): asserts condition {
   if (!condition) throw new Error(`Assertion failed: ${message}`)
@@ -29,7 +30,7 @@ function assertClaudeCompatiblePackage() {
     'Grok-compatible copy should lead with broad network coverage',
   )
   assert(!/[\u2014\u2013]/.test(JSON.stringify(manifest)), 'Grok-compatible copy should not use em or en dashes')
-  assert(manifest.version === '0.8.0', 'Grok-compatible plugin version should be 0.8.0')
+  assert(manifest.version === RELEASE_VERSION, 'Grok-compatible plugin version should match the package release')
   assert(manifest.mcpServers === './.mcp.json', 'Grok-compatible plugin should reference ./.mcp.json')
   for (const skill of ['portal', 'pipes-sdk', 'migrate-to-portal', 'squid-perf']) {
     assert(

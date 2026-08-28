@@ -95,6 +95,24 @@ if (fs.existsSync('server.json')) {
   server.version = '${NEW_VERSION}';
   fs.writeFileSync('server.json', JSON.stringify(server, null, 2) + '\n');
 }
+
+const versionedJson = [
+  ['plugins/portal/.codex-plugin/plugin.json', (value) => { value.version = '${NEW_VERSION}'; }],
+  ['plugins/portal/.claude-plugin/plugin.json', (value) => { value.version = '${NEW_VERSION}'; }],
+  ['plugins/portal/.cursor-plugin/plugin.json', (value) => { value.version = '${NEW_VERSION}'; }],
+  ['plugins/portal/gemini-extension.json', (value) => { value.version = '${NEW_VERSION}'; }],
+  ['.claude-plugin/marketplace.json', (value) => {
+    value.version = '${NEW_VERSION}';
+    for (const plugin of value.plugins ?? []) plugin.version = '${NEW_VERSION}';
+  }],
+  ['.cursor-plugin/marketplace.json', (value) => { value.metadata.version = '${NEW_VERSION}'; }],
+];
+for (const [path, update] of versionedJson) {
+  if (!fs.existsSync(path)) continue;
+  const value = JSON.parse(fs.readFileSync(path, 'utf8'));
+  update(value);
+  fs.writeFileSync(path, JSON.stringify(value, null, 2) + '\n');
+}
 "
 
 if [[ "$CHANGELOG_MODE" == "date" ]]; then
@@ -113,6 +131,17 @@ STAGE_FILES=(package.json package-lock.json CHANGELOG.md)
 if [[ -f server.json ]]; then
   STAGE_FILES+=(server.json)
 fi
+for versioned_file in \
+  plugins/portal/.codex-plugin/plugin.json \
+  plugins/portal/.claude-plugin/plugin.json \
+  plugins/portal/.cursor-plugin/plugin.json \
+  plugins/portal/gemini-extension.json \
+  .claude-plugin/marketplace.json \
+  .cursor-plugin/marketplace.json; do
+  if [[ -f "$versioned_file" ]]; then
+    STAGE_FILES+=("$versioned_file")
+  fi
+done
 git add "${STAGE_FILES[@]}"
 git commit -m "chore: release v${NEW_VERSION}"
 git tag -a "$TAG" -m "v${NEW_VERSION}"

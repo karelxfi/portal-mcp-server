@@ -3,6 +3,8 @@
 import { Client } from '@modelcontextprotocol/client'
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio'
 
+import { npmVersion } from '../src/version.js'
+
 function assert(condition: boolean, message: string): asserts condition {
   if (!condition) throw new Error(`Assertion failed: ${message}`)
 }
@@ -17,7 +19,7 @@ async function main() {
     stderr: 'pipe',
   })
   const client = new Client(
-    { name: 'mcp-2026-stdio-smoke', version: '0.8.0' },
+    { name: 'mcp-2026-stdio-smoke', version: npmVersion },
     { versionNegotiation: { mode: 'auto', probe: { timeoutMs: 5_000 } } },
   )
 
@@ -28,7 +30,7 @@ async function main() {
       client.getNegotiatedProtocolVersion() === '2026-07-28',
       `expected protocol 2026-07-28, got ${client.getNegotiatedProtocolVersion()}`,
     )
-    assert(client.getServerVersion()?.version === '0.8.0', 'expected server version 0.8.0')
+    assert(client.getServerVersion()?.version === npmVersion, `expected server version ${npmVersion}`)
     assert(
       client.getDiscoverResult()?.supportedVersions?.includes('2026-07-28') === true,
       'server/discover should advertise 2026-07-28',

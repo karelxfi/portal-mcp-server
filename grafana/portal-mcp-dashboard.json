@@ -623,14 +623,14 @@
       },
       "targets": [
         {
-          "expr": "topk(20, sum by (client_name, client_version) (increase(mcp_client_requests_total[$__range])))",
+          "expr": "topk(20, sum by (client_family, client_major) (increase(mcp_tool_client_calls_total[$__range])))",
           "instant": true,
-          "legendFormat": "{{client_name}} {{client_version}}",
+          "legendFormat": "{{client_family}} {{client_major}}",
           "range": false,
           "refId": "A"
         }
       ],
-      "title": "HTTP clients by version",
+      "title": "MCP clients by family",
       "type": "table",
       "description": "Live Prometheus scrape data from /metrics. Use the Loki panels below for long-range event history when Prometheus retention or scraping is missing."
     },
@@ -684,12 +684,12 @@
       },
       "targets": [
         {
-          "expr": "{app=\"sqd-portal-mcp\", event=\"mcp_tool_call\"} | json | tool=~\"$tool\" | user_query!=\"\" | line_format \"{{.user_query}} | tool={{.tool}} | network={{.network}} | status={{.status}}\"",
+          "expr": "{app=\"sqd-portal-mcp\", event=\"mcp_tool_call\"} | json | tool=~\"$tool\" | status=~\"tool_error|request_error|cancelled\" | line_format \"tool={{.tool}} | state={{.result_state}} | origin={{.error_origin}} | code={{.error_code}}\"",
           "queryType": "range",
           "refId": "A"
         }
       ],
-      "title": "Forwarded user questions",
+      "title": "Attributed failures and cancellations",
       "type": "logs"
     },
     {
