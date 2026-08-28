@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.8.1] - Unreleased
+## [0.8.1] - 2026-08-28
 
 Portal MCP v0.8.1 makes blockchain investigations more dependable under empty results, invalid inputs, upstream failures, and client cancellation. Responses now say what happened in a form agents can act on, while operators get privacy-safe metrics that separate useful empty or partial answers from actual failures.
 
