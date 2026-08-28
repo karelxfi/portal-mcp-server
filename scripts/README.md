@@ -94,7 +94,7 @@ BENCHMARK_SAMPLES=50 \
 npm run benchmark:paired
 ```
 
-The runner starts both exact commits, sends each sample pair at the same intended time, and fails statistically supported latency regressions above 10 percent or candidate tool errors above 1 percent. Sequential artifacts remain useful for standalone capacity evidence, but are not used as the release regression gate.
+The runner starts both exact commits, sends each sample pair at the same intended time, alternates which side starts first, and cools down between tools. Its default rate is two pairs per second, which produces four shared upstream requests per second before the burst profiles. Release mode requires at least 80 percent successful pairs per warm profile and fails statistically supported latency regressions above 10 percent, candidate tool errors above 1 percent, or any profile with insufficient evidence. `BENCHMARK_TARGET_RPS` and `BENCHMARK_COOLDOWN_MS` can override the default pair rate and 5-second cooldown. Sequential artifacts remain useful for standalone capacity evidence, but are not used as the release regression gate.
 
 ### `npm run soak:v082`
 Runs mixed tools with periodic eight-call bursts while recording tool errors, latency recovery, and MCP child-process RSS. Development runs may override the duration. Release mode requires a clean commit, at least 60 minutes, and no more than 1 percent tool errors:
