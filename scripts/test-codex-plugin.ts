@@ -52,6 +52,12 @@ const EXPECTED_PUBLIC_TOOL_NAMES = [
   'portal_debug_hyperliquid_query_replica_commands',
 ] as const
 
+const EXPECTED_STARTER_PROMPTS = [
+  'Show me the last 200 BTC perp fills on Hyperliquid.',
+  'How many transactions landed on Base in the past 2h?',
+  'Who sent the most USDC on Base in the past hour?',
+] as const
+
 function assert(condition: boolean, message: string) {
   if (!condition) {
     throw new Error(`Assertion failed: ${message}`)
@@ -144,13 +150,8 @@ function assertComposerIcon(pluginRoot: string, value: unknown) {
 function assertPromptList(value: unknown) {
   assert(Array.isArray(value), 'interface.defaultPrompt must be an array')
   assert(value.length > 0 && value.length <= 3, 'interface.defaultPrompt must contain 1-3 prompts')
-  const expectedPrompts = [
-    'Which blockchain networks can SQD query?',
-    'Show the latest Hyperliquid BTC trades.',
-    'Is Tron available in SQD?',
-  ]
   assert(
-    JSON.stringify(value) === JSON.stringify(expectedPrompts),
+    JSON.stringify(value) === JSON.stringify(EXPECTED_STARTER_PROMPTS),
     'interface.defaultPrompt should stay concrete and analysis-oriented',
   )
   for (const [index, prompt] of value.entries()) {
@@ -369,6 +370,11 @@ function assertChatgptSubmission() {
 
   assert(Array.isArray(submission.test_cases), 'ChatGPT submission test_cases must be an array')
   assert(submission.test_cases.length === 5, 'ChatGPT submission should include exactly 5 positive test cases')
+  assert(
+    JSON.stringify(submission.test_cases.slice(0, 3).map((value) => value.user_prompt)) ===
+      JSON.stringify(EXPECTED_STARTER_PROMPTS),
+    'ChatGPT submission should use the Codex starter prompts as its first three positive tests',
+  )
   for (const [index, value] of submission.test_cases.entries()) {
     assertRecord(value, `test_cases[${index}] must be an object`)
     assertString(value.description, `test_cases[${index}].description must be a string`)

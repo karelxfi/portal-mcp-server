@@ -20,9 +20,9 @@ Long description:
 
 Starter prompts:
 
-1. Which blockchain networks can SQD query?
-2. Show the latest Hyperliquid BTC trades.
-3. Is Tron available in SQD?
+1. Show me the last 200 BTC perp fills on Hyperliquid.
+2. How many transactions landed on Base in the past 2h?
+3. Who sent the most USDC on Base in the past hour?
 
 Public URLs:
 
@@ -104,10 +104,10 @@ Suggested initial release notes:
 
 | Prompt | Expected tool | Expected result |
 |---|---|---|
+| Show me the last 200 BTC perp fills on Hyperliquid. | `portal_hyperliquid_query_fills` | The latest 200 BTC fills with time, direction, price, size, and trader fields. |
+| How many transactions landed on Base in the past 2h? | `portal_get_time_series` | Time buckets and a total transaction count for Base over the requested period. |
+| Who sent the most USDC on Base in the past hour? | `portal_evm_query_token_transfers` | Recent Base USDC transfers grouped to identify the largest sender by transferred value. |
 | Which blockchain networks can SQD query? | `portal_list_networks` | A searchable list of supported networks and their availability. |
-| Show the latest Hyperliquid BTC trades. | `portal_hyperliquid_query_fills` | A bounded list of BTC trades with time, direction, price, size, and trader fields. |
-| How many transactions were on Base in the past two hours? | `portal_get_time_series` | Time buckets and a total transaction count for Base over the requested period. |
-| Show the latest USDC transfers on Ethereum in the past hour. | `portal_evm_query_token_transfers` | A bounded list of recent USDC transfers with transaction references and coverage details. |
 | Summarize this wallet's activity on Base over the past day. | `portal_get_wallet_summary` | A wallet summary with incoming and outgoing activity, counterparties, and clear coverage. |
 
 ### Negative review tests

@@ -63,9 +63,9 @@ Cursor loads the public SQD MCP connection and the same four skills. No API key 
 
 ## Starter prompts
 
-- Which blockchain networks can SQD query?
-- Show the latest Hyperliquid BTC trades.
-- Is Tron available in SQD?
+- Show me the last 200 BTC perp fills on Hyperliquid.
+- How many transactions landed on Base in the past 2h?
+- Who sent the most USDC on Base in the past hour?
 
 ## Checks
 
