@@ -196,7 +196,7 @@ async function main() {
           const candidateSamples = projectSamples(pairs, 'candidate')
           const successfulPairs = baselineSamples.flatMap((sample, index) =>
             sample.success && candidateSamples[index].success
-              ? [{ baseline: sample.endToEndMs, candidate: candidateSamples[index].endToEndMs }]
+              ? [{ baseline: sample.serviceMs, candidate: candidateSamples[index].serviceMs }]
               : [],
           )
           const requiredSuccessfulPairs = profile.name === 'cold-c1' ? 1 : Math.max(5, Math.ceil(profile.samples * 0.8))
@@ -229,8 +229,8 @@ async function main() {
           console.log(
             `${spec.name} ${profile.name} attempt=${attempt}/${profileAttempts}: baseline-p95=${baselineSummary.endToEndMs.p95.toFixed(1)}ms candidate-p95=${candidateSummary.endToEndMs.p95.toFixed(1)}ms pairs=${successfulPairs.length}/${requiredSuccessfulPairs} ${status.toUpperCase()}`,
           )
-          if (hasEnoughPairs || attempt === profileAttempts) break
-          console.log(`${spec.name} ${profile.name}: cooling down before retrying insufficient evidence`)
+          if (status === 'pass' || attempt === profileAttempts) break
+          console.log(`${spec.name} ${profile.name}: cooling down before confirming ${status} evidence`)
           await delay(cooldownMs)
         }
 
@@ -243,7 +243,7 @@ async function main() {
     }
 
     const artifact = {
-      schemaVersion: 'sqd_mcp_paired_performance_v3',
+      schemaVersion: 'sqd_mcp_paired_performance_v4',
       createdAt: new Date().toISOString(),
       releaseVersion: packageJson.version,
       baseline: { gitSha: baselineSha, gitDirty: baselineDirty },
