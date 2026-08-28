@@ -1,0 +1,107 @@
+{
+  "schemaVersion": 1,
+  "product": "SQD",
+  "repository": "https://github.com/subsquid-labs/portal-mcp-server",
+  "serverUrl": "https://portal.sqd.dev/mcp",
+  "targets": [
+    {
+      "id": "claude-connectors",
+      "name": "Claude Connectors Directory",
+      "listingUrl": "https://claude.ai/directory/connectors/sqd",
+      "updateMode": "manual-platform-review",
+      "required": true
+    },
+    {
+      "id": "openai-plugins",
+      "name": "OpenAI Plugins Directory",
+      "submissionUrl": "https://platform.openai.com/",
+      "updateMode": "manual-platform-review",
+      "required": true
+    },
+    {
+      "id": "grok-build",
+      "name": "Grok Build Marketplace",
+      "listingUrl": "https://github.com/xai-org/plugin-marketplace/pull/384",
+      "updateMode": "marketplace-pull-request",
+      "required": true,
+      "liveCheck": "github-pull-request"
+    },
+    {
+      "id": "cursor-marketplace",
+      "name": "Cursor Marketplace",
+      "submissionUrl": "https://cursor.com/marketplace/publish",
+      "updateMode": "manual-platform-review",
+      "required": true
+    },
+    {
+      "id": "official-mcp-registry",
+      "name": "Official MCP Registry",
+      "listingUrl": "https://registry.modelcontextprotocol.io/v0.1/servers?search=subsquid",
+      "updateMode": "publish-on-tag",
+      "required": true,
+      "liveCheck": "mcp-registry"
+    },
+    {
+      "id": "gemini-cli",
+      "name": "Gemini CLI Extension Gallery",
+      "listingUrl": "https://geminicli.com/extensions/",
+      "updateMode": "release-asset-and-topic-crawl",
+      "required": true,
+      "liveCheck": "gemini-gallery"
+    },
+    {
+      "id": "glama",
+      "name": "Glama",
+      "listingUrl": "https://glama.ai/mcp/servers/subsquid-labs/portal-mcp-server",
+      "updateMode": "github-crawl-after-one-time-claim",
+      "required": true,
+      "liveCheck": "glama"
+    },
+    {
+      "id": "awesome-mcp-servers",
+      "name": "Awesome MCP Servers",
+      "listingUrl": "https://github.com/punkpeye/awesome-mcp-servers",
+      "updateMode": "github-source",
+      "required": true,
+      "liveCheck": "awesome-mcp-servers"
+    },
+    {
+      "id": "smithery",
+      "name": "Smithery",
+      "listingUrl": "https://smithery.ai/",
+      "submissionUrl": "https://smithery.ai/new",
+      "updateMode": "remote-scan-after-one-time-publish",
+      "required": false
+    },
+    {
+      "id": "mcp-so",
+      "name": "MCP.so",
+      "listingUrl": "https://mcp.so/",
+      "submissionUrl": "https://mcp.so/submit?type=server",
+      "updateMode": "paid-one-time-submission",
+      "required": false
+    },
+    {
+      "id": "pulse-mcp",
+      "name": "PulseMCP",
+      "listingUrl": "https://www.pulsemcp.com/servers",
+      "submissionUrl": "https://www.pulsemcp.com/submit",
+      "updateMode": "official-registry-crawl",
+      "required": false
+    },
+    {
+      "id": "api-tracker",
+      "name": "APITracker MCP Directory",
+      "listingUrl": "https://apitracker.io/mcp-servers",
+      "updateMode": "registry-discovery",
+      "required": false
+    },
+    {
+      "id": "perplexity",
+      "name": "Perplexity",
+      "documentationUrl": "https://www.perplexity.ai/help-center/en/articles/13915507-adding-custom-remote-connectors",
+      "updateMode": "custom-remote-connector-only",
+      "required": false
+    }
+  ]
+}

@@ -1,0 +1,33 @@
+name: Directory Health
+
+on:
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out main
+        uses: actions/checkout@v5
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+
+      - name: Check public directory freshness
+        run: node scripts/check-distribution.mjs --live --output=directory-health.json
+
+      - name: Upload health report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: directory-health
+          path: directory-health.json
+          if-no-files-found: error
+          retention-days: 30

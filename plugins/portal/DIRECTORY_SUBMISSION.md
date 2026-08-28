@@ -2,6 +2,17 @@
 
 This is the source packet for SQD's OpenAI, Claude, Grok, Gemini, and Cursor directory listings.
 
+## Release automation
+
+Directory metadata is tied to releases so public catalogs do not depend on manual version updates.
+
+- A `v*` tag runs `.github/workflows/publish-mcp-registry.yml`. It validates the tag and manifests, authenticates to the official MCP Registry with GitHub OIDC, publishes only when the version is missing, and verifies that the new version is latest.
+- A published GitHub release runs `.github/workflows/publish-gemini-extension.yml`. It validates and packages the Gemini extension, requires the `gemini-cli-extension` topic, and uploads `sqd.tar.gz` to the matching release.
+- `.github/workflows/directory-health.yml` checks the official MCP Registry, Gemini discovery prerequisites and gallery, Glama, Awesome MCP Servers, and the Grok marketplace pull request every day. It stores a JSON health artifact and writes a compact Actions summary.
+- `npm run test:distribution` keeps `package.json`, `server.json`, and the Claude, Codex, Cursor, and Gemini manifests on one version.
+
+The supported publication routes and update modes live in `distribution/targets.json`. Reusable, directory-specific public copy lives in `distribution/submission-packets.json`. Glama requires one owner claim and then supports repository sync. Smithery requires one account-owned publish. MCP.so currently offers a paid submission route, so publishing there requires explicit spend approval. PulseMCP ingests servers from the official MCP Registry and does not need a separate submission. Perplexity supports SQD as a custom remote connector but does not currently offer a public connector-directory submission route. Do not add credentials or private review details to the tracker.
+
 ## Public listing
 
 Name: `SQD`
