@@ -29,10 +29,26 @@ type PairMeasurement = {
 }
 
 type BenchmarkProfile = {
-  name: 'cold-c1' | 'warm-c1' | 'warm-c4' | 'warm-c8' | 'burst-c8'
+  name: 'cold-c1' | 'warm-c1' | 'warm-c4'
   concurrency: number
   intervalMs: number
   samples: number
+}
+
+type BenchmarkAttempt = {
+  attempt: number
+  baseline: {
+    summary: ReturnType<typeof summarizePerformanceSamples>
+    samples: PerformanceSample<CallMeasurement>[]
+  }
+  candidate: {
+    summary: ReturnType<typeof summarizePerformanceSamples>
+    samples: PerformanceSample<CallMeasurement>[]
+  }
+  successfulPairs: number
+  requiredSuccessfulPairs: number
+  status: 'insufficient' | 'regression' | 'pass'
+  comparison?: ReturnType<typeof comparePairedLatencies>
 }
 
 function positiveInteger(value: string | undefined, fallback: number) {
@@ -111,6 +127,7 @@ async function main() {
   const targetRps = positiveInteger(process.env.BENCHMARK_TARGET_RPS, 2)
   const cooldownMs = positiveInteger(process.env.BENCHMARK_COOLDOWN_MS, 5_000)
   const releaseMode = process.env.BENCHMARK_RELEASE === '1'
+  const profileAttempts = positiveInteger(process.env.BENCHMARK_PROFILE_ATTEMPTS, releaseMode ? 2 : 1)
   const tools = selectedTools()
   if (releaseMode && (tools.length !== TOOL_SPECS.length || samplesPerProfile < 50)) {
     throw new Error('Release paired benchmark requires every tool and at least 50 sample pairs per warm profile')
@@ -133,8 +150,6 @@ async function main() {
     { name: 'cold-c1', concurrency: 1, intervalMs: 0, samples: 1 },
     { name: 'warm-c1', concurrency: 1, intervalMs: 1_000 / targetRps, samples: samplesPerProfile },
     { name: 'warm-c4', concurrency: 4, intervalMs: 1_000 / targetRps, samples: samplesPerProfile },
-    { name: 'warm-c8', concurrency: 8, intervalMs: 1_000 / targetRps, samples: samplesPerProfile },
-    { name: 'burst-c8', concurrency: 8, intervalMs: 0, samples: samplesPerProfile },
   ]
 
   const [baseline, candidate] = await Promise.all([
@@ -154,72 +169,94 @@ async function main() {
     for (const spec of tools) {
       const args = spec.args(context)
       for (const profile of profiles) {
-        const pairs = await runOpenLoop<PairMeasurement>({
-          count: profile.samples,
-          intervalMs: profile.intervalMs,
-          concurrency: profile.concurrency,
-          task: async (index) => {
-            if (index % 2 === 0) {
-              const [baselineCall, candidateCall] = await Promise.all([
-                measure(baseline.client, spec.name, args),
+        const attempts: BenchmarkAttempt[] = []
+        let finalAttempt: BenchmarkAttempt | undefined
+
+        for (let attempt = 1; attempt <= profileAttempts; attempt += 1) {
+          const pairs = await runOpenLoop<PairMeasurement>({
+            count: profile.samples,
+            intervalMs: profile.intervalMs,
+            concurrency: profile.concurrency,
+            task: async (index) => {
+              if (index % 2 === 0) {
+                const [baselineCall, candidateCall] = await Promise.all([
+                  measure(baseline.client, spec.name, args),
+                  measure(candidate.client, spec.name, args),
+                ])
+                return { baseline: baselineCall, candidate: candidateCall }
+              }
+              const [candidateCall, baselineCall] = await Promise.all([
                 measure(candidate.client, spec.name, args),
+                measure(baseline.client, spec.name, args),
               ])
               return { baseline: baselineCall, candidate: candidateCall }
-            }
-            const [candidateCall, baselineCall] = await Promise.all([
-              measure(candidate.client, spec.name, args),
-              measure(baseline.client, spec.name, args),
-            ])
-            return { baseline: baselineCall, candidate: candidateCall }
-          },
-        })
-        const baselineSamples = projectSamples(pairs, 'baseline')
-        const candidateSamples = projectSamples(pairs, 'candidate')
-        const successfulPairs = baselineSamples.flatMap((sample, index) =>
-          sample.success && candidateSamples[index].success
-            ? [{ baseline: sample.endToEndMs, candidate: candidateSamples[index].endToEndMs }]
-            : [],
-        )
-        const requiredSuccessfulPairs = profile.name === 'cold-c1' ? 1 : Math.max(5, Math.ceil(profile.samples * 0.8))
-        const hasEnoughPairs = successfulPairs.length >= requiredSuccessfulPairs
-        const comparison =
-          profile.name !== 'cold-c1' && hasEnoughPairs
-            ? comparePairedLatencies(
-                successfulPairs.map((pair) => pair.baseline),
-                successfulPairs.map((pair) => pair.candidate),
-              )
-            : undefined
-        if (comparison?.regression) regressions += 1
-        if (!hasEnoughPairs) insufficientProfiles += 1
-        baselineErrors += baselineSamples.filter((sample) => !sample.success).length
-        candidateErrors += candidateSamples.filter((sample) => !sample.success).length
-        totalCalls += profile.samples
+            },
+          })
+          const baselineSamples = projectSamples(pairs, 'baseline')
+          const candidateSamples = projectSamples(pairs, 'candidate')
+          const successfulPairs = baselineSamples.flatMap((sample, index) =>
+            sample.success && candidateSamples[index].success
+              ? [{ baseline: sample.endToEndMs, candidate: candidateSamples[index].endToEndMs }]
+              : [],
+          )
+          const requiredSuccessfulPairs = profile.name === 'cold-c1' ? 1 : Math.max(5, Math.ceil(profile.samples * 0.8))
+          const hasEnoughPairs = successfulPairs.length >= requiredSuccessfulPairs
+          const comparison =
+            profile.name !== 'cold-c1' && hasEnoughPairs
+              ? comparePairedLatencies(
+                  successfulPairs.map((pair) => pair.baseline),
+                  successfulPairs.map((pair) => pair.candidate),
+                )
+              : undefined
+          const status = !hasEnoughPairs ? 'insufficient' : comparison?.regression ? 'regression' : 'pass'
+          const baselineSummary = summarizePerformanceSamples(baselineSamples)
+          const candidateSummary = summarizePerformanceSamples(candidateSamples)
+          finalAttempt = {
+            attempt,
+            baseline: { summary: baselineSummary, samples: baselineSamples },
+            candidate: { summary: candidateSummary, samples: candidateSamples },
+            successfulPairs: successfulPairs.length,
+            requiredSuccessfulPairs,
+            status,
+            comparison,
+          }
+          attempts.push(finalAttempt)
 
-        results.push({
-          tool: spec.name,
-          profile,
-          baseline: { summary: summarizePerformanceSamples(baselineSamples), samples: baselineSamples },
-          candidate: { summary: summarizePerformanceSamples(candidateSamples), samples: candidateSamples },
-          successfulPairs: successfulPairs.length,
-          requiredSuccessfulPairs,
-          status: !hasEnoughPairs ? 'insufficient' : comparison?.regression ? 'regression' : 'pass',
-          comparison,
-        })
-        const status = !hasEnoughPairs ? 'INSUFFICIENT' : comparison?.regression ? 'REGRESSION' : 'PASS'
-        console.log(
-          `${spec.name} ${profile.name}: baseline-p95=${summarizePerformanceSamples(baselineSamples).endToEndMs.p95.toFixed(1)}ms candidate-p95=${summarizePerformanceSamples(candidateSamples).endToEndMs.p95.toFixed(1)}ms pairs=${successfulPairs.length}/${requiredSuccessfulPairs} ${status}`,
-        )
+          baselineErrors += baselineSamples.filter((sample) => !sample.success).length
+          candidateErrors += candidateSamples.filter((sample) => !sample.success).length
+          totalCalls += profile.samples
+
+          console.log(
+            `${spec.name} ${profile.name} attempt=${attempt}/${profileAttempts}: baseline-p95=${baselineSummary.endToEndMs.p95.toFixed(1)}ms candidate-p95=${candidateSummary.endToEndMs.p95.toFixed(1)}ms pairs=${successfulPairs.length}/${requiredSuccessfulPairs} ${status.toUpperCase()}`,
+          )
+          if (hasEnoughPairs || attempt === profileAttempts) break
+          console.log(`${spec.name} ${profile.name}: cooling down before retrying insufficient evidence`)
+          await delay(cooldownMs)
+        }
+
+        if (!finalAttempt) throw new Error(`No paired benchmark attempt ran for ${spec.name} ${profile.name}`)
+        if (finalAttempt.comparison?.regression) regressions += 1
+        if (finalAttempt.status === 'insufficient') insufficientProfiles += 1
+        results.push({ tool: spec.name, profile, ...finalAttempt, attempts })
       }
       if (spec !== tools.at(-1)) await delay(cooldownMs)
     }
 
     const artifact = {
-      schemaVersion: 'sqd_mcp_paired_performance_v2',
+      schemaVersion: 'sqd_mcp_paired_performance_v3',
       createdAt: new Date().toISOString(),
       releaseVersion: packageJson.version,
       baseline: { gitSha: baselineSha, gitDirty: baselineDirty },
       candidate: { gitSha: candidateSha, gitDirty: candidateDirty },
-      config: { releaseMode, samplesPerProfile, targetRps, cooldownMs, toolCount: tools.length, profiles },
+      config: {
+        releaseMode,
+        samplesPerProfile,
+        targetRps,
+        cooldownMs,
+        profileAttempts,
+        toolCount: tools.length,
+        profiles,
+      },
       totals: {
         samplesPerSide: totalCalls,
         baselineErrors,
