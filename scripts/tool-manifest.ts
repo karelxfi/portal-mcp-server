@@ -10,14 +10,7 @@ const PORTAL_API_URL = 'https://portal.sqd.dev'
 const BASE_UNISWAP_V4_POOL_MANAGER = '0x498581ff718922c3f8e6a244956af099b2652b2b'
 const AERODROME_SLIPSTREAM_FACTORY = '0xf8f2eb4940cfe7d13603dddd87f123820fc061ef'
 const SOLANA_TOKEN_PROGRAM_ID = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA'
-const BASE_UNISWAP_V3_TEST_POOL_CANDIDATES = [
-  '0xf0125d06b76cebc2ab3831a938e07ab6988b00c9',
-  '0x3c4384f3664b37a3cb5a5cb3452b4b4a3aa1256f',
-  '0xd0b53d9277642d899df5c87a3966a349a798f224',
-  '0xe69def85897c95e9ef8439128ee015603b360a71',
-  '0xedc625b74537ee3a10874f53d170e9c17a906b9c',
-  '0xbc3231036ee1eca03e5f67fecedc640d21610823',
-] as const
+const BASE_UNISWAP_V3_TEST_POOL = '0xd0b53d9277642d899df5c87a3966a349a798f224'
 const SELECTORS = {
   allPools: '0x41d1de97',
 } as const
@@ -415,7 +408,9 @@ export async function loadToolTestContext(client: Client): Promise<ToolTestConte
   ).toLowerCase()
   assert(/^0x[0-9a-f]{40}$/.test(usdcBase), 'Expected USDC to resolve from token-list data on Base')
 
-  const baseUniswapV3Pool = await pickRecentPoolFromCandidates(client, BASE_UNISWAP_V3_TEST_POOL_CANDIDATES)
+  // Downstream tool calls validate this public pool against live Portal data.
+  // Keeping selection deterministic avoids a separate discovery query becoming a release-gate dependency.
+  const baseUniswapV3Pool = BASE_UNISWAP_V3_TEST_POOL
 
   const recentV4SwapItems = getItems(recentV4SwapResult.data)
   assert(recentV4SwapItems.length > 0, 'Expected at least one active Base Uniswap v4 pool id')
