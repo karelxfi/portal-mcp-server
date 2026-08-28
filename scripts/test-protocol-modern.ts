@@ -50,6 +50,19 @@ async function main() {
       tools.every((tool) => tool.inputSchema?.type === 'object'),
       'every tool should expose an object input schema',
     )
+    assert(
+      tools.every((tool) => tool.outputSchema?.type === 'object'),
+      'every tool should expose an object output schema',
+    )
+    assert(
+      tools.every(
+        (tool) =>
+          tool.outputSchema?.properties?._coverage !== undefined &&
+          tool.outputSchema?.properties?._pagination !== undefined &&
+          tool.outputSchema?.properties?._execution !== undefined,
+      ),
+      'every output schema should describe the stable completeness and execution envelope',
+    )
 
     const { resources } = await client.listResources()
     assert(
@@ -65,7 +78,7 @@ async function main() {
 
     console.log('PASS  server/discover negotiates MCP 2026-07-28 over stdio')
     console.log('PASS  server instructions are self-contained for Codex discovery')
-    console.log('PASS  modern tools/resources discovery exposes the complete 28-tool surface')
+    console.log('PASS  modern tools/resources discovery exposes the complete 28-tool surface with structured outputs')
     console.log('PASS  modern tools/call reaches SQD Portal successfully')
     console.log('\nMCP 2026 protocol QA passed')
   } finally {
