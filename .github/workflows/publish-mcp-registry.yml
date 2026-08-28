@@ -70,15 +70,18 @@ jobs:
         env:
           VERSION: ${{ steps.release.outputs.version }}
         run: |
-          curl --fail --silent --show-error \
-            'https://registry.modelcontextprotocol.io/v0.1/servers?search=subsquid' \
-            --output registry.json
-          if jq -e --arg version "$VERSION" \
-            '.servers[] | select(.server.name == "io.github.subsquid-labs/portal-mcp-server" and .server.version == $version)' \
-            registry.json >/dev/null; then
+          STATUS="$(curl --silent --show-error \
+            --output registry.json \
+            --write-out '%{http_code}' \
+            "https://registry.modelcontextprotocol.io/v0.1/servers/io.github.subsquid-labs%2Fportal-mcp-server/versions/${VERSION}")"
+          if [[ "$STATUS" == "200" ]]; then
             echo "exists=true" >> "$GITHUB_OUTPUT"
-          else
+          elif [[ "$STATUS" == "404" ]]; then
             echo "exists=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Registry returned HTTP $STATUS" >&2
+            cat registry.json >&2
+            exit 1
           fi
 
       - name: Authenticate with GitHub OIDC
@@ -95,9 +98,9 @@ jobs:
         run: |
           for attempt in {1..12}; do
             if curl --fail --silent --show-error \
-              'https://registry.modelcontextprotocol.io/v0.1/servers?search=subsquid' \
+              "https://registry.modelcontextprotocol.io/v0.1/servers/io.github.subsquid-labs%2Fportal-mcp-server/versions/${VERSION}" \
               | jq -e --arg version "$VERSION" \
-                '.servers[] | select(.server.name == "io.github.subsquid-labs/portal-mcp-server" and .server.version == $version and ._meta["io.modelcontextprotocol.registry/official"].isLatest == true)' \
+                'select(.server.name == "io.github.subsquid-labs/portal-mcp-server" and .server.version == $version and ._meta["io.modelcontextprotocol.registry/official"].isLatest == true)' \
                 >/dev/null; then
               echo "Official MCP Registry now serves $VERSION as latest"
               exit 0

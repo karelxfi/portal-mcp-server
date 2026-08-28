@@ -123,12 +123,14 @@ async function fetchText(url) {
 }
 
 async function checkRegistry(version) {
-  const body = await fetchText('https://registry.modelcontextprotocol.io/v0.1/servers?search=subsquid')
-  const payload = JSON.parse(body)
-  const match = payload.servers?.find(
-    (entry) => entry.server?.name === SERVER_NAME && entry.server?.version === version,
+  const encodedName = encodeURIComponent(SERVER_NAME)
+  const body = await fetchText(
+    `https://registry.modelcontextprotocol.io/v0.1/servers/${encodedName}/versions/${encodeURIComponent(version)}`,
   )
-  if (!match) return result('Official MCP Registry', 'fail', `version ${version} is not published`)
+  const match = JSON.parse(body)
+  if (match.server?.name !== SERVER_NAME || match.server?.version !== version) {
+    return result('Official MCP Registry', 'fail', `version ${version} is not published`)
+  }
   if (!match._meta?.['io.modelcontextprotocol.registry/official']?.isLatest) {
     return result('Official MCP Registry', 'fail', `version ${version} is present but not marked latest`)
   }
