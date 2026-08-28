@@ -195,8 +195,17 @@ async function main() {
       try {
         const result = await callToolWithRetry(client, testCase.tool, testCase.args, { parseJson: false })
         assert(result.isError, `${testCase.name} should return an error`)
-        assertErrorQuality(result.text, testCase.name)
-        testCase.expect(result.text)
+        const error = result.structuredContent?.error as Record<string, unknown> | undefined
+        assert(typeof error?.code === 'string' && error.code.length > 0, `${testCase.name} should expose an error code`)
+        assert(
+          ['client_input', 'upstream', 'server', 'transport'].includes(String(error?.origin)),
+          `${testCase.name} should expose a bounded error origin`,
+        )
+        assert(typeof error?.retryable === 'boolean', `${testCase.name} should say whether retry is safe`)
+        assert(Array.isArray(error?.suggestions), `${testCase.name} should expose structured suggestions`)
+        const qualityText = [error?.summary, ...(error?.suggestions as unknown[])].join('\n')
+        assertErrorQuality(qualityText, testCase.name)
+        testCase.expect(qualityText)
         console.log(`PASS  ${testCase.name}`)
         passed++
       } catch (error) {

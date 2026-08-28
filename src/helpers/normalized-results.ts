@@ -1,4 +1,4 @@
-import { formatTimestamp } from './format.js'
+import { formatTimestamp, normalizeUnixTimestamp } from './format.js'
 
 type RecordLike = Record<string, unknown>
 
@@ -33,20 +33,6 @@ function withCommonAliases(
         }
       : {}),
   }
-}
-
-function normalizeUnixTimestamp(value: unknown): number | undefined {
-  const raw = typeof value === 'number'
-    ? value
-    : typeof value === 'string'
-      ? Number(value)
-      : undefined
-
-  if (raw === undefined || !Number.isFinite(raw) || raw <= 0) {
-    return undefined
-  }
-
-  return raw > 1e12 ? Math.floor(raw / 1000) : raw
 }
 
 export function normalizeEvmTransactionResult(item: RecordLike): RecordLike {

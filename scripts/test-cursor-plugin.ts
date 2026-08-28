@@ -6,6 +6,7 @@ import { resolve } from 'node:path'
 type JsonObject = Record<string, unknown>
 
 const PLUGIN_ROOT = 'plugins/portal'
+const RELEASE_VERSION = readJson('package.json').version
 
 function assert(condition: boolean, message: string): asserts condition {
   if (!condition) throw new Error(`Assertion failed: ${message}`)
@@ -79,7 +80,7 @@ function assertMarketplace() {
   assertRecord(marketplace.owner, 'Cursor marketplace owner should be present')
   assert(marketplace.owner.name === 'Subsquid Labs', 'Cursor marketplace owner should be Subsquid Labs')
   assertRecord(marketplace.metadata, 'Cursor marketplace metadata should be present')
-  assert(marketplace.metadata.version === '0.8.0', 'Cursor marketplace should advertise v0.8.0')
+  assert(marketplace.metadata.version === RELEASE_VERSION, 'Cursor marketplace should match the package release')
   assert(
     Array.isArray(marketplace.plugins) && marketplace.plugins.length === 1,
     'Cursor marketplace should list one plugin',

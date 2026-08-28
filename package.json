@@ -1,6 +1,6 @@
 {
   "name": "sqd-portal-mcp",
-  "version": "0.8.0",
+  "version": "0.8.1",
   "description": "MCP server wrapping SQD Portal API",
   "license": "MIT",
   "type": "module",
@@ -42,7 +42,6 @@
     "package:gemini": "node scripts/package-gemini-extension.mjs",
     "test:conversations": "tsx scripts/test-conversations.ts",
     "test:realistic-prompts": "tsx scripts/test-realistic-prompts.ts",
-    "prompt:taxonomy": "tsx scripts/prompt-taxonomy.ts",
     "test:evm-investigator": "tsx scripts/test-evm-investigator.ts",
     "test:negative": "tsx scripts/test-negative.ts",
     "test:quality": "tsx scripts/test-quality.ts",

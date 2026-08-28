@@ -6,11 +6,26 @@ import { z } from 'zod'
 import { getDatasets } from '../../cache/datasets.js'
 import { detectChainType } from '../../helpers/chain.js'
 import { formatResult } from '../../helpers/format.js'
+import {
+  buildPaginationInfo,
+  decodeOffsetPageCursor,
+  encodeOffsetPageCursor,
+  paginateOffsetItems,
+} from '../../helpers/pagination.js'
+import { buildExecutionMetadata } from '../../helpers/tool-ux.js'
 import { buildToolDescription } from '../../helpers/tool-ux.js'
 
 // ============================================================================
 // Tool: List Datasets
 // ============================================================================
+
+type ListNetworksCursorRequest = {
+  vm?: 'evm' | 'tron' | 'solana' | 'bitcoin' | 'substrate' | 'hyperliquid'
+  network_type?: 'mainnet' | 'testnet' | 'devnet'
+  query?: string
+  real_time_only?: boolean
+  limit: number
+}
 
 export function registerListDatasetsTool(server: McpServer) {
   registerPortalTool(server,
@@ -22,8 +37,29 @@ export function registerListDatasetsTool(server: McpServer) {
       query: z.string().optional().describe('Search by name, alias, or chain ID'),
       real_time_only: z.boolean().optional().describe('Only show networks with a real-time indexed head'),
       limit: z.number().max(100).optional().default(25).describe('Max results to return (default: 25, max: 100)'),
+      cursor: z.string().optional().describe('Continuation cursor from a previous network catalog page'),
     },
-    async ({ vm, network_type, query, real_time_only, limit }) => {
+    async ({ vm, network_type, query, real_time_only, limit, cursor }) => {
+      const paginationCursor = cursor
+        ? decodeOffsetPageCursor<ListNetworksCursorRequest>(cursor, 'portal_list_networks')
+        : undefined
+
+      if (paginationCursor) {
+        vm = paginationCursor.request.vm
+        network_type = paginationCursor.request.network_type
+        query = paginationCursor.request.query
+        real_time_only = paginationCursor.request.real_time_only
+        limit = paginationCursor.request.limit
+      }
+
+      const request: ListNetworksCursorRequest = {
+        ...(vm ? { vm } : {}),
+        ...(network_type ? { network_type } : {}),
+        ...(query ? { query } : {}),
+        ...(real_time_only !== undefined ? { real_time_only } : {}),
+        limit,
+      }
+      const currentOffset = paginationCursor?.offset ?? 0
       let datasets = await getDatasets()
 
       if (vm) {
@@ -108,14 +144,47 @@ export function registerListDatasetsTool(server: McpServer) {
       })
 
       const totalAvailable = results.length
-      const limitedResults = results.slice(0, limit)
+      const { pageItems, hasMore, nextOffset } = paginateOffsetItems(results, limit, currentOffset)
+      const nextCursor = hasMore
+        ? encodeOffsetPageCursor<ListNetworksCursorRequest>({
+            tool: 'portal_list_networks',
+            dataset: 'network-catalog',
+            request,
+            offset: nextOffset ?? currentOffset + pageItems.length,
+          })
+        : undefined
+      const pageStart = pageItems.length > 0 ? currentOffset + 1 : 0
+      const pageEnd = currentOffset + pageItems.length
       const message =
-        totalAvailable > limitedResults.length
-          ? `Found ${totalAvailable} networks (showing ${limitedResults.length}). Increase limit to see more.`
-          : `Found ${limitedResults.length} network${limitedResults.length === 1 ? '' : 's'}.`
+        hasMore || currentOffset > 0
+          ? `Found ${totalAvailable} matching networks (showing ${pageStart}-${pageEnd}).${hasMore ? ' Continue with _pagination.next_cursor to see more.' : ''}`
+          : `Found ${pageItems.length} network${pageItems.length === 1 ? '' : 's'}.`
 
-      return formatResult(limitedResults, message, {
+      return formatResult({
+        items: pageItems,
+        total_matching: totalAvailable,
+        page_offset: currentOffset,
+      }, message, {
         toolName: 'portal_list_networks',
+        pagination: buildPaginationInfo(limit, pageItems.length, nextCursor),
+        ordering: {
+          kind: 'catalog',
+          page_order: 'portal_catalog_order',
+          sorted_by: 'portal_catalog',
+          direction: 'asc',
+          continuation: nextCursor ? 'next_page' : 'none',
+        },
+        coverage: {
+          kind: 'catalog_page',
+          result_complete: !hasMore,
+          continuation: hasMore ? 'cursor' : 'none',
+          returned_items: pageItems.length,
+          total_matching: totalAvailable,
+        },
+        execution: buildExecutionMetadata({
+          limit,
+          notes: ['Network catalog filters and ordering are preserved by the continuation cursor.'],
+        }),
       })
     },
   )

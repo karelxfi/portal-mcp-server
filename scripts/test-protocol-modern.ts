@@ -3,6 +3,8 @@
 import { Client } from '@modelcontextprotocol/client'
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio'
 
+import { npmVersion } from '../src/version.js'
+
 function assert(condition: boolean, message: string): asserts condition {
   if (!condition) throw new Error(`Assertion failed: ${message}`)
 }
@@ -17,7 +19,7 @@ async function main() {
     stderr: 'pipe',
   })
   const client = new Client(
-    { name: 'mcp-2026-stdio-smoke', version: '0.8.0' },
+    { name: 'mcp-2026-stdio-smoke', version: npmVersion },
     { versionNegotiation: { mode: 'auto', probe: { timeoutMs: 5_000 } } },
   )
 
@@ -28,10 +30,18 @@ async function main() {
       client.getNegotiatedProtocolVersion() === '2026-07-28',
       `expected protocol 2026-07-28, got ${client.getNegotiatedProtocolVersion()}`,
     )
-    assert(client.getServerVersion()?.version === '0.8.0', 'expected server version 0.8.0')
+    assert(client.getServerVersion()?.version === npmVersion, `expected server version ${npmVersion}`)
     assert(
       client.getDiscoverResult()?.supportedVersions?.includes('2026-07-28') === true,
       'server/discover should advertise 2026-07-28',
+    )
+    const instructions = client.getInstructions()
+    assert(typeof instructions === 'string' && instructions.length > 0, 'server should expose usage instructions')
+    assert(
+      instructions.slice(0, 512).includes('portal_list_networks') &&
+        instructions.slice(0, 512).includes('_coverage') &&
+        instructions.slice(0, 512).includes('_pagination'),
+      'the first 512 instruction characters should explain discovery and completeness checks',
     )
 
     const { tools } = await client.listTools()
@@ -54,6 +64,7 @@ async function main() {
     assert(typeof (payload.number ?? payload.block_number) === 'number', 'portal_get_head should return a block number')
 
     console.log('PASS  server/discover negotiates MCP 2026-07-28 over stdio')
+    console.log('PASS  server instructions are self-contained for Codex discovery')
     console.log('PASS  modern tools/resources discovery exposes the complete 28-tool surface')
     console.log('PASS  modern tools/call reaches SQD Portal successfully')
     console.log('\nMCP 2026 protocol QA passed')

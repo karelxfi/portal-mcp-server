@@ -222,14 +222,129 @@ export function sanitizeErrorContext(context?: Record<string, unknown>): Record<
   return Object.keys(sanitized).length > 0 ? sanitized : undefined
 }
 
+export type ToolErrorOrigin = 'client_input' | 'upstream' | 'server' | 'transport'
+
+export type ToolErrorCode =
+  | 'invalid_request'
+  | 'invalid_cursor'
+  | 'unknown_network'
+  | 'unsupported_operation'
+  | 'not_found'
+  | 'no_data'
+  | 'incomplete_result'
+  | 'response_too_large'
+  | 'upstream_reorg'
+  | 'rate_limited'
+  | 'upstream_unavailable'
+  | 'upstream_timeout'
+  | 'upstream_error'
+  | 'internal_error'
+  | 'cancelled'
+  | 'unknown_error'
+
+export type ToolErrorDescriptor = {
+  code: ToolErrorCode
+  origin: ToolErrorOrigin
+  summary: string
+  retryable: boolean
+  retryAfterMs?: number
+  suggestions: string[]
+}
+
+export type ActionableErrorMetadata = {
+  code?: ToolErrorCode
+  origin?: ToolErrorOrigin
+  retryable?: boolean
+  retryAfterMs?: number
+}
+
+function inferErrorMetadata(message: string): Required<Omit<ActionableErrorMetadata, 'retryAfterMs'>> {
+  const normalized = message.toLowerCase()
+
+  if (normalized.includes('cancel')) {
+    return { code: 'cancelled', origin: 'transport', retryable: false }
+  }
+  if (normalized.includes('pagination cursor') || normalized.includes('cursor belongs')) {
+    return { code: 'invalid_cursor', origin: 'client_input', retryable: false }
+  }
+  if (normalized.includes('unknown network')) {
+    return { code: 'unknown_network', origin: 'client_input', retryable: false }
+  }
+  if (normalized.includes('does not support') || normalized.includes('only supported for')) {
+    return { code: 'unsupported_operation', origin: 'client_input', retryable: false }
+  }
+  if (normalized.includes('response too large')) {
+    return { code: 'response_too_large', origin: 'client_input', retryable: false }
+  }
+  if (normalized.includes('chain reorganization') || normalized.includes('409 conflict')) {
+    return { code: 'upstream_reorg', origin: 'upstream', retryable: true }
+  }
+  if (normalized.includes('rate limit') || normalized.includes('(429')) {
+    return { code: 'rate_limited', origin: 'upstream', retryable: true }
+  }
+  if (normalized.includes('timed out') || normalized.includes('timeout')) {
+    return { code: 'upstream_timeout', origin: 'upstream', retryable: true }
+  }
+  if (normalized.includes('temporarily unavailable') || normalized.includes('(503')) {
+    return { code: 'upstream_unavailable', origin: 'upstream', retryable: true }
+  }
+  if (normalized.includes('coverage was incomplete')) {
+    return { code: 'incomplete_result', origin: 'upstream', retryable: true }
+  }
+  if (normalized.includes('no data') || (normalized.includes('no ') && normalized.includes(' found'))) {
+    return { code: 'no_data', origin: 'client_input', retryable: false }
+  }
+  if (normalized.includes('not found')) {
+    return { code: 'not_found', origin: 'client_input', retryable: false }
+  }
+  if (
+    normalized.includes('portal server error') ||
+    normalized.includes('portal api error (5') ||
+    normalized.includes('failed to fetch') ||
+    normalized.includes('fetch failed')
+  ) {
+    return { code: 'upstream_error', origin: 'upstream', retryable: true }
+  }
+  if (
+    normalized.includes('invalid') ||
+    normalized.includes('required') ||
+    normalized.includes('must ') ||
+    normalized.includes('cannot be used') ||
+    normalized.includes('provide ') ||
+    normalized.includes('cannot be empty')
+  ) {
+    return { code: 'invalid_request', origin: 'client_input', retryable: false }
+  }
+
+  return { code: 'internal_error', origin: 'server', retryable: false }
+}
+
+function safeGenericSummary(error: Error, metadata: ReturnType<typeof inferErrorMetadata>): string {
+  if (metadata.origin === 'server') {
+    return 'The tool could not complete the request.'
+  }
+  return sanitizeText(error.message).slice(0, 500)
+}
+
 export class ActionableError extends Error {
   public suggestions: string[]
   public context?: Record<string, unknown>
+  public code: ToolErrorCode
+  public origin: ToolErrorOrigin
+  public retryable: boolean
+  public retryAfterMs?: number
+  public summary: string
 
-  constructor(message: string, suggestions: string[], context?: Record<string, unknown>) {
+  constructor(
+    message: string,
+    suggestions: string[],
+    context?: Record<string, unknown>,
+    metadata: ActionableErrorMetadata = {},
+  ) {
     const sanitizedMessage = sanitizeText(message)
     const sanitizedSuggestions = suggestions.map((suggestion) => sanitizeText(suggestion))
     const sanitizedContext = sanitizeErrorContext(context)
+    const inferred = inferErrorMetadata(sanitizedMessage)
 
     // Build the full message including suggestions
     const parts = [sanitizedMessage]
@@ -252,6 +367,11 @@ export class ActionableError extends Error {
     this.name = 'ActionableError'
     this.suggestions = sanitizedSuggestions
     this.context = sanitizedContext
+    this.code = metadata.code ?? inferred.code
+    this.origin = metadata.origin ?? inferred.origin
+    this.retryable = metadata.retryable ?? inferred.retryable
+    this.retryAfterMs = metadata.retryAfterMs
+    this.summary = sanitizedMessage
   }
 }
 
@@ -259,6 +379,52 @@ export class RequestCancelledError extends Error {
   constructor(message = 'Request cancelled by the MCP client') {
     super(message)
     this.name = 'RequestCancelledError'
+  }
+}
+
+export function describeToolError(error: unknown): ToolErrorDescriptor {
+  if (error instanceof ActionableError) {
+    return {
+      code: error.code,
+      origin: error.origin,
+      summary: error.summary,
+      retryable: error.retryable,
+      ...(error.retryAfterMs !== undefined ? { retryAfterMs: error.retryAfterMs } : {}),
+      suggestions: error.suggestions,
+    }
+  }
+
+  if (error instanceof RequestCancelledError) {
+    return {
+      code: 'cancelled',
+      origin: 'transport',
+      summary: error.message,
+      retryable: false,
+      suggestions: [],
+    }
+  }
+
+  if (error instanceof Error) {
+    const metadata = inferErrorMetadata(error.message)
+    const suggestions =
+      metadata.origin === 'upstream' && metadata.retryable
+        ? ['Retry the same request once.', 'Reduce the requested window if the problem continues.']
+        : metadata.origin === 'client_input'
+          ? ['Review the tool arguments and retry with the corrected values.']
+          : ['Retry once. If the problem continues, use a narrower query.']
+    return {
+      ...metadata,
+      summary: safeGenericSummary(error, metadata),
+      suggestions,
+    }
+  }
+
+  return {
+    code: 'unknown_error',
+    origin: 'server',
+    summary: 'The tool could not complete the request.',
+    retryable: false,
+    suggestions: ['Retry once. If the problem continues, use a narrower query.'],
   }
 }
 
@@ -272,10 +438,16 @@ export function parsePortalError(
 ): ActionableError {
   const suggestions: string[] = []
   let message = `Portal API Error (${status})`
+  let metadata: ActionableErrorMetadata = {
+    code: 'upstream_error',
+    origin: 'upstream',
+    retryable: status >= 500,
+  }
 
   // 400 Bad Request - Parse detailed error
   if (status === 400) {
     message = `Invalid request: ${errorText}`
+    metadata = { code: 'invalid_request', origin: 'client_input', retryable: false }
 
     if (errorText.includes('unknown field')) {
       const fieldMatch = errorText.match(/unknown field `(\w+)`/)
@@ -323,6 +495,7 @@ export function parsePortalError(
   // 404 Not Found
   if (status === 404) {
     message = `Resource not found: ${errorText}`
+    metadata = { code: 'not_found', origin: 'upstream', retryable: false }
 
     if (context?.url && String(context.url).includes('/timestamps/')) {
       // Timestamp-to-block lookup failed — the indexer hasn't caught up
@@ -348,6 +521,7 @@ export function parsePortalError(
   // 409 Conflict (Chain Reorg)
   if (status === 409) {
     message = 'Chain reorganization detected'
+    metadata = { code: 'upstream_reorg', origin: 'upstream', retryable: true }
     suggestions.push('Wait a few seconds and retry with the same parameters')
     suggestions.push("Query finalized blocks only (older blocks that won't reorg)")
     suggestions.push('For recent data, use smaller block ranges (< 100 blocks)')
@@ -355,7 +529,9 @@ export function parsePortalError(
 
   // 429 Rate Limited
   if (status === 429) {
-    const retryAfterMatch = errorText.match(/Retry after (\d+)s/)
+    const retryAfterMatch = errorText.match(/Retry after (\d+)s/i)
+    const retryAfterMs = retryAfterMatch ? Number(retryAfterMatch[1]) * 1000 : undefined
+    metadata = { code: 'rate_limited', origin: 'upstream', retryable: true, retryAfterMs }
     if (retryAfterMatch) {
       message = `Rate limited. Retry after ${retryAfterMatch[1]} seconds`
       suggestions.push(`Wait ${retryAfterMatch[1]} seconds before retrying`)
@@ -371,6 +547,7 @@ export function parsePortalError(
   // 503 Worker unavailable
   if (status === 503) {
     message = `Portal worker temporarily unavailable (503): ${errorText}`
+    metadata = { code: 'upstream_unavailable', origin: 'upstream', retryable: true }
     suggestions.push('IMPORTANT: This is a transient error — retry the same request immediately')
     suggestions.push('Portal workers rotate frequently; the next attempt will likely hit a different worker')
     suggestions.push('If retries fail, try a slightly different block range (e.g., shift by 100 blocks)')
@@ -380,13 +557,14 @@ export function parsePortalError(
   // Other 5xx Server Errors
   if (status >= 500 && status !== 503) {
     message = `Portal server error (${status}): ${errorText}`
+    metadata = { code: 'upstream_error', origin: 'upstream', retryable: true }
     suggestions.push('This is a Portal API infrastructure issue')
     suggestions.push('Wait a few minutes and retry')
     suggestions.push('Try a different dataset or smaller block range')
     suggestions.push('Check Portal status at https://status.sqd.dev')
   }
 
-  return new ActionableError(message, suggestions, context)
+  return new ActionableError(message, suggestions, context, metadata)
 }
 
 /**
@@ -401,7 +579,11 @@ export function createTimeoutError(timeout: number, context?: Record<string, unk
     'Use a lower timeframe or explicit from_block/to_block window',
   ]
 
-  return new ActionableError(`Request timeout after ${timeout}ms`, suggestions, context)
+  return new ActionableError(`Request timeout after ${timeout}ms`, suggestions, context, {
+    code: 'upstream_timeout',
+    origin: 'upstream',
+    retryable: true,
+  })
 }
 
 /**
@@ -430,7 +612,11 @@ export function createBlockRangeError(fromBlock: number, toBlock: number, reason
     suggestions.push('fromBlock must be >= 0')
   }
 
-  return new ActionableError(reason, suggestions, { fromBlock, toBlock, range })
+  return new ActionableError(reason, suggestions, { fromBlock, toBlock, range }, {
+    code: 'invalid_request',
+    origin: 'client_input',
+    retryable: false,
+  })
 }
 
 /**
@@ -445,7 +631,11 @@ export function createEmptyResultError(queryType: string, context: Record<string
     'Use portal_get_head to confirm blocks exist',
   ]
 
-  return new ActionableError(`No ${queryType} found in the specified range`, suggestions, context)
+  return new ActionableError(`No ${queryType} found in the specified range`, suggestions, context, {
+    code: 'no_data',
+    origin: 'client_input',
+    retryable: false,
+  })
 }
 
 /**
@@ -459,10 +649,15 @@ export function createDatasetError(dataset: string, availableCount: number): Act
     "Common aliases: 'ethereum', 'polygon', 'base', 'arbitrum', 'optimism'",
   ]
 
-  return new ActionableError(`Unknown network: '${dataset}'`, suggestions, {
-    dataset,
-    available_networks: availableCount,
-  })
+  return new ActionableError(
+    `Unknown network: '${dataset}'`,
+    suggestions,
+    {
+      dataset,
+      available_networks: availableCount,
+    },
+    { code: 'unknown_network', origin: 'client_input', retryable: false },
+  )
 }
 
 /**
@@ -488,7 +683,11 @@ export function createAddressFormatError(address: string): ActionableError {
     suggestions.push(`Try: ${address.toLowerCase()}`)
   }
 
-  return new ActionableError(`Invalid address format: ${address}`, suggestions, { address })
+  return new ActionableError(`Invalid address format: ${address}`, suggestions, { address }, {
+    code: 'invalid_request',
+    origin: 'client_input',
+    retryable: false,
+  })
 }
 
 function describeChainType(chainType: string): string {

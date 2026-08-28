@@ -35,6 +35,21 @@ export const toolCallsTotal = new Counter({
   registers: [register],
 })
 
+export const toolOutcomesTotal = new Counter({
+  name: 'mcp_tool_outcomes_total',
+  help: 'Canonical MCP tool outcomes by terminal status, result state, and bounded failure attribution',
+  labelNames: [
+    'tool',
+    'status',
+    'result_state',
+    'error_origin',
+    'error_code',
+    'transport',
+    'server_version',
+  ] as const,
+  registers: [register],
+})
+
 export const toolCallDuration = new Histogram({
   name: 'mcp_tool_call_duration_seconds',
   help: 'Duration of MCP tool invocations in seconds',
@@ -111,10 +126,10 @@ export const datasetQueriesTotal = new Counter({
   registers: [register],
 })
 
-export const clientRequestsTotal = new Counter({
-  name: 'mcp_client_requests_total',
-  help: 'Total number of HTTP MCP requests by declared client',
-  labelNames: ['transport', 'client_name', 'client_version'] as const,
+export const toolClientCallsTotal = new Counter({
+  name: 'mcp_tool_client_calls_total',
+  help: 'Total tool calls by bounded MCP client family and major version',
+  labelNames: ['transport', 'client_family', 'client_major'] as const,
   registers: [register],
 })
 
@@ -122,12 +137,5 @@ export const observabilityExportsTotal = new Counter({
   name: 'mcp_observability_exports_total',
   help: 'Total number of observability export attempts',
   labelNames: ['sink', 'status'] as const,
-  registers: [register],
-})
-
-export const userQueryCapturedTotal = new Counter({
-  name: 'mcp_user_query_captured_total',
-  help: 'Total number of user query strings captured for observability',
-  labelNames: ['transport', 'client_name'] as const,
   registers: [register],
 })

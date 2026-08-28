@@ -70,6 +70,14 @@ async function main() {
       Number(tronInfoResult.data.indexing?.indexed_head?.timestamp) > 1_000_000_000,
       'Expected Tron network info to resolve its indexed head timestamp',
     )
+    assert(
+      Number(tronInfoResult.data.indexing?.indexed_head?.timestamp) < 10_000_000_000,
+      'Expected Tron network info to normalize millisecond timestamps to Unix seconds',
+    )
+    assert(
+      Number(tronInfoResult.data.indexing?.indexed_head?.age_seconds) < 10 * 365 * 24 * 3600,
+      'Expected Tron indexed-head age to remain within a plausible human timeframe',
+    )
 
     const walletFixtureResult = await callWithoutRetry(client, 'portal_evm_query_transactions', {
       network: 'base',

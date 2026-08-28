@@ -4,7 +4,7 @@ import { type IncomingMessage, type ServerResponse, createServer } from 'node:ht
 import { toNodeHandler } from '@modelcontextprotocol/node'
 import { type McpRequestContext, createMcpHandler } from '@modelcontextprotocol/server'
 
-import { clientRequestsTotal, register } from './metrics.js'
+import { register } from './metrics.js'
 import { type RuntimeRequestContext, getObservabilityStatus } from './observability.js'
 import { createPortalServer } from './server.js'
 import { npmVersion } from './version.js'
@@ -44,18 +44,11 @@ function isMetricsAuthorized(req: IncomingMessage): boolean {
 
 function runtimeContextFromRequest(ctx: McpRequestContext): RuntimeRequestContext {
   const headers = ctx.requestInfo?.headers
-  const clientName = headers?.get('x-mcp-client-name') || headers?.get('x-client-name') || undefined
-  const clientVersion = headers?.get('x-mcp-client-version') || headers?.get('x-client-version') || undefined
 
   return {
     transport: 'http',
     requestId: headers?.get('x-request-id') || undefined,
-    clientName,
-    clientVersion,
     protocolVersion: ctx.era === 'modern' ? '2026-07-28' : undefined,
-    userQuery: headers?.get('x-mcp-user-query') || undefined,
-    userAgent: headers?.get('user-agent') || undefined,
-    forwardedFor: headers?.get('x-forwarded-for') || undefined,
   }
 }
 
@@ -113,10 +106,6 @@ const server = createServer(async (req, res) => {
   }
 
   if (url.pathname === '/' || url.pathname === '/mcp') {
-    const clientName = readHeader(req, 'x-mcp-client-name') || readHeader(req, 'x-client-name') || 'unknown'
-    const clientVersion = readHeader(req, 'x-mcp-client-version') || readHeader(req, 'x-client-version') || 'unknown'
-    clientRequestsTotal.inc({ transport: 'http', client_name: clientName, client_version: clientVersion })
-
     await handleMcpRequest(req, res)
     return
   }

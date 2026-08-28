@@ -17,6 +17,7 @@ const REQUIRE_OPENAI_LIVE_METADATA = process.env.REQUIRE_OPENAI_LIVE_METADATA ==
 const REQUIRE_MCP_2026_LIVE = process.env.REQUIRE_MCP_2026_LIVE === '1'
 const MODERN_PROTOCOL_VERSION = '2026-07-28'
 const LEGACY_PROTOCOL_VERSION = '2025-11-25'
+const RELEASE_VERSION = readJson('package.json').version
 
 const EXPECTED_PUBLIC_TOOL_NAMES = [
   'portal_list_networks',
@@ -195,7 +196,7 @@ async function postRpc(endpoint: string, method: string, params: JsonObject, mod
 function assertManifest() {
   const manifest = readJson(PLUGIN_JSON_PATH)
   assert(manifest.name === 'portal', 'plugin name should be portal')
-  assert(manifest.version === '0.8.0', 'plugin version should be the public release version')
+  assert(manifest.version === RELEASE_VERSION, 'plugin version should match the package release version')
   assert(manifest.skills === './skills/', 'plugin should load the bundled official SQD skills')
   assert(manifest.mcpServers === './.mcp.json', 'plugin should reference ./.mcp.json')
   assertRecord(manifest.interface, 'plugin interface must be an object')

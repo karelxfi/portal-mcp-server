@@ -2,6 +2,7 @@
 
 import { type ChildProcessWithoutNullStreams, spawn } from 'node:child_process'
 import { readFile } from 'node:fs/promises'
+import { type Server, createServer } from 'node:http'
 import { setTimeout as sleep } from 'node:timers/promises'
 
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client'
@@ -10,10 +11,11 @@ const PORT = 3197
 const BASE_URL = `http://localhost:${PORT}`
 const METRICS_TOKEN = 'test-metrics-token'
 const OBS_USER_QUERY_SECRET = 'obs-user-query-secret'
-const OBS_USER_QUERY_BEARER = 'obs-user-query-bearer'
-const OBS_USER_QUERY = `show https://example.test/path?access_token=${OBS_USER_QUERY_SECRET} with Authorization: Bearer ${OBS_USER_QUERY_BEARER}`
 
 let child: ChildProcessWithoutNullStreams | undefined
+let portalFixture: Server | undefined
+let portalFixtureUrl = ''
+let cancelledUpstreamRequests = 0
 const stderrChunks: string[] = []
 
 function assert(condition: boolean, message: string) {
@@ -36,6 +38,48 @@ async function waitForHealth() {
   throw new Error('HTTP server did not become healthy')
 }
 
+async function startPortalFixture() {
+  portalFixture = createServer((req, res) => {
+    if (req.url?.startsWith('/datasets?')) {
+      res.writeHead(200, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify([
+        {
+          dataset: 'base-mainnet',
+          aliases: ['base'],
+          metadata: { kind: 'evm', display_name: 'Base' },
+          schema: { tables: {} },
+        },
+        {
+          dataset: 'slow-mainnet',
+          aliases: ['slow'],
+          metadata: { kind: 'evm', display_name: 'Slow fixture' },
+          schema: { tables: {} },
+        },
+      ]))
+      return
+    }
+    if (req.url === '/datasets/base-mainnet/head') {
+      res.writeHead(200, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({ number: 1_000, hash: `0x${'1'.repeat(64)}` }))
+      return
+    }
+    if (req.url === '/datasets/slow-mainnet/head') {
+      req.on('close', () => {
+        cancelledUpstreamRequests += 1
+      })
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Content-Length': '100' })
+      res.flushHeaders()
+      return
+    }
+    res.writeHead(404, { 'Content-Type': 'application/json' })
+    res.end(JSON.stringify({ error: 'fixture route not found' }))
+  })
+  await new Promise<void>((resolve) => portalFixture!.listen(0, '127.0.0.1', resolve))
+  const address = portalFixture.address()
+  assert(address && typeof address === 'object', 'Portal fixture should expose a TCP address')
+  portalFixtureUrl = `http://127.0.0.1:${address.port}`
+}
+
 function parseSseJson(text: string) {
   const dataLine = text
     .split('\n')
@@ -51,9 +95,7 @@ async function postRpc(id: number, method: string, params: Record<string, unknow
     headers: {
       'Content-Type': 'application/json',
       Accept: 'application/json, text/event-stream',
-      'x-mcp-client-name': 'metrics-smoke',
-      'x-mcp-client-version': '1.0.0',
-      'x-mcp-user-query': OBS_USER_QUERY,
+      'x-mcp-user-query': `this header must be ignored ${OBS_USER_QUERY_SECRET}`,
     },
     body: JSON.stringify({ jsonrpc: '2.0', id, method, params }),
   })
@@ -67,6 +109,11 @@ async function postRpc(id: number, method: string, params: Record<string, unknow
 async function assertPublicHttpSurface() {
   const health = await fetch(`${BASE_URL}/health`)
   assert(health.ok, `Public /health should stay reachable, got ${health.status}`)
+  const healthPayload = await health.json() as Record<string, any>
+  assert(
+    healthPayload.observability?.captures_user_content === false,
+    'Runtime should explicitly report that observability does not capture user content',
+  )
 
   const tools = await fetch(`${BASE_URL}/tools`)
   assert(tools.status === 404, `Retired duplicate /tools endpoint should return 404, got ${tools.status}`)
@@ -86,13 +133,13 @@ async function assertModernHttpProtocol() {
   const transport = new StreamableHTTPClientTransport(new URL(`${BASE_URL}/mcp`), {
     requestInit: {
       headers: {
-        'x-mcp-client-name': 'modern-http-smoke',
-        'x-mcp-client-version': '0.8.0',
+        'x-mcp-client-name': 'ignored-header-value',
+        'x-mcp-client-version': '999.999.999',
       },
     },
   })
   const client = new Client(
-    { name: 'modern-http-smoke', version: '0.8.0' },
+    { name: 'codex', version: '0.8.0' },
     { versionNegotiation: { mode: 'auto', probe: { timeoutMs: 5_000 } } },
   )
 
@@ -107,6 +154,32 @@ async function assertModernHttpProtocol() {
     assert(tools.length === 28, `Modern HTTP tools/list expected 28 tools, got ${tools.length}`)
     const result = await client.callTool({ name: 'portal_get_head', arguments: { network: 'base' } })
     assert(!result.isError, 'Modern HTTP portal_get_head should succeed')
+
+    const cancellation = new AbortController()
+    setTimeout(() => cancellation.abort(), 50)
+    const startedAt = Date.now()
+    await client
+      .callTool(
+        { name: 'portal_get_head', arguments: { network: 'slow' } },
+        { signal: cancellation.signal, timeout: 2_000 },
+      )
+      .then(() => {
+        throw new Error('Cancelled HTTP tool call unexpectedly succeeded')
+      })
+      .catch((error) => {
+        assert(
+          error instanceof Error && /abort|cancel/i.test(`${error.name}: ${error.message}`),
+          `Cancelled HTTP call should reject as cancellation, got ${String(error)}`,
+        )
+      })
+    assert(Date.now() - startedAt < 750, 'HTTP cancellation should complete within 750ms')
+
+    const cancellationDeadline = Date.now() + 750
+    while (cancelledUpstreamRequests === 0 && Date.now() < cancellationDeadline) await sleep(20)
+    assert(cancelledUpstreamRequests === 1, 'HTTP cancellation should close the active upstream request exactly once')
+
+    const recovery = await client.callTool({ name: 'portal_get_head', arguments: { network: 'base' } })
+    assert(!recovery.isError, 'The same HTTP client should recover immediately after cancellation')
   } finally {
     await client.close()
   }
@@ -154,29 +227,24 @@ async function assertDashboardMetricNames(metricsText: string) {
   )
 }
 
-function assertUserQueryRedacted() {
+function assertUserContentNotCaptured() {
   const stderrText = stderrChunks.join('')
-  assert(stderrText.includes('"user_query"'), 'JSON runtime logs should include captured user_query when enabled')
-  assert(!stderrText.includes(OBS_USER_QUERY_SECRET), 'Captured user_query should not expose URL query secrets')
-  assert(!stderrText.includes(OBS_USER_QUERY_BEARER), 'Captured user_query should not expose bearer secrets')
-  assert(!stderrText.includes('?access_token='), 'Captured user_query should strip URL query strings')
-  assert(
-    stderrText.includes('https://example.test/path'),
-    'Captured user_query should retain the non-sensitive URL path',
-  )
-  assert(stderrText.includes('[REDACTED]'), 'Captured user_query should mark redacted sensitive content')
+  assert(!stderrText.includes('"user_query"'), 'JSON runtime logs should never include forwarded user queries')
+  assert(!stderrText.includes(OBS_USER_QUERY_SECRET), 'Ignored user-query headers should never enter telemetry')
 }
 
 async function main() {
   console.log('Starting HTTP runtime QA...\n')
+
+  await startPortalFixture()
 
   child = spawn('node', ['dist/http.js'], {
     cwd: process.cwd(),
     env: {
       ...process.env,
       PORT: String(PORT),
+      PORTAL_URL: portalFixtureUrl,
       METRICS_BEARER_TOKEN: METRICS_TOKEN,
-      OBS_CAPTURE_USER_QUERY: 'true',
       OBS_LOG_JSON: 'true',
     },
     stdio: ['pipe', 'pipe', 'pipe'],
@@ -222,9 +290,29 @@ async function main() {
   )
   assert(
     metricsText.includes(
-      'mcp_client_requests_total{transport="http",client_name="metrics-smoke",client_version="1.0.0"',
+      'mcp_tool_client_calls_total{transport="http",client_family="openai",client_major="v0"',
     ),
-    'Metrics should count the declared HTTP client',
+    'Metrics should attribute the protocol-declared client to a bounded family and major version',
+  )
+  assert(
+    !metricsText.includes('ignored-header-value') && !metricsText.includes('999.999.999'),
+    'Arbitrary HTTP headers should never become metric labels',
+  )
+  assert(
+    metricsText.includes(
+      'mcp_tool_outcomes_total{tool="portal_get_head",status="success",result_state="data",error_origin="none",error_code="none",transport="http"',
+    ),
+    'Metrics should expose a canonical attributable outcome for successful tool calls',
+  )
+  assert(
+    metricsText.includes(
+      'mcp_tool_outcomes_total{tool="portal_get_head",status="cancelled",result_state="cancelled",error_origin="transport",error_code="cancelled",transport="http"',
+    ),
+    'Metrics should attribute HTTP cancellation separately from tool failures',
+  )
+  assert(
+    metricsText.includes('mcp_tool_calls_active{tool="portal_get_head",transport="http"} 0'),
+    'Cancellation should restore the active tool gauge to zero',
   )
   assert(
     metricsText.includes('mcp_dataset_queries_total{dataset="base-mainnet",vm="evm"}'),
@@ -247,15 +335,16 @@ async function main() {
     'Metrics should expose token-list cache events',
   )
 
-  assertUserQueryRedacted()
+  assertUserContentNotCaptured()
   await assertDashboardMetricNames(metricsText)
 
   console.log('PASS  /health and MCP remain public with no client credential setup')
   console.log('PASS  MCP 2026-07-28 negotiates and calls tools over stateless HTTP')
+  console.log('PASS  HTTP cancellation closes upstream work and the same client recovers immediately')
   console.log('PASS  Retired duplicate /tools endpoint stays removed')
-  console.log('PASS  OBS_CAPTURE_USER_QUERY emits sanitized user_query text')
+  console.log('PASS  observability ignores forwarded user content and arbitrary client headers')
   console.log('PASS  /metrics blocks anonymous access and accepts bearer auth')
-  console.log('PASS  /metrics emits canonical tool, client, Portal, dataset, and token-list series')
+  console.log('PASS  /metrics emits canonical outcome, client, Portal, dataset, and token-list series')
   console.log('PASS  Grafana dashboard Prometheus metric names match emitted metrics')
   console.log('\nHTTP runtime QA passed')
 }
@@ -267,4 +356,5 @@ main()
   })
   .finally(() => {
     child?.kill()
+    portalFixture?.close()
   })

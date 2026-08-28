@@ -13,6 +13,7 @@ const DIRECTORY_SUBMISSION_PATH = `${PLUGIN_ROOT}/DIRECTORY_SUBMISSION.md`
 const REQUIRE_MCP_2026_LIVE = process.env.REQUIRE_MCP_2026_LIVE === '1'
 const MODERN_PROTOCOL_VERSION = '2026-07-28'
 const LEGACY_PROTOCOL_VERSION = '2025-11-25'
+const RELEASE_VERSION = readJson('package.json').version
 
 function assert(condition: boolean, message: string) {
   if (!condition) {
@@ -104,13 +105,13 @@ function assertMarketplace() {
   assert(marketplace.name === 'sqd', 'Claude marketplace name should be sqd')
   assertRecord(marketplace.owner, 'Claude marketplace owner must be an object')
   assert(marketplace.owner.name === 'Subsquid Labs', 'Claude marketplace owner should be Subsquid Labs')
-  assert(marketplace.version === '0.8.0', 'Claude marketplace version should match the plugin release')
+  assert(marketplace.version === RELEASE_VERSION, 'Claude marketplace version should match the package release')
   assert(Array.isArray(marketplace.plugins), 'Claude marketplace plugins must be an array')
   const entry = marketplace.plugins.find((plugin) => plugin?.name === 'portal') as JsonObject | undefined
   assertRecord(entry, 'Claude marketplace should include portal')
   assert(entry.source === './plugins/portal', 'Claude marketplace portal source should point at ./plugins/portal')
   assert(entry.displayName === 'SQD', 'Claude marketplace display name should be SQD')
-  assert(entry.version === '0.8.0', 'Claude marketplace plugin entry version should be 0.8.0')
+  assert(entry.version === RELEASE_VERSION, 'Claude marketplace plugin entry version should match the package release')
   assertNoCommittedSecretOrLocalPath(marketplace)
 }
 
@@ -124,7 +125,7 @@ function getEndpoint() {
     'Claude plugin description should lead with broad network coverage',
   )
   assert(!/[\u2014\u2013]/.test(JSON.stringify(manifest)), 'Claude plugin copy should not use em or en dashes')
-  assert(manifest.version === '0.8.0', 'Claude plugin version should be 0.8.0')
+  assert(manifest.version === RELEASE_VERSION, 'Claude plugin version should match the package release')
   assert(manifest.mcpServers === './.mcp.json', 'Claude plugin should reference ./.mcp.json')
   assert(existsSync(resolve(PLUGIN_ROOT, '.mcp.json')), 'Claude plugin MCP config should exist')
   for (const skill of ['portal', 'pipes-sdk', 'migrate-to-portal', 'squid-perf']) {

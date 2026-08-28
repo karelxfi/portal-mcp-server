@@ -21,6 +21,7 @@ export interface PaginationInfo {
   returned: number
   has_more: boolean
   next_cursor?: string
+  continuation_scope?: 'remaining_results' | 'adjacent_window'
 }
 
 export interface BlockBoundaryCursor {
@@ -233,13 +234,19 @@ export function paginateAscendingItems<T>(
   }
 }
 
-export function buildPaginationInfo(pageSize: number, returned: number, nextCursor?: string): PaginationInfo {
+export function buildPaginationInfo(
+  pageSize: number,
+  returned: number,
+  nextCursor?: string,
+  options?: { continuationScope?: 'remaining_results' | 'adjacent_window' },
+): PaginationInfo {
   return {
     type: 'cursor',
     page_size: pageSize,
     returned,
     has_more: Boolean(nextCursor),
     ...(nextCursor ? { next_cursor: nextCursor } : {}),
+    ...(nextCursor ? { continuation_scope: options?.continuationScope ?? 'remaining_results' } : {}),
   }
 }
 

@@ -535,6 +535,14 @@ function inferPrimaryPath(
     return { primaryPath: 'items', primaryKind: 'records' }
   }
 
+  if (typeof payload.answer === 'string') {
+    return { primaryPath: 'answer', primaryKind: 'summary_text' }
+  }
+
+  if (typeof payload._summary === 'string') {
+    return { primaryPath: '_summary', primaryKind: 'summary_text' }
+  }
+
   const firstSection = sections.find((section) => section.path !== '_summary')
   if (firstSection) {
     return { primaryPath: firstSection.path, primaryKind: firstSection.kind }
@@ -684,12 +692,18 @@ function buildParserNotes(
   tableHints: LlmTableHint[],
   overrides?: LlmOverrides,
 ): string[] | undefined {
+  const pagination = isRecord(payload._pagination) ? payload._pagination : undefined
+  const paginationNote = pagination
+    ? pagination.continuation_scope === 'adjacent_window'
+      ? 'A pagination cursor loads an older adjacent window; use _coverage to judge the completeness of the current window.'
+      : 'Check _pagination before assuming the returned list is complete.'
+    : undefined
   const notes = [
     metricCards.length > 0 ? 'Use _llm.metric_cards for headline numbers before recomputing values from arrays.' : undefined,
     chartHint ? 'Use _llm.chart plus chart.tooltip and chart.interactions metadata for plotting and hover labels instead of inferring series structure.' : undefined,
     tableHints.length > 0 ? 'Use _llm.tables columns for labels, ordering, and value formats instead of guessing from field names.' : undefined,
     normalizedOutput ? 'When present, prefer normalized aliases like primary_id, record_type, timestamp_human, sender, and recipient for cross-chain answers.' : undefined,
-    typeof payload._pagination === 'object' && payload._pagination !== null ? 'Check _pagination before assuming the returned list is complete.' : undefined,
+    paginationNote,
     ...(overrides?.parser_notes ?? []),
   ].filter((note): note is string => Boolean(note))
 

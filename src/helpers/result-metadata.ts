@@ -49,6 +49,7 @@ export interface BlockLookupFreshness {
 export interface BucketCoverage {
   kind: 'bucket_window'
   window_complete: boolean
+  result_complete: true
   expected_buckets: number
   returned_buckets: number
   filled_buckets: number
@@ -223,6 +224,7 @@ export function buildBucketCoverage(params: {
   return {
     kind: 'bucket_window',
     window_complete: params.windowComplete ?? true,
+    result_complete: true,
     expected_buckets: params.expectedBuckets,
     returned_buckets: params.returnedBuckets,
     filled_buckets: params.filledBuckets,

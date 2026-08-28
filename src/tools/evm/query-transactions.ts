@@ -522,7 +522,7 @@ export function registerQueryTransactionsTool(server: McpServer) {
         .string()
         .optional()
         .describe(
-          "Time range (e.g., '24h', '7d'). Alternative to from_block/to_block. Supported: 1h, 6h, 12h, 24h, 3d, 7d, 14d, 30d. Large ranges OK with low limit (<=100).",
+          "Natural time range such as '5m', '1h', '24h', '7d', or 'past 30 minutes'. Alternative to from_block/to_block. Large ranges are allowed with a low limit (<=100).",
         ),
       from_block: z
         .number()

@@ -2,6 +2,7 @@ import { CLIENT_INFO_META_KEY, McpServer, type ServerContext } from '@modelconte
 
 import { RequestCancelledError } from './helpers/errors.js'
 import { runWithPortalRequestSignal } from './helpers/request-context.js'
+import { formatToolError } from './helpers/tool-error.js'
 import { toolCallDuration, toolCallsActive, toolCallsTotal } from './metrics.js'
 import {
   classifyToolOutcome,
@@ -17,10 +18,15 @@ import { npmVersion } from './version.js'
 // Server Factory
 // ============================================================================
 
+export const PORTAL_SERVER_INSTRUCTIONS =
+  'SQD provides read-only blockchain data from SQD Portal. Start with portal_list_networks to resolve a network, then use portal_get_network_info to check availability and freshness. Use chain-specific query tools for Ethereum-compatible networks, Tron, Solana, Bitcoin, Polkadot and other Substrate networks, and Hyperliquid. Prefer timeframe for recent windows and from_block/to_block for exact evidence. Check _coverage and _pagination before claiming completeness, and reuse _pagination.next_cursor when present. No authentication is required.'
+
 export function createPortalServer(runtimeContext: RuntimeRequestContext = { transport: 'stdio' }): McpServer {
   const server = new McpServer({
     name: 'sqd-portal-mcp-server',
     version: npmVersion,
+  }, {
+    instructions: PORTAL_SERVER_INSTRUCTIONS,
   })
 
   function instrumentToolHandler<TArgs extends unknown[]>(
@@ -75,21 +81,23 @@ export function createPortalServer(runtimeContext: RuntimeRequestContext = { tra
         })
         return result
       } catch (error) {
-        const status = classifyToolOutcome({
-          error,
-          cancelled: requestSignal?.aborted || error instanceof RequestCancelledError,
-        })
+        const cancelled = requestSignal?.aborted || error instanceof RequestCancelledError
+        const status = cancelled ? 'cancelled' : 'tool_error'
+        const toolErrorResult = cancelled ? undefined : formatToolError(error, toolName)
         toolCallsTotal.inc({ tool: toolName, status, transport: runtimeContext.transport, server_version: npmVersion })
         recordToolOutcome({
           toolName,
           args: toolArgs,
-          error: status === 'cancelled' ? new RequestCancelledError() : error,
+          ...(cancelled
+            ? { error: new RequestCancelledError() }
+            : { result: toolErrorResult }),
           durationMs: Date.now() - startedAt,
           runtime: effectiveRuntime,
           invocationId,
           status,
         })
-        throw error
+        if (cancelled) throw error
+        return toolErrorResult
       } finally {
         end()
         toolCallsActive.dec({ tool: toolName, transport: runtimeContext.transport })

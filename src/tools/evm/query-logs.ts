@@ -272,7 +272,7 @@ export function registerQueryLogsTool(server: McpServer) {
         .string()
         .optional()
         .describe(
-          "Time range (e.g., '24h', '7d'). Alternative to from_block/to_block. Supported: 1h, 6h, 12h, 24h, 3d, 7d, 14d, 30d",
+          "Natural time range such as '5m', '1h', '24h', '7d', or 'past 30 minutes'. Alternative to from_block/to_block.",
         ),
       from_block: z.number().optional().describe('Starting block number (use this OR timeframe)'),
       to_block: z
