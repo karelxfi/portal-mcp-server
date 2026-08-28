@@ -14,6 +14,17 @@ import { portalAdmission } from './admission.js'
 const MAX_RETRY_DELAY_MS = 5_000
 const MAX_RETRY_WALL_CLOCK_MS = 15_000
 
+export function computeRetryAttemptTimeoutMs(
+  requestTimeoutMs: number,
+  retries: number,
+  startedAt: number,
+  now = Date.now(),
+): number {
+  if (retries <= 0) return requestTimeoutMs
+  const remainingBudget = MAX_RETRY_WALL_CLOCK_MS - Math.max(0, now - startedAt)
+  return Math.max(0, Math.min(requestTimeoutMs, remainingBudget))
+}
+
 export function computeRetryDelayMs(
   attempt: number,
   retryAfterSeconds?: string | null,
@@ -204,7 +215,9 @@ export async function portalFetch<T>(
   const retryStartedAt = Date.now()
 
   for (let attempt = 0; attempt <= retries; attempt++) {
-    const abortContext = createRequestAbortContext(timeout)
+    const attemptTimeout = computeRetryAttemptTimeoutMs(timeout, retries, retryStartedAt)
+    if (attemptTimeout <= 0) break
+    const abortContext = createRequestAbortContext(attemptTimeout)
     let releaseAdmission: (() => void) | undefined
 
     try {
@@ -262,7 +275,7 @@ export async function portalFetch<T>(
 
       return (await response.json()) as T
     } catch (error) {
-      rethrowAbort(error, abortContext, timeout, { url, attempt: attempt + 1, max_attempts: retries + 1 })
+      rethrowAbort(error, abortContext, attemptTimeout, { url, attempt: attempt + 1, max_attempts: retries + 1 })
 
       lastError = wrapError(error, { url, attempt: attempt + 1, max_attempts: retries + 1 }) as Error
 
@@ -306,7 +319,9 @@ export async function portalFetchStream(
   const retryStartedAt = Date.now()
 
   for (let attempt = 0; attempt <= options.retries; attempt++) {
-    const abortContext = createRequestAbortContext(timeout)
+    const attemptTimeout = computeRetryAttemptTimeoutMs(timeout, options.retries, retryStartedAt)
+    if (attemptTimeout <= 0) break
+    const abortContext = createRequestAbortContext(attemptTimeout)
     let releaseAdmission: (() => void) | undefined
 
     try {
@@ -451,7 +466,7 @@ export async function portalFetchStream(
 
       return results
     } catch (error) {
-      rethrowAbort(error, abortContext, timeout, { url, query: body })
+      rethrowAbort(error, abortContext, attemptTimeout, { url, query: body })
 
       lastError = wrapError(error, { url, query: body }) as Error
       if (lastError instanceof ActionableError && !lastError.retryable) throw lastError
@@ -485,7 +500,9 @@ export async function portalFetchStreamVisit(
   const retryStartedAt = Date.now()
 
   for (let attempt = 0; attempt <= normalizedOptions.retries; attempt++) {
-    const abortContext = createRequestAbortContext(timeout)
+    const attemptTimeout = computeRetryAttemptTimeoutMs(timeout, normalizedOptions.retries, retryStartedAt)
+    if (attemptTimeout <= 0) break
+    const abortContext = createRequestAbortContext(attemptTimeout)
     let releaseAdmission: (() => void) | undefined
 
     try {
@@ -627,7 +644,7 @@ export async function portalFetchStreamVisit(
 
       return processedRecords
     } catch (error) {
-      rethrowAbort(error, abortContext, timeout, { url, query: body })
+      rethrowAbort(error, abortContext, attemptTimeout, { url, query: body })
 
       lastError = wrapError(error, { url, query: body }) as Error
       if (lastError instanceof ActionableError && !lastError.retryable) throw lastError

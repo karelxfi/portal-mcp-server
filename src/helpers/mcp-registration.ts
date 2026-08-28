@@ -7,6 +7,8 @@ import type {
 } from '@modelcontextprotocol/server'
 import { type ZodRawShape, z } from 'zod'
 
+import { runWithPortalRequestDeadline } from './request-context.js'
+
 type PortalToolResult = CallToolResult | InputRequiredResult
 
 const PORTAL_TOOL_TITLES: Record<string, string> = {
@@ -129,7 +131,18 @@ export function registerPortalTool<InputShape extends ZodRawShape>(
     args: z.infer<z.ZodObject<InputShape>>,
     context: ServerContext,
   ) => PortalToolResult | Promise<PortalToolResult>,
+  options?: { deadlineMs?: number },
 ): RegisteredTool {
+  const deadlineMs = options?.deadlineMs
+  const boundedHandler = deadlineMs !== undefined
+    ? (args: z.infer<z.ZodObject<InputShape>>, context: ServerContext) =>
+        runWithPortalRequestDeadline(
+          deadlineMs,
+          async () => handler(args, context),
+          { tool: name, stage: 'tool' },
+        )
+    : handler
+
   return server.registerTool(
     name,
     {
@@ -139,6 +152,6 @@ export function registerPortalTool<InputShape extends ZodRawShape>(
       outputSchema: PORTAL_TOOL_OUTPUT_SCHEMA,
       annotations: READ_ONLY_TOOL_ANNOTATIONS,
     },
-    handler,
+    boundedHandler,
   )
 }

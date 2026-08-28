@@ -26,6 +26,7 @@ import { decodeCursor, encodeCursor, paginateAscendingItems } from '../../helper
 import { buildWalletPipesRecipe } from '../../helpers/pipes-recipe.js'
 import { type ResponseFormat, resolveDefaultResponseFormat } from '../../helpers/response-modes.js'
 import { buildQueryFreshness, buildSectionCoverage } from '../../helpers/result-metadata.js'
+import { runWithPortalRequestDeadline } from '../../helpers/request-context.js'
 import {
   type TimestampInput,
   describeTimeWindowInput,
@@ -50,6 +51,8 @@ import { normalizeEvmAddress } from '../../helpers/validation.js'
 
 const WALLET_QUERY_TIMEOUT_MS = 8_000
 const WALLET_QUERY_RETRIES = 0
+const WALLET_SECTION_DEADLINE_MS = 10_000
+const WALLET_TOOL_DEADLINE_MS = 25_000
 
 /**
  * One-call wallet activity summary.
@@ -269,16 +272,21 @@ async function fetchCachedWalletSection(params: {
     concurrency,
     initialSequentialChunks,
   })
-  const { value } = await walletSectionQueryCache.getOrLoad(cacheKey, async () =>
-    portalFetchRecentRecords(`${PORTAL_URL}/datasets/${dataset}/stream`, query, {
-      itemKeys,
-      limit,
-      chunkSize,
-      concurrency,
-      initialSequentialChunks,
-      timeout: WALLET_QUERY_TIMEOUT_MS,
-      retries: WALLET_QUERY_RETRIES,
-    }),
+  const { value } = await runWithPortalRequestDeadline(
+    WALLET_SECTION_DEADLINE_MS,
+    () =>
+      walletSectionQueryCache.getOrLoad(cacheKey, async () =>
+        portalFetchRecentRecords(`${PORTAL_URL}/datasets/${dataset}/stream`, query, {
+          itemKeys,
+          limit,
+          chunkSize,
+          concurrency,
+          initialSequentialChunks,
+          timeout: WALLET_QUERY_TIMEOUT_MS,
+          retries: WALLET_QUERY_RETRIES,
+        }),
+      ),
+    { tool: 'portal_get_wallet_summary', stage: section },
   )
   return value
 }
@@ -1951,6 +1959,7 @@ export function registerGetWalletSummaryTool(server: McpServer) {
         },
       })
     },
+    { deadlineMs: WALLET_TOOL_DEADLINE_MS },
   )
 }
 
