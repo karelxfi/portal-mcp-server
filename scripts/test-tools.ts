@@ -35,6 +35,11 @@ function assertCatalogUx(
     inputSchema?: {
       properties?: Record<string, { description?: string }>
     }
+    outputSchema?: {
+      type?: string
+      properties?: Record<string, unknown>
+      additionalProperties?: unknown
+    }
   }>,
 ) {
   const publicTools = tools.filter((tool) => !tool.name.startsWith('portal_debug_'))
@@ -46,6 +51,23 @@ function assertCatalogUx(
     assert(tool.annotations?.readOnlyHint === true, `${tool.name} should be marked read-only`)
     assert(tool.annotations?.destructiveHint === false, `${tool.name} should be marked non-destructive`)
     assert(tool.annotations?.openWorldHint === true, `${tool.name} should disclose its external blockchain data source`)
+    assert(tool.outputSchema?.type === 'object', `${tool.name} should expose an object output schema`)
+    assert(
+      tool.outputSchema?.properties?._coverage !== undefined,
+      `${tool.name} output schema should describe coverage`,
+    )
+    assert(
+      tool.outputSchema?.properties?._pagination !== undefined,
+      `${tool.name} output schema should describe pagination`,
+    )
+    assert(
+      tool.outputSchema?.properties?._execution !== undefined,
+      `${tool.name} output schema should describe execution`,
+    )
+    assert(
+      tool.outputSchema?.additionalProperties !== false,
+      `${tool.name} output schema should allow tool-specific data`,
+    )
     const description = tool.description ?? ''
     assert(description.includes('COMMON USER ASKS:'), `${tool.name} description should include COMMON USER ASKS`)
     assert(description.includes('WHEN TO USE:'), `${tool.name} description should include WHEN TO USE`)
@@ -63,6 +85,23 @@ function assertCatalogUx(
     assert(tool.annotations?.readOnlyHint === true, `${tool.name} should be marked read-only`)
     assert(tool.annotations?.destructiveHint === false, `${tool.name} should be marked non-destructive`)
     assert(tool.annotations?.openWorldHint === true, `${tool.name} should disclose its external blockchain data source`)
+    assert(tool.outputSchema?.type === 'object', `${tool.name} should expose an object output schema`)
+    assert(
+      tool.outputSchema?.properties?._coverage !== undefined,
+      `${tool.name} output schema should describe coverage`,
+    )
+    assert(
+      tool.outputSchema?.properties?._pagination !== undefined,
+      `${tool.name} output schema should describe pagination`,
+    )
+    assert(
+      tool.outputSchema?.properties?._execution !== undefined,
+      `${tool.name} output schema should describe execution`,
+    )
+    assert(
+      tool.outputSchema?.additionalProperties !== false,
+      `${tool.name} output schema should allow tool-specific data`,
+    )
     const description = tool.description ?? ''
     assert(description.includes('ADVANCED:'), `${tool.name} description should be clearly marked ADVANCED`)
     assert(description.includes('COMMON USER ASKS:'), `${tool.name} description should include COMMON USER ASKS`)
@@ -71,9 +110,13 @@ function assertCatalogUx(
   }
 
   for (const toolName of ['portal_evm_query_transactions', 'portal_evm_query_logs']) {
-    const timeframeDescription = tools.find((tool) => tool.name === toolName)?.inputSchema?.properties?.timeframe?.description ?? ''
+    const timeframeDescription =
+      tools.find((tool) => tool.name === toolName)?.inputSchema?.properties?.timeframe?.description ?? ''
     assert(timeframeDescription.includes('5m'), `${toolName} should document the supported 5m timeframe`)
-    assert(!timeframeDescription.includes('Supported:'), `${toolName} should not publish a restrictive fixed timeframe list`)
+    assert(
+      !timeframeDescription.includes('Supported:'),
+      `${toolName} should not publish a restrictive fixed timeframe list`,
+    )
   }
 }
 
