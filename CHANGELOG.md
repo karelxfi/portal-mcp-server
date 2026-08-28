@@ -15,6 +15,7 @@ Portal MCP v0.8.2 makes every returned blockchain row trustworthy under large re
 - **Sustained-load proof**: a 60-minute mixed-tool soak records error rate, latency recovery, and MCP child-process RSS, with short local smoke settings available during development.
 - **Five-family protocol journeys**: Claude, Codex, Grok, Gemini, and Cursor declared-client journeys cover discovery, structured fallback parity, continuation, multi-step evidence, concurrency, error handling, and recovery. Installed-host proof remains a separate release artifact.
 - **Capacity metrics**: Prometheus and Grafana now expose active and queued Portal work, admission wait, and admission rejection rate.
+- **Release gates before publication**: pull requests run the complete CI matrix, and Docker image publication waits for the same gate to pass.
 
 **Full Changelog**: https://github.com/subsquid-labs/portal-mcp-server/compare/v0.8.1...v0.8.2
 

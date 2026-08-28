@@ -26,6 +26,7 @@ This document defines the bounded meaning of “100% hardened and measured” fo
 | Sustained mixed load | 60 minutes with bursts, latency recovery, error rate, and child-process RSS | `soak:v082` |
 | Published package boundary | Allowlisted runtime and public files only | `test:package` |
 | Dependency findings | No known npm audit finding | `test:package` |
+| Pull requests and image publication | Full gate passes before merge or Docker publication | GitHub `CI` and `Build Docker Image` workflows |
 
 `npm run test:release` runs the deterministic and live functional matrix. Adding a tool without adding it to the registry-derived manifests fails the release gate. A release candidate also requires clean-commit benchmark comparison, the 60-minute soak, and installed-host evidence. Those artifacts are intentionally separate because they take longer and must identify the exact commit under test.
 
@@ -90,3 +91,5 @@ The exact release commit must have all of these artifacts:
 3. The paired benchmark reports no statistically supported regression above 10 percent and at most 1 percent candidate tool errors. Sequential `benchmark:v082` artifacts remain useful capacity evidence, but are not the release regression gate because live upstream conditions can drift between runs.
 4. `SOAK_RELEASE=1 npm run soak:v082` completes the default 60-minute mixed-tool run with at most 1 percent tool errors and records latency and child-process RSS.
 5. Installed Claude, Codex, Grok, Gemini, and Cursor hosts each complete the declared user journeys. `test:client-journeys` verifies protocol identity and behavior, but does not replace installed-host proof.
+
+GitHub pull requests run `npm run test:ci`. Main-branch and tag image publication runs the same gate before Docker login, build, or push, so failed code cannot publish a new image.
