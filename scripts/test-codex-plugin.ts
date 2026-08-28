@@ -13,6 +13,8 @@ const README_PATH = `${PLUGIN_ROOT}/README.md`
 const DIRECTORY_SUBMISSION_PATH = `${PLUGIN_ROOT}/DIRECTORY_SUBMISSION.md`
 const SKILLS_SOURCE_PATH = `${PLUGIN_ROOT}/skills/SOURCE.md`
 const CHATGPT_SUBMISSION_PATH = 'chatgpt-app-submission.json'
+const OPENAI_DIRECTORY_ICON_PATH = `${PLUGIN_ROOT}/assets/sqd-directory-icon.png`
+const OPENAI_COMPOSER_ICON_PATH = `${PLUGIN_ROOT}/assets/sqd-chatgpt-composer-icon.png`
 const REQUIRE_OPENAI_LIVE_METADATA = process.env.REQUIRE_OPENAI_LIVE_METADATA === '1'
 const REQUIRE_MCP_2026_LIVE = process.env.REQUIRE_MCP_2026_LIVE === '1'
 const MODERN_PROTOCOL_VERSION = '2026-07-28'
@@ -92,6 +94,18 @@ function assertOptionalAsset(pluginRoot: string, value: unknown, field: string) 
   assertString(value, `${field} must be a string when present`)
   assert(value.startsWith('./assets/'), `${field} must live under ./assets/`)
   assert(existsSync(resolve(pluginRoot, value)), `${field} points to a missing asset: ${value}`)
+}
+
+function assertSquarePng(path: string, minimumSize: number) {
+  const image = readFileSync(path)
+  assert(
+    image.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])),
+    `${path} must be a PNG file`,
+  )
+  const width = image.readUInt32BE(16)
+  const height = image.readUInt32BE(20)
+  assert(width === height, `${path} must be square`)
+  assert(width >= minimumSize, `${path} must be at least ${minimumSize} x ${minimumSize}`)
 }
 
 function assertSquareLogoVariants(pluginRoot: string, interfaceConfig: JsonObject) {
@@ -259,6 +273,8 @@ function assertManifest() {
   assertOptionalAsset(PLUGIN_ROOT, manifest.interface.logoDark, 'interface.logoDark')
   assertComposerIcon(PLUGIN_ROOT, manifest.interface.composerIcon)
   assertSquareLogoVariants(PLUGIN_ROOT, manifest.interface)
+  assertSquarePng(OPENAI_DIRECTORY_ICON_PATH, 256)
+  assertSquarePng(OPENAI_COMPOSER_ICON_PATH, 48)
   const screenshots = manifest.interface.screenshots
   if (screenshots !== undefined) {
     assert(Array.isArray(screenshots), 'interface.screenshots must be an array when present')
