@@ -142,7 +142,7 @@ codex plugin marketplace add .
 codex plugin add portal@sqd
 ```
 
-Open a new Codex thread after installing. First-use prompts include Hyperliquid BTC perp fills, recent Base transaction volume, and top USDC senders on Base.
+Open a new Codex thread after installing. First-use prompts include Hyperliquid BTC perp fills, recent Base transaction volume, and the latest USDC transfers on Base.
 
 ## Claude Code plugin
 
