@@ -38,7 +38,7 @@ function validateMetadata() {
   }
 
   assert(server.name === SERVER_NAME, `server.json name must be ${SERVER_NAME}`)
-  assert(server.title === 'SQD Portal', 'server.json title must be SQD Portal')
+  assert(server.title === 'SQD', 'server.json title must be SQD')
   assert(server.version === packageJson.version, 'server.json version must match package.json')
   assert(server.repository?.url === REPOSITORY, 'server.json repository must use the canonical GitHub URL')
   assert(
