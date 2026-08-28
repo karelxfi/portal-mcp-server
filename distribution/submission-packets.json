@@ -11,16 +11,7 @@
   "privacy": "https://sqd.dev/imprint/",
   "logo": "https://sqd.dev/brand/Symbol_bl-bg.svg",
   "authentication": "none",
-  "tags": [
-    "blockchain",
-    "blockchain data",
-    "Hyperliquid",
-    "Tron",
-    "Solana",
-    "Bitcoin",
-    "Ethereum",
-    "MCP"
-  ],
+  "tags": ["blockchain", "blockchain data", "Hyperliquid", "Tron", "Solana", "Bitcoin", "Ethereum", "MCP"],
   "packets": {
     "smithery": {
       "name": "SQD",
@@ -36,6 +27,11 @@
       "name": "SQD",
       "tagline": "Explore blockchain data from any MCP client",
       "description": "SQD gives Claude, Codex, Cursor, Gemini, Grok, Perplexity, and other MCP clients direct access to blockchain data across 140+ networks. Investigate wallets and contracts, retrieve transactions and token transfers, analyze Hyperliquid fills, and explore Tron, Solana, Bitcoin, Ethereum, and more. No account or API key is required."
+    },
+    "api-tracker": {
+      "name": "SQD",
+      "tagline": "One MCP server for blockchain data across 140+ networks",
+      "description": "SQD is a hosted, read-only MCP server for blockchain data across 140+ networks, including Tron, Solana, Bitcoin, Ethereum, and Hyperliquid. Query transactions, token transfers, wallets, contracts, and market activity without an account or API key."
     }
   }
 }
