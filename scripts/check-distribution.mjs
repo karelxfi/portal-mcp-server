@@ -85,7 +85,7 @@ function validateMetadata() {
   assert(submissions.serverUrl === SERVER_URL, 'submission packets must use the hosted MCP URL')
   assert(submissions.authentication === 'none', 'submission packets must state that authentication is not required')
   assert(/Symbol_bl-bg\.svg$/.test(submissions.logo), 'submission packets must use the black-background SQD logo')
-  for (const targetId of ['smithery', 'mcp-so', 'pulse-mcp']) {
+  for (const targetId of ['smithery', 'mcp-so', 'pulse-mcp', 'api-tracker']) {
     const packet = submissions.packets?.[targetId]
     assert(packet?.name === 'SQD', `${targetId} submission must use the product name SQD`)
     assert(

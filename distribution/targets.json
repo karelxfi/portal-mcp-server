@@ -93,7 +93,8 @@
       "id": "api-tracker",
       "name": "APITracker MCP Directory",
       "listingUrl": "https://apitracker.io/mcp-servers",
-      "updateMode": "registry-discovery",
+      "submissionUrl": "mailto:apitracker@apideck.com",
+      "updateMode": "editorial-contact",
       "required": false
     },
     {
