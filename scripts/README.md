@@ -57,6 +57,9 @@ Runs an automated response-quality audit over the full manifest. It:
 ### `npm run test:fetch-reliability`
 Exercises the shared upstream boundary without depending on live Portal state. It covers queued cancellation, bounded overload, retry jitter, `Retry-After`, malformed JSON, truncated NDJSON, premature body termination, and structured oversized-result recovery.
 
+### `npm run test:stdio-backpressure`
+Forces 32 large concurrent MCP responses through a slow stdout fixture and verifies response writes stay serialized, listener-bounded, and fully drained.
+
 ### `npm run test:performance-harness`
 Validates the open-loop measurement code itself. It checks intended-start queue delay, a no-change A/A comparison, and detection of an injected 20 percent regression.
 
