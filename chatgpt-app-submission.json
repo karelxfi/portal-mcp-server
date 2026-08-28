@@ -363,11 +363,11 @@
       "expected_output_url": null
     },
     {
-      "description": "Identify the largest recent USDC sender on Base.",
-      "user_prompt": "Who sent the most USDC on Base in the past hour?",
+      "description": "Retrieve the latest 20 USDC transfers on Base.",
+      "user_prompt": "Show me the latest 20 USDC transfers on Base from the past hour.",
       "file_attachment_urls": null,
       "tools_triggered": "portal_evm_query_token_transfers",
-      "expected_output": "Returns recent Base USDC transfers grouped to identify the largest sender by transferred value.",
+      "expected_output": "Returns the latest 20 Base USDC transfers with sender, recipient, amount, time, and transaction hash.",
       "expected_output_url": null
     },
     {
