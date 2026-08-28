@@ -29,7 +29,7 @@ type PairMeasurement = {
 }
 
 type BenchmarkProfile = {
-  name: 'cold-c1' | 'warm-c1' | 'warm-c4'
+  name: 'cold-c1' | 'warm-c1'
   concurrency: number
   intervalMs: number
   samples: number
@@ -149,7 +149,6 @@ async function main() {
   const profiles: BenchmarkProfile[] = [
     { name: 'cold-c1', concurrency: 1, intervalMs: 0, samples: 1 },
     { name: 'warm-c1', concurrency: 1, intervalMs: 1_000 / targetRps, samples: samplesPerProfile },
-    { name: 'warm-c4', concurrency: 4, intervalMs: 1_000 / targetRps, samples: samplesPerProfile },
   ]
 
   const [baseline, candidate] = await Promise.all([
@@ -243,7 +242,7 @@ async function main() {
     }
 
     const artifact = {
-      schemaVersion: 'sqd_mcp_paired_performance_v4',
+      schemaVersion: 'sqd_mcp_paired_performance_v5',
       createdAt: new Date().toISOString(),
       releaseVersion: packageJson.version,
       baseline: { gitSha: baselineSha, gitDirty: baselineDirty },
