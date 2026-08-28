@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.8.2] - Unreleased
+## [0.8.2] - 2026-08-29
 
 Portal MCP v0.8.2 makes every returned blockchain row trustworthy under large responses, malformed streams, retries, and concurrent load. It also adds repeatable performance evidence so release decisions use measured queue, service, and end-to-end latency instead of isolated timings.
 
