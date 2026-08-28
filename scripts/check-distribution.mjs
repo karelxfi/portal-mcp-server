@@ -75,6 +75,7 @@ function validateMetadata() {
     'gemini-cli',
     'glama',
     'awesome-mcp-servers',
+    'smithery',
   ]) {
     assert(targetIds.includes(requiredTarget), `distribution targets must include ${requiredTarget}`)
   }
@@ -193,6 +194,17 @@ async function checkAwesomeList() {
   return result('Awesome MCP Servers', 'pass', 'canonical repository is listed')
 }
 
+async function checkSmithery() {
+  const body = await fetchText('https://smithery.ai/servers/sqd/sqd')
+  if (!body.includes('Connect AI agents to live blockchain data across 140+ networks')) {
+    return result('Smithery', 'fail', 'official listing metadata is missing')
+  }
+  if (!body.includes(SERVER_URL)) {
+    return result('Smithery', 'fail', 'hosted MCP endpoint is missing')
+  }
+  return result('Smithery', 'pass', 'official sqd/sqd listing is live')
+}
+
 async function checkGrokPullRequest() {
   const body = await fetchText('https://api.github.com/repos/xai-org/plugin-marketplace/pulls/384')
   const pullRequest = JSON.parse(body)
@@ -210,6 +222,7 @@ async function runLiveChecks(version) {
     ['Gemini CLI Extension Gallery', () => checkGemini(version)],
     ['Glama', () => checkGlama(version)],
     ['Awesome MCP Servers', checkAwesomeList],
+    ['Smithery', checkSmithery],
     ['Grok Build Marketplace', checkGrokPullRequest],
   ]
 

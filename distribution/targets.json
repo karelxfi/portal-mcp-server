@@ -68,10 +68,11 @@
     {
       "id": "smithery",
       "name": "Smithery",
-      "listingUrl": "https://smithery.ai/",
+      "listingUrl": "https://smithery.ai/servers/sqd/sqd",
       "submissionUrl": "https://smithery.ai/new",
       "updateMode": "remote-scan-after-one-time-publish",
-      "required": false
+      "required": true,
+      "liveCheck": "smithery"
     },
     {
       "id": "mcp-so",
