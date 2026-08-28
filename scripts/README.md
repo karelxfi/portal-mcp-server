@@ -54,6 +54,44 @@ Runs an automated response-quality audit over the full manifest. It:
 - flags truncation, legacy wording, default raw-query bloat, and non-humanized labels
 - warns when a tool is drifting toward the hard budgets before it actually fails
 
+### `npm run test:fetch-reliability`
+Exercises the shared upstream boundary without depending on live Portal state. It covers queued cancellation, bounded overload, retry jitter, `Retry-After`, malformed JSON, truncated NDJSON, premature body termination, and structured oversized-result recovery.
+
+### `npm run test:performance-harness`
+Validates the open-loop measurement code itself. It checks intended-start queue delay, a no-change A/A comparison, and detection of an injected 20 percent regression.
+
+### `npm run test:pagination`
+Validates exact cursor continuation when more than one page of matching rows shares the same block. It fails on repeated or skipped rows.
+
+### `npm run test:client-journeys`
+Runs the same protocol-level journey matrix for declared Claude, Codex, Grok, Gemini, and Cursor client identities. It covers discovery, structured and text parity, exact continuation, multi-step evidence, concurrency, invalid input, and post-error recovery.
+
+This is protocol compatibility evidence, not proof that the five installed host applications rendered and completed the journeys. Installed-host proof remains a separate release artifact.
+
+### `npm run benchmark:v082`
+Runs open-loop cold c1, warm c1/c4/c8, and c8 burst profiles. The artifact records intended-start queue delay, service and end-to-end latency, bytes, outcomes, version, commit, and dirty state.
+
+For a release artifact, use a clean commit, all tools, and at least 50 samples per warm profile:
+
+```bash
+BENCHMARK_RELEASE=1 BENCHMARK_SAMPLES=50 npm run benchmark:v082
+```
+
+Compare exact baseline and candidate artifacts with:
+
+```bash
+npm run benchmark:compare -- artifacts/baseline.json artifacts/candidate.json
+```
+
+The comparison uses paired seeded bootstrap intervals and fails a statistically supported latency regression above 10 percent.
+
+### `npm run soak:v082`
+Runs mixed tools with periodic eight-call bursts while recording tool errors, latency recovery, and MCP child-process RSS. Development runs may override the duration. Release mode requires a clean commit, at least 60 minutes, and no more than 1 percent tool errors:
+
+```bash
+SOAK_RELEASE=1 npm run soak:v082
+```
+
 ### `npm run test:package`
 Runs `npm pack --dry-run` and verifies the published tarball contains only runtime essentials. It fails if source, test, plan, workflow, dashboard, lockfile, or local tooling artifacts are included.
 
@@ -102,7 +140,10 @@ Runs the full live matrix:
 - package contents
 
 ### `npm run test:ci`
-Alias for the full CI verification entrypoint. Today it runs the same matrix as `test:all`, including the quality-and-budget gate and package-content check.
+Alias for the full CI verification entrypoint. Today it runs the same matrix as `test:all`, including the deterministic performance-harness checks, declared-client protocol journeys, quality-and-budget gate, and package-content check.
+
+### `npm run test:release`
+Runs the deterministic and live functional release matrix. Clean-commit benchmark comparison, the 60-minute soak, and installed-host journeys remain separate evidence because they are long-running or host-specific.
 
 ### `npm run test:substrate`
 Runs a focused live QA pass for Substrate readiness. It:

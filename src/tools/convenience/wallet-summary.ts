@@ -78,9 +78,11 @@ type WalletSummaryCursor = {
   window_from_block: number
   window_to_block: number
   sections: {
-    transactions: WalletBoundaryCursor | null
+    transactions?: WalletBoundaryCursor | null
     token_transfers?: WalletBoundaryCursor | null
     nft_transfers?: WalletBoundaryCursor | null
+    outputs?: WalletBoundaryCursor | null
+    inputs?: WalletBoundaryCursor | null
   }
 }
 
@@ -1155,6 +1157,25 @@ export function registerGetWalletSummaryTool(server: McpServer) {
       }
 
       if (chainType !== 'evm') {
+        if (paginationCursor && requestedDataset && paginationCursor.dataset !== requestedDataset) {
+          throw new ActionableError('This cursor belongs to a different network.', [
+            'Reuse the cursor with the same network and wallet address.',
+            'Omit cursor to start a fresh wallet summary.',
+          ])
+        }
+        if (paginationCursor && address && paginationCursor.address !== address) {
+          throw new ActionableError('This cursor belongs to a different wallet address.', [
+            'Reuse the cursor with the same wallet address as the previous response.',
+            'Omit cursor to start a fresh wallet summary.',
+          ])
+        }
+        if (paginationCursor) {
+          address = paginationCursor.address
+          timeframe = paginationCursor.timeframe
+          mode = paginationCursor.mode
+          limit_per_type = paginationCursor.limit_per_type
+          response_format = paginationCursor.response_format
+        }
         return await buildNonEvmWalletSummary({
           dataset,
           chainType,
@@ -1166,6 +1187,7 @@ export function registerGetWalletSummaryTool(server: McpServer) {
           limit_per_type,
           response_format,
           queryStartTime,
+          paginationCursor,
         })
       }
 
@@ -1943,8 +1965,9 @@ async function buildNonEvmWalletSummary(params: {
   limit_per_type: number
   response_format?: ResponseFormat
   queryStartTime: number
+  paginationCursor?: WalletSummaryCursor
 }) {
-  const { dataset, chainType, address, timeframe, from_timestamp, to_timestamp, mode, limit_per_type, response_format, queryStartTime } =
+  const { dataset, chainType, address, timeframe, from_timestamp, to_timestamp, mode, limit_per_type, response_format, queryStartTime, paginationCursor } =
     params
   const effectiveResponseFormat = resolveDefaultResponseFormat(response_format)
   const networkLabel = humanizeLabel(dataset) ?? dataset
@@ -1971,8 +1994,13 @@ async function buildNonEvmWalletSummary(params: {
   const estimatedBlockCount = useInteractiveHyperliquidEstimate
     ? Math.max(1, Math.floor(parseTimeframeToSeconds(timeframe) / estimatedBlockTime))
     : 0
-  const resolvedWindow =
-    useInteractiveHyperliquidEstimate
+  const resolvedWindow = paginationCursor
+    ? {
+        from_block: paginationCursor.window_from_block,
+        to_block: paginationCursor.window_to_block,
+        range_kind: /^\d+$/.test(timeframe) ? 'block_range' as const : 'timeframe' as const,
+      }
+    : useInteractiveHyperliquidEstimate
       ? {
           from_block: Math.max(0, head.number - estimatedBlockCount + 1),
           to_block: head.number,
@@ -2206,13 +2234,15 @@ async function buildNonEvmWalletSummary(params: {
   }
 
   if (chainType === 'bitcoin') {
+    const outputCursor = paginationCursor?.sections.outputs ?? undefined
+    const inputCursor = paginationCursor?.sections.inputs ?? undefined
     const [outputBlocks, inputBlocks] = await Promise.all([
       portalFetchRecentRecords(
         `${PORTAL_URL}/datasets/${dataset}/stream`,
         {
           type: 'bitcoin',
           fromBlock,
-          toBlock,
+          toBlock: outputCursor?.page_to_block ?? toBlock,
           fields: {
             block: { number: true, timestamp: true },
             output: { transactionIndex: true, outputIndex: true, value: true, scriptPubKeyAddress: true },
@@ -2222,7 +2252,13 @@ async function buildNonEvmWalletSummary(params: {
         },
         {
           itemKeys: ['outputs'],
-          limit: limit_per_type,
+          countItems: (record) => {
+            const outputs = (record as { outputs?: Array<{ scriptPubKeyAddress?: string }> })?.outputs
+            return Array.isArray(outputs)
+              ? outputs.filter((output) => output.scriptPubKeyAddress === address).length
+              : 0
+          },
+          limit: limit_per_type + (outputCursor?.skip_inclusive_block ?? 0) + 1,
           chunkSize: 20,
           timeout: WALLET_QUERY_TIMEOUT_MS,
           retries: WALLET_QUERY_RETRIES,
@@ -2233,7 +2269,7 @@ async function buildNonEvmWalletSummary(params: {
         {
           type: 'bitcoin',
           fromBlock,
-          toBlock,
+          toBlock: inputCursor?.page_to_block ?? toBlock,
           fields: {
             block: { number: true, timestamp: true },
             input: { transactionIndex: true, inputIndex: true, prevoutValue: true, prevoutScriptPubKeyAddress: true },
@@ -2243,7 +2279,13 @@ async function buildNonEvmWalletSummary(params: {
         },
         {
           itemKeys: ['inputs'],
-          limit: limit_per_type,
+          countItems: (record) => {
+            const inputs = (record as { inputs?: Array<{ prevoutScriptPubKeyAddress?: string }> })?.inputs
+            return Array.isArray(inputs)
+              ? inputs.filter((input) => input.prevoutScriptPubKeyAddress === address).length
+              : 0
+          },
+          limit: limit_per_type + (inputCursor?.skip_inclusive_block ?? 0) + 1,
           chunkSize: 20,
           timeout: WALLET_QUERY_TIMEOUT_MS,
           retries: WALLET_QUERY_RETRIES,
@@ -2251,8 +2293,8 @@ async function buildNonEvmWalletSummary(params: {
       ),
     ])
 
-    const outputs = outputBlocks.flatMap((block: any) =>
-      (block.outputs || []).map((output: any) => ({
+    const matchingOutputs = outputBlocks.flatMap((block: any) =>
+      (block.outputs || []).filter((output: any) => output.scriptPubKeyAddress === address).map((output: any) => ({
         ...output,
         block_number: block.number ?? block.header?.number,
         timestamp: block.timestamp ?? block.header?.timestamp,
@@ -2269,9 +2311,13 @@ async function buildNonEvmWalletSummary(params: {
         tx_hash: output.transaction?.hash,
         recipient: output.scriptPubKeyAddress,
       })),
+    ).sort((left: any, right: any) =>
+      Number(left.block_number || 0) - Number(right.block_number || 0) ||
+      Number(left.transactionIndex || 0) - Number(right.transactionIndex || 0) ||
+      Number(left.outputIndex || 0) - Number(right.outputIndex || 0),
     )
-    const inputs = inputBlocks.flatMap((block: any) =>
-      (block.inputs || []).map((input: any) => ({
+    const matchingInputs = inputBlocks.flatMap((block: any) =>
+      (block.inputs || []).filter((input: any) => input.prevoutScriptPubKeyAddress === address).map((input: any) => ({
         ...input,
         block_number: block.number ?? block.header?.number,
         timestamp: block.timestamp ?? block.header?.timestamp,
@@ -2288,7 +2334,37 @@ async function buildNonEvmWalletSummary(params: {
         tx_hash: input.transaction?.hash,
         sender: input.prevoutScriptPubKeyAddress,
       })),
+    ).sort((left: any, right: any) =>
+      Number(left.block_number || 0) - Number(right.block_number || 0) ||
+      Number(left.transactionIndex || 0) - Number(right.transactionIndex || 0) ||
+      Number(left.inputIndex || 0) - Number(right.inputIndex || 0),
     )
+    const outputPage = paginateAscendingItems<any>(matchingOutputs, limit_per_type, getBlockNumber, outputCursor)
+    const inputPage = paginateAscendingItems<any>(matchingInputs, limit_per_type, getBlockNumber, inputCursor)
+    const outputsHaveMore = outputPage.hasMore
+    const inputsHaveMore = inputPage.hasMore
+    const bitcoinHasMore = outputsHaveMore || inputsHaveMore
+    const outputs = outputPage.pageItems
+    const inputs = inputPage.pageItems
+    const nextCursor = bitcoinHasMore
+      ? createWalletSummaryCursor({
+          dataset,
+          address,
+          timeframe,
+          mode,
+          response_format: effectiveResponseFormat,
+          include_tokens: false,
+          include_nfts: false,
+          limit_per_type,
+          window_from_block: requestedFromBlock,
+          window_to_block: toBlock,
+          sections: {
+            transactions: null,
+            outputs: outputsHaveMore ? (outputPage.nextBoundary ?? null) : null,
+            inputs: inputsHaveMore ? (inputPage.nextBoundary ?? null) : null,
+          },
+        })
+      : undefined
     const totalIn = outputs.reduce((sum, item) => sum + Number(item.value || 0), 0)
     const totalOut = inputs.reduce((sum, item) => sum + Number(item.prevoutValue || 0), 0)
     const netSats = totalIn - totalOut
@@ -2361,6 +2437,12 @@ async function buildNonEvmWalletSummary(params: {
         activity: {
           count: outputs.length + inputs.length,
           items: [...outputs, ...inputs].sort((a, b) => Number(a.timestamp || 0) - Number(b.timestamp || 0)),
+          ...(bitcoinHasMore
+            ? {
+                items_sampled: true,
+                item_sample_size: outputs.length + inputs.length,
+              }
+            : {}),
         },
         fund_flow: fundFlow,
         assets: {
@@ -2381,10 +2463,21 @@ async function buildNonEvmWalletSummary(params: {
           buildBitcoinInputsTable('Recent inputs', inputs.length),
         ],
       }, effectiveResponseFormat),
-      `Wallet flow for ${address} on ${networkLabel}: ${outputs.length} inbound outputs, ${inputs.length} outbound inputs, net ${netSats} sats.`,
+      `Wallet flow for ${address} on ${networkLabel}: ${outputs.length} inbound outputs, ${inputs.length} outbound inputs, net ${netSats} sats.${nextCursor ? ' This is a preview page; continue with the cursor for older rows.' : ''}`,
       {
         toolName: 'portal_get_wallet_summary',
         notices,
+        pagination: {
+          type: 'cursor',
+          page_size: limit_per_type,
+          returned: outputs.length + inputs.length,
+          has_more: bitcoinHasMore,
+          ...(nextCursor ? { next_cursor: nextCursor } : {}),
+          sections: {
+            outputs: buildSectionPagination(outputs.length, outputsHaveMore),
+            inputs: buildSectionPagination(inputs.length, inputsHaveMore),
+          },
+        },
         freshness: buildQueryFreshness({
           finality: 'latest',
           headBlockNumber: head.number,
@@ -2464,16 +2557,21 @@ async function buildNonEvmWalletSummary(params: {
               table_id: 'bitcoin_inputs',
             }),
           ],
-          followUpActions: [{ label: 'Show raw activity rows', intent: 'show_raw', target: 'activity.items' }],
+          followUpActions: [
+            ...(nextCursor
+              ? [{ label: 'Load older wallet activity', intent: 'continue' as const, target: '_pagination.next_cursor' }]
+              : []),
+            { label: 'Show raw activity rows', intent: 'show_raw', target: 'activity.items' },
+          ],
         }),
         llm: buildWalletLlmOverrides('bitcoin'),
         coverage: buildSectionCoverage({
           windowFromBlock: requestedFromBlock,
           windowToBlock: toBlock,
-          hasMore: false,
+          hasMore: bitcoinHasMore,
           windowComplete: fromBlock <= requestedFromBlock,
           sections: {
-            activity: buildSectionPagination(outputs.length + inputs.length, false),
+            activity: buildSectionPagination(outputs.length + inputs.length, bitcoinHasMore),
           },
         }),
         metadata: {

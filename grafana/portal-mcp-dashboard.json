@@ -773,6 +773,98 @@
       ],
       "title": "Top networks from Loki events",
       "type": "table"
+    },
+    {
+      "datasource": "${DS_PROMETHEUS}",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 55
+      },
+      "id": 17,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "right"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "expr": "mcp_portal_upstream_active",
+          "legendFormat": "active",
+          "refId": "A"
+        },
+        {
+          "expr": "mcp_portal_upstream_queued",
+          "legendFormat": "queued",
+          "refId": "B"
+        }
+      ],
+      "title": "Portal admission pressure",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "${DS_PROMETHEUS}",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 55
+      },
+      "id": 18,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "right"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(mcp_portal_admission_wait_seconds_bucket[$__interval])))",
+          "legendFormat": "admission wait p95",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(rate(mcp_portal_admission_rejected_total[$__interval]))",
+          "legendFormat": "rejections per second",
+          "refId": "B"
+        }
+      ],
+      "title": "Portal admission wait and rejection rate",
+      "type": "timeseries"
     }
   ],
   "refresh": "30s",
@@ -820,6 +912,6 @@
   "timezone": "",
   "title": "SQD Portal MCP",
   "uid": "sqd-portal-mcp",
-  "version": 2,
+  "version": 3,
   "weekStart": ""
 }

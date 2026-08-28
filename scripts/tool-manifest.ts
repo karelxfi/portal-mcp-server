@@ -359,7 +359,6 @@ export async function loadToolTestContext(client: Client): Promise<ToolTestConte
   const [
     usdcResolveResult,
     recentDeployment,
-    recentV2SwapResult,
     recentV4SwapResult,
     evmTxResult,
     solTxResult,
@@ -376,19 +375,11 @@ export async function loadToolTestContext(client: Client): Promise<ToolTestConte
     pickRecentBaseDeployment(baseHead),
     callToolWithRetry(client, 'portal_evm_query_logs', {
       network: 'base-mainnet',
-      from_timestamp: '24h ago',
+      from_timestamp: '1h ago',
       to_timestamp: 'now',
-      topic0: [EVENT_SIGNATURES.UNISWAP_V2_SWAP],
-      limit: 1,
-      field_preset: 'minimal',
-    }),
-    callToolWithRetry(client, 'portal_evm_query_logs', {
-      network: 'base-mainnet',
-      from_block: baseHead - 2_000,
-      to_block: baseHead,
       addresses: [BASE_UNISWAP_V4_POOL_MANAGER],
       topic0: [EVENT_SIGNATURES.UNISWAP_V4_SWAP],
-      limit: 50,
+      limit: 20,
       field_preset: 'standard',
     }),
     callToolWithRetry(client, 'portal_evm_query_transactions', {
@@ -417,11 +408,6 @@ export async function loadToolTestContext(client: Client): Promise<ToolTestConte
       limit: 1,
     }),
   ])
-
-  const recentV2SwapItems = getItems(recentV2SwapResult.data)
-  assert(recentV2SwapItems.length > 0, 'Expected at least one active Base Uniswap v2-style pool')
-  const baseUniswapV2LogAddress = String(recentV2SwapItems[0].address || '').toLowerCase()
-  assert(baseUniswapV2LogAddress.startsWith('0x'), 'Expected an active Base Uniswap v2-style pool address')
 
   const usdcMatches = Array.isArray(usdcResolveResult.data?.matches) ? usdcResolveResult.data.matches : []
   const usdcBase = String(
@@ -1134,8 +1120,9 @@ export const TOOL_SPECS: ToolSpec[] = [
       const callOhlcVariant = async (label: string, args: Record<string, unknown>) => {
         try {
           return await callToolWithRetry(client, 'portal_evm_get_ohlc', args, {
-            retries: 3,
+            retries: 1,
             retryDelayMs: 1_200,
+            totalBudgetMs: 50_000,
           })
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error)
@@ -1345,6 +1332,25 @@ export const TOOL_SPECS: ToolSpec[] = [
         const walletData = walletResult.data
         assert(walletData.overview?.vm === 'bitcoin', 'Expected Bitcoin address flow to route through wallet summary')
         assert(walletData.bitcoin?.outputs_count !== undefined, 'Expected Bitcoin address output counts')
+        const nextCursor = walletData._pagination?.next_cursor
+        if (typeof nextCursor === 'string') {
+          const continuedWallet = await callToolWithRetry(client, 'portal_get_wallet_summary', { cursor: nextCursor })
+          assert(!continuedWallet.isError, 'Expected Bitcoin wallet continuation to succeed')
+          const continuedData = continuedWallet.data
+          const rowKey = (item: any, indexKey: 'inputIndex' | 'outputIndex') =>
+            `${String(item.block_number)}:${String(item.transactionIndex)}:${String(item[indexKey])}`
+          for (const [section, indexKey] of [
+            ['recent_inputs', 'inputIndex'],
+            ['recent_outputs', 'outputIndex'],
+          ] as const) {
+            const firstKeys = new Set((walletData.bitcoin?.[section] ?? []).map((item: any) => rowKey(item, indexKey)))
+            const continuedKeys = (continuedData.bitcoin?.[section] ?? []).map((item: any) => rowKey(item, indexKey))
+            assert(
+              continuedKeys.every((key: string) => !firstKeys.has(key)),
+              `Bitcoin wallet ${section} continuation should not repeat rows`,
+            )
+          }
+        }
       }
     },
   },

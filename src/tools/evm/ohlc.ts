@@ -25,7 +25,7 @@ import { portalFetchRecentRecords, portalFetchStreamRangeVisit } from '../../hel
 import { buildEvmLogFields } from '../../helpers/fields.js'
 import { formatResult, formatTimestamp } from '../../helpers/format.js'
 import { buildPaginationInfo, decodeCursor, encodeCursor } from '../../helpers/pagination.js'
-import { getPortalRequestSignal } from '../../helpers/request-context.js'
+import { getPortalRequestSignal, runWithPortalRequestSignal } from '../../helpers/request-context.js'
 import {
   buildBucketCoverage,
   buildBucketGapDiagnostics,
@@ -200,6 +200,10 @@ const EVM_OHLC_METADATA_CACHE_TTL_MS = 15 * 60_000
 const EVM_OHLC_RESPONSE_CACHE_TTL_MS = 20_000
 const EVM_OHLC_QUERY_TIMEOUT_MS = 12_000
 const EVM_OHLC_TOOL_BUDGET_MS = 25_000
+const EVM_OHLC_METADATA_BUDGET_MS: Record<OhlcMode, number> = {
+  fast: 2_000,
+  deep: 6_000,
+}
 const evmOhlcMetadataCache = createCache<UniswapV4PoolMetadata | null>(EVM_OHLC_METADATA_CACHE_TTL_MS, 128)
 const evmOhlcResponseCache = createCache<CachedOhlcResponse>(EVM_OHLC_RESPONSE_CACHE_TTL_MS, 32)
 const pendingUniswapV4Metadata = new Map<
@@ -844,6 +848,38 @@ async function getCachedOrResolveUniswapV4PoolMetadata(params: {
   }
 }
 
+async function runOptionalWorkWithinBudget<T>(
+  budgetMs: number,
+  work: () => Promise<T>,
+): Promise<{ value: T; timedOut: false } | { value?: undefined; timedOut: true }> {
+  const requestSignal = getPortalRequestSignal()
+  const controller = new AbortController()
+  let budgetExpired = false
+
+  const cancelFromRequest = () => controller.abort()
+  if (requestSignal?.aborted) {
+    cancelFromRequest()
+  } else {
+    requestSignal?.addEventListener('abort', cancelFromRequest, { once: true })
+  }
+
+  const timeoutId = setTimeout(() => {
+    budgetExpired = true
+    controller.abort()
+  }, budgetMs)
+
+  try {
+    const value = await runWithPortalRequestSignal(controller.signal, work)
+    return { value, timedOut: false }
+  } catch (error) {
+    if (budgetExpired && !requestSignal?.aborted) return { timedOut: true }
+    throw error
+  } finally {
+    clearTimeout(timeoutId)
+    requestSignal?.removeEventListener('abort', cancelFromRequest)
+  }
+}
+
 async function visitAdaptiveEvmLogRange(
   dataset: string,
   body: Record<string, unknown>,
@@ -1162,6 +1198,8 @@ export function registerEvmOhlcTool(server: McpServer) {
       let scannedFromBlock = 0
       let seriesStartTimestamp = 0
       let seriesEndExclusive = 0
+      let seriesAnchor = 'latest_event'
+      let initialScanCoversSeriesStart = false
       let resolvedWindow
       let endBlock = 0
       let head
@@ -1212,14 +1250,23 @@ export function registerEvmOhlcTool(server: McpServer) {
           !hooksAddressProvided)
       ) {
         try {
-          resolvedV4Metadata = await getCachedOrResolveUniswapV4PoolMetadata({
-            dataset,
-            poolManagerAddress: normalizedPoolManagerAddress!,
-            poolId: normalizedPoolId,
-            toBlock: endBlock,
-            mode: mode as OhlcMode,
-          })
-          v4MetadataResolutionStatus = resolvedV4Metadata ? 'resolved' : 'not_found'
+          const metadataLookup = await runOptionalWorkWithinBudget(
+            EVM_OHLC_METADATA_BUDGET_MS[mode as OhlcMode],
+            () =>
+              getCachedOrResolveUniswapV4PoolMetadata({
+                dataset,
+                poolManagerAddress: normalizedPoolManagerAddress!,
+                poolId: normalizedPoolId!,
+                toBlock: endBlock,
+                mode: mode as OhlcMode,
+              }),
+          )
+          resolvedV4Metadata = metadataLookup.value
+          v4MetadataResolutionStatus = metadataLookup.timedOut
+            ? 'timeout'
+            : resolvedV4Metadata
+              ? 'resolved'
+              : 'not_found'
 
           if (resolvedV4Metadata) {
             normalizedCurrency0Address = normalizedCurrency0Address ?? resolvedV4Metadata.currency0_address
@@ -1448,14 +1495,21 @@ export function registerEvmOhlcTool(server: McpServer) {
       }
 
       if (!paginationCursor) {
-        seriesEndExclusive = Math.floor(latestTimestamp / intervalSeconds) * intervalSeconds + intervalSeconds
+        const indexedHeadTimestamp = resolvedWindow.from_lookup?.head_timestamp
+        const anchorTimestamp = indexedHeadTimestamp ?? latestTimestamp
+        seriesAnchor = indexedHeadTimestamp !== undefined ? 'indexed_head' : 'latest_event'
+        seriesEndExclusive = Math.floor(anchorTimestamp / intervalSeconds) * intervalSeconds + intervalSeconds
         const bucketSpanSeconds = expectedBuckets * intervalSeconds
         seriesStartTimestamp = seriesEndExclusive - bucketSpanSeconds
+        initialScanCoversSeriesStart =
+          resolvedWindow.from_lookup?.resolution === 'exact' &&
+          resolvedWindow.from_lookup.timestamp <= seriesStartTimestamp
       }
 
       let backfillAttempts = 0
       let backfillInterrupted = false
       while (
+        !initialScanCoversSeriesStart &&
         earliestObservedBelowPageEnd > seriesStartTimestamp &&
         scannedFromBlock > 0 &&
         backfillAttempts < maxBackfillAttempts &&
@@ -1491,6 +1545,7 @@ export function registerEvmOhlcTool(server: McpServer) {
         backfillAttempts += 1
       }
       if (
+        !initialScanCoversSeriesStart &&
         !backfillInterrupted &&
         earliestObservedBelowPageEnd > seriesStartTimestamp &&
         Date.now() - queryStartTime >= EVM_OHLC_TOOL_BUDGET_MS
@@ -1578,8 +1633,9 @@ export function registerEvmOhlcTool(server: McpServer) {
         buckets: ohlc,
         intervalSeconds,
         isFilled: (bucket) => bucket.sample_count > 0,
-        anchor: 'latest_event',
-        windowComplete: !backfillInterrupted && earliestObservedBelowPageEnd <= seriesStartTimestamp,
+        anchor: seriesAnchor,
+        windowComplete:
+          !backfillInterrupted && (initialScanCoversSeriesStart || earliestObservedBelowPageEnd <= seriesStartTimestamp),
         ...(earliestObservedTimestamp !== Number.MAX_SAFE_INTEGER
           ? { firstObservedTimestamp: earliestObservedTimestamp }
           : {}),
@@ -2163,8 +2219,10 @@ export function registerEvmOhlcTool(server: McpServer) {
             expectedBuckets,
             returnedBuckets: ohlc.length,
             filledBuckets,
-            anchor: 'latest_event',
-            windowComplete: !backfillInterrupted && earliestObservedBelowPageEnd <= seriesStartTimestamp,
+            anchor: seriesAnchor,
+            windowComplete:
+              !backfillInterrupted &&
+              (initialScanCoversSeriesStart || earliestObservedBelowPageEnd <= seriesStartTimestamp),
           }),
           metadata: {
             dataset,
