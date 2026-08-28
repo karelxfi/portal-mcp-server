@@ -8,8 +8,9 @@ import { buildLlmHints } from './llm-hints.js'
 import type { PipesRecipe } from './pipes-recipe.js'
 import { getToolContract } from './tool-ux.js'
 import type { UiFollowUpAction } from './ui-metadata.js'
+import { ActionableError } from './errors.js'
 
-const MAX_RESPONSE_LENGTH = 50_000 // 50KB - keeps responses within MCP client context limits
+const MAX_RESPONSE_BYTES = 50_000
 
 export interface FormatOptions {
   maxItems?: number
@@ -1103,35 +1104,6 @@ function buildInvestigationGuide(payload: RecordLike): RecordLike | undefined {
   }
 }
 
-const TRUNCATABLE_ARRAY_KEYS = new Set([
-  'items',
-  'time_series',
-  'ohlc',
-  'current_series',
-  'previous_series',
-  'comparison_series',
-  'bucket_deltas',
-  'top_contracts',
-  'top_senders',
-  'top_receivers',
-  'top_programs',
-  'programs',
-  'volume_by_coin',
-  'top_traders_by_volume',
-  'top_pnl_winners',
-  'top_pnl_losers',
-  'recent_outputs',
-  'recent_inputs',
-  'summary_rows',
-])
-
-type TruncatableArrayRef = {
-  key: string
-  path: string
-  values: unknown[]
-  replace: (nextValues: unknown[]) => void
-}
-
 function buildInferredExecutionMetadata(metadata?: FormatOptions['metadata']) {
   if (!metadata) return undefined
 
@@ -1202,109 +1174,48 @@ function normalizeExecutionMetadata(
   }
 }
 
-function collectTruncatableArrays(
-  value: unknown,
-  path = '$',
-  results: TruncatableArrayRef[] = [],
-): TruncatableArrayRef[] {
-  if (!value || typeof value !== 'object') {
-    return results
-  }
+function responseTooLargeError(
+  formattedBytes: number,
+  options?: FormatOptions,
+): ActionableError {
+  const pagination = isRecord(options?.pagination) ? options?.pagination : undefined
+  const pageSize = typeof pagination?.page_size === 'number' ? pagination.page_size : options?.maxItems
+  const recommendedLimit =
+    typeof pageSize === 'number' && pageSize > 1
+      ? Math.max(1, Math.floor(pageSize * (MAX_RESPONSE_BYTES / formattedBytes) * 0.8))
+      : undefined
 
-  if (Array.isArray(value)) {
-    value.forEach((entry, index) => collectTruncatableArrays(entry, `${path}[${index}]`, results))
-    return results
-  }
-
-  const record = value as Record<string, unknown>
-  for (const [key, child] of Object.entries(record)) {
-    const childPath = `${path}.${key}`
-    if (Array.isArray(child)) {
-      if (TRUNCATABLE_ARRAY_KEYS.has(key) || key.endsWith('_items') || key.endsWith('_series')) {
-        results.push({
-          key,
-          path: childPath,
-          values: child,
-          replace: (nextValues) => {
-            record[key] = nextValues
-          },
-        })
-      }
-      child.forEach((entry, index) => collectTruncatableArrays(entry, `${childPath}[${index}]`, results))
-      continue
-    }
-
-    collectTruncatableArrays(child, childPath, results)
-  }
-
-  return results
-}
-
-function truncateNestedArraysToFit(
-  value: unknown,
-  maxLength: number,
-): { data: unknown; truncatedPaths: string[]; jsonString?: string } | undefined {
-  let working: unknown
-  try {
-    working = JSON.parse(JSON.stringify(value))
-  } catch {
-    return undefined
-  }
-
-  const truncatedPaths = new Set<string>()
-  let jsonString = JSON.stringify(working, null, 2)
-  if (jsonString.length <= maxLength) {
-    return { data: working, truncatedPaths: [], jsonString }
-  }
-
-  while (jsonString.length > maxLength) {
-    const candidates = collectTruncatableArrays(working).filter((candidate) => candidate.values.length > 1)
-    if (candidates.length === 0) {
-      return undefined
-    }
-
-    candidates.sort((left, right) => right.values.length - left.values.length)
-    const target = candidates[0]
-    const nextLength = Math.max(1, Math.floor(target.values.length / 2))
-    if (nextLength >= target.values.length) {
-      return undefined
-    }
-
-    target.replace(target.values.slice(0, nextLength))
-    truncatedPaths.add(target.path)
-    jsonString = JSON.stringify(working, null, 2)
-  }
-
-  return {
-    data: working,
-    truncatedPaths: Array.from(truncatedPaths),
-    jsonString,
-  }
+  return new ActionableError(
+    `Response too large (${formattedBytes.toLocaleString('en-US')} bytes). SQD did not shorten the blockchain evidence because that could create an incomplete result.`,
+    [
+      ...(recommendedLimit ? [`Retry with limit: ${recommendedLimit}`] : []),
+      'Narrow timeframe, from_block/to_block, or other query filters',
+      'Use the returned pagination cursor only when the tool provides one',
+    ],
+    {
+      formatted_bytes: formattedBytes,
+      maximum_formatted_bytes: MAX_RESPONSE_BYTES,
+      ...(recommendedLimit ? { recommended_arguments: { limit: recommendedLimit } } : {}),
+    },
+    {
+      code: 'response_too_large',
+      origin: 'client_input',
+      retryable: true,
+    },
+  )
 }
 
 /**
- * Format results as MCP text content with optional metadata and truncation.
+ * Format results as MCP text content with optional metadata. Oversized
+ * responses fail explicitly instead of silently dropping blockchain rows.
  */
 export function formatResult(
   data: unknown,
   message?: string,
   options?: FormatOptions,
 ): FormattedToolResult {
-  const maxItems = options?.maxItems
-
   let dataToFormat = data
-  let truncated = false
-  let truncationKind: 'array' | 'nested' | undefined
-  let originalCount = 0
   const notices = [...(options?.notices || [])]
-
-  // Handle array truncation
-  if (Array.isArray(data) && maxItems && data.length > maxItems) {
-    originalCount = data.length
-    dataToFormat = data.slice(0, maxItems)
-    truncated = true
-    truncationKind = 'array'
-  }
 
   let jsonString: string
   try {
@@ -1316,45 +1227,6 @@ export function formatResult(
       return {
         content: [{ type: 'text', text: 'Error: Unable to serialize response.' }],
       }
-    }
-  }
-
-  // Truncate if too large
-  if (jsonString.length > MAX_RESPONSE_LENGTH) {
-    if (Array.isArray(dataToFormat)) {
-      const safeCount = Math.floor(((dataToFormat as unknown[]).length * MAX_RESPONSE_LENGTH) / jsonString.length)
-      originalCount = originalCount || (dataToFormat as unknown[]).length
-      dataToFormat = (dataToFormat as unknown[]).slice(0, Math.max(1, safeCount))
-      jsonString = JSON.stringify(dataToFormat, null, 2)
-      truncated = true
-      truncationKind = 'array'
-    } else {
-      const nestedTruncation = truncateNestedArraysToFit(dataToFormat, MAX_RESPONSE_LENGTH)
-      if (nestedTruncation) {
-        dataToFormat = nestedTruncation.data
-        jsonString = nestedTruncation.jsonString ?? JSON.stringify(dataToFormat, null, 2)
-        truncated = true
-        truncationKind = 'nested'
-        const pathLabel = nestedTruncation.truncatedPaths.slice(0, 3).join(', ')
-        const extraCount = Math.max(0, nestedTruncation.truncatedPaths.length - 3)
-        notices.push(
-          extraCount > 0
-            ? `Large nested arrays were truncated to fit MCP limits (${pathLabel}, +${extraCount} more).`
-            : `Large nested arrays were truncated to fit MCP limits (${pathLabel}).`,
-        )
-      } else {
-        return {
-          content: [{ type: 'text', text: `Error: Response too large. Add filters or reduce block range.` }],
-        }
-      }
-    }
-  }
-
-  if (truncated && (options?.warnOnTruncation ?? true)) {
-    if (truncationKind === 'array' && Array.isArray(dataToFormat) && originalCount > dataToFormat.length) {
-      notices.push(`Results truncated: showing ${(dataToFormat as unknown[]).length} of ${originalCount} items.`)
-    } else if (truncationKind === 'nested') {
-      notices.push('Some nested sections were shortened to keep the response fast and readable in MCP clients.')
     }
   }
 
@@ -1372,7 +1244,6 @@ export function formatResult(
     if (metadata.query_start_time) meta.response_time_ms = Date.now() - metadata.query_start_time
     if (Array.isArray(dataToFormat)) {
       meta.returned = (dataToFormat as unknown[]).length
-      if (truncated) meta.has_more = true
     }
 
     if (Array.isArray(dataToFormat)) {
@@ -1468,6 +1339,11 @@ export function formatResult(
     }
   }
 
+  const formattedBytes = Buffer.byteLength(jsonString, 'utf8')
+  if (formattedBytes > MAX_RESPONSE_BYTES) {
+    throw responseTooLargeError(formattedBytes, options)
+  }
+
   try {
     const structuredContent = JSON.parse(jsonString) as Record<string, unknown>
 
@@ -1484,7 +1360,7 @@ export function formatResult(
 }
 
 /**
- * Format result with automatic array truncation
+ * Format a result with the shared lossless size guard.
  */
 export function formatResultWithLimit(
   data: unknown,

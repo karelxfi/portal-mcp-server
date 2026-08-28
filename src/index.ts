@@ -2,6 +2,7 @@
 
 import { serveStdio } from '@modelcontextprotocol/server/stdio'
 
+import { SerializedStdioServerTransport } from './helpers/serialized-stdio-transport.js'
 import { createPortalServer } from './server.js'
 
 // ============================================================================
@@ -10,6 +11,7 @@ import { createPortalServer } from './server.js'
 
 serveStdio(() => createPortalServer({ transport: 'stdio' }), {
   legacy: 'serve',
+  transport: new SerializedStdioServerTransport(),
   onerror(error) {
     console.error('[mcp:stdio]', error)
   },

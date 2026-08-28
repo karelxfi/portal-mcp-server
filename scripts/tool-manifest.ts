@@ -10,14 +10,7 @@ const PORTAL_API_URL = 'https://portal.sqd.dev'
 const BASE_UNISWAP_V4_POOL_MANAGER = '0x498581ff718922c3f8e6a244956af099b2652b2b'
 const AERODROME_SLIPSTREAM_FACTORY = '0xf8f2eb4940cfe7d13603dddd87f123820fc061ef'
 const SOLANA_TOKEN_PROGRAM_ID = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA'
-const BASE_UNISWAP_V3_TEST_POOL_CANDIDATES = [
-  '0xf0125d06b76cebc2ab3831a938e07ab6988b00c9',
-  '0x3c4384f3664b37a3cb5a5cb3452b4b4a3aa1256f',
-  '0xd0b53d9277642d899df5c87a3966a349a798f224',
-  '0xe69def85897c95e9ef8439128ee015603b360a71',
-  '0xedc625b74537ee3a10874f53d170e9c17a906b9c',
-  '0xbc3231036ee1eca03e5f67fecedc640d21610823',
-] as const
+const BASE_UNISWAP_V3_TEST_POOL = '0xd0b53d9277642d899df5c87a3966a349a798f224'
 const SELECTORS = {
   allPools: '0x41d1de97',
 } as const
@@ -359,7 +352,6 @@ export async function loadToolTestContext(client: Client): Promise<ToolTestConte
   const [
     usdcResolveResult,
     recentDeployment,
-    recentV2SwapResult,
     recentV4SwapResult,
     evmTxResult,
     solTxResult,
@@ -376,19 +368,11 @@ export async function loadToolTestContext(client: Client): Promise<ToolTestConte
     pickRecentBaseDeployment(baseHead),
     callToolWithRetry(client, 'portal_evm_query_logs', {
       network: 'base-mainnet',
-      from_timestamp: '24h ago',
+      from_timestamp: '1h ago',
       to_timestamp: 'now',
-      topic0: [EVENT_SIGNATURES.UNISWAP_V2_SWAP],
-      limit: 1,
-      field_preset: 'minimal',
-    }),
-    callToolWithRetry(client, 'portal_evm_query_logs', {
-      network: 'base-mainnet',
-      from_block: baseHead - 2_000,
-      to_block: baseHead,
       addresses: [BASE_UNISWAP_V4_POOL_MANAGER],
       topic0: [EVENT_SIGNATURES.UNISWAP_V4_SWAP],
-      limit: 50,
+      limit: 20,
       field_preset: 'standard',
     }),
     callToolWithRetry(client, 'portal_evm_query_transactions', {
@@ -418,18 +402,15 @@ export async function loadToolTestContext(client: Client): Promise<ToolTestConte
     }),
   ])
 
-  const recentV2SwapItems = getItems(recentV2SwapResult.data)
-  assert(recentV2SwapItems.length > 0, 'Expected at least one active Base Uniswap v2-style pool')
-  const baseUniswapV2LogAddress = String(recentV2SwapItems[0].address || '').toLowerCase()
-  assert(baseUniswapV2LogAddress.startsWith('0x'), 'Expected an active Base Uniswap v2-style pool address')
-
   const usdcMatches = Array.isArray(usdcResolveResult.data?.matches) ? usdcResolveResult.data.matches : []
   const usdcBase = String(
     usdcMatches.find((item: any) => String(item?.symbol || '').toUpperCase() === 'USDC')?.address || '',
   ).toLowerCase()
   assert(/^0x[0-9a-f]{40}$/.test(usdcBase), 'Expected USDC to resolve from token-list data on Base')
 
-  const baseUniswapV3Pool = await pickRecentPoolFromCandidates(client, BASE_UNISWAP_V3_TEST_POOL_CANDIDATES)
+  // Downstream tool calls validate this public pool against live Portal data.
+  // Keeping selection deterministic avoids a separate discovery query becoming a release-gate dependency.
+  const baseUniswapV3Pool = BASE_UNISWAP_V3_TEST_POOL
 
   const recentV4SwapItems = getItems(recentV4SwapResult.data)
   assert(recentV4SwapItems.length > 0, 'Expected at least one active Base Uniswap v4 pool id')
@@ -1134,8 +1115,9 @@ export const TOOL_SPECS: ToolSpec[] = [
       const callOhlcVariant = async (label: string, args: Record<string, unknown>) => {
         try {
           return await callToolWithRetry(client, 'portal_evm_get_ohlc', args, {
-            retries: 3,
+            retries: 1,
             retryDelayMs: 1_200,
+            totalBudgetMs: 50_000,
           })
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error)
@@ -1345,6 +1327,25 @@ export const TOOL_SPECS: ToolSpec[] = [
         const walletData = walletResult.data
         assert(walletData.overview?.vm === 'bitcoin', 'Expected Bitcoin address flow to route through wallet summary')
         assert(walletData.bitcoin?.outputs_count !== undefined, 'Expected Bitcoin address output counts')
+        const nextCursor = walletData._pagination?.next_cursor
+        if (typeof nextCursor === 'string') {
+          const continuedWallet = await callToolWithRetry(client, 'portal_get_wallet_summary', { cursor: nextCursor })
+          assert(!continuedWallet.isError, 'Expected Bitcoin wallet continuation to succeed')
+          const continuedData = continuedWallet.data
+          const rowKey = (item: any, indexKey: 'inputIndex' | 'outputIndex') =>
+            `${String(item.block_number)}:${String(item.transactionIndex)}:${String(item[indexKey])}`
+          for (const [section, indexKey] of [
+            ['recent_inputs', 'inputIndex'],
+            ['recent_outputs', 'outputIndex'],
+          ] as const) {
+            const firstKeys = new Set((walletData.bitcoin?.[section] ?? []).map((item: any) => rowKey(item, indexKey)))
+            const continuedKeys = (continuedData.bitcoin?.[section] ?? []).map((item: any) => rowKey(item, indexKey))
+            assert(
+              continuedKeys.every((key: string) => !firstKeys.has(key)),
+              `Bitcoin wallet ${section} continuation should not repeat rows`,
+            )
+          }
+        }
       }
     },
   },

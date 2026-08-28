@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.8.2] - Unreleased
+
+Portal MCP v0.8.2 makes every returned blockchain row trustworthy under large responses, malformed streams, retries, and concurrent load. It also adds repeatable performance evidence so release decisions use measured queue, service, and end-to-end latency instead of isolated timings.
+
+### Highlights
+- **No silent evidence loss**: oversized results now return a structured `response_too_large` error with a safer limit recommendation instead of dropping rows or nested arrays.
+- **Exact continuation under dense blocks**: same-block cursors accumulate their boundary offset, preventing repeated pages when many matching rows share one block. Bitcoin wallet summaries now filter exact address matches, stay below the response budget, and provide signed continuation cursors.
+- **Bounded load admission**: Portal requests use a configurable active and queued budget, propagate cancellation while queued, and return a retryable overload result when capacity is exhausted.
+- **Retry storm resistance**: retries use full jitter, respect `Retry-After` as a minimum, release capacity before waiting, and stop inside one wall-clock budget.
+- **Malformed-stream safety**: truncated NDJSON, invalid JSON, and premature response termination can no longer look like complete blockchain results.
+- **Fast EVM candles**: exact time windows no longer trigger redundant historical backfill, and optional Uniswap v4 metadata lookup has its own cancellation-aware budget so candle data stays interactive.
+- **Measured performance gates**: the new harness records intended-start queue delay, service latency, end-to-end latency, response bytes, outcomes, c1/c4/c8 profiles, and bursts. Paired bootstrap comparison rejects statistically supported regressions above 10 percent.
+- **Sustained-load proof**: a 60-minute mixed-tool soak records error rate, latency recovery, and MCP child-process RSS, with short local smoke settings available during development.
+- **Five-family protocol journeys**: Claude, Codex, Grok, Gemini, and Cursor declared-client journeys cover discovery, structured fallback parity, continuation, multi-step evidence, concurrency, error handling, and recovery. Installed-host proof remains a separate release artifact.
+- **Capacity metrics**: Prometheus and Grafana now expose active and queued Portal work, admission wait, and admission rejection rate.
+- **Release gates before publication**: pull requests run the complete CI matrix, and Docker image publication waits for the same gate to pass.
+
+**Full Changelog**: https://github.com/subsquid-labs/portal-mcp-server/compare/v0.8.1...v0.8.2
+
 ## [0.8.1] - 2026-08-28
 
 Portal MCP v0.8.1 makes blockchain investigations more dependable under empty results, invalid inputs, upstream failures, and client cancellation. Responses now say what happened in a form agents can act on, while operators get privacy-safe metrics that separate useful empty or partial answers from actual failures.

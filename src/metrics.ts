@@ -96,6 +96,32 @@ export const portalRequestsTotal = new Counter({
   registers: [register],
 })
 
+export const portalUpstreamActive = new Gauge({
+  name: 'mcp_portal_upstream_active',
+  help: 'Current Portal API requests admitted for execution',
+  registers: [register],
+})
+
+export const portalUpstreamQueued = new Gauge({
+  name: 'mcp_portal_upstream_queued',
+  help: 'Current Portal API requests waiting for admission',
+  registers: [register],
+})
+
+export const portalAdmissionRejectedTotal = new Counter({
+  name: 'mcp_portal_admission_rejected_total',
+  help: 'Portal API requests rejected before execution by bounded admission control',
+  labelNames: ['reason'] as const,
+  registers: [register],
+})
+
+export const portalAdmissionWait = new Histogram({
+  name: 'mcp_portal_admission_wait_seconds',
+  help: 'Time Portal API requests wait for an execution slot',
+  buckets: [0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 3],
+  registers: [register],
+})
+
 export const tokenListRequestsTotal = new Counter({
   name: 'mcp_token_list_requests_total',
   help: 'Total number of external token-list fetch attempts by source, chain, and outcome',

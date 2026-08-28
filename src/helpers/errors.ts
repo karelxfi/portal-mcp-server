@@ -233,6 +233,7 @@ export type ToolErrorCode =
   | 'no_data'
   | 'incomplete_result'
   | 'response_too_large'
+  | 'overloaded'
   | 'upstream_reorg'
   | 'rate_limited'
   | 'upstream_unavailable'
@@ -275,6 +276,9 @@ function inferErrorMetadata(message: string): Required<Omit<ActionableErrorMetad
   }
   if (normalized.includes('response too large')) {
     return { code: 'response_too_large', origin: 'client_input', retryable: false }
+  }
+  if (normalized.includes('server is busy') || normalized.includes('admission queue')) {
+    return { code: 'overloaded', origin: 'server', retryable: true }
   }
   if (normalized.includes('chain reorganization') || normalized.includes('409 conflict')) {
     return { code: 'upstream_reorg', origin: 'upstream', retryable: true }
@@ -776,6 +780,22 @@ export function wrapError(error: unknown, context?: Record<string, unknown>): Er
     // Check for timeout
     if (error.message.includes('abort')) {
       return createTimeoutError(60000, context)
+    }
+
+    if (
+      error instanceof SyntaxError ||
+      /unexpected end|terminated|premature close|invalid json|ndjson|parse/i.test(error.message)
+    ) {
+      return new ActionableError(
+        'Portal returned an incomplete or malformed data stream.',
+        [
+          'Retry the same request once',
+          'If the problem continues, narrow the timeframe or block range',
+          'Do not treat any rows from the interrupted response as complete',
+        ],
+        context,
+        { code: 'upstream_error', origin: 'upstream', retryable: true },
+      )
     }
 
     // Generic error - add context if provided

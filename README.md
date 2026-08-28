@@ -6,7 +6,7 @@ Thin MCP wrapper around the [SQD Portal API](https://portal.sqd.dev) for blockch
 
 This server does not index chains itself. It validates user input, maps it onto Portal requests, and returns MCP-friendly responses.
 
-v0.8.1 supports the stateless MCP `2026-07-28` protocol over HTTP and stdio, while retaining the SDK-managed legacy negotiation path for clients still rolling out the revision. No SQD account, API key, or client credential is required.
+v0.8.2 supports the stateless MCP `2026-07-28` protocol over HTTP and stdio, while retaining the SDK-managed legacy negotiation path for clients still rolling out the revision. No SQD account, API key, or client credential is required.
 
 ## Current public surface
 
@@ -162,7 +162,7 @@ Grok chat can use SQD as a custom connector:
 1. Open `grok.com/connectors`.
 2. Choose **New Connector**, then **Custom**.
 3. Enter `https://portal.sqd.dev/mcp` as the MCP server URL.
-4. Leave authentication unset for v0.8.1.
+4. Leave authentication unset for v0.8.2.
 
 Grok Build reads Claude Code plugins directly, so it uses the same package rather than a made-up Grok-only manifest:
 
@@ -170,11 +170,11 @@ Grok Build reads Claude Code plugins directly, so it uses the same package rathe
 grok plugin install --trust subsquid-labs/portal-mcp-server#plugins/portal
 ```
 
-The v0.8.1 release gate validates the Codex, Claude Code, Grok Build, Gemini CLI, and Cursor packages. Where a client CLI is available, it also exercises its local package workflow.
+The v0.8.2 release gate validates the Codex, Claude Code, Grok Build, Gemini CLI, and Cursor packages. Where a client CLI is available, it also exercises its local package workflow.
 
 ## ChatGPT
 
-In a workspace with custom MCP apps enabled, open **Settings → Apps → Create**, enter `https://portal.sqd.dev/mcp`, choose no authentication, scan the tools, and create the draft app. The server is read-only and does not require user credentials in v0.8.1.
+In a workspace with custom MCP apps enabled, open **Settings → Apps → Create**, enter `https://portal.sqd.dev/mcp`, choose no authentication, scan the tools, and create the draft app. The server is read-only and does not require user credentials in v0.8.2.
 
 ## Claude Desktop
 
@@ -204,7 +204,7 @@ Add an entry like this to `claude_desktop_config.json`:
 
 HTTP mode exposes MCP at `/` and `/mcp`, with health state at `/health`.
 
-- MCP and health are public in v0.8.1. User authentication is deferred to a unified `auth.sqd.dev` flow in v0.9.0.
+- MCP and health are public in v0.8.2. User authentication is deferred to a unified `auth.sqd.dev` flow in v0.9.0.
 - Tool and resource discovery use the MCP protocol; retired `/tools` and `/tools.json` routes return `404`.
 - Set `MCP_CURSOR_SECRET` in production so pagination cursors are signed with a deployment-specific secret. Local development uses a deterministic fallback for convenience.
 
@@ -214,7 +214,7 @@ Useful environment variables:
 
 ## Tests
 
-The [v0.8.1 release-assurance contract](RELEASE_ASSURANCE.md) defines the complete hardening matrix, five-state terminal outcome taxonomy, result-state and failure-attribution metrics, privacy boundary, and exact automated gates. “100%” refers to every applicable cell in that declared matrix, not a claim that upstream networks can never fail.
+The [v0.8.2 release-assurance contract](RELEASE_ASSURANCE.md) defines the complete hardening matrix, five-state terminal outcome taxonomy, result-state and failure-attribution metrics, privacy boundary, and exact automated gates. “100%” refers to every applicable cell in that declared matrix, not a claim that upstream networks can never fail.
 
 ```bash
 npm test

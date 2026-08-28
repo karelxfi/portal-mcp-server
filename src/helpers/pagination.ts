@@ -226,11 +226,16 @@ export function paginateAscendingItems<T>(
   const remainingItems = trimBoundaryItemsFromEnd(items, cursor, getBlockNumber)
   const hasMore = remainingItems.length > limit
   const pageItems = remainingItems.slice(Math.max(0, remainingItems.length - limit))
+  const nextBoundary = hasMore ? buildNextBoundaryCursor(pageItems, getBlockNumber) : undefined
+
+  if (nextBoundary && cursor && nextBoundary.page_to_block === cursor.page_to_block) {
+    nextBoundary.skip_inclusive_block += cursor.skip_inclusive_block
+  }
 
   return {
     pageItems,
     hasMore,
-    nextBoundary: hasMore ? buildNextBoundaryCursor(pageItems, getBlockNumber) : undefined,
+    nextBoundary,
   }
 }
 

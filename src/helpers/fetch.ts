@@ -7,22 +7,49 @@ import {
   getPortalRequestSignal,
   isAbortLike,
 } from './request-context.js'
+import { portalAdmission } from './admission.js'
 
 // ============================================================================
 
 const MAX_RETRY_DELAY_MS = 5_000
+const MAX_RETRY_WALL_CLOCK_MS = 15_000
 
-function retryDelayMs(attempt: number, retryAfterSeconds?: string | null): number {
-  const retryAfterMs = retryAfterSeconds ? Number(retryAfterSeconds) * 1000 : Number.NaN
-  if (Number.isFinite(retryAfterMs) && retryAfterMs >= 0) {
-    return Math.min(retryAfterMs, MAX_RETRY_DELAY_MS)
-  }
-  return Math.min(2 ** attempt * 1000, MAX_RETRY_DELAY_MS)
+export function computeRetryAttemptTimeoutMs(
+  requestTimeoutMs: number,
+  retries: number,
+  startedAt: number,
+  now = Date.now(),
+): number {
+  if (retries <= 0) return requestTimeoutMs
+  const remainingBudget = MAX_RETRY_WALL_CLOCK_MS - Math.max(0, now - startedAt)
+  return Math.max(0, Math.min(requestTimeoutMs, remainingBudget))
 }
 
-async function waitForRetry(attempt: number, retries: number, delayMs = retryDelayMs(attempt)): Promise<void> {
-  if (attempt >= retries) return
+export function computeRetryDelayMs(
+  attempt: number,
+  retryAfterSeconds?: string | null,
+  random: () => number = Math.random,
+): number {
+  const retryAfterMs = retryAfterSeconds ? Number(retryAfterSeconds) * 1000 : Number.NaN
+  const exponentialCap = Math.min(2 ** attempt * 1000, MAX_RETRY_DELAY_MS)
+  const jitter = Math.max(0, Math.min(0.999_999_999, random()))
+  if (Number.isFinite(retryAfterMs) && retryAfterMs >= 0) {
+    const jitterWindow = Math.min(1_000, exponentialCap)
+    return retryAfterMs + Math.floor(jitter * (jitterWindow + 1))
+  }
+  return Math.floor(jitter * (exponentialCap + 1))
+}
+
+async function waitForRetry(
+  attempt: number,
+  retries: number,
+  startedAt: number,
+  delayMs = computeRetryDelayMs(attempt),
+): Promise<boolean> {
+  if (attempt >= retries) return false
+  if (Date.now() - startedAt + delayMs > MAX_RETRY_WALL_CLOCK_MS) return false
   await sleep(delayMs)
+  return true
 }
 // Portal API Wrapper Functions
 // ============================================================================
@@ -94,6 +121,7 @@ export interface PortalFetchStreamRangeOptions extends PortalFetchStreamOptions 
 
 export interface PortalFetchRecentRecordsOptions extends PortalFetchStreamRangeOptions {
   itemKeys: string[]
+  countItems?: (record: unknown) => number
   limit: number
   chunkSize: number
   maxChunks?: number
@@ -184,11 +212,16 @@ export async function portalFetch<T>(
   const { method = 'GET', body, timeout = DEFAULT_TIMEOUT, retries = DEFAULT_RETRIES } = options
 
   let lastError: Error | null = null
+  const retryStartedAt = Date.now()
 
   for (let attempt = 0; attempt <= retries; attempt++) {
-    const abortContext = createRequestAbortContext(timeout)
+    const attemptTimeout = computeRetryAttemptTimeoutMs(timeout, retries, retryStartedAt)
+    if (attemptTimeout <= 0) break
+    const abortContext = createRequestAbortContext(attemptTimeout)
+    let releaseAdmission: (() => void) | undefined
 
     try {
+      releaseAdmission = await portalAdmission.acquire(abortContext.signal)
       const fetchOptions: RequestInit = {
         method,
         headers: {
@@ -214,20 +247,24 @@ export async function portalFetch<T>(
 
       if (response.status === 409) {
         lastError = parsePortalError(409, '409 Conflict', { url, query: body })
-        await waitForRetry(attempt, retries)
+        releaseAdmission()
+        releaseAdmission = undefined
+        if (!(await waitForRetry(attempt, retries, retryStartedAt))) break
         continue
       }
 
       if (response.status === 429) {
         // Rate limited - check Retry-After header
         const retryAfter = response.headers.get('Retry-After')
-        const delay = retryDelayMs(attempt, retryAfter)
+        const delay = computeRetryDelayMs(attempt, retryAfter)
         lastError = parsePortalError(
           429,
           retryAfter ? `Retry after ${retryAfter}s` : `Retry after ${Math.ceil(delay / 1000)}s`,
           { url, query: body },
         )
-        await waitForRetry(attempt, retries, delay)
+        releaseAdmission()
+        releaseAdmission = undefined
+        if (!(await waitForRetry(attempt, retries, retryStartedAt, delay))) break
         continue
       }
 
@@ -238,7 +275,7 @@ export async function portalFetch<T>(
 
       return (await response.json()) as T
     } catch (error) {
-      rethrowAbort(error, abortContext, timeout, { url, attempt: attempt + 1, max_attempts: retries + 1 })
+      rethrowAbort(error, abortContext, attemptTimeout, { url, attempt: attempt + 1, max_attempts: retries + 1 })
 
       lastError = wrapError(error, { url, attempt: attempt + 1, max_attempts: retries + 1 }) as Error
 
@@ -246,8 +283,11 @@ export async function portalFetch<T>(
         throw lastError
       }
 
-      await waitForRetry(attempt, retries)
+      releaseAdmission?.()
+      releaseAdmission = undefined
+      if (!(await waitForRetry(attempt, retries, retryStartedAt))) break
     } finally {
+      releaseAdmission?.()
       abortContext.cleanup()
     }
   }
@@ -276,11 +316,16 @@ export async function portalFetchStream(
   const options = normalizePortalFetchStreamOptions(timeoutOrOptions, maxBlocks, maxBytes, _retries)
   const { timeout, stopAfterItems } = options
   let lastError: Error | null = null
+  const retryStartedAt = Date.now()
 
   for (let attempt = 0; attempt <= options.retries; attempt++) {
-    const abortContext = createRequestAbortContext(timeout)
+    const attemptTimeout = computeRetryAttemptTimeoutMs(timeout, options.retries, retryStartedAt)
+    if (attemptTimeout <= 0) break
+    const abortContext = createRequestAbortContext(attemptTimeout)
+    let releaseAdmission: (() => void) | undefined
 
     try {
+      releaseAdmission = await portalAdmission.acquire(abortContext.signal)
       const response = await fetch(url, {
         method: 'POST',
         headers: {
@@ -300,25 +345,31 @@ export async function portalFetchStream(
 
       if (response.status === 409) {
         lastError = parsePortalError(409, '409 Conflict', { url, query: body })
-        await waitForRetry(attempt, options.retries)
+        releaseAdmission()
+        releaseAdmission = undefined
+        if (!(await waitForRetry(attempt, options.retries, retryStartedAt))) break
         continue
       }
 
       if (response.status === 429) {
         const retryAfter = response.headers.get('Retry-After')
-        const delay = retryDelayMs(attempt, retryAfter)
+        const delay = computeRetryDelayMs(attempt, retryAfter)
         lastError = parsePortalError(
           429,
           retryAfter ? `Retry after ${retryAfter}s` : `Retry after ${Math.ceil(delay / 1000)}s`,
           { url, query: body },
         )
-        await waitForRetry(attempt, options.retries, delay)
+        releaseAdmission()
+        releaseAdmission = undefined
+        if (!(await waitForRetry(attempt, options.retries, retryStartedAt, delay))) break
         continue
       }
 
       if (response.status === 503) {
         lastError = parsePortalError(503, await response.text(), { url, query: body })
-        await waitForRetry(attempt, options.retries)
+        releaseAdmission()
+        releaseAdmission = undefined
+        if (!(await waitForRetry(attempt, options.retries, retryStartedAt))) break
         continue
       }
 
@@ -365,7 +416,7 @@ export async function portalFetchStream(
           if (done) break
 
           const chunk = decoder.decode(value, { stream: true })
-          totalBytes += chunk.length
+          totalBytes += value.byteLength
           buffer += chunk
 
           let newlineIdx: number
@@ -398,6 +449,7 @@ export async function portalFetchStream(
           }
         }
 
+        buffer += decoder.decode()
         const remaining = buffer.trim()
         if (remaining) {
           const parsed = JSON.parse(remaining)
@@ -414,13 +466,16 @@ export async function portalFetchStream(
 
       return results
     } catch (error) {
-      rethrowAbort(error, abortContext, timeout, { url, query: body })
+      rethrowAbort(error, abortContext, attemptTimeout, { url, query: body })
 
       lastError = wrapError(error, { url, query: body }) as Error
       if (lastError instanceof ActionableError && !lastError.retryable) throw lastError
 
-      await waitForRetry(attempt, options.retries)
+      releaseAdmission?.()
+      releaseAdmission = undefined
+      if (!(await waitForRetry(attempt, options.retries, retryStartedAt))) break
     } finally {
+      releaseAdmission?.()
       abortContext.cleanup()
     }
   } // end for loop
@@ -442,11 +497,16 @@ export async function portalFetchStreamVisit(
   const normalizedOptions = normalizePortalFetchStreamOptions(options, 0, 50 * 1024 * 1024, DEFAULT_RETRIES)
   const { timeout, stopAfterItems } = normalizedOptions
   let lastError: Error | null = null
+  const retryStartedAt = Date.now()
 
   for (let attempt = 0; attempt <= normalizedOptions.retries; attempt++) {
-    const abortContext = createRequestAbortContext(timeout)
+    const attemptTimeout = computeRetryAttemptTimeoutMs(timeout, normalizedOptions.retries, retryStartedAt)
+    if (attemptTimeout <= 0) break
+    const abortContext = createRequestAbortContext(attemptTimeout)
+    let releaseAdmission: (() => void) | undefined
 
     try {
+      releaseAdmission = await portalAdmission.acquire(abortContext.signal)
       const response = await fetch(url, {
         method: 'POST',
         headers: {
@@ -466,25 +526,31 @@ export async function portalFetchStreamVisit(
 
       if (response.status === 409) {
         lastError = parsePortalError(409, '409 Conflict', { url, query: body })
-        await waitForRetry(attempt, normalizedOptions.retries)
+        releaseAdmission()
+        releaseAdmission = undefined
+        if (!(await waitForRetry(attempt, normalizedOptions.retries, retryStartedAt))) break
         continue
       }
 
       if (response.status === 429) {
         const retryAfter = response.headers.get('Retry-After')
-        const delay = retryDelayMs(attempt, retryAfter)
+        const delay = computeRetryDelayMs(attempt, retryAfter)
         lastError = parsePortalError(
           429,
           retryAfter ? `Retry after ${retryAfter}s` : `Retry after ${Math.ceil(delay / 1000)}s`,
           { url, query: body },
         )
-        await waitForRetry(attempt, normalizedOptions.retries, delay)
+        releaseAdmission()
+        releaseAdmission = undefined
+        if (!(await waitForRetry(attempt, normalizedOptions.retries, retryStartedAt, delay))) break
         continue
       }
 
       if (response.status === 503) {
         lastError = parsePortalError(503, await response.text(), { url, query: body })
-        await waitForRetry(attempt, normalizedOptions.retries)
+        releaseAdmission()
+        releaseAdmission = undefined
+        if (!(await waitForRetry(attempt, normalizedOptions.retries, retryStartedAt))) break
         continue
       }
 
@@ -530,7 +596,7 @@ export async function portalFetchStreamVisit(
           if (done) break
 
           const chunk = decoder.decode(value, { stream: true })
-          totalBytes += chunk.length
+          totalBytes += value.byteLength
           buffer += chunk
 
           let newlineIdx: number
@@ -564,6 +630,7 @@ export async function portalFetchStreamVisit(
           }
         }
 
+        buffer += decoder.decode()
         const remaining = buffer.trim()
         if (remaining) {
           const parsed = JSON.parse(remaining)
@@ -577,13 +644,16 @@ export async function portalFetchStreamVisit(
 
       return processedRecords
     } catch (error) {
-      rethrowAbort(error, abortContext, timeout, { url, query: body })
+      rethrowAbort(error, abortContext, attemptTimeout, { url, query: body })
 
       lastError = wrapError(error, { url, query: body }) as Error
       if (lastError instanceof ActionableError && !lastError.retryable) throw lastError
 
-      await waitForRetry(attempt, normalizedOptions.retries)
+      releaseAdmission?.()
+      releaseAdmission = undefined
+      if (!(await waitForRetry(attempt, normalizedOptions.retries, retryStartedAt))) break
     } finally {
+      releaseAdmission?.()
       abortContext.cleanup()
     }
   }
@@ -839,7 +909,11 @@ export async function portalFetchRecentRecords(
       if (outcome.value.length > 0) {
         recentRecords.unshift(...outcome.value)
         matchedItems += outcome.value.reduce<number>(
-          (sum, record) => sum + countMatchingItems(record, { keys: options.itemKeys, limit: Number.MAX_SAFE_INTEGER }),
+          (sum, record) =>
+            sum +
+            (options.countItems
+              ? options.countItems(record)
+              : countMatchingItems(record, { keys: options.itemKeys, limit: Number.MAX_SAFE_INTEGER })),
           0,
         )
       }

@@ -258,10 +258,11 @@ export function assertErrorQuality(text: string, label: string) {
   )
 }
 
-export async function connectTestClient(name: string): Promise<ConnectedTestClient> {
+export async function connectTestClient(name: string, options?: { cwd?: string }): Promise<ConnectedTestClient> {
   const transport = new StdioClientTransport({
     command: 'node',
     args: ['dist/index.js'],
+    ...(options?.cwd ? { cwd: options.cwd } : {}),
   })
 
   const client = new McpClient({ name, version: '1.0.0' })
@@ -286,24 +287,46 @@ export async function callToolWithRetry(
     retries?: number
     retryDelayMs?: number
     parseJson?: boolean
+    requestTimeoutMs?: number
+    totalBudgetMs?: number
   },
 ): Promise<ToolCallResult> {
   const retries = options?.retries ?? 3
   const retryDelayMs = options?.retryDelayMs ?? 800
+  const requestTimeoutMs = options?.requestTimeoutMs ?? 45_000
+  const totalBudgetMs = options?.totalBudgetMs ?? 90_000
+  const budgetStartedAt = Date.now()
 
   let lastError: Error | undefined
 
   for (let attempt = 1; attempt <= retries + 1; attempt += 1) {
+    const remainingBudgetMs = totalBudgetMs - (Date.now() - budgetStartedAt)
+    if (remainingBudgetMs <= 0) {
+      throw lastError ?? new Error(`Tool call exceeded the ${totalBudgetMs}ms test budget for ${name}`)
+    }
     const start = Date.now()
 
     try {
-      const result = await client.callTool({ name, arguments: args })
+      const result = await client.callTool(
+        { name, arguments: args },
+        { timeout: Math.max(1, Math.min(requestTimeoutMs, remainingBudgetMs)) },
+      )
       const text = getText(result)
       const isError = Boolean((result as any).isError) || text.startsWith('Error:')
       const elapsedMs = Date.now() - start
 
       if (isError && attempt <= retries && isRetryableError(text)) {
-        await sleep(retryDelayMs * attempt)
+        const retryDelay = retryDelayMs * attempt
+        if (Date.now() - budgetStartedAt + retryDelay >= totalBudgetMs)
+          return {
+            result,
+            text,
+            structuredContent: getStructuredContent(result),
+            isError,
+            elapsedMs,
+            attempts: attempt,
+          }
+        await sleep(retryDelay)
         continue
       }
 
@@ -324,7 +347,9 @@ export async function callToolWithRetry(
       lastError = error instanceof Error ? error : new Error(String(error))
 
       if (attempt <= retries && isRetryableError(lastError.message)) {
-        await sleep(retryDelayMs * attempt)
+        const retryDelay = retryDelayMs * attempt
+        if (Date.now() - budgetStartedAt + retryDelay >= totalBudgetMs) throw lastError
+        await sleep(retryDelay)
         continue
       }
 

@@ -16,6 +16,19 @@ const ERC20_TRANSFER_SIGHASH = '0xa9059cbb'
 const ERC20_APPROVE_SIGHASH = '0x095ea7b3'
 const ZERO_TOPIC = `0x${'0'.repeat(64)}`
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000'
+const BASE_FAILED_TX_FIXTURE = {
+  block_number: 50_579_339,
+  to: '0x6ca5d7a9736fface6ef213eab7333e39d4fd0ebe',
+}
+const BASE_CREATION_FIXTURE = {
+  block_number: 50_579_324,
+  from: '0x968aeb659ea3561941ef0ad275f3833ed6cbf8c4',
+}
+const BASE_APPROVAL_FIXTURE = {
+  block_number: 50_574_710,
+  owner_topic: '0x0000000000000000000000002192bc3b4028acc1113f2cd9ac2cba70c36520db',
+}
+const BASE_APPROVE_CALL_FIXTURE_BLOCK = 50_529_367
 
 type TestCase = {
   name: string
@@ -68,55 +81,10 @@ async function main() {
     const ethereumHead = (await callToolWithRetry(client, 'portal_get_head', { network: 'ethereum-mainnet' })).data
       .number as number
     const baseWindowFrom = context.baseHead - 5_000
-    const wideBaseWindowFrom = context.baseHead - 50_000
-
-    const latestFailed = await callToolWithRetry(client, 'portal_evm_query_transactions', {
-      network: 'base',
-      from_block: wideBaseWindowFrom,
-      to_block: context.baseHead,
-      transaction_status: 'failed',
-      scan_order: 'latest',
-      max_scan_blocks: 50_000,
-      limit: 1,
-      field_preset: 'standard',
-      response_format: 'full',
-    })
-    const failedTx = getItems(latestFailed.data)[0]
-    assert(failedTx?.to, 'Expected a recent failed Base transaction with a recipient')
-
-    const creationFixture = await callToolWithRetry(client, 'portal_evm_query_transactions', {
-      network: 'base',
-      from_block: wideBaseWindowFrom,
-      to_block: context.baseHead,
-      contract_creation: true,
-      scan_order: 'latest',
-      max_scan_blocks: 50_000,
-      limit: 1,
-      field_preset: 'standard',
-      response_format: 'full',
-    })
-    const creationTx = getItems(creationFixture.data)[0]
-    assert(
-      creationTx?.from && typeof creationTx.block_number === 'number',
-      'Expected a recent Base contract creation fixture',
-    )
-
-    const approvalFixture = await callToolWithRetry(client, 'portal_evm_query_logs', {
-      network: 'base',
-      from_block: wideBaseWindowFrom,
-      to_block: context.baseHead,
-      addresses: [context.usdcBase],
-      event: 'approval',
-      scan_order: 'latest',
-      limit: 1,
-      field_preset: 'minimal',
-    })
-    const approvalLog = getItems(approvalFixture.data)[0]
-    assert(
-      approvalLog?.topics?.[0] === EVENT_SIGNATURES.APPROVAL_ERC20 && approvalLog?.topics?.[1],
-      'Expected a recent USDC Approval fixture',
-    )
-    const approvalOwnerTopic = approvalLog.topics[1]
+    // Stable public-chain fixtures keep semantic CI independent of current activity density.
+    const failedTx = BASE_FAILED_TX_FIXTURE
+    const creationTx = BASE_CREATION_FIXTURE
+    const approvalOwnerTopic = BASE_APPROVAL_FIXTURE.owner_topic
     const approvalOwner = topicAddress(approvalOwnerTopic)
 
     const tests: TestCase[] = [
@@ -241,8 +209,8 @@ async function main() {
           const failedTo = String(failedTx.to).toLowerCase()
           const result = await callToolWithRetry(client, 'portal_evm_query_transactions', {
             network: 'base',
-            from_block: Math.max(0, Number(failedTx.block_number ?? context.baseHead) - 2_000),
-            to_block: context.baseHead,
+            from_block: failedTx.block_number - 2,
+            to_block: failedTx.block_number + 2,
             to_addresses: [failedTo],
             transaction_status: 'failed',
             scan_order: 'earliest',
@@ -362,8 +330,8 @@ async function main() {
         run: async () => {
           const result = await callToolWithRetry(client, 'portal_evm_query_logs', {
             network: 'base',
-            from_block: wideBaseWindowFrom,
-            to_block: context.baseHead,
+            from_block: BASE_APPROVAL_FIXTURE.block_number - 2,
+            to_block: BASE_APPROVAL_FIXTURE.block_number + 2,
             addresses: [context.usdcBase],
             event: 'approval',
             topic1: [approvalOwnerTopic],
@@ -381,12 +349,12 @@ async function main() {
         run: async () => {
           const result = await callToolWithRetry(client, 'portal_evm_query_transactions', {
             network: 'base',
-            from_block: wideBaseWindowFrom,
-            to_block: context.baseHead,
+            from_block: BASE_APPROVE_CALL_FIXTURE_BLOCK - 2,
+            to_block: BASE_APPROVE_CALL_FIXTURE_BLOCK + 2,
             to_addresses: [context.usdcBase],
             method: 'approve',
             scan_order: 'earliest',
-            max_scan_blocks: 50_000,
+            max_scan_blocks: 5,
             limit: 1,
             field_preset: 'full',
             response_format: 'full',
@@ -489,8 +457,8 @@ async function main() {
 
           const failedResult = await callToolWithRetry(client, 'portal_evm_query_transactions', {
             network: 'base',
-            from_block: Math.max(0, Number(failedTx.block_number ?? context.baseHead) - 2_000),
-            to_block: context.baseHead,
+            from_block: failedTx.block_number - 2,
+            to_block: failedTx.block_number + 2,
             to_addresses: [String(failedTx.to).toLowerCase()],
             transaction_status: 'failed',
             scan_order: 'latest',

@@ -8,16 +8,20 @@ import { StdioClientTransport, getDefaultEnvironment } from '@modelcontextprotoc
 import { InMemoryTransport } from '@modelcontextprotocol/server'
 
 import { createQueryCache } from '../src/cache/query-cache.js'
+import { AdmissionController } from '../src/helpers/admission.js'
 import { scanBoundedBlockRange } from '../src/helpers/bounded-search.js'
 import { ActionableError, RequestCancelledError } from '../src/helpers/errors.js'
 import { fetchExternalJson } from '../src/helpers/external-apis.js'
 import {
+  computeRetryAttemptTimeoutMs,
+  computeRetryDelayMs,
   portalFetch,
   portalFetchRecentRecords,
   portalFetchStream,
   portalFetchStreamVisit,
   sleep,
 } from '../src/helpers/fetch.js'
+import { formatResult } from '../src/helpers/format.js'
 import { runWithPortalRequestSignal } from '../src/helpers/request-context.js'
 import { registerPortalTool } from '../src/helpers/mcp-registration.js'
 import { toolCallsTotal, toolErrorsTotal, toolOutcomesTotal } from '../src/metrics.js'
@@ -66,6 +70,90 @@ async function main() {
   assert(maxActiveScans === 3, `bounded reverse scan should use concurrency 3, observed ${maxActiveScans}`)
   assert(scanResult.scannedBlocks === 50 && scanResult.exhaustedWindow, 'bounded reverse scan should cover its window')
   console.log('PASS  bounded reverse scans preserve coverage while fetching ordered batches concurrently')
+
+  const admission = new AdmissionController(2, 1, 100)
+  const releaseFirst = await admission.acquire()
+  const releaseSecond = await admission.acquire()
+  const queued = admission.acquire()
+  await expectFastFailure(
+    'full admission queue sheds excess work',
+    () => admission.acquire(),
+    (error) =>
+      assert(
+        error instanceof ActionableError &&
+          error.code === 'overloaded' &&
+          error.origin === 'server' &&
+          error.retryable,
+        'full admission queue should return a retryable overload error',
+      ),
+  )
+  releaseFirst()
+  const releaseQueued = await queued
+  releaseQueued()
+  releaseSecond()
+  assert(admission.snapshot().active === 0 && admission.snapshot().queued === 0, 'admission should return to zero')
+
+  const cancellableAdmission = new AdmissionController(1, 1, 500)
+  const releaseBlocking = await cancellableAdmission.acquire()
+  const queuedCancellation = new AbortController()
+  const cancelledAcquire = cancellableAdmission.acquire(queuedCancellation.signal)
+  queuedCancellation.abort()
+  await expectFastFailure(
+    'queued admission observes MCP cancellation',
+    () => cancelledAcquire,
+    (error) => assert(error instanceof RequestCancelledError, 'queued admission should reject as cancellation'),
+  )
+  releaseBlocking()
+  assert(
+    cancellableAdmission.snapshot().active === 0 && cancellableAdmission.snapshot().queued === 0,
+    'cancelled admission should release its queue entry',
+  )
+
+  const noHeaderDelays = Array.from({ length: 8 }, (_, index) =>
+    computeRetryDelayMs(2, undefined, () => index / 8),
+  )
+  assert(new Set(noHeaderDelays).size === 8, 'retry jitter should de-correlate concurrent callers')
+  const retryAfterDelays = Array.from({ length: 8 }, (_, index) =>
+    computeRetryDelayMs(0, '2', () => index / 8),
+  )
+  assert(retryAfterDelays.every((delay) => delay >= 2_000), 'retry jitter must not violate Retry-After')
+  assert(
+    computeRetryAttemptTimeoutMs(30_000, 2, 1_000, 1_000) === 15_000,
+    'retry-enabled requests should cap their first attempt to the total wall-clock budget',
+  )
+  assert(
+    computeRetryAttemptTimeoutMs(30_000, 2, 1_000, 13_000) === 3_000,
+    'later retry attempts should receive only the remaining wall-clock budget',
+  )
+  assert(
+    computeRetryAttemptTimeoutMs(30_000, 2, 1_000, 16_000) === 0,
+    'retry attempts should stop after the wall-clock budget is exhausted',
+  )
+  assert(
+    computeRetryAttemptTimeoutMs(30_000, 0, 1_000, 16_000) === 30_000,
+    'single-attempt callers should retain their explicit request timeout',
+  )
+  console.log('PASS  retry request attempts share one enforced 15-second wall-clock budget')
+
+  try {
+    formatResult(
+      { items: Array.from({ length: 500 }, (_, index) => ({ index, value: 'x'.repeat(200) })) },
+      'Oversized fixture',
+      {
+        toolName: 'portal_evm_query_transactions',
+        pagination: { type: 'cursor', page_size: 500, returned: 500, has_more: false },
+      },
+    )
+    throw new Error('oversized formatter fixture unexpectedly succeeded')
+  } catch (error) {
+    assert(
+      error instanceof ActionableError &&
+        error.code === 'response_too_large' &&
+        error.retryable &&
+        error.suggestions.some((suggestion) => suggestion.startsWith('Retry with limit: ')),
+      'oversized formatter output should fail losslessly with exact limit guidance',
+    )
+  }
 
   const sockets = new Set<Socket>()
   let closedRequests = 0
@@ -148,6 +236,18 @@ async function main() {
     if (req.url === '/json-stall') {
       res.writeHead(200, { 'Content-Type': 'application/json', 'Content-Length': '2' })
       res.flushHeaders()
+      return
+    }
+
+    if (req.url === '/truncated-stream') {
+      res.writeHead(200, { 'Content-Type': 'application/x-ndjson' })
+      res.end('{"number":1}\n{"number":')
+      return
+    }
+
+    if (req.url === '/early-eof') {
+      res.writeHead(200, { 'Content-Type': 'application/x-ndjson', 'Content-Length': '200' })
+      res.end('{"number":1}\n')
       return
     }
 
@@ -280,6 +380,21 @@ async function main() {
         assert(error instanceof Error && /Request timeout after 100ms/.test(error.message), 'expected timeout error'),
     )
 
+    for (const path of ['/truncated-stream', '/early-eof']) {
+      await expectFastFailure(
+        `${path} never becomes a complete result`,
+        () => portalFetchStream(`${baseUrl}${path}`, {}, { timeout: 500, retries: 0 }),
+        (error) =>
+          assert(
+            error instanceof ActionableError &&
+              (error.code === 'upstream_error' || error.code === 'upstream_timeout') &&
+              error.origin === 'upstream' &&
+              error.retryable,
+            `${path} should return a typed incomplete upstream error, got ${error instanceof Error ? error.message : String(error)}`,
+          ),
+      )
+    }
+
     const cancellation = new AbortController()
     setTimeout(() => cancellation.abort(), 50)
     await expectFastFailure(
@@ -408,6 +523,27 @@ async function main() {
     registerPortalTool(mcpServer, '__test_actionable_error_outcome', 'Actionable error metric test.', {}, async () => {
       throw new ActionableError('Fixture input is invalid.', ['Correct the fixture input.'])
     })
+    registerPortalTool(
+      mcpServer,
+      '__test_deadline_outcome',
+      'Tool deadline reliability test.',
+      {},
+      async () => {
+        await portalFetchStream(`${baseUrl}/mcp-deadline-stall`, {}, { timeout: 5_000, retries: 0 })
+        return { content: [{ type: 'text' as const, text: 'unexpected success' }] }
+      },
+      { deadlineMs: 100 },
+    )
+    registerPortalTool(mcpServer, '__test_oversized_result', 'Lossless response-size guard test.', {}, async () =>
+      formatResult(
+        { items: Array.from({ length: 500 }, (_, index) => ({ index, value: 'x'.repeat(200) })) },
+        'Oversized fixture',
+        {
+          toolName: '__test_oversized_result',
+          pagination: { type: 'cursor', page_size: 500, returned: 500, has_more: false },
+        },
+      ),
+    )
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
     const client = new Client({ name: 'fetch-reliability-test', version: '1.0.0' })
     await mcpServer.connect(serverTransport)
@@ -454,6 +590,24 @@ async function main() {
       const actionablePayload = actionableErrorResult.structuredContent as Record<string, any> | undefined
       assert(actionablePayload?.error?.code === 'invalid_request', 'actionable input failures need a stable code')
       assert(actionablePayload?.error?.origin === 'client_input', 'actionable input failures need a stable origin')
+      const deadlineStartedAt = Date.now()
+      const deadlineResult = await client.callTool({ name: '__test_deadline_outcome', arguments: {} })
+      const deadlineElapsedMs = Date.now() - deadlineStartedAt
+      const deadlinePayload = deadlineResult.structuredContent as Record<string, any> | undefined
+      assert(deadlineResult.isError, 'tool deadline should return a structured tool error')
+      assert(deadlinePayload?.error?.code === 'upstream_timeout', 'tool deadline should retain timeout attribution')
+      assert(deadlinePayload?.error?.origin === 'upstream', 'tool deadline should be attributed to the upstream stage')
+      assert(deadlinePayload?.error?.retryable === true, 'tool deadline should remain retryable')
+      assert(deadlineElapsedMs < 750, `tool deadline should abort nested work promptly, took ${deadlineElapsedMs}ms`)
+      const oversizedResult = await client.callTool({ name: '__test_oversized_result', arguments: {} })
+      const oversizedPayload = oversizedResult.structuredContent as Record<string, any> | undefined
+      assert(oversizedResult.isError, 'oversized results should return a structured tool error')
+      assert(oversizedPayload?.error?.code === 'response_too_large', 'oversized results need a stable code')
+      assert(oversizedPayload?.error?.retryable === true, 'oversized results should be correctable')
+      assert(
+        oversizedPayload?._coverage?.result_complete === false,
+        'oversized results must never look complete',
+      )
 
       const cancellationDeadline = Date.now() + 750
       while (closedRequests <= closedBeforeMcpCancellation && Date.now() < cancellationDeadline) {
@@ -500,6 +654,7 @@ async function main() {
         ['__test_tool_error_outcome', 'tool_error'],
         ['__test_request_error_outcome', 'tool_error'],
         ['__test_actionable_error_outcome', 'tool_error'],
+        ['__test_deadline_outcome', 'tool_error'],
         ['__test_cancel_portal_fetch', 'cancelled'],
         ['__test_cancel_no_args', 'cancelled'],
       ])
@@ -516,6 +671,7 @@ async function main() {
         '__test_tool_error_outcome',
         '__test_request_error_outcome',
         '__test_actionable_error_outcome',
+        '__test_deadline_outcome',
       ]) {
         assert(
           errorMetrics.values.some((value) => value.labels.tool === tool && value.value === 1),
@@ -533,6 +689,7 @@ async function main() {
         ['__test_partial_outcome', 'partial', 'none', 'none'],
         ['__test_request_error_outcome', 'error', 'server', 'internal_error'],
         ['__test_actionable_error_outcome', 'error', 'client_input', 'invalid_request'],
+        ['__test_deadline_outcome', 'error', 'upstream', 'upstream_timeout'],
         ['__test_cancel_portal_fetch', 'cancelled', 'transport', 'cancelled'],
       ]
       for (const [tool, resultState, errorOrigin, errorCode] of expectedDetails) {
