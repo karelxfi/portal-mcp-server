@@ -22,7 +22,7 @@ This document defines the bounded meaning of “100% hardened and measured” fo
 | VM-specific regression coverage | EVM, Solana, Bitcoin, Substrate, Hyperliquid | `test:tools`, `test:evm-investigator`, `test:substrate`, `test:reliability-live` |
 | Distribution packages | Codex, Claude Code, Grok Build, Gemini CLI, Cursor | `test:plugin`, `test:claude-plugin`, `test:grok-plugin`, `test:gemini-extension`, `test:cursor-plugin` |
 | Declared-client protocol journeys | Claude, Codex, Grok, Gemini, Cursor | `test:client-journeys` |
-| Open-loop performance profiles | Cold c1; warm c1, c4, c8; c8 burst | `benchmark:v082`, `benchmark:compare` |
+| Open-loop performance profiles | Cold c1; warm c1, c4, c8; c8 burst | `benchmark:v082`, `benchmark:paired` |
 | Sustained mixed load | 60 minutes with bursts, latency recovery, error rate, and child-process RSS | `soak:v082` |
 | Published package boundary | Allowlisted runtime and public files only | `test:package` |
 | Dependency findings | No known npm audit finding | `test:package` |
@@ -86,7 +86,7 @@ The Grafana dashboard is checked against emitted metric names during `test:http-
 The exact release commit must have all of these artifacts:
 
 1. `npm run test:release` passes.
-2. A baseline and candidate artifact from `npm run benchmark:v082`, each created from a clean commit with every registered tool and at least 50 samples per warm profile.
-3. `npm run benchmark:compare -- <baseline.json> <candidate.json>` reports no statistically supported regression above 10 percent.
+2. A paired baseline/candidate artifact from `npm run benchmark:paired`, created from two clean commits with every registered tool and at least 50 interleaved sample pairs per warm profile.
+3. The paired benchmark reports no statistically supported regression above 10 percent and at most 1 percent candidate tool errors. Sequential `benchmark:v082` artifacts remain useful capacity evidence, but are not the release regression gate because live upstream conditions can drift between runs.
 4. `SOAK_RELEASE=1 npm run soak:v082` completes the default 60-minute mixed-tool run with at most 1 percent tool errors and records latency and child-process RSS.
 5. Installed Claude, Codex, Grok, Gemini, and Cursor hosts each complete the declared user journeys. `test:client-journeys` verifies protocol identity and behavior, but does not replace installed-host proof.

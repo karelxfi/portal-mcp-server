@@ -258,10 +258,11 @@ export function assertErrorQuality(text: string, label: string) {
   )
 }
 
-export async function connectTestClient(name: string): Promise<ConnectedTestClient> {
+export async function connectTestClient(name: string, options?: { cwd?: string }): Promise<ConnectedTestClient> {
   const transport = new StdioClientTransport({
     command: 'node',
     args: ['dist/index.js'],
+    ...(options?.cwd ? { cwd: options.cwd } : {}),
   })
 
   const client = new McpClient({ name, version: '1.0.0' })

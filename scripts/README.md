@@ -85,6 +85,17 @@ npm run benchmark:compare -- artifacts/baseline.json artifacts/candidate.json
 
 The comparison uses paired seeded bootstrap intervals and fails a statistically supported latency regression above 10 percent.
 
+For the release regression gate, use the interleaved paired runner so baseline and candidate see the same live upstream conditions:
+
+```bash
+BENCHMARK_RELEASE=1 \
+BENCHMARK_BASELINE_CWD=/path/to/clean-v0.8.1-worktree \
+BENCHMARK_SAMPLES=50 \
+npm run benchmark:paired
+```
+
+The runner starts both exact commits, sends each sample pair at the same intended time, and fails statistically supported latency regressions above 10 percent or candidate tool errors above 1 percent. Sequential artifacts remain useful for standalone capacity evidence, but are not used as the release regression gate.
+
 ### `npm run soak:v082`
 Runs mixed tools with periodic eight-call bursts while recording tool errors, latency recovery, and MCP child-process RSS. Development runs may override the duration. Release mode requires a clean commit, at least 60 minutes, and no more than 1 percent tool errors:
 

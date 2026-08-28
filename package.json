@@ -37,6 +37,7 @@
     "test:pagination": "tsx scripts/test-pagination.ts",
     "test:client-journeys": "tsx scripts/test-client-journeys.ts",
     "benchmark:v082": "tsx scripts/benchmark-v082.ts",
+    "benchmark:paired": "tsx scripts/benchmark-paired-v082.ts",
     "benchmark:compare": "tsx scripts/compare-performance-artifacts.ts",
     "soak:v082": "tsx scripts/soak-v082.ts",
     "test:reliability-live": "tsx scripts/test-reliability-live.ts",
