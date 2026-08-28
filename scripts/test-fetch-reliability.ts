@@ -26,6 +26,7 @@ import { runWithPortalRequestSignal } from '../src/helpers/request-context.js'
 import { registerPortalTool } from '../src/helpers/mcp-registration.js'
 import { toolCallsTotal, toolErrorsTotal, toolOutcomesTotal } from '../src/metrics.js'
 import { createPortalServer } from '../src/server.js'
+import { isBoundedUpstreamToolError, type ToolCallResult } from './test-helpers.ts'
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(`Assertion failed: ${message}`)
@@ -51,6 +52,41 @@ async function expectFastFailure(
 }
 
 async function main() {
+  const boundedResult = (code: string, origin: string, retryable = true): ToolCallResult => ({
+    result: {},
+    text: JSON.stringify({ error: { code, origin, retryable } }),
+    structuredContent: { error: { code, origin, retryable } },
+    isError: true,
+    elapsedMs: 1,
+    attempts: 1,
+  })
+  for (const code of [
+    'incomplete_result',
+    'upstream_reorg',
+    'rate_limited',
+    'upstream_unavailable',
+    'upstream_timeout',
+    'upstream_error',
+  ]) {
+    assert(
+      isBoundedUpstreamToolError(boundedResult(code, 'upstream')),
+      `${code} should be recognized as a bounded upstream tool error`,
+    )
+  }
+  assert(
+    isBoundedUpstreamToolError(boundedResult('overloaded', 'server')),
+    'server overload should be recognized as a bounded tool error',
+  )
+  assert(
+    !isBoundedUpstreamToolError(boundedResult('upstream_unavailable', 'upstream', false)),
+    'non-retryable upstream failures should not be treated as bounded transient errors',
+  )
+  assert(
+    !isBoundedUpstreamToolError(boundedResult('internal_error', 'server')),
+    'internal server errors should not be treated as bounded upstream errors',
+  )
+  console.log('PASS  structured retryable errors are classified without relying on display text')
+
   let activeScans = 0
   let maxActiveScans = 0
   const scanResult = await scanBoundedBlockRange({

@@ -42,6 +42,15 @@ const RETRYABLE_PATTERNS = [
   /429/i,
 ]
 
+const BOUNDED_RETRYABLE_UPSTREAM_CODES = new Set([
+  'incomplete_result',
+  'upstream_reorg',
+  'rate_limited',
+  'upstream_unavailable',
+  'upstream_timeout',
+  'upstream_error',
+])
+
 export function assert(condition: boolean, message: string) {
   if (!condition) {
     throw new Error(`Assertion failed: ${message}`)
@@ -53,11 +62,17 @@ export function sleep(ms: number) {
 }
 
 export function isBoundedUpstreamToolError(result: ToolCallResult): boolean {
-  return (
-    result.isError &&
-    /Portal server error \((?:429|5\d\d)\)|rate limit|service is overloaded|Request timeout after \d+ms/i.test(
-      result.text,
-    )
+  if (!result.isError) return false
+
+  const error = result.structuredContent?.error
+  if (error && typeof error === 'object' && error.retryable === true && typeof error.code === 'string') {
+    if (error.origin === 'upstream' && BOUNDED_RETRYABLE_UPSTREAM_CODES.has(error.code)) return true
+    if (error.origin === 'server' && error.code === 'overloaded') return true
+    return false
+  }
+
+  return /Portal server error \((?:429|5\d\d)\)|rate limit|service is overloaded|Request timeout after \d+ms/i.test(
+    result.text,
   )
 }
 

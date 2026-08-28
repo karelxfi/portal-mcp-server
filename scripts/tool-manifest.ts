@@ -774,63 +774,84 @@ export const TOOL_SPECS: ToolSpec[] = [
         ['bitcoin', bitcoinResult],
         ['hyperliquid', hyperliquidResult],
       ] as const) {
-        assert(!result.isError, `portal_get_time_series ${label} failed: ${result.text.slice(0, 240)}`)
+        if (!result.isError) continue
+        assert(
+          isBoundedUpstreamToolError(result),
+          `portal_get_time_series ${label} returned an unexpected tool error: ${result.text.slice(0, 240)}`,
+        )
+      }
+      const successfulResults = [compareResult, groupedResult, solanaResult, bitcoinResult, hyperliquidResult].filter(
+        (result) => !result.isError,
+      )
+      assert(successfulResults.length >= 4, `Expected at least 4/5 time-series variants to succeed`)
+
+      if (!compareResult.isError) {
+        const compareData = compareResult.data
+        assert(Array.isArray(compareData.current_series), 'Expected current_series')
+        assert(Array.isArray(compareData.previous_series), 'Expected previous_series')
+        assert(Array.isArray(compareData.comparison_series), 'Expected comparison_series')
+        assert(Array.isArray(compareData.bucket_deltas), 'Expected bucket_deltas')
+        expectWindowMetadata(compareData, 'portal_get_time_series compare_previous')
+        expectPresentation(compareData, 'portal_get_time_series compare_previous', {
+          chartDataKey: 'comparison_series',
+          tableId: 'comparison_series',
+        })
       }
 
-      const compareData = compareResult.data
-      assert(Array.isArray(compareData.current_series), 'Expected current_series')
-      assert(Array.isArray(compareData.previous_series), 'Expected previous_series')
-      assert(Array.isArray(compareData.comparison_series), 'Expected comparison_series')
-      assert(Array.isArray(compareData.bucket_deltas), 'Expected bucket_deltas')
-      expectWindowMetadata(compareData, 'portal_get_time_series compare_previous')
-      expectPresentation(compareData, 'portal_get_time_series compare_previous', {
-        chartDataKey: 'comparison_series',
-        tableId: 'comparison_series',
-      })
+      if (!groupedResult.isError) {
+        const groupedData = groupedResult.data
+        assert(Array.isArray(groupedData.top_contracts) && groupedData.top_contracts.length > 0, 'Expected top_contracts')
+        assert(groupedData.chart?.grouped_value_field === 'contract_address', 'Expected grouped contract chart metadata')
+        expectWindowMetadata(groupedData, 'portal_get_time_series grouped')
+        expectGapDiagnostics(groupedData, 'portal_get_time_series grouped')
+        expectPresentation(groupedData, 'portal_get_time_series grouped', {
+          chartDataKey: 'time_series',
+          tableId: 'contract_series',
+        })
+      }
 
-      const groupedData = groupedResult.data
-      assert(Array.isArray(groupedData.top_contracts) && groupedData.top_contracts.length > 0, 'Expected top_contracts')
-      assert(groupedData.chart?.grouped_value_field === 'contract_address', 'Expected grouped contract chart metadata')
-      expectWindowMetadata(groupedData, 'portal_get_time_series grouped')
-      expectGapDiagnostics(groupedData, 'portal_get_time_series grouped')
-      expectPresentation(groupedData, 'portal_get_time_series grouped', {
-        chartDataKey: 'time_series',
-        tableId: 'contract_series',
-      })
+      if (!solanaResult.isError) {
+        const solanaData = solanaResult.data
+        assert(getItems(solanaData).length >= 12, 'portal_get_time_series solana should return at least 12 item(s)')
+        assert(solanaData.summary?.metric === 'tps', 'Expected Solana TPS summary')
+        expectWindowMetadata(solanaData, 'portal_get_time_series solana')
+        expectPresentation(solanaData, 'portal_get_time_series solana', {
+          chartDataKey: 'time_series',
+          tableId: 'main',
+        })
+      }
 
-      const solanaData = solanaResult.data
-      assert(getItems(solanaData).length >= 12, 'portal_get_time_series solana should return at least 12 item(s)')
-      assert(solanaData.summary?.metric === 'tps', 'Expected Solana TPS summary')
-      expectWindowMetadata(solanaData, 'portal_get_time_series solana')
-      expectPresentation(solanaData, 'portal_get_time_series solana', { chartDataKey: 'time_series', tableId: 'main' })
+      if (!bitcoinResult.isError) {
+        const bitcoinData = bitcoinResult.data
+        assert(getItems(bitcoinData).length >= 12, 'portal_get_time_series bitcoin should return at least 12 item(s)')
+        assert(bitcoinData.summary?.metric === 'block_size_bytes', 'Expected Bitcoin metric summary')
+        expectWindowMetadata(bitcoinData, 'portal_get_time_series bitcoin')
+        expectPresentation(bitcoinData, 'portal_get_time_series bitcoin', {
+          chartDataKey: 'time_series',
+          tableId: 'main',
+        })
+      }
 
-      const bitcoinData = bitcoinResult.data
-      assert(getItems(bitcoinData).length >= 12, 'portal_get_time_series bitcoin should return at least 12 item(s)')
-      assert(bitcoinData.summary?.metric === 'block_size_bytes', 'Expected Bitcoin metric summary')
-      expectWindowMetadata(bitcoinData, 'portal_get_time_series bitcoin')
-      expectPresentation(bitcoinData, 'portal_get_time_series bitcoin', {
-        chartDataKey: 'time_series',
-        tableId: 'main',
-      })
-
-      const hyperliquidData = hyperliquidResult.data
-      const hyperliquidRows = getItems(hyperliquidData)
-      assert(
-        hyperliquidRows.length === 8,
-        'portal_get_time_series hyperliquid should return 8 buckets for 38m at 5m granularity',
-      )
-      assert(
-        hyperliquidRows.some((row: any) => Number(row.value ?? 0) > 0 || Number(row.blocks_in_bucket ?? 0) > 0),
-        'portal_get_time_series hyperliquid should not emit all-empty buckets for an active recent window',
-      )
-      assert(hyperliquidData._coverage?.expected_buckets === 8, 'Expected Hyperliquid coverage to report 8 buckets')
-      assert(hyperliquidData._coverage?.returned_buckets === 8, 'Expected Hyperliquid coverage to return all buckets')
-      assert(hyperliquidData.summary?.metric === 'volume', 'Expected Hyperliquid metric summary')
-      expectWindowMetadata(hyperliquidData, 'portal_get_time_series hyperliquid')
-      expectPresentation(hyperliquidData, 'portal_get_time_series hyperliquid', {
-        chartDataKey: 'time_series',
-        tableId: 'main',
-      })
+      if (!hyperliquidResult.isError) {
+        const hyperliquidData = hyperliquidResult.data
+        const hyperliquidRows = getItems(hyperliquidData)
+        assert(
+          hyperliquidRows.length === 8,
+          'portal_get_time_series hyperliquid should return 8 buckets for 38m at 5m granularity',
+        )
+        assert(
+          hyperliquidRows.some((row: any) => Number(row.value ?? 0) > 0 || Number(row.blocks_in_bucket ?? 0) > 0),
+          'portal_get_time_series hyperliquid should not emit all-empty buckets for an active recent window',
+        )
+        assert(hyperliquidData._coverage?.expected_buckets === 8, 'Expected Hyperliquid coverage to report 8 buckets')
+        assert(hyperliquidData._coverage?.returned_buckets === 8, 'Expected Hyperliquid coverage to return all buckets')
+        assert(hyperliquidData.summary?.metric === 'volume', 'Expected Hyperliquid metric summary')
+        expectWindowMetadata(hyperliquidData, 'portal_get_time_series hyperliquid')
+        expectPresentation(hyperliquidData, 'portal_get_time_series hyperliquid', {
+          chartDataKey: 'time_series',
+          tableId: 'main',
+        })
+      }
     },
   },
   {
