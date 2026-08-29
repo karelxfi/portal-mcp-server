@@ -85,7 +85,7 @@ async function main() {
               tool: spec.name,
               responseBytes: Buffer.byteLength(text, 'utf8'),
               outcome:
-                result.isError && getToolErrorCode(result) === 'overloaded' && profile.concurrency >= 8
+                result.isError && getToolErrorCode(result) === 'overloaded'
                   ? 'bounded_overload'
                   : result.isError
                     ? 'tool_error'

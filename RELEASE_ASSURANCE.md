@@ -13,7 +13,7 @@ v0.8.3 keeps the complete v0.8.2 hardening baseline and adds the following requi
 | Responsive and theme coverage | Desktop light, desktop dark, and mobile light for every fixture | `test:app-ui` |
 | Accessibility and interaction | Keyboard navigation, overflow, collapsed panels, and zero serious or critical axe findings | `test:app-ui` |
 | Adaptive tool admission | Four weighted work classes, fair promotion, cancellation, timeout, overload, and zero capacity leaks | `test:tool-admission` |
-| Saturation accounting | c8 overload is a structured retryable outcome, measured separately from unexpected failures; release evidence permits at most 10% bounded overload and 1% unexpected failure | `benchmark:v082`, `soak:v082` |
+| Saturation accounting | Scheduler overload is a structured retryable outcome at any concurrency above a tool class budget, measured separately from unexpected failures; release evidence permits at most 10% bounded overload and 1% unexpected failure | `benchmark:v082`, `soak:v082` |
 | App and admission metrics | Result-to-render funnel, payload and bundle size, active weight, wait, queue, and bounded rejection reasons | `test:app-contract`, `test:http-runtime` |
 | Sustained process memory | 60-minute peak RSS at or below 512 MB and first-to-last-quarter median growth at or below 128 MB | `soak:v082` with `SOAK_RELEASE=1` |
 | Lean app boundary | One self-contained bundle, no external app fetches or assets, under 700 KB | `test:app-contract`, `test:lean`, `test:package` |
