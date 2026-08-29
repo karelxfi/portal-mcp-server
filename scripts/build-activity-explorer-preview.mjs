@@ -1,10 +1,13 @@
-import { mkdir, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 
 import { build } from 'esbuild'
 
 const root = process.cwd()
 const directory = path.join(root, 'output', 'activity-explorer')
+const interFont = await readFile(path.join(root, 'src/app-ui/assets/inter-latin.woff2'))
+const monoFont = await readFile(path.join(root, 'src/app-ui/assets/jetbrains-mono-latin.woff2'))
+const fontDataUrl = (mime, bytes) => `data:${mime};base64,${bytes.toString('base64')}`
 const result = await build({
   entryPoints: [path.join(root, 'src/app-ui/preview.ts')],
   bundle: true,
@@ -15,12 +18,16 @@ const result = await build({
   minify: false,
   sourcemap: 'inline',
   legalComments: 'none',
+  define: {
+    __SQD_INTER_DATA_URL__: JSON.stringify(fontDataUrl('font/woff2', interFont)),
+    __SQD_MONO_DATA_URL__: JSON.stringify(fontDataUrl('font/woff2', monoFont)),
+  },
 })
 const bundle = result.outputFiles[0]?.text ?? ''
 await mkdir(directory, { recursive: true })
 await writeFile(
   path.join(directory, 'index.html'),
-  `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>SQD Activity Explorer Preview</title></head><body><div id="app"></div><script>${bundle}</script></body></html>`,
+  `<!doctype html><html lang="en" style="color-scheme:dark"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="dark"><title>SQD Activity Explorer Preview</title></head><body><div id="app"></div><script>${bundle}</script></body></html>`,
   'utf8',
 )
 console.log(`Built preview: ${path.relative(root, path.join(directory, 'index.html'))}`)

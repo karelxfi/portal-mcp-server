@@ -457,6 +457,7 @@ async function fetchTransactionsByScanOrder({
   maxScanBlocks,
   clientFilters,
   candidateLimit,
+  offset = 0,
 }: {
   url: string
   query: Record<string, unknown>
@@ -469,10 +470,12 @@ async function fetchTransactionsByScanOrder({
   maxScanBlocks: number
   clientFilters: Parameters<typeof matchesClientTransactionFilters>[1]
   candidateLimit?: number
+  offset?: number
 }) {
-  const targetCount = limit + 1
+  const targetCount = offset + limit + 1
   const effectiveCandidateLimit =
-    candidateLimit ?? (orderBy && orderBy !== 'chronological' ? Math.max(limit * 20, 500) : targetCount)
+    candidateLimit ??
+    (orderBy && orderBy !== 'chronological' ? Math.max((offset + limit) * 20, 500) : targetCount)
   const collected: EvmTransactionItem[] = []
   const scan = await scanBoundedBlockRange<EvmTransactionItem>({
     fromBlock,
@@ -503,12 +506,11 @@ async function fetchTransactionsByScanOrder({
   const ordered = orderTransactionsForOutput(collected, orderBy)
   return {
     ...scan,
-    items: ordered.slice(0, limit),
+    items: ordered.slice(offset, offset + limit),
     candidates: ordered,
-    hasMore:
-      collected.length > limit ||
-      (scan.reachedMaxScanBlocks && scan.hasUnscannedBlocks),
+    hasMore: collected.length > offset + limit,
     candidateCount: collected.length,
+    offset,
   }
 }
 
@@ -1019,6 +1021,7 @@ export function registerQueryTransactionsTool(server: McpServer) {
               minEffectiveGasPriceWei: normalizedMinEffectiveGasPriceWei,
             },
             candidateLimit: aggregate_by ? Math.max(limit * 200, 5000) : undefined,
+            offset: paginationCursor?.skip_inclusive_block ?? 0,
           })
         : undefined
       const allTxs = scanResult
@@ -1044,46 +1047,54 @@ export function registerQueryTransactionsTool(server: McpServer) {
                 }
               : undefined,
           )
-      const nextCursor =
-        !scanResult && page.hasMore && page.nextBoundary
+      const cursorRequest: QueryTransactionsRequest = {
+        ...(timeframe ? { timeframe } : {}),
+        ...(from_timestamp !== undefined ? { from_timestamp } : {}),
+        ...(to_timestamp !== undefined ? { to_timestamp } : {}),
+        limit,
+        finalized_only,
+        ...(fromFilters ? { from_addresses: fromFilters } : {}),
+        ...(toFilters ? { to_addresses: toFilters } : {}),
+        ...(from_token_symbols ? { from_token_symbols } : {}),
+        ...(to_token_symbols ? { to_token_symbols } : {}),
+        ...(max_token_symbol_matches !== undefined ? { max_token_symbol_matches } : {}),
+        ...(normalizedSighash.length > 0 ? { sighash: normalizedSighash } : {}),
+        ...(method ? { method } : {}),
+        ...(normalizedTransactionType !== undefined ? { transaction_type: normalizedTransactionType } : {}),
+        ...(normalizedTransactionStatus !== undefined ? { transaction_status: normalizedTransactionStatus } : {}),
+        ...(contract_creation !== undefined ? { contract_creation } : {}),
+        ...(min_value_wei !== undefined ? { min_value_wei } : {}),
+        ...(min_gas_used !== undefined ? { min_gas_used } : {}),
+        ...(min_effective_gas_price_wei !== undefined ? { min_effective_gas_price_wei } : {}),
+        order_by: effectiveOrderBy,
+        ...(aggregate_by ? { aggregate_by } : {}),
+        aggregate_metric: effectiveAggregateMetric,
+        ...(max_scan_blocks !== undefined ? { max_scan_blocks } : {}),
+        scan_order: effectiveScanOrder,
+        ...(first_nonce !== undefined ? { first_nonce } : {}),
+        ...(last_nonce !== undefined ? { last_nonce } : {}),
+        field_preset,
+        response_format: effectiveResponseFormat,
+        include_logs,
+        include_traces,
+        include_state_diffs,
+        include_l2_fields,
+      }
+      const nextCursor = scanResult && page.hasMore
+        ? encodeRecentPageCursor<QueryTransactionsRequest>({
+            tool: 'portal_evm_query_transactions',
+            dataset,
+            request: cursorRequest,
+            window_from_block: resolvedFromBlock,
+            window_to_block: endBlock,
+            page_to_block: endBlock,
+            skip_inclusive_block: scanResult.offset + page.pageItems.length,
+          })
+        : !scanResult && page.hasMore && page.nextBoundary
           ? encodeRecentPageCursor<QueryTransactionsRequest>({
               tool: 'portal_evm_query_transactions',
               dataset,
-              request: {
-                ...(timeframe ? { timeframe } : {}),
-                ...(from_timestamp !== undefined ? { from_timestamp } : {}),
-                ...(to_timestamp !== undefined ? { to_timestamp } : {}),
-                limit,
-                finalized_only,
-                ...(fromFilters ? { from_addresses: fromFilters } : {}),
-                ...(toFilters ? { to_addresses: toFilters } : {}),
-                ...(from_token_symbols ? { from_token_symbols } : {}),
-                ...(to_token_symbols ? { to_token_symbols } : {}),
-                ...(max_token_symbol_matches !== undefined ? { max_token_symbol_matches } : {}),
-                ...(normalizedSighash.length > 0 ? { sighash: normalizedSighash } : {}),
-                ...(method ? { method } : {}),
-                ...(normalizedTransactionType !== undefined ? { transaction_type: normalizedTransactionType } : {}),
-                ...(normalizedTransactionStatus !== undefined
-                  ? { transaction_status: normalizedTransactionStatus }
-                  : {}),
-                ...(contract_creation !== undefined ? { contract_creation } : {}),
-                ...(min_value_wei !== undefined ? { min_value_wei } : {}),
-                ...(min_gas_used !== undefined ? { min_gas_used } : {}),
-                ...(min_effective_gas_price_wei !== undefined ? { min_effective_gas_price_wei } : {}),
-                order_by: effectiveOrderBy,
-                ...(aggregate_by ? { aggregate_by } : {}),
-                aggregate_metric: effectiveAggregateMetric,
-                ...(max_scan_blocks !== undefined ? { max_scan_blocks } : {}),
-                scan_order: effectiveScanOrder,
-                ...(first_nonce !== undefined ? { first_nonce } : {}),
-                ...(last_nonce !== undefined ? { last_nonce } : {}),
-                field_preset,
-                response_format: effectiveResponseFormat,
-                include_logs,
-                include_traces,
-                include_state_diffs,
-                include_l2_fields,
-              },
+              request: cursorRequest,
               window_from_block: resolvedFromBlock,
               window_to_block: endBlock,
               page_to_block: page.nextBoundary.page_to_block,
@@ -1107,7 +1118,7 @@ export function registerQueryTransactionsTool(server: McpServer) {
           limit,
         )
         const aggregateKey = aggregate_by === 'sender' ? 'top_senders' : 'top_receivers'
-        if (scanResult?.hasMore) {
+        if (scanResult?.hasUnscannedBlocks) {
           notices.push(
             `Aggregation is bounded to ${scanResult.candidateCount.toLocaleString()} scanned candidate transactions across blocks ${scanResult.scannedFromBlock}-${scanResult.scannedToBlock}; narrow the window or raise max_scan_blocks for deeper coverage.`,
           )
@@ -1185,7 +1196,8 @@ export function registerQueryTransactionsTool(server: McpServer) {
           pageToBlock: scanResult && effectiveScanOrder === 'earliest' ? scanResult.scannedToBlock : pageToBlock,
           items: scanResult?.candidates ?? allTxs,
           getBlockNumber,
-          hasMore: Boolean(scanResult?.hasMore),
+          hasMore: false,
+          windowComplete: scanResult ? !scanResult.hasUnscannedBlocks : true,
         })
 
         return formatResult(
@@ -1239,7 +1251,7 @@ export function registerQueryTransactionsTool(server: McpServer) {
       }
       if (scanResult && page.hasMore) {
         notices.push(
-          `More matching transactions exist beyond the returned page for scanned blocks ${scanResult.scannedFromBlock}-${scanResult.scannedToBlock}; narrow the window, raise max_scan_blocks, or add Portal-side filters.`,
+          `More matching transactions exist beyond the returned page for scanned blocks ${scanResult.scannedFromBlock}-${scanResult.scannedToBlock}; continue with _pagination.next_cursor.`,
         )
       }
       const boundedSearchNotice = scanResult ? buildBoundedSearchNotice(scanResult, 'EVM transaction scan') : undefined
@@ -1257,6 +1269,7 @@ export function registerQueryTransactionsTool(server: McpServer) {
         items: page.pageItems,
         getBlockNumber,
         hasMore: page.hasMore,
+        windowComplete: scanResult ? !scanResult.hasUnscannedBlocks : true,
       })
 
       const message =

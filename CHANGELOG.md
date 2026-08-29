@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.8.3] - Unreleased
 
 The v0.8.3 release candidate turns SQD results into a fast, portable blockchain investigation experience while preserving the exact structured and text answers used by every existing client. This candidate is not tagged, published, or deployed.
 
@@ -10,8 +10,11 @@ The v0.8.3 release candidate turns SQD results into a fast, portable blockchain 
 - **Broad blockchain views**: the explorer adapts to wallets, contracts, token flows, network activity, Bitcoin, Tron, Solana, Substrate, Hyperliquid fills, analytics, and candles without narrowing the 28-tool product.
 - **Adaptive tool execution**: a weighted, cancellation-aware scheduler protects fast lookups from expensive concurrent analytics, uses measured memory-safe concurrency for each work class, shares identical analytics already in flight, promotes queued work fairly, bounds queue time, and returns structured overload guidance when saturated.
 - **Complete app metrics**: bounded Prometheus and Grafana series cover capability-aware tool results, result-to-render conversion, render payload size, app resource reads, app bundle size, admission wait, active weight, queued work, and rejection reasons.
+- **Authoritative data integrity**: direct Portal comparisons prove complete identities across paginated EVM and Substrate windows, exact Bitcoin and Solana records, and Hyperliquid candles reproduced from every raw fill in the reported window.
+- **Truthful continuation**: coverage and pagination metadata must agree, client-filtered EVM scans continue without gaps or duplicates, exhausted Bitcoin wallet sections stay exhausted, and candle cursors identify adjacent time windows correctly.
 - **Sustained memory gate**: the release soak now rejects excessive peak RSS or first-to-last-quarter median RSS growth instead of relying on a noisy first-to-last sample.
-- **Visual and accessibility hardening**: deterministic browser fixtures cover desktop and mobile layouts, light and dark themes, success, partial, empty, and error states, keyboard access, overflow, and serious or critical accessibility findings.
+- **SQD Design System UI**: the exact Inter and JetBrains Mono files, semantic dark surfaces, status fills, table typography, spacing, official black-background symbol, and indigo roles come from the current SQD Design System.
+- **Visual and accessibility hardening**: deterministic browser fixtures cover desktop and mobile layouts under light and dark host preferences, success, partial, empty, and error states, keyboard access, overflow, and serious or critical accessibility findings.
 - **Lean product surface**: the app reuses the existing tool results and follow-up contracts, adds no browser API layer, loads no external assets, and does not add tools merely to power the UI.
 
 ## [0.8.2] - 2026-08-29

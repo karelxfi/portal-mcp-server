@@ -30,12 +30,59 @@ async function validate(page: Page, fixture: string, viewport: (typeof viewports
   const startedAt = performance.now()
   await page.goto(`${baseUrl}?fixture=${fixture}`, { waitUntil: 'load' })
   await page.waitForSelector('.sqd-shell')
+  await page.evaluate(() => document.fonts.ready)
   const renderMs = performance.now() - startedAt
   renderTimings.push(renderMs)
   assert(renderMs < 2_000, `${fixture} ${viewport.name} took ${renderMs.toFixed(0)}ms to render`)
   const nodeCount = await page.locator('*').count()
   assert(nodeCount < 2_000, `${fixture} ${viewport.name} rendered ${nodeCount} DOM nodes`)
   assert(errors.length === 0, `${fixture} ${viewport.name} console errors: ${errors.join(' | ')}`)
+  const design = await page.evaluate(() => {
+    const body = getComputedStyle(document.body)
+    const title = getComputedStyle(document.querySelector('.sqd-title')!)
+    const mono = getComputedStyle(document.querySelector('.sqd-footer')!)
+    const root = getComputedStyle(document.documentElement)
+    const card = document.querySelector('.sqd-card')
+    const tableHeader = document.querySelector('.sqd-table th')
+    const cardStyle = card ? getComputedStyle(card) : undefined
+    const tableHeaderStyle = tableHeader ? getComputedStyle(tableHeader) : undefined
+    return {
+      background: body.backgroundColor,
+      foreground: body.color,
+      bodyFont: body.fontFamily,
+      titleWeight: title.fontWeight,
+      monoFont: mono.fontFamily,
+      accent: root.getPropertyValue('--accent').trim(),
+      successFill: root.getPropertyValue('--success-fill').trim(),
+      warningFill: root.getPropertyValue('--warning-fill').trim(),
+      dangerFill: root.getPropertyValue('--danger-fill').trim(),
+      colorScheme: root.colorScheme,
+      cardBackground: cardStyle?.backgroundColor,
+      cardRadius: cardStyle?.borderRadius,
+      tableHeaderFont: tableHeaderStyle?.fontFamily,
+      tableHeaderWeight: tableHeaderStyle?.fontWeight,
+      tableHeaderTracking: tableHeaderStyle?.letterSpacing,
+    }
+  })
+  assert(design.background === 'rgb(8, 9, 10)', `${fixture} should use SQD dark surface #08090a`)
+  assert(design.foreground === 'rgb(247, 248, 248)', `${fixture} should use the SQD foreground token`)
+  assert(design.bodyFont.startsWith('"Inter SQD"'), `${fixture} should render with embedded Inter`)
+  assert(design.monoFont.startsWith('"JetBrains Mono SQD"'), `${fixture} evidence metadata should use JetBrains Mono`)
+  assert(design.titleWeight === '510', `${fixture} headings should use SQD weight 510`)
+  assert(design.accent === '#818cf8', `${fixture} should use SQD indigo #818cf8`)
+  assert(design.successFill === '#16a34a', `${fixture} should use the SQD success fill token`)
+  assert(design.warningFill === '#f59e0b', `${fixture} should use the SQD warning fill token`)
+  assert(design.dangerFill === '#ef4444', `${fixture} should use the SQD danger fill token`)
+  assert(design.colorScheme === 'dark', `${fixture} should remain an intentional dark product surface`)
+  if (design.cardBackground) {
+    assert(design.cardBackground === 'rgb(19, 19, 22)', `${fixture} cards should use SQD raised surface #131316`)
+    assert(design.cardRadius === '8px', `${fixture} cards should use the SQD 8px radius`)
+  }
+  if (design.tableHeaderFont) {
+    assert(design.tableHeaderFont.startsWith('"Inter SQD"'), `${fixture} table headers should use Inter`)
+    assert(design.tableHeaderWeight === '510', `${fixture} table headers should use weight 510`)
+    assert(design.tableHeaderTracking === '0.48px', `${fixture} table headers should use 0.04em tracking`)
+  }
   assert((await page.locator('.sqd-mark').count()) === 1, `${fixture} should show one SQD mark`)
   assert((await page.locator('h1').count()) === 1, `${fixture} should expose one result heading`)
   const overflow = await page.evaluate(

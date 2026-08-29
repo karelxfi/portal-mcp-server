@@ -3,7 +3,7 @@
   "name": "io.github.subsquid-labs/portal-mcp-server",
   "title": "SQD",
   "description": "Query blockchain data across 140+ networks with SQD Portal, including Tron, Solana, and Hyperliquid.",
-  "version": "0.8.2",
+  "version": "0.8.3",
   "repository": {
     "url": "https://github.com/subsquid-labs/portal-mcp-server",
     "source": "github"

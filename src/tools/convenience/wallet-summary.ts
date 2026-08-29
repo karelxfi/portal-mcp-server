@@ -2245,8 +2245,10 @@ async function buildNonEvmWalletSummary(params: {
   if (chainType === 'bitcoin') {
     const outputCursor = paginationCursor?.sections.outputs ?? undefined
     const inputCursor = paginationCursor?.sections.inputs ?? undefined
+    const outputsExhausted = Boolean(paginationCursor && paginationCursor.sections.outputs === null)
+    const inputsExhausted = Boolean(paginationCursor && paginationCursor.sections.inputs === null)
     const [outputBlocks, inputBlocks] = await Promise.all([
-      portalFetchRecentRecords(
+      outputsExhausted ? Promise.resolve([]) : portalFetchRecentRecords(
         `${PORTAL_URL}/datasets/${dataset}/stream`,
         {
           type: 'bitcoin',
@@ -2273,7 +2275,7 @@ async function buildNonEvmWalletSummary(params: {
           retries: WALLET_QUERY_RETRIES,
         },
       ),
-      portalFetchRecentRecords(
+      inputsExhausted ? Promise.resolve([]) : portalFetchRecentRecords(
         `${PORTAL_URL}/datasets/${dataset}/stream`,
         {
           type: 'bitcoin',

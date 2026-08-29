@@ -2170,7 +2170,9 @@ export function registerEvmOhlcTool(server: McpServer) {
         {
           toolName: 'portal_evm_get_ohlc',
           ...(notices.length > 0 ? { notices } : {}),
-          pagination: buildPaginationInfo(expectedBuckets, ohlc.length, nextCursor),
+          pagination: buildPaginationInfo(expectedBuckets, ohlc.length, nextCursor, {
+            continuationScope: 'adjacent_window',
+          }),
           ordering: buildChronologicalPageOrdering({
             sortedBy: 'timestamp',
             continuation: nextCursor ? 'older' : 'none',

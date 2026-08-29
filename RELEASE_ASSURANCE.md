@@ -10,8 +10,11 @@ v0.8.3 keeps the complete v0.8.2 hardening baseline and adds the following requi
 | Structured fallback parity | All 28 tools remain callable; 21 app-enabled tools keep structured and text results | `test:app-contract`, `test:client-journeys` |
 | App capability handling | Declared, unsupported, and undeclared states without client-name branching | `test:app-contract` |
 | Explorer state coverage | Hyperliquid, time series, candles, activity, empty, and error fixtures | `test:app-ui` |
-| Responsive and theme coverage | Desktop light, desktop dark, and mobile light for every fixture | `test:app-ui` |
+| SQD Design System fidelity | Embedded Inter and JetBrains Mono, semantic dark surfaces, status fills, table type, official black-background symbol, and no horizon gradient | `test:app-contract`, `test:app-ui` |
+| Responsive and host-preference coverage | Desktop light preference, desktop dark preference, and mobile light preference for every fixture; the app remains an intentional dark product surface | `test:app-ui` |
 | Accessibility and interaction | Keyboard navigation, overflow, collapsed panels, and zero serious or critical axe findings | `test:app-ui` |
+| Authoritative data integrity | Direct Portal parity for complete EVM, Solana, Bitcoin, Substrate, and Hyperliquid evidence, including raw-fill candle reproduction | `test:data-integrity` |
+| Coverage and continuation truthfulness | Pagination promises a cursor, remaining-result cursors mark the result incomplete, adjacent-window cursors are distinct, and paged identities have no gaps or duplicates | `test:tools`, `test:data-integrity` |
 | Adaptive tool admission | Four weighted work classes, fair promotion, cancellation, timeout, overload, and zero capacity leaks | `test:tool-admission` |
 | Saturation accounting | Scheduler overload is a structured retryable outcome at any concurrency above a tool class budget, measured separately from unexpected failures; release evidence permits at most 10% bounded overload and 1% unexpected failure | `benchmark:v082`, `soak:v082` |
 | App and admission metrics | Result-to-render funnel, payload and bundle size, active weight, wait, queue, and bounded rejection reasons | `test:app-contract`, `test:http-runtime` |

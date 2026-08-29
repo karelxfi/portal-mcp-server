@@ -74,8 +74,13 @@ async function main() {
       'resource bytes must match the generated artifact',
     )
     assert(
-      content.text.includes('Blockchain Activity Explorer') && content.text.includes('#050505'),
-      'the app should contain the SQD product identity and black mark',
+      content.text.includes('Blockchain Activity Explorer')
+        && content.text.includes('viewBox="0 0 306 306"')
+        && content.text.includes('#08090a')
+        && content.text.includes('#818cf8')
+        && content.text.includes('Inter SQD')
+        && content.text.includes('JetBrains Mono SQD'),
+      'the app should contain the official SQD mark, dark product tokens, and embedded typefaces',
     )
     assert(
       !content.text.includes('<script src=') && !content.text.includes('<link rel='),

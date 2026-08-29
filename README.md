@@ -8,7 +8,7 @@ This server does not index chains itself. It validates user input, maps it onto 
 
 The current v0.8.2 release supports the stateless MCP `2026-07-28` protocol over HTTP and stdio, while retaining the SDK-managed legacy negotiation path for clients still rolling out the revision. No SQD account, API key, or client credential is required.
 
-The unreleased v0.8.3 candidate adds the SQD Blockchain Activity Explorer, adaptive tool execution, and complete app runtime metrics. It has not been tagged, published, or deployed.
+The unreleased v0.8.3 candidate adds the SQD Blockchain Activity Explorer, adaptive tool execution, complete app runtime metrics, and authoritative data-integrity tests against direct Portal responses. The app uses the current SQD Design System with embedded Inter and JetBrains Mono fonts. It has not been tagged, published, or deployed.
 
 ## Current public surface
 

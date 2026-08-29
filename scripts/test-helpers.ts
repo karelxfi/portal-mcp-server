@@ -219,6 +219,15 @@ export function assertChatSurface(parsed: any, label: string, options?: { expect
   if (parsed._pagination.has_more !== undefined) {
     assert(typeof parsed._pagination.has_more === 'boolean', `${label} _pagination.has_more should be boolean`)
   }
+  if (parsed._pagination.has_more === true) {
+    assertNonEmptyString(parsed._pagination.next_cursor, `${label} _pagination.next_cursor`)
+  }
+  if (parsed._pagination.next_cursor !== undefined) {
+    assert(
+      parsed._pagination.has_more === true,
+      `${label} should set _pagination.has_more when it returns a continuation cursor`,
+    )
+  }
   assertRecord(parsed._coverage, `${label} _coverage`)
   assertNonEmptyString(parsed._coverage.kind, `${label} _coverage.kind`)
   if (parsed._coverage.window_complete !== undefined) {
@@ -231,6 +240,18 @@ export function assertChatSurface(parsed: any, label: string, options?: { expect
     assert(
       typeof parsed._coverage.result_complete === 'boolean',
       `${label} _coverage.result_complete should be boolean`,
+    )
+  }
+  if (parsed._coverage.continuation === 'cursor') {
+    assert(
+      parsed._pagination.has_more === true && typeof parsed._pagination.next_cursor === 'string',
+      `${label} should return the cursor promised by _coverage.continuation`,
+    )
+  }
+  if (parsed._pagination.continuation_scope === 'remaining_results') {
+    assert(
+      parsed._coverage.result_complete === false,
+      `${label} should mark a result incomplete while remaining results are available`,
     )
   }
   assertRecord(parsed._ordering, `${label} _ordering`)
