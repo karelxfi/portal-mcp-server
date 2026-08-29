@@ -1,4 +1,25 @@
-# v0.8.2 MCP Release Assurance
+# MCP Release Assurance
+
+## v0.8.3 release candidate additions
+
+v0.8.3 keeps the complete v0.8.2 hardening baseline and adds the following required cells. The candidate must pass every cell on one exact commit before a release can be approved. Preparing or reviewing the candidate does not authorize a tag, package publication, deployment, directory submission, or release.
+
+| Release property | Required coverage | Automated gate |
+|---|---:|---|
+| Portable MCP App contract | Versioned resource, standard MIME and UI metadata, ChatGPT aliases, exact CSP | `test:app-contract` |
+| Structured fallback parity | All 28 tools remain callable; 21 app-enabled tools keep structured and text results | `test:app-contract`, `test:client-journeys` |
+| App capability handling | Declared, unsupported, and undeclared states without client-name branching | `test:app-contract` |
+| Explorer state coverage | Hyperliquid, time series, candles, activity, empty, and error fixtures | `test:app-ui` |
+| Responsive and theme coverage | Desktop light, desktop dark, and mobile light for every fixture | `test:app-ui` |
+| Accessibility and interaction | Keyboard navigation, overflow, collapsed panels, and zero serious or critical axe findings | `test:app-ui` |
+| Adaptive tool admission | Four weighted work classes, fair promotion, cancellation, timeout, overload, and zero capacity leaks | `test:tool-admission` |
+| App and admission metrics | Result-to-render funnel, payload and bundle size, active weight, wait, queue, and bounded rejection reasons | `test:app-contract`, `test:http-runtime` |
+| Lean app boundary | One self-contained bundle, no external app fetches or assets, under 700 KB | `test:app-contract`, `test:lean`, `test:package` |
+| Cross-client fallback journeys | Claude, Codex, Grok, Gemini, and Cursor | `test:client-journeys` |
+
+Installed-host UI proof requires a deployed candidate endpoint and remains an explicit approval-gated release step. The local release candidate proves the protocol resource contract, browser rendering, fallback behavior, and client-declared journeys without changing production.
+
+## v0.8.2 baseline
 
 This document defines the bounded meaning of “100% hardened and measured” for v0.8.2. It means every applicable cell in the declared release matrix passes on the exact release commit. It does not mean upstream data services or networks can never fail.
 

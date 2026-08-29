@@ -38,14 +38,21 @@ for (const [file, source] of sources) {
   dependencies.set(file, localDependencies)
 }
 
-const reachable = new Set()
-const pending = [resolve('src/index.ts'), resolve('src/http.ts')]
-while (pending.length > 0) {
-  const file = pending.pop()
-  if (!file || reachable.has(file)) continue
-  reachable.add(file)
-  pending.push(...(dependencies.get(file) ?? []))
+function collectReachable(entryPoints) {
+  const reachable = new Set()
+  const pending = [...entryPoints]
+  while (pending.length > 0) {
+    const file = pending.pop()
+    if (!file || reachable.has(file)) continue
+    reachable.add(file)
+    pending.push(...(dependencies.get(file) ?? []))
+  }
+  return reachable
 }
+
+const runtimeReachable = collectReachable([resolve('src/index.ts'), resolve('src/http.ts')])
+const appBuildReachable = collectReachable([resolve('src/app-ui/index.ts'), resolve('src/app-ui/preview.ts')])
+const reachable = new Set([...runtimeReachable, ...appBuildReachable])
 
 const unreachable = files.filter((file) => !reachable.has(file))
 if (unreachable.length > 0) {
@@ -76,7 +83,10 @@ const bannedRuntimePatterns = [
 ]
 for (const [label, pattern] of bannedRuntimePatterns) {
   const matches = [...sources.entries()]
-    .filter(([, source]) => pattern.test(source))
+    .filter(
+      ([file, source]) =>
+        runtimeReachable.has(file) && !file.startsWith(resolve('src/generated')) && pattern.test(source),
+    )
     .map(([file]) => relative('.', file))
   if (matches.length > 0) {
     throw new Error(`Lean MCP surface still contains ${label}:\n${matches.map((file) => `- ${file}`).join('\n')}`)
@@ -102,7 +112,9 @@ if (directToolRegistrations.length > 0) {
   )
 }
 
-const sourceLines = [...sources.values()].reduce((total, source) => total + source.split('\n').length, 0)
+const sourceLines = [...sources.entries()]
+  .filter(([file]) => runtimeReachable.has(file) || appBuildReachable.has(file))
+  .reduce((total, [, source]) => total + source.split('\n').length, 0)
 console.log(
-  `Lean surface OK: ${files.length} reachable runtime modules, ${sourceLines} source lines, 28/28 instrumented registrations, 0 legacy surfaces`,
+  `Lean surface OK: ${runtimeReachable.size} runtime modules, ${appBuildReachable.size} app build modules, ${sourceLines} source lines, 28/28 instrumented registrations, 0 legacy surfaces`,
 )

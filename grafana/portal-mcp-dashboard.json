@@ -865,6 +865,154 @@
       ],
       "title": "Portal admission wait and rejection rate",
       "type": "timeseries"
+    },
+    {
+      "datasource": "${DS_PROMETHEUS}",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 63
+      },
+      "id": 19,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "right"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "expr": "mcp_tool_admission_active_weight",
+          "legendFormat": "active weight",
+          "refId": "A"
+        },
+        {
+          "expr": "sum by (tool_class) (mcp_tool_admission_active)",
+          "legendFormat": "active {{tool_class}}",
+          "refId": "B"
+        },
+        {
+          "expr": "sum by (tool_class) (mcp_tool_admission_queued)",
+          "legendFormat": "queued {{tool_class}}",
+          "refId": "C"
+        },
+        {
+          "expr": "sum by (tool_class) (rate(mcp_tool_admission_rejected_total[$__interval]))",
+          "legendFormat": "rejected {{tool_class}}",
+          "refId": "D"
+        }
+      ],
+      "title": "Adaptive tool execution pressure",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "${DS_PROMETHEUS}",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 63
+      },
+      "id": 20,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "right"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum by (ui_capability, result_state) (rate(mcp_app_tool_results_total[$__interval]))",
+          "legendFormat": "results {{ui_capability}} {{result_state}}",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(rate(mcp_app_resource_reads_total[$__interval]))",
+          "legendFormat": "resource reads",
+          "refId": "B"
+        }
+      ],
+      "title": "MCP App result to render funnel",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "${DS_PROMETHEUS}",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 24,
+        "x": 0,
+        "y": 71
+      },
+      "id": 21,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "right"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (le, tool) (rate(mcp_app_render_payload_bytes_bucket[$__interval])))",
+          "legendFormat": "payload p95 {{tool}}",
+          "refId": "A"
+        },
+        {
+          "expr": "mcp_app_resource_size_bytes",
+          "legendFormat": "embedded app bundle",
+          "refId": "B"
+        }
+      ],
+      "title": "MCP App payload and bundle size",
+      "type": "timeseries"
     }
   ],
   "refresh": "30s",

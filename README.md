@@ -6,7 +6,9 @@ Thin MCP wrapper around the [SQD Portal API](https://portal.sqd.dev) for blockch
 
 This server does not index chains itself. It validates user input, maps it onto Portal requests, and returns MCP-friendly responses.
 
-v0.8.2 supports the stateless MCP `2026-07-28` protocol over HTTP and stdio, while retaining the SDK-managed legacy negotiation path for clients still rolling out the revision. No SQD account, API key, or client credential is required.
+The current v0.8.2 release supports the stateless MCP `2026-07-28` protocol over HTTP and stdio, while retaining the SDK-managed legacy negotiation path for clients still rolling out the revision. No SQD account, API key, or client credential is required.
+
+The unreleased v0.8.3 candidate adds the SQD Blockchain Activity Explorer, adaptive tool execution, and complete app runtime metrics. It has not been tagged, published, or deployed.
 
 ## Current public surface
 
@@ -72,7 +74,8 @@ Advanced/debug:
 
 ## Supported data
 
-- EVM networks indexed by Portal, including Base, Ethereum, Optimism, Arbitrum, Monad, Hyperliquid EVM, and others
+- EVM networks indexed by Portal, including Base, Ethereum, Optimism, Arbitrum, Monad, Hyperliquid EVM, and many others
+- Tron discovery, head, freshness, and timestamp metadata, with native Tron stream queries documented in the bundled SQD plugin skill
 - Solana mainnet
 - Bitcoin mainnet
 - Hyperliquid fills and replica commands
@@ -99,7 +102,7 @@ When a response uses estimated, partial, sampled, capped, or paginated data, the
 
 Chart-oriented tools also return chart and table descriptors so MCP clients or LLMs can render them without reverse-engineering the payload.
 
-The server does not ship its own frontend. It returns structured data and rendering hints for the client to use.
+The v0.8.3 candidate includes one portable SQD Blockchain Activity Explorer for 21 data tools. Compatible MCP App hosts can show exact metrics, charts, evidence tables, timelines, coverage, freshness, and continuation controls. The app is self-contained and makes no browser-side network requests. Hosts without MCP App support receive the same `structuredContent` and compact JSON text fallback, so the underlying answer never depends on the UI.
 
 ## Install
 
@@ -211,14 +214,20 @@ HTTP mode exposes MCP at `/` and `/mcp`, with health state at `/health`.
 Useful environment variables:
 
 - `MCP_CURSOR_SECRET` to sign pagination cursors
+- `MCP_TOOL_WEIGHT_BUDGET` to bound the combined cost of active tool calls, default `24`
+- `MCP_TOOL_MAX_QUEUE` to bound queued tool calls, default `64`
+- `MCP_TOOL_QUEUE_TIMEOUT_MS` to bound tool admission wait time, default `2500`
 
 ## Tests
 
-The [v0.8.2 release-assurance contract](RELEASE_ASSURANCE.md) defines the complete hardening matrix, five-state terminal outcome taxonomy, result-state and failure-attribution metrics, privacy boundary, and exact automated gates. “100%” refers to every applicable cell in that declared matrix, not a claim that upstream networks can never fail.
+The [release-assurance contract](RELEASE_ASSURANCE.md) defines the complete v0.8.2 baseline and the additional v0.8.3 candidate gates. “100%” refers to every applicable cell in the declared matrix, not a claim that upstream networks can never fail.
 
 ```bash
 npm test
 npm run test:protocol
+npm run test:tool-admission
+npm run test:app-contract
+npm run test:app-ui
 npm run test:tools
 npm run test:routing
 npm run test:substrate

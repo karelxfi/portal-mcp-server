@@ -1,5 +1,18 @@
 # Changelog
 
+## [Unreleased]
+
+The v0.8.3 release candidate turns SQD results into a fast, portable blockchain investigation experience while preserving the exact structured and text answers used by every existing client. This candidate is not tagged, published, or deployed.
+
+### Highlights
+- **SQD Blockchain Activity Explorer**: one self-contained MCP App presents exact metrics, charts, evidence tables, timelines, coverage, freshness, partial results, errors, empty results, and signed continuation controls for 21 data tools.
+- **Portable app contract**: standard MCP Apps metadata, MIME type, capability detection, and resource security policy work alongside ChatGPT compatibility aliases. Unsupported hosts keep the same `structuredContent` and compact JSON text fallback.
+- **Broad blockchain views**: the explorer adapts to wallets, contracts, token flows, network activity, Bitcoin, Tron, Solana, Substrate, Hyperliquid fills, analytics, and candles without narrowing the 28-tool product.
+- **Adaptive tool execution**: a weighted, cancellation-aware scheduler protects fast lookups from expensive concurrent analytics, admits work fairly, bounds queue time, and returns the existing structured overload guidance when saturated.
+- **Complete app metrics**: bounded Prometheus and Grafana series cover capability-aware tool results, result-to-render conversion, render payload size, app resource reads, app bundle size, admission wait, active weight, queued work, and rejection reasons.
+- **Visual and accessibility hardening**: deterministic browser fixtures cover desktop and mobile layouts, light and dark themes, success, partial, empty, and error states, keyboard access, overflow, and serious or critical accessibility findings.
+- **Lean product surface**: the app reuses the existing tool results and follow-up contracts, adds no browser API layer, loads no external assets, and does not add tools merely to power the UI.
+
 ## [0.8.2] - 2026-08-29
 
 Portal MCP v0.8.2 makes every returned blockchain row trustworthy under large responses, malformed streams, retries, and concurrent load. It also adds repeatable performance evidence so release decisions use measured queue, service, and end-to-end latency instead of isolated timings.

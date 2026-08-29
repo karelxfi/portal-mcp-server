@@ -1,0 +1,183 @@
+export const APP_FIXTURES: Record<string, Record<string, unknown>> = {
+  hyperliquid: {
+    answer: 'BTC traded $48.2M across 18,420 fills in the selected six-hour window.',
+    overview: { total_fills: 18420, unique_traders: 3912, total_volume_usd: 48200000 },
+    liquidations: { count: 126 },
+    volume_by_coin: [
+      { rank: 1, coin: 'BTC', volume_usd: 48200000 },
+      { rank: 2, coin: 'ETH', volume_usd: 33700000 },
+      { rank: 3, coin: 'SOL', volume_usd: 12100000 },
+      { rank: 4, coin: 'HYPE', volume_usd: 8400000 },
+    ],
+    _meta: { network: 'hyperliquid-fills', row_count: 4, timeframe: '6h' },
+    _freshness: { finality: 'latest' },
+    _coverage: { result_complete: true },
+    _pagination: { has_more: false },
+    _tool_contract: { name: 'portal_hyperliquid_get_analytics' },
+    _ui: {
+      version: 'portal_ui_v1',
+      layout: 'dashboard',
+      headline: {
+        title: 'Hyperliquid market activity',
+        subtitle: 'BTC, ETH, SOL, and HYPE trading over the past six hours.',
+      },
+      metric_cards: [
+        { label: 'Fills', value_path: 'overview.total_fills', format: 'integer', emphasis: 'primary' },
+        { label: 'Traders', value_path: 'overview.unique_traders', format: 'integer' },
+        { label: 'Volume', value_path: 'overview.total_volume_usd', format: 'currency_usd' },
+        { label: 'Liquidations', value_path: 'liquidations.count', format: 'integer' },
+      ],
+      panels: [
+        {
+          kind: 'ranked_bars_panel',
+          title: 'Volume by coin',
+          subtitle: 'Notional volume from exact fill rows.',
+          data_key: 'volume_by_coin',
+          category_key: 'coin',
+          value_key: 'volume_usd',
+          value_format: 'currency_usd',
+          emphasis: 'primary',
+        },
+      ],
+    },
+  },
+  timeseries: {
+    answer: 'Base processed 2.4M transactions over the past 24 hours.',
+    summary: { total: 2431402, average: 101308, peak: 152440, filled_buckets: 24 },
+    time_series: Array.from({ length: 24 }, (_, index) => ({
+      bucket_index: index,
+      timestamp: 1787942400 + index * 3600,
+      timestamp_human: `${String(index).padStart(2, '0')}:00 UTC`,
+      value: 72000 + Math.round(Math.sin(index / 2.4) * 24000 + index * 1700),
+    })),
+    chart: {
+      kind: 'time_series',
+      data_key: 'time_series',
+      recommended_visual: 'line',
+      y_field: 'value',
+      total_points: 24,
+    },
+    tables: [
+      {
+        id: 'series',
+        data_key: 'time_series',
+        columns: [
+          { key: 'timestamp_human', label: 'Time' },
+          { key: 'value', label: 'Transactions', format: 'integer', align: 'right' },
+        ],
+      },
+    ],
+    _meta: { network: 'base-mainnet', row_count: 24, timeframe: '24h' },
+    _freshness: { finality: 'latest' },
+    _coverage: { result_complete: true },
+    _pagination: { has_more: false },
+    _tool_contract: { name: 'portal_get_time_series' },
+    _ui: {
+      version: 'portal_ui_v1',
+      layout: 'chart_focus',
+      headline: { title: 'Base transaction activity', subtitle: 'Hourly transaction counts over the past 24 hours.' },
+      metric_cards: [
+        { label: 'Transactions', value_path: 'summary.total', format: 'compact_number', emphasis: 'primary' },
+        { label: 'Hourly average', value_path: 'summary.average', format: 'integer' },
+        { label: 'Peak hour', value_path: 'summary.peak', format: 'integer' },
+        { label: 'Complete buckets', value_path: 'summary.filled_buckets', format: 'integer' },
+      ],
+      panels: [
+        { kind: 'chart_panel', title: 'Transactions by hour', chart_key: 'chart', emphasis: 'primary' },
+        { kind: 'table_panel', title: 'Exact hourly evidence', table_id: 'series' },
+      ],
+      follow_up_actions: [{ label: 'Compare with previous day', intent: 'compare_previous' }],
+    },
+  },
+  candles: {
+    answer: 'BTC closed at $111,240 after trading between $108,920 and $112,180.',
+    summary: { series_close: 111240, total_volume: 88200000, total_fills: 29120, filled_buckets: 18 },
+    ohlc: Array.from({ length: 18 }, (_, index) => {
+      const base = 109500 + index * 95 + Math.sin(index) * 820
+      return {
+        timestamp_human: `${String(index).padStart(2, '0')}:00 UTC`,
+        open: base,
+        high: base + 650,
+        low: base - 520,
+        close: base + Math.sin(index * 1.7) * 410,
+        volume: 2100000 + index * 190000,
+        fill_count: 900 + index * 43,
+      }
+    }),
+    chart: { kind: 'candlestick', data_key: 'ohlc', total_candles: 18 },
+    tables: [
+      {
+        id: 'ohlc',
+        data_key: 'ohlc',
+        columns: [
+          { key: 'timestamp_human', label: 'Time' },
+          { key: 'open', label: 'Open', format: 'currency_usd', align: 'right' },
+          { key: 'high', label: 'High', format: 'currency_usd', align: 'right' },
+          { key: 'low', label: 'Low', format: 'currency_usd', align: 'right' },
+          { key: 'close', label: 'Close', format: 'currency_usd', align: 'right' },
+        ],
+      },
+    ],
+    _meta: { network: 'hyperliquid-fills', timeframe: '18h' },
+    _freshness: { finality: 'latest' },
+    _coverage: { result_complete: false },
+    _pagination: { has_more: true, next_cursor: 'signed-preview-cursor' },
+    _notice: 'The next page contains older candles. Totals cover only the visible window.',
+    _tool_contract: { name: 'portal_hyperliquid_get_ohlc' },
+    _ui: {
+      version: 'portal_ui_v1',
+      layout: 'chart_focus',
+      headline: { title: 'BTC Hyperliquid candles', subtitle: 'Hourly price action with exact OHLC evidence.' },
+      metric_cards: [
+        { label: 'Last close', value_path: 'summary.series_close', format: 'currency_usd', emphasis: 'primary' },
+        { label: 'Volume', value_path: 'summary.total_volume', format: 'currency_usd' },
+        { label: 'Fills', value_path: 'summary.total_fills', format: 'integer' },
+        { label: 'Buckets', value_path: 'summary.filled_buckets', format: 'integer' },
+      ],
+      panels: [
+        { kind: 'chart_panel', title: 'BTC price action', chart_key: 'chart', emphasis: 'primary' },
+        { kind: 'table_panel', title: 'Candle evidence', table_id: 'ohlc' },
+      ],
+      follow_up_actions: [{ label: 'Load older candles', intent: 'continue' }],
+    },
+  },
+  activity: {
+    answer: 'The selected wallet had 12 recent movements on Base.',
+    items: Array.from({ length: 12 }, (_, index) => ({
+      timestamp_human: `${index + 1} min ago`,
+      block_number: 34811020 - index,
+      tx_hash: `0x${String(index + 1).padStart(64, 'a')}`,
+      sender: index % 2 ? '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913' : '0x4200000000000000000000000000000000000006',
+      recipient:
+        index % 2 ? '0x4200000000000000000000000000000000000006' : '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913',
+      value_formatted: `${(1200 + index * 83).toLocaleString()} USDC`,
+      status: 'success',
+    })),
+    _meta: { network: 'base-mainnet', row_count: 12, timeframe: '1h' },
+    _freshness: { finality: 'latest' },
+    _coverage: { result_complete: true },
+    _pagination: { has_more: false },
+    _tool_contract: { name: 'portal_get_recent_activity' },
+  },
+  error: {
+    error: {
+      code: 'overloaded',
+      origin: 'server',
+      summary: 'SQD is busy and could not start this query inside the bounded wait budget.',
+      retryable: true,
+      suggestions: ['Retry this request in a moment', 'Use a smaller timeframe'],
+    },
+    _coverage: { result_complete: false },
+    _pagination: { has_more: false },
+    _tool_contract: { name: 'portal_get_wallet_summary' },
+  },
+  empty: {
+    answer: 'No matching blockchain activity was found in this window.',
+    items: [],
+    _meta: { network: 'tron-mainnet', row_count: 0, timeframe: '1h' },
+    _freshness: { finality: 'latest' },
+    _coverage: { result_complete: true },
+    _pagination: { has_more: false },
+    _tool_contract: { name: 'portal_get_recent_activity' },
+  },
+}

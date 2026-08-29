@@ -7,6 +7,7 @@ import type {
 } from '@modelcontextprotocol/server'
 import { type ZodRawShape, z } from 'zod'
 
+import { getActivityExplorerToolMeta } from '../apps/activity-explorer.js'
 import { runWithPortalRequestDeadline } from './request-context.js'
 
 type PortalToolResult = CallToolResult | InputRequiredResult
@@ -134,14 +135,11 @@ export function registerPortalTool<InputShape extends ZodRawShape>(
   options?: { deadlineMs?: number },
 ): RegisteredTool {
   const deadlineMs = options?.deadlineMs
-  const boundedHandler = deadlineMs !== undefined
-    ? (args: z.infer<z.ZodObject<InputShape>>, context: ServerContext) =>
-        runWithPortalRequestDeadline(
-          deadlineMs,
-          async () => handler(args, context),
-          { tool: name, stage: 'tool' },
-        )
-    : handler
+  const boundedHandler =
+    deadlineMs !== undefined
+      ? (args: z.infer<z.ZodObject<InputShape>>, context: ServerContext) =>
+          runWithPortalRequestDeadline(deadlineMs, async () => handler(args, context), { tool: name, stage: 'tool' })
+      : handler
 
   return server.registerTool(
     name,
@@ -151,6 +149,7 @@ export function registerPortalTool<InputShape extends ZodRawShape>(
       inputSchema: z.object(inputShape),
       outputSchema: PORTAL_TOOL_OUTPUT_SCHEMA,
       annotations: READ_ONLY_TOOL_ANNOTATIONS,
+      _meta: getActivityExplorerToolMeta(name),
     },
     boundedHandler,
   )
