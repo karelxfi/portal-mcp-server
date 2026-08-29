@@ -2,6 +2,7 @@
 
 import { setTimeout as sleep } from 'node:timers/promises'
 
+import { buildOhlcRequestCacheKey } from '../src/tools/evm/ohlc.ts'
 import { comparePairedLatencies, runOpenLoop, summarizePerformanceSamples } from './performance-harness.ts'
 
 function assert(condition: boolean, message: string) {
@@ -9,6 +10,30 @@ function assert(condition: boolean, message: string) {
 }
 
 async function main() {
+  const ohlcKeyInput = {
+    dataset: 'base-mainnet',
+    source: 'uniswap_v3_swap' as const,
+    interval: '5m' as const,
+    duration: '1h',
+    mode: 'deep' as const,
+    poolAddress: '0x0000000000000000000000000000000000000001',
+    priceIn: 'auto' as const,
+    baseToken: 'token0' as const,
+    includeRecentTrades: true,
+    recentTradesLimit: 5,
+  }
+  const firstOhlcKey = buildOhlcRequestCacheKey(ohlcKeyInput)
+  assert(firstOhlcKey === buildOhlcRequestCacheKey({ ...ohlcKeyInput }), 'identical OHLC requests should share a key')
+  assert(
+    firstOhlcKey !== buildOhlcRequestCacheKey({ ...ohlcKeyInput, baseToken: 'token1' }),
+    'price orientation must remain part of the OHLC request cache key',
+  )
+  assert(
+    firstOhlcKey !== buildOhlcRequestCacheKey({ ...ohlcKeyInput, duration: '6h' }),
+    'requested evidence window must remain part of the OHLC request cache key',
+  )
+  console.log('PASS  EVM OHLC request cache keys preserve query semantics')
+
   const samples = await runOpenLoop({
     count: 8,
     intervalMs: 2,

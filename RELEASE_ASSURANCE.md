@@ -17,6 +17,7 @@ v0.8.3 keeps the complete v0.8.2 hardening baseline and adds the following requi
 | Rendered-data parity | Exact candle, volume, line, grouped-series, signed-bar, identifier, and displayed-row values reconcile with structured content | `test:app-ui` |
 | Chronology and gap fidelity | Shuffled inputs render in declared x order; missing buckets are not joined into false continuity; positive and negative bars share a correct zero baseline | `test:app-ui` |
 | App performance budgets | Bundle below 700 KB, initial render below 1 second per cell, interaction p95 below 250 ms, bounded DOM | `test:app-contract`, `test:app-ui` |
+| Repeated EVM candle performance | Identical requests reuse one exact short-lived snapshot; cache keys separate evidence window, pool, token, and price orientation semantics; paired warm latency has no supported regression | `test:performance-harness`, `benchmark:paired` |
 | Authoritative data integrity | Direct Portal parity for complete EVM, Solana, Bitcoin, Substrate, and Hyperliquid evidence, including raw-fill candle reproduction | `test:data-integrity` |
 | Coverage and continuation truthfulness | Pagination promises a cursor, remaining-result cursors mark the result incomplete, adjacent-window cursors are distinct, and paged identities have no gaps or duplicates | `test:tools`, `test:data-integrity` |
 | Adaptive tool admission | Four weighted work classes, fair promotion, cancellation, timeout, overload, and zero capacity leaks | `test:tool-admission` |
