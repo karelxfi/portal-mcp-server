@@ -1,6 +1,10 @@
 #!/usr/bin/env tsx
 
-import { WeightedToolAdmissionController, getToolWorkProfile } from '../src/helpers/tool-admission.js'
+import {
+  DEFAULT_TOOL_WEIGHT_BUDGET,
+  WeightedToolAdmissionController,
+  getToolWorkProfile,
+} from '../src/helpers/tool-admission.js'
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message)
@@ -16,6 +20,10 @@ async function main() {
   const raw = getToolWorkProfile('portal_evm_query_transactions')
   const analytics = getToolWorkProfile('portal_hyperliquid_get_analytics')
   assert(lookup.weight === 1 && raw.weight === 2 && analytics.weight === 4, 'tool cost classes should stay explicit')
+  assert(
+    DEFAULT_TOOL_WEIGHT_BUDGET / analytics.weight === 8,
+    'the default scheduler budget must admit the declared c8 analytics profile',
+  )
 
   const first = await controller.acquire(raw, 'stdio')
   const second = await controller.acquire(raw, 'http')

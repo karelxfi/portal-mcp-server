@@ -214,7 +214,7 @@ HTTP mode exposes MCP at `/` and `/mcp`, with health state at `/health`.
 Useful environment variables:
 
 - `MCP_CURSOR_SECRET` to sign pagination cursors
-- `MCP_TOOL_WEIGHT_BUDGET` to bound the combined cost of active tool calls, default `24`
+- `MCP_TOOL_WEIGHT_BUDGET` to bound the combined cost of active tool calls, default `32`, which admits the declared c8 analytics profile
 - `MCP_TOOL_MAX_QUEUE` to bound queued tool calls, default `64`
 - `MCP_TOOL_QUEUE_TIMEOUT_MS` to bound tool admission wait time, default `2500`
 

@@ -261,8 +261,10 @@ export class WeightedToolAdmissionController {
   }
 }
 
+export const DEFAULT_TOOL_WEIGHT_BUDGET = 32
+
 export const toolAdmission = new WeightedToolAdmissionController(
-  boundedInteger(process.env.MCP_TOOL_WEIGHT_BUDGET, 24, 4, 256),
+  boundedInteger(process.env.MCP_TOOL_WEIGHT_BUDGET, DEFAULT_TOOL_WEIGHT_BUDGET, 4, 256),
   boundedInteger(process.env.MCP_TOOL_MAX_QUEUE, 64, 0, 1024),
   boundedInteger(process.env.MCP_TOOL_QUEUE_TIMEOUT_MS, 2_500, 50, 30_000),
 )
