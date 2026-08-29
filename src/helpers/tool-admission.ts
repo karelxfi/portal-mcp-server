@@ -120,7 +120,7 @@ export class WeightedToolAdmissionController {
     if (!Number.isInteger(maxWeight) || maxWeight < 1) throw new Error('maxWeight must be a positive integer')
     if (!Number.isInteger(maxQueued) || maxQueued < 0) throw new Error('maxQueued must be a non-negative integer')
     if (!Number.isFinite(queueTimeoutMs) || queueTimeoutMs < 1) throw new Error('queueTimeoutMs must be positive')
-    this.updateMetrics()
+    this.syncMetrics()
   }
 
   snapshot(): ToolAdmissionSnapshot {
@@ -168,7 +168,7 @@ export class WeightedToolAdmissionController {
       signal?.addEventListener('abort', entry.abort, { once: true })
       this.queue.push(entry)
       this.adjustMap(this.queuedByKey, this.key(profile, transport), 1)
-      this.updateMetrics()
+      this.syncMetrics(profile, transport)
       this.promote()
     })
   }
@@ -194,7 +194,7 @@ export class WeightedToolAdmissionController {
     clearTimeout(entry.timeoutId)
     entry.signal?.removeEventListener('abort', entry.abort)
     this.adjustMap(this.queuedByKey, this.key(entry.profile, entry.transport), -1)
-    this.updateMetrics()
+    this.syncMetrics(entry.profile, entry.transport)
     return true
   }
 
@@ -208,7 +208,7 @@ export class WeightedToolAdmissionController {
     this.activeCalls += 1
     this.adjustMap(this.activeByKey, this.key(profile, transport), 1)
     if (this.emitMetrics) toolAdmissionWait.observe({ tool_class: profile.class, transport }, waitMs / 1000)
-    this.updateMetrics()
+    this.syncMetrics(profile, transport)
     let released = false
     return {
       waitMs,
@@ -218,6 +218,7 @@ export class WeightedToolAdmissionController {
         this.activeWeight = Math.max(0, this.activeWeight - profile.weight)
         this.activeCalls = Math.max(0, this.activeCalls - 1)
         this.adjustMap(this.activeByKey, this.key(profile, transport), -1)
+        this.syncMetrics(profile, transport)
         this.promote()
       },
     }
@@ -233,6 +234,7 @@ export class WeightedToolAdmissionController {
       clearTimeout(entry.timeoutId)
       entry.signal?.removeEventListener('abort', entry.abort)
       this.adjustMap(this.queuedByKey, this.key(entry.profile, entry.transport), -1)
+      this.syncMetrics(entry.profile, entry.transport)
       if (entry.signal?.aborted) {
         entry.reject(new RequestCancelledError())
         promoted = true
@@ -241,22 +243,31 @@ export class WeightedToolAdmissionController {
       entry.resolve(this.grant(entry.profile, entry.transport, entry.enqueuedAt))
       promoted = true
     }
-    this.updateMetrics()
   }
 
   private rejectMetric(profile: ToolWorkProfile, transport: RuntimeRequestContext['transport'], reason: string) {
     if (this.emitMetrics) toolAdmissionRejectedTotal.inc({ tool_class: profile.class, transport, reason })
   }
 
-  private updateMetrics() {
+  private syncMetrics(profile?: ToolWorkProfile, transport?: RuntimeRequestContext['transport']) {
     if (!this.emitMetrics) return
     toolAdmissionActiveWeight.set(this.activeWeight)
-    for (const profile of Object.values(PROFILES)) {
-      for (const transport of ['stdio', 'http'] as const) {
-        const key = this.key(profile, transport)
-        toolAdmissionActive.set({ tool_class: profile.class, transport }, this.activeByKey.get(key) ?? 0)
-        toolAdmissionQueued.set({ tool_class: profile.class, transport }, this.queuedByKey.get(key) ?? 0)
-      }
+    const pairs =
+      profile && transport
+        ? [[profile, transport] as const]
+        : Object.values(PROFILES).flatMap((candidate) =>
+            (['stdio', 'http'] as const).map((candidateTransport) => [candidate, candidateTransport] as const),
+          )
+    for (const [candidate, candidateTransport] of pairs) {
+      const key = this.key(candidate, candidateTransport)
+      toolAdmissionActive.set(
+        { tool_class: candidate.class, transport: candidateTransport },
+        this.activeByKey.get(key) ?? 0,
+      )
+      toolAdmissionQueued.set(
+        { tool_class: candidate.class, transport: candidateTransport },
+        this.queuedByKey.get(key) ?? 0,
+      )
     }
   }
 }

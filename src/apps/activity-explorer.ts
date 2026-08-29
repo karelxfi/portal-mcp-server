@@ -78,7 +78,14 @@ export function recordActivityExplorerResult(params: {
   if (!ACTIVITY_EXPLORER_TOOLS.has(params.toolName)) return
   const result = asRecord(params.result)
   const structured = asRecord(result?.structuredContent)
-  const bytes = structured ? Buffer.byteLength(JSON.stringify(structured)) : 0
+  const content = Array.isArray(result?.content) ? result.content : []
+  const first = asRecord(content[0])
+  const bytes =
+    typeof first?.text === 'string'
+      ? Buffer.byteLength(first.text)
+      : structured
+        ? Buffer.byteLength(JSON.stringify(structured))
+        : 0
   appToolResultsTotal.inc({
     tool: params.toolName,
     transport: params.transport,
