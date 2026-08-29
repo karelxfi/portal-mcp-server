@@ -10,6 +10,7 @@ The v0.8.3 release candidate turns SQD results into a fast, portable blockchain 
 - **Broad blockchain views**: the explorer adapts to wallets, contracts, token flows, network activity, Bitcoin, Tron, Solana, Substrate, Hyperliquid fills, analytics, and candles without narrowing the 28-tool product.
 - **Adaptive tool execution**: a weighted, cancellation-aware scheduler protects fast lookups from expensive concurrent analytics, admits the declared c8 analytics profile, promotes queued work fairly, bounds queue time, and returns the existing structured overload guidance when saturated.
 - **Complete app metrics**: bounded Prometheus and Grafana series cover capability-aware tool results, result-to-render conversion, render payload size, app resource reads, app bundle size, admission wait, active weight, queued work, and rejection reasons.
+- **Sustained memory gate**: the release soak now rejects excessive peak RSS or first-to-last-quarter median RSS growth instead of relying on a noisy first-to-last sample.
 - **Visual and accessibility hardening**: deterministic browser fixtures cover desktop and mobile layouts, light and dark themes, success, partial, empty, and error states, keyboard access, overflow, and serious or critical accessibility findings.
 - **Lean product surface**: the app reuses the existing tool results and follow-up contracts, adds no browser API layer, loads no external assets, and does not add tools merely to power the UI.
 
