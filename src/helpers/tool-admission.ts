@@ -41,9 +41,9 @@ export type ToolAdmissionLease = {
 
 const PROFILES: Record<ToolWorkClass, ToolWorkProfile> = {
   lookup: { class: 'lookup', weight: 1 },
-  raw_query: { class: 'raw_query', weight: 2 },
-  summary: { class: 'summary', weight: 3 },
-  analytics: { class: 'analytics', weight: 4 },
+  raw_query: { class: 'raw_query', weight: 8 },
+  summary: { class: 'summary', weight: 8 },
+  analytics: { class: 'analytics', weight: 16 },
 }
 
 const ANALYTICS = new Set([
@@ -275,7 +275,7 @@ export class WeightedToolAdmissionController {
 export const DEFAULT_TOOL_WEIGHT_BUDGET = 32
 
 export const toolAdmission = new WeightedToolAdmissionController(
-  boundedInteger(process.env.MCP_TOOL_WEIGHT_BUDGET, DEFAULT_TOOL_WEIGHT_BUDGET, 4, 256),
+  boundedInteger(process.env.MCP_TOOL_WEIGHT_BUDGET, DEFAULT_TOOL_WEIGHT_BUDGET, 16, 256),
   boundedInteger(process.env.MCP_TOOL_MAX_QUEUE, 64, 0, 1024),
-  boundedInteger(process.env.MCP_TOOL_QUEUE_TIMEOUT_MS, 2_500, 50, 30_000),
+  boundedInteger(process.env.MCP_TOOL_QUEUE_TIMEOUT_MS, 5_000, 50, 30_000),
 )

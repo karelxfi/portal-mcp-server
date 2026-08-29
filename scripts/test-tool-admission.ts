@@ -1,5 +1,12 @@
 #!/usr/bin/env tsx
 
+import { RequestCancelledError } from '../src/helpers/errors.js'
+import {
+  getPortalRequestSignal,
+  runAsSharedPortalWork,
+  runWithPortalRequestSignal,
+  waitForSharedPortalWork,
+} from '../src/helpers/request-context.js'
 import {
   DEFAULT_TOOL_WEIGHT_BUDGET,
   WeightedToolAdmissionController,
@@ -15,19 +22,19 @@ function sleep(ms: number) {
 }
 
 async function main() {
-  const controller = new WeightedToolAdmissionController(4, 3, 80, false)
+  const controller = new WeightedToolAdmissionController(16, 3, 80, false)
   const lookup = getToolWorkProfile('portal_get_head')
   const raw = getToolWorkProfile('portal_evm_query_transactions')
   const analytics = getToolWorkProfile('portal_hyperliquid_get_analytics')
-  assert(lookup.weight === 1 && raw.weight === 2 && analytics.weight === 4, 'tool cost classes should stay explicit')
+  assert(lookup.weight === 1 && raw.weight === 8 && analytics.weight === 16, 'tool cost classes should stay explicit')
   assert(
-    DEFAULT_TOOL_WEIGHT_BUDGET / analytics.weight === 8,
-    'the default scheduler budget must admit the declared c8 analytics profile',
+    DEFAULT_TOOL_WEIGHT_BUDGET / analytics.weight === 2,
+    'the default scheduler budget must cap concurrent analytics at the measured memory-safe level',
   )
 
   const first = await controller.acquire(raw, 'stdio')
   const second = await controller.acquire(raw, 'http')
-  assert(controller.snapshot().activeWeight === 4, 'two raw calls should fill the four-weight test budget')
+  assert(controller.snapshot().activeWeight === 16, 'two raw calls should fill the test budget')
 
   const order: string[] = []
   const expensive = controller.acquire(analytics, 'http').then((lease) => {
@@ -85,9 +92,33 @@ async function main() {
     'timeout recovery should restore scheduler state',
   )
 
+  const firstCaller = new AbortController()
+  const secondCaller = new AbortController()
+  let resolveShared!: (value: string) => void
+  const shared = runWithPortalRequestSignal(firstCaller.signal, () =>
+    runAsSharedPortalWork(
+      () =>
+        new Promise<string>((resolve) => {
+          assert(getPortalRequestSignal() === undefined, 'shared work should not inherit one caller signal')
+          resolveShared = resolve
+        }),
+    ),
+  )
+  const firstWait = runWithPortalRequestSignal(firstCaller.signal, () => waitForSharedPortalWork(shared))
+  const secondWait = runWithPortalRequestSignal(secondCaller.signal, () => waitForSharedPortalWork(shared))
+  firstCaller.abort()
+  const firstCancelled = await firstWait.then(
+    () => false,
+    (error) => error instanceof RequestCancelledError,
+  )
+  resolveShared('shared result')
+  assert(firstCancelled, 'one cancelled caller should stop waiting for shared work')
+  assert((await secondWait) === 'shared result', 'another caller should still receive the shared result')
+
   console.log('PASS  weighted profiles preserve capacity for low-cost discovery')
   console.log('PASS  fair promotion avoids head-of-line blocking without starving analytics')
   console.log('PASS  queued cancellation, timeout, and overload release all scheduler state')
+  console.log('PASS  shared analytics work isolates caller cancellation')
 }
 
 main().catch((error) => {

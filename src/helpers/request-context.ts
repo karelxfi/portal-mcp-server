@@ -24,6 +24,40 @@ export function getPortalRequestSignal(): AbortSignal | undefined {
   return requestSignalStorage.getStore()
 }
 
+/**
+ * Start cacheable work outside one caller's cancellation scope. Callers still
+ * observe their own cancellation through waitForSharedPortalWork, while an
+ * identical request can reuse the bounded upstream scan already in flight.
+ */
+export function runAsSharedPortalWork<T>(callback: () => T): T {
+  return requestSignalStorage.exit(callback)
+}
+
+export function waitForSharedPortalWork<T>(promise: Promise<T>, signal = getPortalRequestSignal()): Promise<T> {
+  if (!signal) return promise
+  if (signal.aborted) return Promise.reject(new RequestCancelledError())
+
+  return new Promise<T>((resolve, reject) => {
+    const cancel = () => {
+      cleanup()
+      reject(new RequestCancelledError())
+    }
+    const cleanup = () => signal.removeEventListener('abort', cancel)
+
+    signal.addEventListener('abort', cancel, { once: true })
+    promise.then(
+      (value) => {
+        cleanup()
+        resolve(value)
+      },
+      (error) => {
+        cleanup()
+        reject(error)
+      },
+    )
+  })
+}
+
 export function createRequestAbortContext(timeout: number): RequestAbortContext {
   const controller = new AbortController()
   const requestSignal = getPortalRequestSignal()
