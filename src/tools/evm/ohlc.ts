@@ -2053,7 +2053,7 @@ export function registerEvmOhlcTool(server: McpServer) {
             kind: 'chart_panel',
             title: `${summary.pair_label} price action`,
             subtitle:
-              'Candles plus color-matched volume bars. Hover for O/H/L/C and volume; drag to zoom narrower windows.',
+              'Candles plus color-matched volume bars. Hover or focus a candle for O/H/L/C and volume.',
             chart_key: 'chart',
             emphasis: 'primary',
           }),
@@ -2084,7 +2084,7 @@ export function registerEvmOhlcTool(server: McpServer) {
           ...(recentTrades.length > 0
             ? [{ label: 'Show recent trades', intent: 'show_raw' as const, target: 'recent_trades' }]
             : []),
-          { label: 'Zoom into the latest move', intent: 'zoom_in', target: 'chart' },
+          { label: 'Query a shorter recent window', intent: 'zoom_in', target: 'chart' },
         ],
       })
 

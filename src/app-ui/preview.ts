@@ -4,7 +4,7 @@ import { type ExplorerState, renderExplorer } from './view.js'
 const root = document.getElementById('app')
 if (!root) throw new Error('Preview root missing')
 const picker = document.createElement('nav')
-picker.className = 'sqd-app sqd-actions'
+picker.className = 'sqd-app sqd-actions sqd-preview-picker'
 picker.setAttribute('aria-label', 'Preview fixtures')
 document.body.prepend(picker)
 
@@ -17,8 +17,21 @@ function show(name: string) {
     currentArgs: { duration: '24h' },
   }
   renderExplorer(root!, state, {
-    runFollowup(intent) {
+    runFollowup(intent, target) {
       document.body.dataset.lastAction = intent
+      if (intent === 'show_raw' && target) {
+        const value = target
+          .split('.')
+          .reduce<unknown>((current, key) => current && typeof current === 'object' && !Array.isArray(current)
+            ? (current as Record<string, unknown>)[key]
+            : undefined, state.payload)
+        const pre = document.querySelector<HTMLPreElement>('.sqd-raw pre')
+        const details = document.querySelector<HTMLDetailsElement>('.sqd-raw')
+        if (pre && details) {
+          pre.textContent = JSON.stringify(value, null, 2)
+          details.open = true
+        }
+      }
     },
     requestFullscreen() {
       document.body.dataset.fullscreenRequested = 'true'

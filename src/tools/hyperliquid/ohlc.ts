@@ -462,14 +462,14 @@ export function registerHyperliquidOhlcTool(server: McpServer) {
         title_label: 'Time',
         title_format: 'timestamp_human',
         fields: [
-          { key: 'open', label: 'Open', format: 'decimal', emphasis: 'primary' },
-          { key: 'high', label: 'High', format: 'decimal' },
-          { key: 'low', label: 'Low', format: 'decimal' },
-          { key: 'close', label: 'Close', format: 'decimal', emphasis: 'primary' },
+          { key: 'open', label: 'Open', format: 'currency_usd', unit: 'USD', emphasis: 'primary' },
+          { key: 'high', label: 'High', format: 'currency_usd', unit: 'USD' },
+          { key: 'low', label: 'Low', format: 'currency_usd', unit: 'USD' },
+          { key: 'close', label: 'Close', format: 'currency_usd', unit: 'USD', emphasis: 'primary' },
           { key: 'volume', label: 'Volume', format: 'currency_usd', unit: 'USD' },
           { key: 'base_volume', label: `${coin} size`, format: 'decimal', unit: coin },
           { key: 'fill_count', label: 'Fills', format: 'integer' },
-          { key: 'vwap', label: 'VWAP', format: 'decimal' },
+          { key: 'vwap', label: 'VWAP', format: 'currency_usd', unit: 'USD' },
         ],
       }
 
@@ -483,7 +483,7 @@ export function registerHyperliquidOhlcTool(server: McpServer) {
           subtitle: `${resolvedInterval} candles over ${durationLabel}${user ? ` for ${user.toLowerCase()}` : ''}`,
         },
         metric_cards: [
-          buildMetricCard({ id: 'last_close', label: 'Last close', value_path: 'summary.series_close', format: 'decimal', emphasis: 'primary' }),
+          buildMetricCard({ id: 'last_close', label: 'Last close', value_path: 'summary.series_close', format: 'currency_usd', unit: 'USD', emphasis: 'primary' }),
           buildMetricCard({ id: 'volume', label: 'Volume', value_path: 'summary.total_volume', format: 'currency_usd', unit: 'USD' }),
           buildMetricCard({ id: 'fills', label: 'Fills', value_path: 'summary.total_fills', format: 'integer' }),
           buildMetricCard({ id: 'filled_buckets', label: 'Filled buckets', value_path: 'summary.filled_buckets', format: 'integer' }),
@@ -493,7 +493,7 @@ export function registerHyperliquidOhlcTool(server: McpServer) {
             id: 'candles',
             kind: 'chart_panel',
             title: `${coin} price action`,
-            subtitle: 'Hover for OHLC, volume, fills, and VWAP. Drag horizontally to zoom.',
+            subtitle: 'Hover or focus a candle for OHLC, volume, fills, and VWAP.',
             chart_key: 'chart',
             emphasis: 'primary',
           }),
@@ -508,7 +508,7 @@ export function registerHyperliquidOhlcTool(server: McpServer) {
         follow_up_actions: [
           ...(nextCursor ? [{ label: 'Load older candles', intent: 'continue' as const, target: '_pagination.next_cursor' }] : []),
           { label: 'Show raw candle rows', intent: 'show_raw', target: 'ohlc' },
-          { label: 'Zoom into the latest move', intent: 'zoom_in', target: 'chart' },
+          { label: 'Query a shorter recent window', intent: 'zoom_in', target: 'chart' },
         ],
       })
 
@@ -520,10 +520,12 @@ export function registerHyperliquidOhlcTool(server: McpServer) {
             interval: resolvedInterval,
             totalCandles: ohlc.length,
             title: `${coin} Hyperliquid candles`,
-            subtitle: 'Interactive OHLC chart with hover labels, zoom, and candle table',
+            subtitle: 'Interactive OHLC chart with exact point labels and candle table',
             volumePanel: true,
             volumeField: 'volume',
             volumeUnit: 'USD',
+            priceUnit: 'USD',
+            priceFormat: 'currency_usd',
             tooltip: chartTooltip,
           }),
           tables: [

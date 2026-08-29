@@ -5,7 +5,7 @@
 The v0.8.3 release candidate turns SQD results into a fast, portable blockchain investigation experience while preserving the exact structured and text answers used by every existing client. This candidate is not tagged, published, or deployed.
 
 ### Highlights
-- **SQD Blockchain Activity Explorer**: one self-contained MCP App presents exact metrics, charts, evidence tables, timelines, coverage, freshness, partial results, errors, empty results, and signed continuation controls for 21 data tools.
+- **SQD Blockchain Activity Explorer**: one self-contained MCP App presents exact metrics, multi-series charts, candle and volume views, evidence tables, timelines, coverage, freshness, partial results, errors, empty results, and signed continuation controls for 21 data tools.
 - **Portable app contract**: standard MCP Apps metadata, MIME type, capability detection, and resource security policy work alongside ChatGPT compatibility aliases. Unsupported hosts keep the same `structuredContent` and compact JSON text fallback.
 - **Broad blockchain views**: the explorer adapts to wallets, contracts, token flows, network activity, Bitcoin, Tron, Solana, Substrate, Hyperliquid fills, analytics, and candles without narrowing the 28-tool product.
 - **Adaptive tool execution**: a weighted, cancellation-aware scheduler protects fast lookups from expensive concurrent analytics, uses measured memory-safe concurrency for each work class, shares identical analytics already in flight, promotes queued work fairly, bounds queue time, and returns structured overload guidance when saturated.
@@ -13,8 +13,10 @@ The v0.8.3 release candidate turns SQD results into a fast, portable blockchain 
 - **Authoritative data integrity**: direct Portal comparisons prove complete identities across paginated EVM and Substrate windows, exact Bitcoin and Solana records, and Hyperliquid candles reproduced from every raw fill in the reported window.
 - **Truthful continuation**: coverage and pagination metadata must agree, client-filtered EVM scans continue without gaps or duplicates, exhausted Bitcoin wallet sections stay exhausted, and candle cursors identify adjacent time windows correctly.
 - **Sustained memory gate**: the release soak now rejects excessive peak RSS or first-to-last-quarter median RSS growth instead of relying on a noisy first-to-last sample.
-- **SQD Design System UI**: the exact Inter and JetBrains Mono files, semantic dark surfaces, status fills, table typography, spacing, official black-background symbol, and indigo roles come from the current SQD Design System.
-- **Visual and accessibility hardening**: deterministic browser fixtures cover desktop and mobile layouts under light and dark host preferences, success, partial, empty, and error states, keyboard access, overflow, and serious or critical accessibility findings.
+- **SQD Design System UI**: the exact Inter and JetBrains Mono files, semantic dark surfaces, status fills, table typography, spacing, right-side chart scales, official black-background symbol, and indigo roles come from the current SQD Design System.
+- **Rendered-data parity**: browser gates prove that every tested candle, volume bar, time-series point, grouped total, signed bar, exact identifier, and table count reconciles with its structured source. Chronological sorting and missing-bucket gaps prevent a chart from inventing continuity.
+- **Visual and accessibility hardening**: 30 deterministic browser cells cover desktop and mobile layouts under light and dark host preferences, USD and token-ratio candles, success, partial, empty, and error states, keyboard point inspection, searchable and sortable evidence, overflow, and serious or critical accessibility findings.
+- **Truthful interaction metadata**: chart contracts advertise point inspection and supported series toggles, but do not claim zoom, visual switching, or image export that the app does not implement.
 - **Lean product surface**: the app reuses the existing tool results and follow-up contracts, adds no browser API layer, loads no external assets, and does not add tools merely to power the UI.
 
 ## [0.8.2] - 2026-08-29

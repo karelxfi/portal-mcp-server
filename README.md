@@ -8,7 +8,7 @@ This server does not index chains itself. It validates user input, maps it onto 
 
 The current v0.8.2 release supports the stateless MCP `2026-07-28` protocol over HTTP and stdio, while retaining the SDK-managed legacy negotiation path for clients still rolling out the revision. No SQD account, API key, or client credential is required.
 
-The unreleased v0.8.3 candidate adds the SQD Blockchain Activity Explorer, adaptive tool execution, complete app runtime metrics, and authoritative data-integrity tests against direct Portal responses. The app uses the current SQD Design System with embedded Inter and JetBrains Mono fonts. It has not been tagged, published, or deployed.
+The unreleased v0.8.3 candidate adds the SQD Blockchain Activity Explorer, adaptive tool execution, complete app runtime metrics, and authoritative data-integrity tests against direct Portal responses. The app uses the current SQD Design System with embedded Inter and JetBrains Mono fonts. It renders distinct market, analytics, and investigation layouts with exact multi-series charts, candle and volume views, evidence tables, chronological gaps, and honest local display limits. It has not been tagged, published, or deployed.
 
 ## Current public surface
 
@@ -102,7 +102,7 @@ When a response uses estimated, partial, sampled, capped, or paginated data, the
 
 Chart-oriented tools also return chart and table descriptors so MCP clients or LLMs can render them without reverse-engineering the payload.
 
-The v0.8.3 candidate includes one portable SQD Blockchain Activity Explorer for 21 data tools. Compatible MCP App hosts can show exact metrics, charts, evidence tables, timelines, coverage, freshness, and continuation controls. The app is self-contained and makes no browser-side network requests. Hosts without MCP App support receive the same `structuredContent` and compact JSON text fallback, so the underlying answer never depends on the UI.
+The v0.8.3 candidate includes one portable SQD Blockchain Activity Explorer for 21 data tools. Compatible MCP App hosts can show exact metrics, multi-series and signed-value charts, right-scaled price candles with linked volume, evidence tables, timelines, coverage, freshness, and continuation controls. Pointer and keyboard inspection expose exact plotted values. Missing buckets remain visible as gaps, identifiers stay unshortened, and any local row cap is separate from server completeness. The app is self-contained and makes no browser-side network requests. Hosts without MCP App support receive the same `structuredContent` and compact JSON text fallback, so the underlying answer never depends on the UI.
 
 ## Install
 

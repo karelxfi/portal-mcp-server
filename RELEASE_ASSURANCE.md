@@ -9,10 +9,14 @@ v0.8.3 keeps the complete v0.8.2 hardening baseline and adds the following requi
 | Portable MCP App contract | Versioned resource, standard MIME and UI metadata, ChatGPT aliases, exact CSP | `test:app-contract` |
 | Structured fallback parity | All 28 tools remain callable; 21 app-enabled tools keep structured and text results | `test:app-contract`, `test:client-journeys` |
 | App capability handling | Declared, unsupported, and undeclared states without client-name branching | `test:app-contract` |
-| Explorer state coverage | Hyperliquid, time series, candles, activity, empty, and error fixtures | `test:app-ui` |
+| Explorer state coverage | Pinned Hyperliquid candles, non-USD token-ratio candles, continuous and sparse time series, grouped series, mixed-sign bars, activity, large tables, empty, and error fixtures | `test:app-ui` |
 | SQD Design System fidelity | Embedded Inter and JetBrains Mono, semantic dark surfaces, status fills, table type, official black-background symbol, and no horizon gradient | `test:app-contract`, `test:app-ui` |
 | Responsive and host-preference coverage | Desktop light preference, desktop dark preference, and mobile light preference for every fixture; the app remains an intentional dark product surface | `test:app-ui` |
-| Accessibility and interaction | Keyboard navigation, overflow, collapsed panels, and zero serious or critical axe findings | `test:app-ui` |
+| Accessibility and interaction | Keyboard point inspection, searchable and sortable evidence, series toggles, overflow, collapsed panels, and zero serious or critical axe findings | `test:app-ui` |
+| Truthful visual contracts | Declared hover and series controls work; unavailable zoom, toolbar, visual switching, and image export remain disabled | `test:app-contract`, `test:app-ui` |
+| Rendered-data parity | Exact candle, volume, line, grouped-series, signed-bar, identifier, and displayed-row values reconcile with structured content | `test:app-ui` |
+| Chronology and gap fidelity | Shuffled inputs render in declared x order; missing buckets are not joined into false continuity; positive and negative bars share a correct zero baseline | `test:app-ui` |
+| App performance budgets | Bundle below 700 KB, initial render below 1 second per cell, interaction p95 below 250 ms, bounded DOM | `test:app-contract`, `test:app-ui` |
 | Authoritative data integrity | Direct Portal parity for complete EVM, Solana, Bitcoin, Substrate, and Hyperliquid evidence, including raw-fill candle reproduction | `test:data-integrity` |
 | Coverage and continuation truthfulness | Pagination promises a cursor, remaining-result cursors mark the result incomplete, adjacent-window cursors are distinct, and paged identities have no gaps or duplicates | `test:tools`, `test:data-integrity` |
 | Adaptive tool admission | Four weighted work classes, fair promotion, cancellation, timeout, overload, and zero capacity leaks | `test:tool-admission` |

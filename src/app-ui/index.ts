@@ -1,5 +1,6 @@
 import { App, applyDocumentTheme, applyHostFonts, applyHostStyleVariables } from '@modelcontextprotocol/ext-apps'
 
+import { planFollowup } from './followup-state.js'
 import { type ExplorerActions, type ExplorerState, isRecord, renderExplorer } from './view.js'
 
 const root = document.getElementById('app')
@@ -46,7 +47,7 @@ function applyHostContext(context: ReturnType<typeof app.getHostContext>) {
 
 const actions: ExplorerActions = {
   async runFollowup(intent, target, action) {
-    if (intent === 'drilldown' && target) {
+    if ((intent === 'drilldown' || intent === 'show_raw') && target) {
       const value = state.payload
         ? target
             .split('.')
@@ -68,23 +69,29 @@ const actions: ExplorerActions = {
       update({ error: 'This result does not include a safe follow-up tool.' })
       return
     }
-    let args: Record<string, unknown> = isRecord(action?.arguments) ? action.arguments : { ...state.currentArgs }
-    if (intent === 'continue') {
-      const pagination = state.payload && isRecord(state.payload._pagination) ? state.payload._pagination : undefined
-      if (typeof pagination?.next_cursor !== 'string') return
-      args = { cursor: pagination.next_cursor }
-    } else if (intent === 'compare_previous') args = { ...state.currentArgs, compare_previous: true }
-    else if (intent === 'zoom_in') {
-      const duration = typeof state.currentArgs.duration === 'string' ? state.currentArgs.duration : undefined
-      const zoom: Record<string, string> = { '30d': '7d', '7d': '24h', '24h': '6h', '6h': '1h' }
-      args = { ...state.currentArgs, ...(duration && zoom[duration] ? { duration: zoom[duration] } : {}) }
+    const pagination = state.payload && isRecord(state.payload._pagination) ? state.payload._pagination : undefined
+    const plan = planFollowup({
+      intent,
+      currentArgs: state.currentArgs,
+      nextCursor: pagination?.next_cursor,
+      actionArguments: action?.arguments,
+    })
+    if (plan.error || !plan.callArgs || !plan.persistedArgs) {
+      update({ error: plan.error ?? 'This follow-up cannot be reconstructed safely.' })
+      return
     }
     update({ loading: true, error: '' })
     try {
-      const result = await app.callServerTool({ name: toolName, arguments: args })
+      const result = await app.callServerTool({ name: toolName, arguments: plan.callArgs })
       const rawText = extractText(result.content)
       const payload = isRecord(result.structuredContent) ? result.structuredContent : parseText(rawText)
-      update({ payload, rawText, loading: false, error: result.isError ? rawText || 'SQD returned an error.' : '' })
+      update({
+        payload,
+        rawText,
+        currentArgs: plan.persistedArgs,
+        loading: false,
+        error: result.isError ? rawText || 'SQD returned an error.' : '',
+      })
     } catch (error) {
       update({ loading: false, error: error instanceof Error ? error.message : 'The follow-up request failed.' })
     }

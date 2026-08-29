@@ -13,6 +13,8 @@ import {
   recordActivityExplorerResult,
 } from '../src/apps/activity-explorer.js'
 import { ACTIVITY_EXPLORER_BYTES, ACTIVITY_EXPLORER_HASH } from '../src/generated/activity-explorer.version.js'
+import { planFollowup, shorterDuration } from '../src/app-ui/followup-state.js'
+import { buildCandlestickChart, buildTimeSeriesChart } from '../src/helpers/chart-metadata.js'
 import { register } from '../src/metrics.js'
 import { createPortalServer } from '../src/server.js'
 
@@ -21,6 +23,25 @@ function assert(condition: unknown, message: string): asserts condition {
 }
 
 async function main() {
+  assert(shorterDuration('in last 38 mins') === '19m', 'natural-language chart windows should narrow deterministically')
+  const continuationPlan = planFollowup({
+    intent: 'continue',
+    currentArgs: { network: 'hyperliquid-fills', coin: 'BTC', duration: '1h', cursor: 'old' },
+    nextCursor: 'next',
+  })
+  assert(
+    JSON.stringify(continuationPlan.callArgs) === JSON.stringify({ cursor: 'next' }) &&
+      JSON.stringify(continuationPlan.persistedArgs) === JSON.stringify({ network: 'hyperliquid-fills', coin: 'BTC', duration: '1h' }),
+    'continuation should call by cursor while preserving the investigation arguments for later follow-ups',
+  )
+  const timeSeriesContract = buildTimeSeriesChart({ interval: '1m', totalPoints: 2 })
+  const candleContract = buildCandlestickChart({ interval: '1m', totalCandles: 2 })
+  for (const [name, chart] of [['time series', timeSeriesContract], ['candlestick', candleContract]] as const) {
+    assert(chart.interactions?.hover?.enabled === true, `${name} charts should declare exact point inspection`)
+    assert(chart.interactions?.zoom?.enabled === false, `${name} charts must not advertise unimplemented zoom`)
+    assert(chart.interactions?.toolbar?.enabled === false, `${name} charts must not advertise an unimplemented toolbar`)
+    assert(chart.interactions?.toolbar?.actions.length === 0, `${name} charts must not advertise unavailable actions`)
+  }
   assert(
     ACTIVITY_EXPLORER_HASH !== 'unbuilt' && /^[a-f0-9]{12}$/.test(ACTIVITY_EXPLORER_HASH),
     'app resource needs a content hash',

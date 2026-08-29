@@ -540,7 +540,7 @@ function buildComparePreviousUi(metric: TimeSeriesMetric): ReturnType<typeof bui
     ],
     follow_up_actions: [
       { label: 'Show raw comparison rows', intent: 'show_raw', target: 'comparison_series' },
-      { label: 'Zoom into the latest divergence', intent: 'zoom_in', target: 'chart' },
+      { label: 'Query a shorter comparison window', intent: 'zoom_in', target: 'chart' },
     ],
   })
 }
@@ -586,7 +586,7 @@ function buildGroupedContractUi(): ReturnType<typeof buildPortalUi> {
     ],
     follow_up_actions: [
       { label: 'Show raw grouped rows', intent: 'show_raw', target: 'time_series' },
-      { label: 'Zoom into the latest buckets', intent: 'zoom_in', target: 'chart' },
+      { label: 'Query a shorter recent window', intent: 'zoom_in', target: 'chart' },
     ],
   })
 }
