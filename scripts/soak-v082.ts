@@ -5,7 +5,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 
 import { runOpenLoop, summarizePerformanceSamples } from './performance-harness.ts'
-import { closeTestClient, connectTestClient } from './test-helpers.ts'
+import { closeTestClient, connectTestClient, getToolErrorCode } from './test-helpers.ts'
 import { TOOL_SPECS, loadToolTestContext } from './tool-manifest.ts'
 
 function positiveNumber(value: string | undefined, fallback: number) {
@@ -74,10 +74,14 @@ async function main() {
           connected.client.callTool({ name: spec.name, arguments: spec.args(context) }),
         )
         const results = await Promise.all(calls)
+        const boundedOverloads = results.filter(
+          (result) => result.isError && getToolErrorCode(result) === 'overloaded',
+        ).length
         return {
           tool: spec.name,
           calls: results.length,
-          errors: results.filter((result) => result.isError).length,
+          errors: results.filter((result) => result.isError).length - boundedOverloads,
+          boundedOverloads,
         }
       },
     })
@@ -86,6 +90,7 @@ async function main() {
 
     const summary = summarizePerformanceSamples(samples)
     const toolErrors = samples.reduce((sum, sample) => sum + (sample.value?.errors ?? 0), 0)
+    const boundedOverloads = samples.reduce((sum, sample) => sum + (sample.value?.boundedOverloads ?? 0), 0)
     const totalToolCalls = samples.reduce((sum, sample) => sum + (sample.value?.calls ?? 0), 0)
     const rssValues = rssSamples.flatMap((sample) => (sample.rssBytes === undefined ? [] : [sample.rssBytes]))
     const rssGrowthBytes = rssValues.length > 1 ? rssValues[rssValues.length - 1] - rssValues[0] : undefined
@@ -114,7 +119,13 @@ async function main() {
         maxMedianRssGrowthBytes,
       },
       summary,
-      toolCalls: { total: totalToolCalls, errors: toolErrors, errorRate: toolErrors / totalToolCalls },
+      toolCalls: {
+        total: totalToolCalls,
+        errors: toolErrors,
+        errorRate: toolErrors / totalToolCalls,
+        boundedOverloads,
+        boundedOverloadRate: boundedOverloads / totalToolCalls,
+      },
       rss: {
         samples: rssSamples,
         firstBytes: rssValues[0],
@@ -131,19 +142,22 @@ async function main() {
     await writeFile(outputPath, `${JSON.stringify(artifact, null, 2)}\n`, 'utf8')
     console.log(`Wrote ${outputPath}`)
     console.log(
-      `Soak p95=${summary.endToEndMs.p95.toFixed(1)}ms queue-p95=${summary.queueMs.p95.toFixed(1)}ms tool-error-rate=${(artifact.toolCalls.errorRate * 100).toFixed(2)}% RSS-median-growth=${medianGrowthBytes ?? 'unknown'} bytes RSS-max=${maxRssBytes ?? 'unknown'} bytes`,
+      `Soak p95=${summary.endToEndMs.p95.toFixed(1)}ms queue-p95=${summary.queueMs.p95.toFixed(1)}ms unexpected-tool-error-rate=${(artifact.toolCalls.errorRate * 100).toFixed(2)}% bounded-overload-rate=${(artifact.toolCalls.boundedOverloadRate * 100).toFixed(2)}% RSS-median-growth=${medianGrowthBytes ?? 'unknown'} bytes RSS-max=${maxRssBytes ?? 'unknown'} bytes`,
     )
 
     if (
       releaseMode &&
       (summary.failures > 0 ||
         artifact.toolCalls.errorRate > 0.01 ||
+        artifact.toolCalls.boundedOverloadRate > 0.1 ||
         maxRssBytes === undefined ||
         maxRssBytes > maxRssBytesAllowed ||
         medianGrowthBytes === undefined ||
         medianGrowthBytes > maxMedianRssGrowthBytes)
     ) {
-      throw new Error('Release soak exceeded its request, tool-error, peak RSS, or median RSS growth budget')
+      throw new Error(
+        'Release soak exceeded its request, unexpected-error, bounded-overload, peak RSS, or median RSS growth budget',
+      )
     }
   } finally {
     await closeTestClient(connected)

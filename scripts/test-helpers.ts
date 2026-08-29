@@ -1,6 +1,6 @@
 #!/usr/bin/env tsx
 
-import { Client as McpClient, type Client } from '@modelcontextprotocol/client'
+import { type Client, Client as McpClient } from '@modelcontextprotocol/client'
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio'
 
 export type ConnectedTestClient = {
@@ -87,6 +87,11 @@ export function getStructuredContent(result: any): Record<string, any> | undefin
     : undefined
 }
 
+export function getToolErrorCode(result: any): string | undefined {
+  const error = getStructuredContent(result)?.error
+  return error && typeof error === 'object' && typeof error.code === 'string' ? error.code : undefined
+}
+
 export function parseToolResultData(result: any): { data: any; source: 'structuredContent' | 'text' } {
   const structuredContent = getStructuredContent(result)
   if (structuredContent) {
@@ -133,14 +138,20 @@ function assertStringArray(value: unknown, label: string, options?: { nonEmpty?:
   if (options?.nonEmpty) {
     assert(value.length > 0, `${label} should not be empty`)
   }
-  assert(value.every((item) => typeof item === 'string' && item.length > 0), `${label} should contain only non-empty strings`)
+  assert(
+    value.every((item) => typeof item === 'string' && item.length > 0),
+    `${label} should contain only non-empty strings`,
+  )
 }
 
 function assertSafeExecutableArguments(value: unknown, label: string) {
   assertRecord(value, label)
   const text = JSON.stringify(value)
   assert(!/\bhttps?:\/\//i.test(text), `${label} should not contain raw URLs`)
-  assert(!/"[^"]*(secret|token|api[_-]?key|authorization|password|cookie|url)[^"]*"\s*:/i.test(text), `${label} should not expose secret-like argument keys`)
+  assert(
+    !/"[^"]*(secret|token|api[_-]?key|authorization|password|cookie|url)[^"]*"\s*:/i.test(text),
+    `${label} should not expose secret-like argument keys`,
+  )
 }
 
 function assertFollowUpActions(value: unknown, label: string, options?: { requireExecutableArguments?: boolean }) {
@@ -211,10 +222,16 @@ export function assertChatSurface(parsed: any, label: string, options?: { expect
   assertRecord(parsed._coverage, `${label} _coverage`)
   assertNonEmptyString(parsed._coverage.kind, `${label} _coverage.kind`)
   if (parsed._coverage.window_complete !== undefined) {
-    assert(typeof parsed._coverage.window_complete === 'boolean', `${label} _coverage.window_complete should be boolean`)
+    assert(
+      typeof parsed._coverage.window_complete === 'boolean',
+      `${label} _coverage.window_complete should be boolean`,
+    )
   }
   if (parsed._coverage.result_complete !== undefined) {
-    assert(typeof parsed._coverage.result_complete === 'boolean', `${label} _coverage.result_complete should be boolean`)
+    assert(
+      typeof parsed._coverage.result_complete === 'boolean',
+      `${label} _coverage.result_complete should be boolean`,
+    )
   }
   assertRecord(parsed._ordering, `${label} _ordering`)
   assertNonEmptyString(parsed._ordering.kind, `${label} _ordering.kind`)
@@ -268,7 +285,9 @@ export function assertErrorQuality(text: string, label: string) {
   assert(text.length > 0, `${label} error should not be empty`)
   assert(!/TypeError|ReferenceError|SyntaxError|at .*:\d+:\d+/i.test(text), `${label} should not leak stack traces`)
   assert(
-    /Suggestions:|supported|required|Unknown network|does not support network|Invalid|cannot be used together/i.test(text),
+    /Suggestions:|supported|required|Unknown network|does not support network|Invalid|cannot be used together/i.test(
+      text,
+    ),
     `${label} should explain the problem clearly`,
   )
 }

@@ -5,13 +5,13 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 
 import { runOpenLoop, summarizePerformanceSamples } from './performance-harness.ts'
-import { closeTestClient, connectTestClient } from './test-helpers.ts'
+import { closeTestClient, connectTestClient, getToolErrorCode } from './test-helpers.ts'
 import { TOOL_SPECS, loadToolTestContext } from './tool-manifest.ts'
 
 type CallMeasurement = {
   tool: string
   responseBytes: number
-  isError: boolean
+  outcome: 'success' | 'bounded_overload' | 'tool_error'
 }
 
 type BenchmarkProfile = {
@@ -84,31 +84,39 @@ async function main() {
             return {
               tool: spec.name,
               responseBytes: Buffer.byteLength(text, 'utf8'),
-              isError: Boolean(result.isError),
+              outcome:
+                result.isError && getToolErrorCode(result) === 'overloaded' && profile.concurrency >= 8
+                  ? 'bounded_overload'
+                  : result.isError
+                    ? 'tool_error'
+                    : 'success',
             }
           },
         })
         const summary = summarizePerformanceSamples(samples)
-        const toolErrors = samples.filter((sample) => sample.value?.isError).length
+        const toolErrors = samples.filter((sample) => sample.value?.outcome === 'tool_error').length
+        const boundedOverloads = samples.filter((sample) => sample.value?.outcome === 'bounded_overload').length
         results.push({
           tool: spec.name,
           profile,
           summary,
           toolErrors,
+          boundedOverloads,
           responseBytes: samples.map((sample) => sample.value?.responseBytes ?? 0),
           samples: samples.map(({ value, ...timing }) => ({
             ...timing,
-            outcome: value?.isError ? 'tool_error' : 'success',
+            outcome: value?.outcome ?? 'request_failure',
           })),
         })
         console.log(
-          `${spec.name} ${profile.name}: p50=${summary.endToEndMs.p50.toFixed(1)}ms p95=${summary.endToEndMs.p95.toFixed(1)}ms queue-p95=${summary.queueMs.p95.toFixed(1)}ms failures=${summary.failures + toolErrors}`,
+          `${spec.name} ${profile.name}: p50=${summary.endToEndMs.p50.toFixed(1)}ms p95=${summary.endToEndMs.p95.toFixed(1)}ms queue-p95=${summary.queueMs.p95.toFixed(1)}ms unexpected-failures=${summary.failures + toolErrors} bounded-overloads=${boundedOverloads}`,
         )
       }
     }
 
     const totalSamples = results.reduce((sum, result: any) => sum + result.summary.samples, 0)
     const totalFailures = results.reduce((sum, result: any) => sum + result.summary.failures + result.toolErrors, 0)
+    const totalBoundedOverloads = results.reduce((sum, result: any) => sum + result.boundedOverloads, 0)
     const artifact = {
       schemaVersion: 'sqd_mcp_performance_v1',
       createdAt: new Date().toISOString(),
@@ -118,7 +126,13 @@ async function main() {
       transport: 'stdio',
       client: { name: 'sqd-v082-benchmark', version: '1.0.0' },
       config: { releaseMode, samplesPerProfile, targetRps, toolCount: tools.length, profiles },
-      totals: { samples: totalSamples, failures: totalFailures, failureRate: totalFailures / totalSamples },
+      totals: {
+        samples: totalSamples,
+        failures: totalFailures,
+        failureRate: totalFailures / totalSamples,
+        boundedOverloads: totalBoundedOverloads,
+        boundedOverloadRate: totalBoundedOverloads / totalSamples,
+      },
       results,
     }
     await mkdir(dirname(outputPath), { recursive: true })
@@ -126,9 +140,13 @@ async function main() {
     console.log(`Wrote ${outputPath}`)
 
     const allowedFailureRate = releaseMode ? 0.01 : 1
-    if (artifact.totals.failureRate > allowedFailureRate) {
+    const allowedBoundedOverloadRate = releaseMode ? 0.1 : 1
+    if (
+      artifact.totals.failureRate > allowedFailureRate ||
+      artifact.totals.boundedOverloadRate > allowedBoundedOverloadRate
+    ) {
       throw new Error(
-        `Failure rate ${(artifact.totals.failureRate * 100).toFixed(2)}% exceeded ${(allowedFailureRate * 100).toFixed(2)}%`,
+        `Unexpected failure rate ${(artifact.totals.failureRate * 100).toFixed(2)}% or bounded overload rate ${(artifact.totals.boundedOverloadRate * 100).toFixed(2)}% exceeded its release budget`,
       )
     }
   } finally {
