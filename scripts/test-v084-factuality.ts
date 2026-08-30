@@ -147,12 +147,15 @@ function assertChecksumValidation() {
   const validSegwitAddress = 'bc1qqmgu6nlmzf02444jtwer9uptrfn9tk6gahevs6'
   const uppercaseSegwitAddress = validSegwitAddress.toUpperCase()
   const mixedCaseSegwitAddress = `bC${validSegwitAddress.slice(2)}`
+  const corruptSegwitChecksum = `${validSegwitAddress.slice(0, -1)}7`
   assert(isValidBitcoinAddress('1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa'), 'known Bitcoin mainnet address must pass checksum validation')
   assert(!isValidBitcoinAddress('1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNb'), 'corrupted Bitcoin checksum must fail')
   assert(!isValidBitcoinAddress('mipcBbFg9gMiCh81Kj8tqqdgoZub1ZJRfn'), 'Bitcoin testnet addresses must fail on the mainnet dataset')
   assert(isValidBitcoinAddress(validSegwitAddress), 'known lowercase Bitcoin SegWit address must pass checksum validation')
   assert(isValidBitcoinAddress(uppercaseSegwitAddress), 'valid uppercase Bitcoin SegWit address must pass checksum validation')
   assert(!isValidBitcoinAddress(mixedCaseSegwitAddress), 'mixed-case Bitcoin SegWit address must fail checksum validation')
+  assert(!isValidBitcoinAddress(corruptSegwitChecksum), 'lowercase Bitcoin SegWit address with a corrupt checksum must fail')
+  assert(!isValidBitcoinAddress(corruptSegwitChecksum.toUpperCase()), 'uppercase Bitcoin SegWit address with a corrupt checksum must fail')
   assert(
     normalizeBitcoinAddressForPortal(uppercaseSegwitAddress) === validSegwitAddress,
     'uppercase bech32 addresses must be normalized before Portal filtering',
