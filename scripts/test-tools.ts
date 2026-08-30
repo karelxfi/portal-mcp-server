@@ -9,6 +9,7 @@ import {
   connectTestClient,
   extractJson,
   getText,
+  sleep,
 } from './test-helpers.ts'
 import { LEGACY_TOOL_NAMES, TOOL_SPECS, loadToolTestContext } from './tool-manifest.ts'
 
@@ -160,6 +161,7 @@ async function main() {
     const perf: Array<{ name: string; elapsedMs: number; attempts: number }> = []
 
     for (const spec of TOOL_SPECS) {
+      if (passed + failed > 0) await sleep(400)
       const args = spec.args(context)
       const serializedArgs = JSON.stringify(args)
       const testLabel = `${spec.name} <- "${spec.prompt}" (${serializedArgs.slice(0, 80)}${serializedArgs.length > 80 ? '...' : ''})`

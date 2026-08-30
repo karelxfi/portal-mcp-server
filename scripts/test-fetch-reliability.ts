@@ -10,7 +10,7 @@ import { InMemoryTransport } from '@modelcontextprotocol/server'
 import { createQueryCache } from '../src/cache/query-cache.js'
 import { AdmissionController } from '../src/helpers/admission.js'
 import { scanBoundedBlockRange } from '../src/helpers/bounded-search.js'
-import { ActionableError, RequestCancelledError } from '../src/helpers/errors.js'
+import { ActionableError, RequestCancelledError, parsePortalError } from '../src/helpers/errors.js'
 import { fetchExternalJson } from '../src/helpers/external-apis.js'
 import {
   computeRetryAttemptTimeoutMs,
@@ -86,6 +86,19 @@ async function main() {
     'internal server errors should not be treated as bounded upstream errors',
   )
   console.log('PASS  structured retryable errors are classified without relying on display text')
+
+  const portalOverload = parsePortalError(
+    529,
+    JSON.stringify({ error: { type: 'rate_limit_error', code: 'overloaded', message: 'service is overloaded' } }),
+  )
+  assert(
+    portalOverload.code === 'rate_limited' &&
+      portalOverload.origin === 'upstream' &&
+      portalOverload.retryable &&
+      portalOverload.retryAfterMs === 5_000,
+    'Portal 529 overloads should expose bounded rate-limit retry guidance',
+  )
+  console.log('PASS  Portal 529 overloads expose structured retry guidance')
 
   let activeScans = 0
   let maxActiveScans = 0

@@ -447,6 +447,8 @@ export function parsePortalError(
     origin: 'upstream',
     retryable: status >= 500,
   }
+  const upstreamOverloaded =
+    status === 529 || /\"type\"\s*:\s*\"rate_limit_error\"|\"code\"\s*:\s*\"overloaded\"|service is overloaded/i.test(errorText)
 
   // 400 Bad Request - Parse detailed error
   if (status === 400) {
@@ -548,6 +550,16 @@ export function parsePortalError(
     suggestions.push('Consider caching results')
   }
 
+  // Portal may use 529 for capacity overloads. Treat it as an explicit rate
+  // limit so clients receive truthful retry guidance instead of a generic 5xx.
+  if (upstreamOverloaded) {
+    const retryAfterMs = 5_000
+    message = 'Portal is temporarily overloaded. Retry after 5 seconds'
+    metadata = { code: 'rate_limited', origin: 'upstream', retryable: true, retryAfterMs }
+    suggestions.push('Wait at least 5 seconds before retrying the same request')
+    suggestions.push('Reduce request frequency if overloads continue')
+  }
+
   // 503 Worker unavailable
   if (status === 503) {
     message = `Portal worker temporarily unavailable (503): ${errorText}`
@@ -559,7 +571,7 @@ export function parsePortalError(
   }
 
   // Other 5xx Server Errors
-  if (status >= 500 && status !== 503) {
+  if (status >= 500 && status !== 503 && !upstreamOverloaded) {
     message = `Portal server error (${status}): ${errorText}`
     metadata = { code: 'upstream_error', origin: 'upstream', retryable: true }
     suggestions.push('This is a Portal API infrastructure issue')
