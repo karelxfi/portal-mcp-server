@@ -26,7 +26,9 @@ async function main() {
   const lookup = getToolWorkProfile('portal_get_head')
   const raw = getToolWorkProfile('portal_evm_query_transactions')
   const analytics = getToolWorkProfile('portal_hyperliquid_get_analytics')
+  const wallet = getToolWorkProfile('portal_get_wallet_summary')
   assert(lookup.weight === 1 && raw.weight === 8 && analytics.weight === 16, 'tool cost classes should stay explicit')
+  assert(wallet.class === 'summary' && wallet.weight === 16, 'wallet scans should admit at most two concurrent calls')
   assert(
     DEFAULT_TOOL_WEIGHT_BUDGET / analytics.weight === 2,
     'the default scheduler budget must cap concurrent analytics at the measured memory-safe level',

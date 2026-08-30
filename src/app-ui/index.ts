@@ -4,6 +4,8 @@ import { evidenceArguments, planFollowup } from './followup-state.js'
 import { downloadEvidence } from './export.js'
 import { type ExplorerActions, type ExplorerState, isRecord, renderExplorer } from './view.js'
 
+declare const __SQD_APP_VERSION__: string
+
 const root = document.getElementById('app')
 if (!root) throw new Error('SQD Activity Explorer root is missing')
 
@@ -21,7 +23,11 @@ type Snapshot = Pick<ExplorerState, 'payload' | 'rawText' | 'currentArgs' | 'err
 const history: Snapshot[] = []
 let historyIndex = -1
 
-const app = new App({ name: 'sqd-blockchain-activity-explorer', version: '0.8.3' }, {}, { strict: true })
+const app = new App(
+  { name: 'sqd-blockchain-activity-explorer', version: __SQD_APP_VERSION__ },
+  {},
+  { strict: true },
+)
 
 function update(next: Partial<ExplorerState>) {
   state = { ...state, ...next }

@@ -26,6 +26,7 @@ function assert(condition: unknown, message: string): asserts condition {
 }
 
 async function main() {
+  const packageVersion = String(JSON.parse(await readFile('package.json', 'utf8')).version || '')
   const appResult = formatResult(
     { items: [{ primary_id: 'fixture-row' }] },
     'Fixture result',
@@ -139,6 +140,7 @@ async function main() {
     )
     assert(
       content.text.includes('Blockchain Activity Explorer')
+        && content.text.includes(`version:${JSON.stringify(packageVersion)}`)
         && content.text.includes('viewBox="0 0 306 306"')
         && content.text.includes('#08090a')
         && content.text.includes('#818cf8')

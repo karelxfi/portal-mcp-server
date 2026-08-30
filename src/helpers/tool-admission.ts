@@ -46,6 +46,8 @@ const PROFILES: Record<ToolWorkClass, ToolWorkProfile> = {
   analytics: { class: 'analytics', weight: 16 },
 }
 
+const WALLET_PROFILE: ToolWorkProfile = { class: 'summary', weight: 16 }
+
 const ANALYTICS = new Set([
   'portal_evm_get_analytics',
   'portal_solana_get_analytics',
@@ -72,6 +74,7 @@ const LOOKUPS = new Set([
 ])
 
 export function getToolWorkProfile(toolName: string): ToolWorkProfile {
+  if (toolName === 'portal_get_wallet_summary') return WALLET_PROFILE
   if (ANALYTICS.has(toolName)) return PROFILES.analytics
   if (SUMMARIES.has(toolName)) return PROFILES.summary
   if (LOOKUPS.has(toolName)) return PROFILES.lookup

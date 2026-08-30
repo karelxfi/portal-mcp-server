@@ -7,6 +7,9 @@ import { build } from 'esbuild'
 const root = process.cwd()
 const output = path.join(root, 'src/generated/activity-explorer.generated.ts')
 const versionOutput = path.join(root, 'src/generated/activity-explorer.version.ts')
+const packageMetadata = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'))
+const appVersion = String(packageMetadata.version || '')
+if (!/^\d+\.\d+\.\d+$/.test(appVersion)) throw new Error(`Invalid SQD app version: ${appVersion}`)
 const interFont = await readFile(path.join(root, 'src/app-ui/assets/inter-latin.woff2'))
 const monoFont = await readFile(path.join(root, 'src/app-ui/assets/jetbrains-mono-latin.woff2'))
 const fontDataUrl = (mime, bytes) => `data:${mime};base64,${bytes.toString('base64')}`
@@ -25,6 +28,7 @@ const result = await build({
   sourcemap: false,
   define: {
     'process.env.NODE_ENV': '"production"',
+    __SQD_APP_VERSION__: JSON.stringify(appVersion),
     __SQD_INTER_DATA_URL__: JSON.stringify(fontDataUrl('font/woff2', interFont)),
     __SQD_MONO_DATA_URL__: JSON.stringify(fontDataUrl('font/woff2', monoFont)),
   },
