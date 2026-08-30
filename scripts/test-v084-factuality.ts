@@ -144,11 +144,17 @@ function assertExactAssetQuantities() {
 }
 
 function assertChecksumValidation() {
+  const validSegwitAddress = 'bc1qqmgu6nlmzf02444jtwer9uptrfn9tk6gahevs6'
+  const uppercaseSegwitAddress = validSegwitAddress.toUpperCase()
+  const mixedCaseSegwitAddress = `bC${validSegwitAddress.slice(2)}`
   assert(isValidBitcoinAddress('1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa'), 'known Bitcoin mainnet address must pass checksum validation')
   assert(!isValidBitcoinAddress('1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNb'), 'corrupted Bitcoin checksum must fail')
   assert(!isValidBitcoinAddress('mipcBbFg9gMiCh81Kj8tqqdgoZub1ZJRfn'), 'Bitcoin testnet addresses must fail on the mainnet dataset')
+  assert(isValidBitcoinAddress(validSegwitAddress), 'known lowercase Bitcoin SegWit address must pass checksum validation')
+  assert(isValidBitcoinAddress(uppercaseSegwitAddress), 'valid uppercase Bitcoin SegWit address must pass checksum validation')
+  assert(!isValidBitcoinAddress(mixedCaseSegwitAddress), 'mixed-case Bitcoin SegWit address must fail checksum validation')
   assert(
-    normalizeBitcoinAddressForPortal('BC1QEXAMPLE') === 'bc1qexample',
+    normalizeBitcoinAddressForPortal(uppercaseSegwitAddress) === validSegwitAddress,
     'uppercase bech32 addresses must be normalized before Portal filtering',
   )
   assert(isValidTronAddress('TJRabPrwbZy45sbavfcjinPJC18kjpRTv8'), 'known Tron base58check address must pass')
@@ -239,18 +245,22 @@ async function assertLiveAggregateAndOhlcParity() {
     const solanaAddress = String(solanaFixture.data?.items?.[0]?.feePayer ?? solanaFixture.data?.items?.[0]?.sender ?? '')
     assert(solanaAddress.length > 20, 'Solana wallet fixture must expose a fee payer')
 
-    const hyperliquidFixture = await callToolWithRetry(connected.client, 'portal_hyperliquid_query_fills', {
+    const hyperliquidFixture = await callToolWithRetry(connected.client, 'portal_hyperliquid_get_analytics', {
       network: 'hyperliquid-fills',
-      timeframe: '5m',
-      limit: 1,
-    }, { retries: 2 })
+      timeframe: '1h',
+      response_format: 'compact',
+      section_limit: 10,
+    }, { retries: 3, totalBudgetMs: 90_000 })
     assert(!hyperliquidFixture.isError, `Hyperliquid wallet fixture must resolve: ${hyperliquidFixture.text.slice(0, 240)}`)
-    const hyperliquidAddress = String(hyperliquidFixture.data?.items?.[0]?.user ?? '')
-    assert(hyperliquidAddress.startsWith('0x'), 'Hyperliquid wallet fixture must expose a user')
+    const hyperliquidTrader = [...(hyperliquidFixture.data?.top_traders_by_volume ?? [])]
+      .sort((left: any, right: any) => Number(right.fill_count ?? 0) - Number(left.fill_count ?? 0))
+      .find((row: any) => Number(row.fill_count ?? 0) > 5)
+    const hyperliquidAddress = String(hyperliquidTrader?.user ?? '')
+    assert(hyperliquidAddress.startsWith('0x'), 'Hyperliquid fixture must prove an active trader with more than one wallet page')
 
     for (const [network, address, timeframe] of [
       ['solana-mainnet', solanaAddress, '1h'],
-      ['hyperliquid-fills', hyperliquidAddress, '5m'],
+      ['hyperliquid-fills', hyperliquidAddress, '1h'],
     ] as const) {
       const first = await callToolWithRetry(connected.client, 'portal_get_wallet_summary', {
         network,

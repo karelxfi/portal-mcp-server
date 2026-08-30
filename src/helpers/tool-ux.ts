@@ -1021,7 +1021,7 @@ const TOOL_DEFINITIONS: Record<string, ToolDefinition> = {
     ],
     avoid_when: ['You only need public trading activity; fills and analytics are usually the better fit.'],
     examples: [
-      { label: 'Recent order actions', input: { network: 'hyperliquid-replica-cmds', timeframe: '1h', limit: 20 } },
+      { label: 'Recent order action', input: { network: 'hyperliquid-replica-cmds', timeframe: '5m', limit: 1 } },
     ],
     supports: {
       pagination: true,
