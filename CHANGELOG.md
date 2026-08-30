@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.8.4] - Unreleased
+## [0.8.4] - 2026-08-31
 
 Portal MCP v0.8.4 makes factual completeness a release requirement across every supported data family. It fixes confirmed timestamp, identity, pagination, aggregate, wallet, candle, validation, and response-budget defects, then checks the same answers against direct SQD Portal evidence.
 
