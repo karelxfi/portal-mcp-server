@@ -6,9 +6,9 @@ Thin MCP wrapper around the [SQD Portal API](https://portal.sqd.dev) for blockch
 
 This server does not index chains itself. It validates user input, maps it onto Portal requests, and returns MCP-friendly responses.
 
-The current v0.8.2 release supports the stateless MCP `2026-07-28` protocol over HTTP and stdio, while retaining the SDK-managed legacy negotiation path for clients still rolling out the revision. No SQD account, API key, or client credential is required.
+The current v0.8.3 release supports the stateless MCP `2026-07-28` protocol over HTTP and stdio, while retaining the SDK-managed legacy negotiation path for clients still rolling out the revision. No SQD account, API key, or client credential is required.
 
-The unreleased v0.8.3 candidate adds reproducible evidence receipts, three guided investigation prompts, the SQD Blockchain Activity Explorer, adaptive tool execution, complete app runtime metrics, authoritative data-integrity tests against direct Portal responses, and fast reuse of repeated EVM candle snapshots. The app uses the current SQD Design System with embedded Inter and JetBrains Mono fonts. It renders distinct wallet, contract, network, and market workspaces with exact multi-series charts, candle and volume views, searchable evidence tables, chronological gaps, range focus, saved in-session investigations, and JSON or CSV export. It has not been tagged, published, or deployed.
+v0.8.3 adds reproducible evidence receipts, three guided investigation prompts, the SQD Blockchain Activity Explorer, adaptive tool execution, complete app runtime metrics, authoritative data-integrity tests against direct Portal responses, and fast reuse of repeated EVM candle snapshots. The app uses the current SQD Design System with embedded Inter and JetBrains Mono fonts. It renders distinct wallet, contract, network, and market workspaces with exact multi-series charts, candle and volume views, searchable evidence tables, chronological gaps, range focus, saved in-session investigations, and JSON or CSV export.
 
 ## Current public surface
 
@@ -102,7 +102,7 @@ When a response uses estimated, partial, sampled, capped, or paginated data, the
 
 Chart-oriented tools also return chart and table descriptors so MCP clients or LLMs can render them without reverse-engineering the payload.
 
-The v0.8.3 candidate includes one portable SQD Blockchain Activity Explorer for 21 data tools. Compatible MCP App hosts can move between Overview, Chart, Evidence, and Investigation views; inspect exact metrics, multi-series and signed-value charts, right-scaled price candles with linked volume, tables, timelines, coverage, freshness, and continuation controls; focus a time range; retain investigation history for the current app session; and export the received evidence as JSON or CSV. Pointer and keyboard inspection expose exact plotted values. Missing buckets remain visible as gaps, identifiers stay unshortened, and any local row cap is separate from server completeness. The app is self-contained, does not use persistent browser storage, and makes no browser-side network requests. Hosts without MCP App support receive the same `structuredContent` and compact JSON text fallback, so the underlying answer never depends on the UI.
+v0.8.3 includes one portable SQD Blockchain Activity Explorer for 21 data tools. Compatible MCP App hosts can move between Overview, Chart, Evidence, and Investigation views; inspect exact metrics, multi-series and signed-value charts, right-scaled price candles with linked volume, tables, timelines, coverage, freshness, and continuation controls; focus a time range; retain investigation history for the current app session; and export the received evidence as JSON or CSV. Pointer and keyboard inspection expose exact plotted values. Missing buckets remain visible as gaps, identifiers stay unshortened, and any local row cap is separate from server completeness. The app is self-contained, does not use persistent browser storage, and makes no browser-side network requests. Hosts without MCP App support receive the same `structuredContent` and compact JSON text fallback, so the underlying answer never depends on the UI.
 
 Three MCP prompts provide reproducible starting points without adding tools:
 
@@ -226,7 +226,7 @@ Useful environment variables:
 
 ## Tests
 
-The [release-assurance contract](RELEASE_ASSURANCE.md) defines the complete v0.8.2 baseline and the additional v0.8.3 candidate gates. “100%” refers to every applicable cell in the declared matrix, not a claim that upstream networks can never fail.
+The [release-assurance contract](RELEASE_ASSURANCE.md) defines the complete v0.8.2 baseline and the additional v0.8.3 gates. “100%” refers to every applicable cell in the declared matrix, not a claim that upstream networks can never fail.
 
 ```bash
 npm test

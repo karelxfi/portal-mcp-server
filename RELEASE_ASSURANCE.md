@@ -1,8 +1,8 @@
 # MCP Release Assurance
 
-## v0.8.3 release candidate additions
+## v0.8.3 additions
 
-v0.8.3 keeps the complete v0.8.2 hardening baseline and adds the following required cells. The candidate must pass every cell on one exact commit before a release can be approved. Preparing or reviewing the candidate does not authorize a tag, package publication, deployment, directory submission, or release.
+v0.8.3 keeps the complete v0.8.2 hardening baseline and adds the following required cells. The release must pass every cell on one exact commit before publication.
 
 | Release property | Required coverage | Automated gate |
 |---|---:|---|
@@ -31,7 +31,7 @@ v0.8.3 keeps the complete v0.8.2 hardening baseline and adds the following requi
 | Guided investigations | Wallet, contract, and Hyperliquid prompts are discoverable with their guide resources in all five declared client families | `test:investigation-prompts`, `test:client-journeys` |
 | In-session evidence workspace | Overview, Chart, Evidence, and Investigation views, range focus, session history, and JSON or CSV export without persistent browser storage | `test:app-contract`, `test:app-ui` |
 
-Installed-host proof uses an exact temporary candidate package that swaps only the MCP endpoint for the current built stdio server and records a package digest. Codex, Claude Code, and Grok Build must each complete a real tool call with evidence and a supported install lifecycle before release. Gemini CLI and Cursor runtime calls are required when those clients are authenticated in the test environment; if local client authentication is unavailable, the release record must say package-validated rather than runtime-passed. The local release candidate proves the protocol resource contract, browser rendering, fallback behavior, and client-declared journeys without changing production.
+Installed-host proof uses an exact temporary release package that swaps only the MCP endpoint for the current built stdio server and records a package digest. Codex, Claude Code, and Grok Build must each complete a real tool call with evidence and a supported install lifecycle before release. Gemini CLI and Cursor runtime calls are required when those clients are authenticated in the test environment; if local client authentication is unavailable, the release record must say package-validated rather than runtime-passed. The local release package proves the protocol resource contract, browser rendering, fallback behavior, and client-declared journeys without changing production.
 
 ## v0.8.2 baseline
 

@@ -1,8 +1,8 @@
 # Changelog
 
-## [0.8.3] - Unreleased
+## [0.8.3] - 2026-08-30
 
-The v0.8.3 release candidate turns SQD results into a fast, portable blockchain investigation experience while preserving the exact structured and text answers used by every existing client. This candidate is not tagged, published, or deployed.
+Portal MCP v0.8.3 turns SQD results into a fast, portable blockchain investigation experience while preserving the exact structured and text answers used by every existing client.
 
 ### Highlights
 - **SQD Blockchain Activity Explorer**: one self-contained MCP App presents exact metrics, multi-series charts, candle and volume views, evidence tables, timelines, coverage, freshness, partial results, errors, empty results, and signed continuation controls for 21 data tools.
