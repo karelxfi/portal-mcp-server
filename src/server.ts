@@ -27,7 +27,7 @@ import { registerInvestigationPromptsAndResources } from './investigations.js'
 // ============================================================================
 
 export const PORTAL_SERVER_INSTRUCTIONS =
-  'SQD provides read-only blockchain data from SQD Portal. Start with portal_list_networks to resolve a network, then use portal_get_network_info to check availability and freshness. Chain-specific MCP query tools cover Ethereum-compatible networks, Solana, Bitcoin, Polkadot and other Substrate networks, and Hyperliquid. Tron is available for dataset discovery, head, freshness, and timestamp-to-block lookups; use the bundled SQD Portal skill for native Tron Stream API queries. Prefer timeframe for recent windows and from_block/to_block for exact evidence. Check _coverage and _pagination before claiming completeness, and reuse _pagination.next_cursor when present. No authentication is required.'
+  'SQD provides read-only blockchain data from SQD Portal. Start with portal_list_networks to resolve a network, then use portal_get_network_info to check availability and freshness. Check _coverage and _pagination before claiming completeness, and reuse _pagination.next_cursor when present. Chain-specific MCP query tools cover Ethereum-compatible networks, Solana, Bitcoin, Polkadot and other Substrate networks, and Hyperliquid. Tron is available for dataset discovery, head, freshness, and timestamp-to-block lookups; use the bundled SQD Portal skill for native Tron Stream API queries. Prefer timeframe for recent windows and from_block/to_block for exact evidence. No authentication is required.'
 
 export function createPortalServer(runtimeContext: RuntimeRequestContext = { transport: 'stdio' }): McpServer {
   const server = new McpServer(
