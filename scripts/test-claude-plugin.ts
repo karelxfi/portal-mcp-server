@@ -1,5 +1,6 @@
 #!/usr/bin/env tsx
 
+import { spawnSync } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 
@@ -19,6 +20,19 @@ function assert(condition: boolean, message: string) {
   if (!condition) {
     throw new Error(`Assertion failed: ${message}`)
   }
+}
+
+function assertWithInstalledClaudeCli() {
+  const version = spawnSync('claude', ['--version'], { encoding: 'utf8' })
+  if (version.error && (version.error as NodeJS.ErrnoException).code === 'ENOENT') {
+    console.log('SKIP  Claude Code CLI is not installed; static package checks passed')
+    return
+  }
+  for (const path of [PLUGIN_ROOT, MARKETPLACE_PATH]) {
+    const result = spawnSync('claude', ['plugin', 'validate', '--strict', path], { encoding: 'utf8' })
+    assert(result.status === 0, `claude plugin validate failed for ${path}: ${result.stderr || result.stdout}`)
+  }
+  console.log('PASS  Claude Code strictly validates the plugin and marketplace packages')
 }
 
 function readJson(path: string): JsonObject {
@@ -121,7 +135,7 @@ function getEndpoint() {
   assert(manifest.displayName === 'SQD', 'Claude plugin display name should be SQD')
   assert(
     manifest.description ===
-      'Query blockchain data across 140+ networks with SQD Portal, including Ethereum, Base, Solana, Polkadot, Bitcoin, Tron, and Hyperliquid. The SQD plugin also includes Pipes SDK and Squid SDK skills for building, migrating, troubleshooting, and improving blockchain data projects.',
+      'Query blockchain data across 130+ networks with SQD Portal, including Ethereum, Base, Solana, Polkadot, Bitcoin, Tron, and Hyperliquid. The SQD plugin also includes Pipes SDK and Squid SDK skills for building, migrating, troubleshooting, and improving blockchain data projects.',
     'Claude plugin description should lead with broad network coverage',
   )
   assert(!/[\u2014\u2013]/.test(JSON.stringify(manifest)), 'Claude plugin copy should not use em or en dashes')
@@ -156,7 +170,7 @@ function assertDirectoryListing() {
     'Claude submission packet should record the public SQD connector listing',
   )
   assert(
-    submission.includes('Tagline: `Query blockchain data across 140+ networks`'),
+    submission.includes('Tagline: `Query blockchain data across 130+ networks`'),
     'Claude submission packet should keep the broad coverage tagline',
   )
   assert(submission.includes('Authentication: none'), 'Claude submission packet should declare no authentication')
@@ -207,6 +221,7 @@ async function assertHostedMcp(endpoint: string) {
 }
 
 async function main() {
+  assertWithInstalledClaudeCli()
   assertMarketplace()
   assertDirectoryListing()
   const endpoint = getEndpoint()

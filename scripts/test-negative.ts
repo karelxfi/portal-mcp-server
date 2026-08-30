@@ -18,6 +18,7 @@ type NegativeCase = {
   name: string
   tool: string
   args: Record<string, unknown>
+  expectedCode?: string
   expect: (text: string) => void
 }
 
@@ -61,6 +62,22 @@ const CASES: NegativeCase[] = [
       assert(/Tron network/i.test(text), 'Unsupported flow should identify the native Tron query family')
     },
   },
+  ...['portal_get_recent_activity', 'portal_get_time_series', 'portal_get_wallet_summary'].map((tool) => ({
+    name: `Unsupported Tron ${tool}`,
+    tool,
+    expectedCode: 'unsupported_operation',
+    args:
+      tool === 'portal_get_time_series'
+        ? { network: 'tron-mainnet', metric: 'transaction_count', duration: '1h', interval: '5m' }
+        : tool === 'portal_get_wallet_summary'
+          ? { network: 'tron-mainnet', address: 'TExampleAddress', timeframe: '1h' }
+          : { network: 'tron-mainnet', timeframe: '1h', limit: 5 },
+    expect: (text: string) => {
+      assert(/does not support network 'tron-mainnet'/i.test(text), `${tool} should identify unsupported Tron input`)
+      assert(/Tron network/i.test(text), `${tool} should identify the native Tron query family`)
+      assert(!/malformed_request/i.test(text), `${tool} should not leak an upstream malformed request`)
+    },
+  })),
   {
     name: 'Conflicting compare/group args',
     tool: 'portal_get_time_series',
@@ -197,6 +214,9 @@ async function main() {
         assert(result.isError, `${testCase.name} should return an error`)
         const error = result.structuredContent?.error as Record<string, unknown> | undefined
         assert(typeof error?.code === 'string' && error.code.length > 0, `${testCase.name} should expose an error code`)
+        if (testCase.expectedCode) {
+          assert(error.code === testCase.expectedCode, `${testCase.name} should return ${testCase.expectedCode}`)
+        }
         assert(
           ['client_input', 'upstream', 'server', 'transport'].includes(String(error?.origin)),
           `${testCase.name} should expose a bounded error origin`,

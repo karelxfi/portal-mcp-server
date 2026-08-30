@@ -7,6 +7,7 @@ import type {
 } from '@modelcontextprotocol/server'
 import { type ZodRawShape, z } from 'zod'
 
+import { getActivityExplorerToolMeta } from '../apps/activity-explorer.js'
 import { runWithPortalRequestDeadline } from './request-context.js'
 
 type PortalToolResult = CallToolResult | InputRequiredResult
@@ -101,6 +102,10 @@ const PORTAL_TOOL_OUTPUT_SCHEMA = z
     _ordering: z.unknown().optional().describe('Ordering guarantees for the returned data.'),
     _freshness: z.unknown().optional().describe('Freshness and finality information for the returned data.'),
     _coverage: z.unknown().optional().describe('Completeness of the requested window and result set.'),
+    _evidence: z
+      .record(z.string(), z.unknown())
+      .optional()
+      .describe('Replayable arguments, exact-data digest, row count, and completeness receipt.'),
     _execution: z.record(z.string(), z.unknown()).optional().describe('Bounded execution and scan details.'),
     _ui: z.unknown().optional().describe('Optional chart, table, and follow-up presentation metadata.'),
     pipes_handoff: z.unknown().optional().describe('Optional SQD Pipes guidance for custom data needs.'),
@@ -134,14 +139,11 @@ export function registerPortalTool<InputShape extends ZodRawShape>(
   options?: { deadlineMs?: number },
 ): RegisteredTool {
   const deadlineMs = options?.deadlineMs
-  const boundedHandler = deadlineMs !== undefined
-    ? (args: z.infer<z.ZodObject<InputShape>>, context: ServerContext) =>
-        runWithPortalRequestDeadline(
-          deadlineMs,
-          async () => handler(args, context),
-          { tool: name, stage: 'tool' },
-        )
-    : handler
+  const boundedHandler =
+    deadlineMs !== undefined
+      ? (args: z.infer<z.ZodObject<InputShape>>, context: ServerContext) =>
+          runWithPortalRequestDeadline(deadlineMs, async () => handler(args, context), { tool: name, stage: 'tool' })
+      : handler
 
   return server.registerTool(
     name,
@@ -151,6 +153,7 @@ export function registerPortalTool<InputShape extends ZodRawShape>(
       inputSchema: z.object(inputShape),
       outputSchema: PORTAL_TOOL_OUTPUT_SCHEMA,
       annotations: READ_ONLY_TOOL_ANNOTATIONS,
+      _meta: getActivityExplorerToolMeta(name),
     },
     boundedHandler,
   )

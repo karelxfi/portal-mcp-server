@@ -1151,16 +1151,23 @@ export function registerGetWalletSummaryTool(server: McpServer) {
       const chainType = detectChainType(dataset)
       const networkLabel = humanizeLabel(dataset) ?? dataset
 
-      if (chainType === 'substrate') {
+      if (chainType === 'substrate' || chainType === 'tron') {
         throw createUnsupportedChainError({
           toolName: 'portal_get_wallet_summary',
           dataset,
           actualChainType: chainType,
           supportedChains: ['evm', 'solana', 'bitcoin', 'hyperliquidFills'],
-          suggestions: [
-            'Use portal_debug_query_blocks plus a Substrate-specific event or call query for now.',
-            'Add a dedicated Substrate wallet summary once address and account filters are productized for Substrate networks.',
-          ],
+          suggestions:
+            chainType === 'tron'
+              ? [
+                  'Use portal_get_network_info for Tron availability and freshness.',
+                  'Use portal_debug_resolve_time_to_block for Tron timestamp-to-block lookups.',
+                  'Use the native Tron Stream API examples in the bundled SQD Portal skill for wallet-filtered Tron records.',
+                ]
+              : [
+                  'Use portal_debug_query_blocks plus a Substrate-specific event or call query for now.',
+                  'Add a dedicated Substrate wallet summary once address and account filters are productized for Substrate networks.',
+                ],
         })
       }
 
@@ -2084,7 +2091,9 @@ async function buildNonEvmWalletSummary(params: {
     const results = await portalFetchRecentRecords(`${PORTAL_URL}/datasets/${dataset}/stream`, txQuery, {
       itemKeys: ['transactions'],
       limit: limit_per_type,
-      chunkSize: Math.max(25, Math.min(100, limit_per_type * 4)),
+      chunkSize: Math.max(100, Math.min(500, limit_per_type * 50)),
+      concurrency: 6,
+      initialSequentialChunks: 1,
       timeout: WALLET_QUERY_TIMEOUT_MS,
       retries: WALLET_QUERY_RETRIES,
     })
@@ -2245,8 +2254,10 @@ async function buildNonEvmWalletSummary(params: {
   if (chainType === 'bitcoin') {
     const outputCursor = paginationCursor?.sections.outputs ?? undefined
     const inputCursor = paginationCursor?.sections.inputs ?? undefined
+    const outputsExhausted = Boolean(paginationCursor && paginationCursor.sections.outputs === null)
+    const inputsExhausted = Boolean(paginationCursor && paginationCursor.sections.inputs === null)
     const [outputBlocks, inputBlocks] = await Promise.all([
-      portalFetchRecentRecords(
+      outputsExhausted ? Promise.resolve([]) : portalFetchRecentRecords(
         `${PORTAL_URL}/datasets/${dataset}/stream`,
         {
           type: 'bitcoin',
@@ -2273,7 +2284,7 @@ async function buildNonEvmWalletSummary(params: {
           retries: WALLET_QUERY_RETRIES,
         },
       ),
-      portalFetchRecentRecords(
+      inputsExhausted ? Promise.resolve([]) : portalFetchRecentRecords(
         `${PORTAL_URL}/datasets/${dataset}/stream`,
         {
           type: 'bitcoin',

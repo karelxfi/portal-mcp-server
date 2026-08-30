@@ -1,4 +1,4 @@
-import { Counter, Histogram, Gauge, Registry, collectDefaultMetrics } from 'prom-client'
+import { Counter, Gauge, Histogram, Registry, collectDefaultMetrics } from 'prom-client'
 
 import { npmVersion } from './version.js'
 
@@ -38,15 +38,7 @@ export const toolCallsTotal = new Counter({
 export const toolOutcomesTotal = new Counter({
   name: 'mcp_tool_outcomes_total',
   help: 'Canonical MCP tool outcomes by terminal status, result state, and bounded failure attribution',
-  labelNames: [
-    'tool',
-    'status',
-    'result_state',
-    'error_origin',
-    'error_code',
-    'transport',
-    'server_version',
-  ] as const,
+  labelNames: ['tool', 'status', 'result_state', 'error_origin', 'error_code', 'transport', 'server_version'] as const,
   registers: [register],
 })
 
@@ -62,6 +54,41 @@ export const toolCallsActive = new Gauge({
   name: 'mcp_tool_calls_active',
   help: 'Number of currently in-flight MCP tool calls',
   labelNames: ['tool', 'transport'] as const,
+  registers: [register],
+})
+
+export const toolAdmissionWait = new Histogram({
+  name: 'mcp_tool_admission_wait_seconds',
+  help: 'Time a complete MCP tool call waits for weighted execution capacity',
+  labelNames: ['tool_class', 'transport'] as const,
+  buckets: [0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 3],
+  registers: [register],
+})
+
+export const toolAdmissionActive = new Gauge({
+  name: 'mcp_tool_admission_active',
+  help: 'Complete MCP tool calls currently admitted by workload class',
+  labelNames: ['tool_class', 'transport'] as const,
+  registers: [register],
+})
+
+export const toolAdmissionActiveWeight = new Gauge({
+  name: 'mcp_tool_admission_active_weight',
+  help: 'Current weighted complete-tool execution usage',
+  registers: [register],
+})
+
+export const toolAdmissionQueued = new Gauge({
+  name: 'mcp_tool_admission_queued',
+  help: 'Complete MCP tool calls waiting for weighted execution capacity',
+  labelNames: ['tool_class', 'transport'] as const,
+  registers: [register],
+})
+
+export const toolAdmissionRejectedTotal = new Counter({
+  name: 'mcp_tool_admission_rejected_total',
+  help: 'Complete MCP tool calls rejected by the bounded weighted scheduler',
+  labelNames: ['tool_class', 'transport', 'reason'] as const,
   registers: [register],
 })
 
@@ -163,5 +190,34 @@ export const observabilityExportsTotal = new Counter({
   name: 'mcp_observability_exports_total',
   help: 'Total number of observability export attempts',
   labelNames: ['sink', 'status'] as const,
+  registers: [register],
+})
+
+export const appToolResultsTotal = new Counter({
+  name: 'mcp_app_tool_results_total',
+  help: 'Results from tools that can render the SQD Activity Explorer',
+  labelNames: ['tool', 'transport', 'ui_capability', 'result_state'] as const,
+  registers: [register],
+})
+
+export const appRenderPayloadBytes = new Histogram({
+  name: 'mcp_app_render_payload_bytes',
+  help: 'Structured payload bytes available to the SQD Activity Explorer',
+  labelNames: ['tool', 'transport'] as const,
+  buckets: [512, 1024, 2048, 4096, 8192, 16384, 32768, 65536],
+  registers: [register],
+})
+
+export const appResourceReadsTotal = new Counter({
+  name: 'mcp_app_resource_reads_total',
+  help: 'Reads of the versioned SQD Activity Explorer resource',
+  labelNames: ['transport', 'server_version'] as const,
+  registers: [register],
+})
+
+export const appResourceSizeBytes = new Gauge({
+  name: 'mcp_app_resource_size_bytes',
+  help: 'Bytes in the embedded SQD Activity Explorer HTML resource',
+  labelNames: ['resource_hash'] as const,
   registers: [register],
 })

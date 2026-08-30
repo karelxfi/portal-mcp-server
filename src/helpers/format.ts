@@ -845,17 +845,33 @@ function buildDefaultExecution(toolName?: string): RecordLike {
   }
 }
 
-function inferPrimaryEvidencePath(payload: RecordLike): string | undefined {
-  const table = asArray<RecordLike>(payload.tables).find((entry) => typeof entry.data_key === 'string')
-  if (typeof table?.data_key === 'string') return table.data_key
-
+export function inferPrimaryEvidencePath(
+  payload: RecordLike,
+  options: { arraysOnly?: boolean } = {},
+): string | undefined {
+  const tablePaths = asArray<RecordLike>(payload.tables)
+    .map((entry) => entry.data_key)
+    .filter((path): path is string => typeof path === 'string')
   const chart = isRecord(payload.chart) ? payload.chart : undefined
-  if (typeof chart?.data_key === 'string') return chart.data_key
-
+  const chartPaths = typeof chart?.data_key === 'string' ? [chart.data_key] : []
   const preferredKeys = [
     'items',
     'matches',
+    'fills',
+    'candles',
+    'buckets',
+    'transactions',
+    'transfers',
+    'logs',
+    'events',
+    'calls',
+    'instructions',
+    'blocks',
+    'networks',
     'activity.items',
+    'interactions.top_callers',
+    'events.top_event_types',
+    'fund_flow.largest_movements',
     'token_transfers.items',
     'transactions.items',
     'ohlc',
@@ -871,15 +887,16 @@ function inferPrimaryEvidencePath(payload: RecordLike): string | undefined {
     'overview',
     'summary',
     'interactions',
-    'network',
     'block_details',
     'block_number',
+    'number',
     'timestamp',
+    'network',
   ]
 
-  return preferredKeys.find((path) => {
+  return [...tablePaths, ...chartPaths, ...preferredKeys].find((path) => {
     const value = getByPath(payload, path)
-    return value !== undefined
+    return options.arraysOnly ? Array.isArray(value) : value !== undefined
   })
 }
 
@@ -899,7 +916,7 @@ function inferPrimaryEvidenceKind(payload: RecordLike, primaryPath?: string): st
   if (primaryPath.includes('transfer')) return 'token_transfers'
   if (primaryPath.includes('top_')) return 'ranked_summary'
   if (primaryPath.includes('overview') || primaryPath.includes('summary')) return 'summary'
-  if (primaryPath.includes('block_number') || primaryPath.includes('timestamp')) return 'lookup'
+  if (primaryPath === 'number' || primaryPath.includes('block_number') || primaryPath.includes('timestamp')) return 'lookup'
   return 'records'
 }
 

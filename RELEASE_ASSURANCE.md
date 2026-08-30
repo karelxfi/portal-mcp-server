@@ -1,4 +1,39 @@
-# v0.8.2 MCP Release Assurance
+# MCP Release Assurance
+
+## v0.8.3 additions
+
+v0.8.3 keeps the complete v0.8.2 hardening baseline and adds the following required cells. The release must pass every cell on one exact commit before publication.
+
+| Release property | Required coverage | Automated gate |
+|---|---:|---|
+| Portable MCP App contract | Versioned resource, standard MIME and UI metadata, ChatGPT aliases, exact CSP | `test:app-contract` |
+| Structured fallback parity | All 28 tools remain callable; 21 app-enabled tools keep structured and text results | `test:app-contract`, `test:client-journeys` |
+| App capability handling | Declared, unsupported, and undeclared states without client-name branching | `test:app-contract` |
+| Explorer state coverage | Pinned Hyperliquid candles, non-USD token-ratio candles, continuous and sparse time series, grouped series, mixed-sign bars, activity, large tables, empty, and error fixtures | `test:app-ui` |
+| SQD Design System fidelity | Embedded Inter and JetBrains Mono, semantic dark surfaces, status fills, table type, official black-background symbol, and no horizon gradient | `test:app-contract`, `test:app-ui` |
+| Responsive and host-preference coverage | Desktop light preference, desktop dark preference, and mobile light preference for every fixture; the app remains an intentional dark product surface | `test:app-ui` |
+| Accessibility and interaction | Keyboard point inspection, searchable and sortable evidence, series toggles, overflow, collapsed panels, and zero serious or critical axe findings | `test:app-ui` |
+| Truthful visual contracts | Declared hover and series controls work; unavailable zoom, toolbar, visual switching, and image export remain disabled | `test:app-contract`, `test:app-ui` |
+| Rendered-data parity | Exact candle, volume, line, grouped-series, signed-bar, identifier, and displayed-row values reconcile with structured content | `test:app-ui` |
+| Chronology and gap fidelity | Shuffled inputs render in declared x order; missing buckets are not joined into false continuity; positive and negative bars share a correct zero baseline | `test:app-ui` |
+| App performance budgets | Bundle below 700 KB, initial render below 1 second per cell, interaction p95 below 250 ms, bounded DOM | `test:app-contract`, `test:app-ui` |
+| Repeated EVM candle performance | Identical requests reuse one exact short-lived snapshot; cache keys separate evidence window, pool, token, and price orientation semantics; paired warm latency has no supported regression | `test:performance-harness`, `benchmark:paired` |
+| Authoritative data integrity | Direct Portal parity for complete EVM, Solana, Bitcoin, Substrate, and Hyperliquid evidence, including raw-fill candle reproduction | `test:data-integrity` |
+| Coverage and continuation truthfulness | Pagination promises a cursor, remaining-result cursors mark the result incomplete, adjacent-window cursors are distinct, and paged identities have no gaps or duplicates | `test:tools`, `test:data-integrity` |
+| Adaptive tool admission | Four weighted work classes, fair promotion, cancellation, timeout, overload, and zero capacity leaks | `test:tool-admission` |
+| Saturation accounting | Scheduler overload is a structured retryable outcome at any concurrency above a tool class budget, measured separately from unexpected failures; release evidence permits at most 10% bounded overload and 1% unexpected failure | `benchmark:v082`, `soak:v082` |
+| App and admission metrics | Result-to-render funnel, payload and bundle size, active weight, wait, queue, and bounded rejection reasons | `test:app-contract`, `test:http-runtime` |
+| Sustained process memory | 60-minute peak RSS at or below 512 MB and first-to-last-quarter median growth at or below 128 MB | `soak:v082` with `SOAK_RELEASE=1` |
+| Lean app boundary | One self-contained bundle, no external app fetches or assets, under 700 KB | `test:app-contract`, `test:lean`, `test:package` |
+| Cross-client fallback journeys | Claude, Codex, Grok, Gemini, and Cursor | `test:client-journeys` |
+| Reproducible evidence receipts | Canonical arguments, digest, source windows, row reconciliation, and honest exact or semantic replay mode | `test:evidence-receipts`, `test:client-journeys` |
+| Golden factual investigations | Wallet rows involve the requested wallet, contract aggregations reconcile, and Hyperliquid candles reproduce raw fills and volume | `test:investigation-journeys` |
+| Guided investigations | Wallet, contract, and Hyperliquid prompts are discoverable with their guide resources in all five declared client families | `test:investigation-prompts`, `test:client-journeys` |
+| In-session evidence workspace | Linked overview, chart, evidence, and investigation sections, range-focused follow-ups, session history, and JSON or CSV export without persistent browser storage | `test:app-contract`, `test:app-ui` |
+
+Installed-host proof uses an exact temporary release package that swaps only the MCP endpoint for the current built stdio server and records a package digest. Codex, Claude Code, and Grok Build must each complete a real tool call with evidence and a supported install lifecycle before release. Gemini CLI and Cursor runtime calls are required when those clients are authenticated in the test environment; if local client authentication is unavailable, the release record must say package-validated rather than runtime-passed. The local release package proves the protocol resource contract, browser rendering, fallback behavior, and client-declared journeys without changing production.
+
+## v0.8.2 baseline
 
 This document defines the bounded meaning of “100% hardened and measured” for v0.8.2. It means every applicable cell in the declared release matrix passes on the exact release commit. It does not mean upstream data services or networks can never fail.
 
@@ -65,7 +100,7 @@ All 28 tools pass through one instrumented registration surface. This guarantees
 
 Metric labels never contain wallet addresses, transaction hashes, free-form prompts, authorization values, request bodies, raw error messages, or arbitrary client headers. Structured event export records bounded client identity and failure attribution but never captures forwarded user questions.
 
-The Grafana dashboard is checked against emitted metric names during `test:http-runtime`, so stale dashboard queries fail CI. The metrics endpoint is disabled unless deliberately configured and is separate from v0.8.2’s public, credential-free MCP product surface.
+The Grafana dashboard is checked against emitted metric names during `test:http-runtime`, so stale dashboard queries fail CI. The metrics endpoint is disabled unless deliberately configured and is separate from the public, credential-free v0.8.x MCP product surface.
 
 ## Reliability invariants
 
@@ -88,8 +123,8 @@ The exact release commit must have all of these artifacts:
 
 1. `npm run test:release` passes.
 2. A paired baseline/candidate artifact from `npm run benchmark:paired`, created from two clean commits with every registered tool and at least 50 interleaved sample pairs per warm profile.
-3. The paired benchmark reports no statistically supported regression above 10 percent and at most 1 percent candidate tool errors. Sequential `benchmark:v082` artifacts remain useful capacity evidence, but are not the release regression gate because live upstream conditions can drift between runs.
+3. The paired benchmark alternates baseline and candidate calls without making them compete for the same upstream request, and reports no statistically supported median regression above both 10 percent and 5 milliseconds. It also permits at most 1 percent candidate tool errors. Sequential `benchmark:v082` artifacts remain useful capacity evidence, but are not the release regression gate because live upstream conditions can drift between runs.
 4. `SOAK_RELEASE=1 npm run soak:v082` completes the default 60-minute mixed-tool run with at most 1 percent tool errors and records latency and child-process RSS.
-5. Installed Claude, Codex, Grok, Gemini, and Cursor hosts each complete the declared user journeys. `test:client-journeys` verifies protocol identity and behavior, but does not replace installed-host proof.
+5. Installed Claude, Codex, and Grok hosts each complete a real tool call against the exact candidate. Gemini and Cursor complete runtime calls when their local clients are authenticated; otherwise the evidence must record them as package-validated with authentication unavailable. `test:client-journeys` verifies protocol identity and behavior, but does not replace or overstate installed-host proof.
 
 GitHub pull requests run `npm run test:ci`. Main-branch and tag image publication runs the same gate before Docker login, build, or push, so failed code cannot publish a new image.

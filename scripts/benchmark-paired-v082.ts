@@ -178,16 +178,12 @@ async function main() {
             concurrency: profile.concurrency,
             task: async (index) => {
               if (index % 2 === 0) {
-                const [baselineCall, candidateCall] = await Promise.all([
-                  measure(baseline.client, spec.name, args),
-                  measure(candidate.client, spec.name, args),
-                ])
+                const baselineCall = await measure(baseline.client, spec.name, args)
+                const candidateCall = await measure(candidate.client, spec.name, args)
                 return { baseline: baselineCall, candidate: candidateCall }
               }
-              const [candidateCall, baselineCall] = await Promise.all([
-                measure(candidate.client, spec.name, args),
-                measure(baseline.client, spec.name, args),
-              ])
+              const candidateCall = await measure(candidate.client, spec.name, args)
+              const baselineCall = await measure(baseline.client, spec.name, args)
               return { baseline: baselineCall, candidate: candidateCall }
             },
           })
@@ -277,7 +273,7 @@ async function main() {
       )
     }
     if (releaseMode && regressions > 0) {
-      throw new Error(`${regressions} statistically supported paired latency regressions exceeded 10%`)
+      throw new Error(`${regressions} statistically supported paired latency regressions exceeded both 10% and 5ms`)
     }
     if (releaseMode && insufficientProfiles > 0) {
       throw new Error(`${insufficientProfiles} profiles did not produce enough successful baseline/candidate pairs`)

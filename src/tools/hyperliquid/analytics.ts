@@ -10,7 +10,12 @@ import { formatResult } from '../../helpers/format.js'
 import { formatUSD, formatNumber, formatPct, shortenAddress } from '../../helpers/format.js'
 import { hashString53 } from '../../helpers/hash.js'
 import { buildPaginationInfo, decodeCursor, encodeCursor } from '../../helpers/pagination.js'
-import { getPortalRequestSignal } from '../../helpers/request-context.js'
+import {
+  getPortalRequestSignal,
+  runAsSharedPortalWork,
+  type SharedPortalWork,
+  waitForSharedPortalWork,
+} from '../../helpers/request-context.js'
 import { buildAnalysisCoverage, buildQueryFreshness } from '../../helpers/result-metadata.js'
 import type { ResponseFormat } from '../../helpers/response-modes.js'
 import { buildPercentileSummary } from '../../helpers/statistics.js'
@@ -77,16 +82,15 @@ type CachedHyperliquidAnalyticsResult = {
 }
 
 type PendingHyperliquidAnalyticsResult = {
-  promise: Promise<{
+  work: SharedPortalWork<{
     formattedResponse: Record<string, any>
     response: Record<string, any>
     summary: string
     shortSummary: string
-    notices?: string[]
+    notices: string[] | undefined
     effectiveFrom: number
     hasMoreSections: boolean
   }>
-  requestSignal?: AbortSignal
 }
 
 const hyperliquidAnalyticsCache = new Map<string, CachedHyperliquidAnalyticsResult>()
@@ -827,20 +831,21 @@ export function registerHyperliquidAnalyticsTool(server: McpServer) {
 
       const requestSignal = getPortalRequestSignal()
       const pendingEntry = !cursor ? pendingHyperliquidAnalyticsResults.get(cacheKey) : undefined
-      const pending = pendingEntry && pendingEntry.requestSignal === requestSignal ? pendingEntry.promise : undefined
-      const analyticsResult = pending ?? loadFreshAnalytics()
-      const ownsPendingEntry = !cursor && !pending && !pendingEntry
-      if (ownsPendingEntry) {
-        pendingHyperliquidAnalyticsResults.set(cacheKey, { promise: analyticsResult, requestSignal })
-      }
-
-      let freshAnalytics
-      try {
-        freshAnalytics = await analyticsResult
-      } finally {
-        if (ownsPendingEntry && pendingHyperliquidAnalyticsResults.get(cacheKey)?.promise === analyticsResult) {
-          pendingHyperliquidAnalyticsResults.delete(cacheKey)
+      let freshAnalytics: Awaited<ReturnType<typeof loadFreshAnalytics>>
+      if (!cursor) {
+        const analyticsWork = pendingEntry?.work ?? runAsSharedPortalWork(loadFreshAnalytics)
+        if (!pendingEntry) {
+          pendingHyperliquidAnalyticsResults.set(cacheKey, { work: analyticsWork })
+          const clearPending = () => {
+            if (pendingHyperliquidAnalyticsResults.get(cacheKey)?.work === analyticsWork) {
+              pendingHyperliquidAnalyticsResults.delete(cacheKey)
+            }
+          }
+          analyticsWork.promise.then(clearPending, clearPending)
         }
+        freshAnalytics = await waitForSharedPortalWork(analyticsWork, requestSignal)
+      } else {
+        freshAnalytics = await loadFreshAnalytics()
       }
 
       return formatResult(

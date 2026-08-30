@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.8.3] - 2026-08-30
+
+Portal MCP v0.8.3 turns SQD results into a fast, portable blockchain investigation experience while preserving the exact structured and text answers used by every existing client.
+
+### Highlights
+- **SQD Blockchain Activity Explorer**: one self-contained MCP App presents exact metrics, multi-series charts, candle and volume views, evidence tables, timelines, coverage, freshness, partial results, errors, empty results, and signed continuation controls for 21 data tools.
+- **Portable app contract**: standard MCP Apps metadata, MIME type, capability detection, and resource security policy work alongside ChatGPT compatibility aliases. Unsupported hosts keep the same `structuredContent` and compact JSON text fallback.
+- **Broad blockchain views**: the explorer adapts to wallets, contracts, token flows, network activity, Bitcoin, Solana, Substrate, Hyperliquid fills, analytics, and candles without narrowing the 28-tool product. Tron discovery, freshness, and timestamp evidence remain available through the metadata tools.
+- **Adaptive tool execution**: a weighted, cancellation-aware scheduler protects fast lookups from expensive concurrent analytics, uses measured memory-safe concurrency for each work class, shares identical analytics already in flight, promotes queued work fairly, bounds queue time, and returns structured overload guidance when saturated.
+- **Complete app metrics**: bounded Prometheus and Grafana series cover capability-aware tool results, result-to-render conversion, render payload size, app resource reads, app bundle size, admission wait, active weight, queued work, and rejection reasons.
+- **Authoritative data integrity**: direct Portal comparisons prove complete identities across paginated EVM and Substrate windows, exact Bitcoin and Solana records, and Hyperliquid candles reproduced from every raw fill in the reported window.
+- **Fast repeated EVM candles**: identical live OHLC requests reuse the same short-lived factual snapshot before redundant network and token metadata work, while freshness fields continue to identify the exact evidence returned.
+- **Truthful continuation**: coverage and pagination metadata must agree, client-filtered EVM scans continue without gaps or duplicates, exhausted Bitcoin wallet sections stay exhausted, and candle cursors identify adjacent time windows correctly.
+- **Sustained memory gate**: the release soak now rejects excessive peak RSS or first-to-last-quarter median RSS growth instead of relying on a noisy first-to-last sample.
+- **SQD Design System UI**: the exact Inter and JetBrains Mono files, semantic dark surfaces, status fills, table typography, spacing, right-side chart scales, official black-background symbol, and indigo roles come from the current SQD Design System.
+- **Rendered-data parity**: browser gates prove that every tested candle, volume bar, time-series point, grouped total, signed bar, exact identifier, and table count reconciles with its structured source. Chronological sorting and missing-bucket gaps prevent a chart from inventing continuity.
+- **Visual and accessibility hardening**: 36 deterministic browser cells cover desktop and mobile layouts under light and dark host preferences, USD and token-ratio candles, success, partial, empty, and error states, keyboard point inspection, searchable and sortable evidence, overflow, and serious or critical accessibility findings.
+- **Truthful interaction metadata**: chart contracts advertise point inspection and supported series toggles, but do not claim zoom, visual switching, or image export that the app does not implement.
+- **Lean product surface**: the app reuses the existing tool results and follow-up contracts, adds no browser API layer, loads no external assets, and does not add tools merely to power the UI.
+- **Reproducible evidence receipts**: material results include canonical tool arguments, a deterministic digest, source windows, row reconciliation, and an honest exact or semantic replay mode so a moving relative query is never described as a frozen snapshot.
+- **Three guided investigations**: wallet activity, contract activity, and Hyperliquid market prompts produce reusable investigation plans and remain discoverable alongside their MCP guide resources.
+- **Golden factual journeys**: live gates prove that returned wallet rows involve the requested wallet, contract caller totals cannot exceed complete interaction totals, and Hyperliquid candle fill counts and volume reconcile with the reported summary.
+- **Evidence workspace**: linked overview, chart, evidence, and investigation sections add range-focused follow-ups, searchable records, session-only investigation history, and JSON or CSV export without persistent browser storage.
+- **Current SQD skills**: the plugin packages the latest verified `subsquid-labs/skills` snapshot and intentionally flattens the upstream Squid SDK subtree so all five supported client families discover Portal, Pipes SDK, migration, and performance skills.
+- **Real client proof**: an exact temporary candidate workflow records a package digest and separates installed-client runtime calls from manifest validation. Codex, Claude Code, and Grok Build completed real evidence-bearing calls and install lifecycles; unauthenticated local Gemini and Cursor clients remain package-validated rather than misreported as runtime passes.
+
 ## [0.8.2] - 2026-08-29
 
 Portal MCP v0.8.2 makes every returned blockchain row trustworthy under large responses, malformed streams, retries, and concurrent load. It also adds repeatable performance evidence so release decisions use measured queue, service, and end-to-end latency instead of isolated timings.

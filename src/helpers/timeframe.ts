@@ -323,8 +323,9 @@ const TIMESTAMP_TIMEOUT = 3000
  * Works for supported Portal datasets, including real-time datasets that expose
  * timestamp lookups.
  *
- * Uses a short timeout and zero retries — the caller should fall back to
- * block time estimation on failure.
+ * Uses a short timeout and zero retries before the caller falls back to block
+ * time estimation. The fallback remains explicit in the result provenance,
+ * while avoiding duplicate timestamp traffic during concurrent workloads.
  */
 export async function timestampToBlock(dataset: string, timestamp: number): Promise<number> {
   const result = await portalFetch<{ block_number: number }>(

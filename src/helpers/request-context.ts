@@ -24,6 +24,75 @@ export function getPortalRequestSignal(): AbortSignal | undefined {
   return requestSignalStorage.getStore()
 }
 
+export type SharedPortalWork<T> = {
+  promise: Promise<T>
+  controller: AbortController
+  settled: boolean
+  waiters: number
+}
+
+/**
+ * Start cacheable work with its own cancellation scope. Identical callers can
+ * share the scan, and the scan is cancelled when its last waiter leaves.
+ */
+export function runAsSharedPortalWork<T>(callback: () => Promise<T>): SharedPortalWork<T> {
+  const controller = new AbortController()
+  const promise = runWithPortalRequestSignal(controller.signal, callback)
+  const work: SharedPortalWork<T> = {
+    promise,
+    controller,
+    settled: false,
+    waiters: 0,
+  }
+  promise.then(
+    () => {
+      work.settled = true
+    },
+    () => {
+      work.settled = true
+    },
+  )
+  return work
+}
+
+export function waitForSharedPortalWork<T>(work: SharedPortalWork<T>, signal = getPortalRequestSignal()): Promise<T> {
+  if (signal?.aborted) {
+    if (work.waiters === 0 && !work.settled) work.controller.abort()
+    return Promise.reject(new RequestCancelledError())
+  }
+
+  work.waiters += 1
+
+  return new Promise<T>((resolve, reject) => {
+    let waiting = true
+    const leave = (cancelWhenIdle: boolean) => {
+      if (!waiting) return
+      waiting = false
+      signal?.removeEventListener('abort', cancel)
+      work.waiters = Math.max(0, work.waiters - 1)
+      if (cancelWhenIdle && work.waiters === 0 && !work.settled) {
+        work.controller.abort()
+      }
+    }
+    const cancel = () => {
+      leave(true)
+      reject(new RequestCancelledError())
+    }
+
+    signal?.addEventListener('abort', cancel, { once: true })
+    work.promise.then(
+      (value) => {
+        leave(false)
+        resolve(value)
+      },
+      (error) => {
+        leave(false)
+        reject(error)
+      },
+    )
+  })
+}
+
 export function createRequestAbortContext(timeout: number): RequestAbortContext {
   const controller = new AbortController()
   const requestSignal = getPortalRequestSignal()

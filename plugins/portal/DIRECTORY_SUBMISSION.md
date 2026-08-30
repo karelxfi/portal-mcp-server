@@ -23,11 +23,11 @@ Category: `Data & Analytics`
 
 Short description:
 
-> Query blockchain data across 140+ networks with SQD Portal.
+> Query blockchain data across 130+ networks with SQD Portal.
 
 Long description:
 
-> Query blockchain data across 140+ networks with SQD Portal, including Ethereum, Base, Solana, Polkadot, Bitcoin, Tron, and Hyperliquid. The SQD plugin also includes Pipes SDK and Squid SDK skills for building, migrating, troubleshooting, and improving blockchain data projects.
+> Query blockchain data across 130+ networks with SQD Portal, including Ethereum, Base, Solana, Polkadot, Bitcoin, Tron, and Hyperliquid. The SQD plugin also includes Pipes SDK and Squid SDK skills for building, migrating, troubleshooting, and improving blockchain data projects.
 
 Starter prompts:
 
@@ -66,8 +66,8 @@ For a new version or listing change, use the connector submission portal in the 
 - Connection model: one URL for every user
 - Authentication: none
 - Name: `SQD`
-- Tagline: `Query blockchain data across 140+ networks`
-- Description: `Query blockchain data across 140+ networks with SQD Portal, including Ethereum, Base, Solana, Polkadot, Bitcoin, Tron, and Hyperliquid.`
+- Tagline: `Query blockchain data across 130+ networks`
+- Description: `Query blockchain data across 130+ networks with SQD Portal, including Ethereum, Base, Solana, Polkadot, Bitcoin, Tron, and Hyperliquid.`
 - Documentation: `https://docs.sqd.dev/en/ai/claude-connector`
 - Privacy: `https://sqd.dev/imprint/`
 - Support: `https://sqd.dev/contact/`
@@ -75,7 +75,7 @@ For a new version or listing change, use the connector submission portal in the 
 - Setup requirement: no account, login, or API key
 - Data handling: SQD's own public read-only blockchain data API; no health data or sponsored content
 
-Before submitting an update, confirm that Claude syncs all 28 tools, every tool has a title and the applicable annotations, and each tool passes an end-to-end call. No carousel screenshots are needed because SQD v0.8.0 does not ship an MCP App UI.
+Before submitting an update, confirm that Claude syncs all 28 tools and the three investigation prompts, every tool has a title and the applicable annotations, and each tool passes an end-to-end call. The current Claude Code tool namespace for an install from this package is `mcp__plugin_portal_SQD__<tool-name>`, for example `mcp__plugin_portal_SQD__portal_get_head`. Treat this as client-generated configuration, not part of the public MCP tool name.
 
 ## OpenAI directory
 
@@ -105,11 +105,11 @@ OpenAI submission values:
 
 After scanning, confirm all 28 tools show `readOnlyHint: true`, `destructiveHint: false`, and `openWorldHint: true`. Upload the four skill folders from `plugins/portal/skills`, enter the prompts and tests from this packet, and submit the completed draft for review.
 
-Do not upload screenshots. SQD does not ship a plugin user interface in this release.
+Treat submitted OpenAI metadata as a versioned snapshot. Prepare the MCP App update only after the current review concludes, use screenshots captured from the deployed exact release, and keep the underlying non-UI fallback tests in the review packet.
 
 Suggested initial release notes:
 
-> Initial SQD plugin submission. Query blockchain data across 140+ networks with SQD Portal, including Ethereum, Base, Solana, Polkadot, Bitcoin, Tron, and Hyperliquid. The plugin also includes Pipes SDK and Squid SDK skills for building, migrating, troubleshooting, and improving blockchain data projects.
+> Initial SQD plugin submission. Query blockchain data across 130+ networks with SQD Portal, including Ethereum, Base, Solana, Polkadot, Bitcoin, Tron, and Hyperliquid. The plugin also includes Pipes SDK and Squid SDK skills for building, migrating, troubleshooting, and improving blockchain data projects.
 
 ### Positive review tests
 
@@ -138,7 +138,7 @@ Add this entry to `.grok-plugin/marketplace.json` after the SQD source change is
 ```json
 {
   "name": "sqd",
-  "description": "Query blockchain data across 140+ networks with SQD Portal, including Ethereum, Base, Solana, Polkadot, Bitcoin, Tron, and Hyperliquid. The SQD plugin also includes Pipes SDK and Squid SDK skills for building, migrating, troubleshooting, and improving blockchain data projects.",
+  "description": "Query blockchain data across 130+ networks with SQD Portal, including Ethereum, Base, Solana, Polkadot, Bitcoin, Tron, and Hyperliquid. The SQD plugin also includes Pipes SDK and Squid SDK skills for building, migrating, troubleshooting, and improving blockchain data projects.",
   "category": "development",
   "source": {
     "source": "url",
@@ -214,7 +214,7 @@ Use these listing values:
 - Logo: `plugins/portal/assets/sqd-logo.svg`
 - Authentication: none
 - Components: one read-only MCP server and four skills
-- Short description: `Query blockchain data across 140+ networks with SQD Portal.`
-- Long description: `Query blockchain data across 140+ networks with SQD Portal, including Ethereum, Base, Solana, Polkadot, Bitcoin, Tron, and Hyperliquid. The SQD plugin also includes Pipes SDK and Squid SDK skills for building, migrating, troubleshooting, and improving blockchain data projects.`
+- Short description: `Query blockchain data across 130+ networks with SQD Portal.`
+- Long description: `Query blockchain data across 130+ networks with SQD Portal, including Ethereum, Base, Solana, Polkadot, Bitcoin, Tron, and Hyperliquid. The SQD plugin also includes Pipes SDK and Squid SDK skills for building, migrating, troubleshooting, and improving blockchain data projects.`
 
 Before submitting at `https://cursor.com/marketplace/publish`, run `npm run test:cursor-plugin` and test the plugin locally in Cursor. Cursor reviews every public marketplace submission.

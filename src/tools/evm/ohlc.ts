@@ -1,6 +1,4 @@
 import type { McpServer } from '@modelcontextprotocol/server'
-
-import { registerPortalTool } from '../../helpers/mcp-registration.js'
 import { keccak_256 } from '@noble/hashes/sha3'
 import { z } from 'zod'
 
@@ -24,6 +22,7 @@ import { RequestCancelledError, createUnsupportedChainError } from '../../helper
 import { portalFetchRecentRecords, portalFetchStreamRangeVisit } from '../../helpers/fetch.js'
 import { buildEvmLogFields } from '../../helpers/fields.js'
 import { formatResult, formatTimestamp } from '../../helpers/format.js'
+import { registerPortalTool } from '../../helpers/mcp-registration.js'
 import { buildPaginationInfo, decodeCursor, encodeCursor } from '../../helpers/pagination.js'
 import { getPortalRequestSignal, runWithPortalRequestSignal } from '../../helpers/request-context.js'
 import {
@@ -751,17 +750,17 @@ function cloneResponse<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T
 }
 
-function buildOhlcResponseCacheKey(params: {
+export function buildOhlcRequestCacheKey(params: {
   dataset: string
   source: EvmOhlcSource
   interval: OhlcInterval
   duration: string
   mode: OhlcMode
-  endBlock: number
   poolAddress?: string
   poolId?: string
   poolManagerAddress?: string
   priceIn?: PriceDisplayMode
+  baseToken?: BaseTokenSide
   includeRecentTrades?: boolean
   recentTradesLimit?: number
   currency0Address?: string
@@ -782,11 +781,11 @@ function buildOhlcResponseCacheKey(params: {
     params.interval,
     params.duration,
     params.mode,
-    params.endBlock,
     params.poolAddress ?? '',
     params.poolId ?? '',
     params.poolManagerAddress ?? '',
     params.priceIn ?? '',
+    params.baseToken ?? '',
     String(Boolean(params.includeRecentTrades)),
     String(params.recentTradesLimit ?? ''),
     params.currency0Address ?? '',
@@ -922,7 +921,8 @@ function isTimeoutLikeMessage(message: string) {
 }
 
 export function registerEvmOhlcTool(server: McpServer) {
-  registerPortalTool(server,
+  registerPortalTool(
+    server,
     'portal_evm_get_ohlc',
     buildToolDescription('portal_evm_get_ohlc'),
     {
@@ -1181,6 +1181,42 @@ export function registerEvmOhlcTool(server: McpServer) {
       const intervalSeconds = parseTimeframeToSeconds(resolvedInterval)
       const durationSeconds = parseTimeframeToSeconds(duration)
       const expectedBuckets = Math.max(1, Math.ceil(durationSeconds / intervalSeconds))
+      // Repeated live-window requests should reuse the exact snapshot already returned
+      // during this short TTL. Checking before head and token metadata resolution keeps
+      // the cache useful while the response's own freshness fields remain authoritative.
+      const requestCacheKey = !paginationCursor
+        ? buildOhlcRequestCacheKey({
+            dataset,
+            source: source as EvmOhlcSource,
+            interval: resolvedInterval,
+            duration,
+            mode: mode as OhlcMode,
+            poolAddress: normalizedPoolAddress,
+            poolId: normalizedPoolId,
+            poolManagerAddress: normalizedPoolManagerAddress,
+            priceIn: price_in as PriceDisplayMode,
+            baseToken: base_token,
+            includeRecentTrades: include_recent_trades,
+            recentTradesLimit: recent_trades_limit,
+            currency0Address: normalizedCurrency0Address,
+            currency1Address: normalizedCurrency1Address,
+            fee,
+            tickSpacing: tick_spacing,
+            hooksAddress: normalizedHooksAddress,
+            token0Symbol: token0_symbol,
+            token1Symbol: token1_symbol,
+            token0Decimals: token0_decimals,
+            token1Decimals: token1_decimals,
+            token0Address: token0_address ? normalizeEvmAddress(token0_address) : undefined,
+            token1Address: token1_address ? normalizeEvmAddress(token1_address) : undefined,
+          })
+        : undefined
+
+      if (requestCacheKey) {
+        const cached = evmOhlcResponseCache.get(requestCacheKey)
+        if (cached) return cloneResponse(cached.response)
+      }
+
       const bucketsByBase: Record<BaseTokenSide, Map<number, CandleAccumulator>> = {
         token0: new Map<number, CandleAccumulator>(),
         token1: new Map<number, CandleAccumulator>(),
@@ -1250,16 +1286,14 @@ export function registerEvmOhlcTool(server: McpServer) {
           !hooksAddressProvided)
       ) {
         try {
-          const metadataLookup = await runOptionalWorkWithinBudget(
-            EVM_OHLC_METADATA_BUDGET_MS[mode as OhlcMode],
-            () =>
-              getCachedOrResolveUniswapV4PoolMetadata({
-                dataset,
-                poolManagerAddress: normalizedPoolManagerAddress!,
-                poolId: normalizedPoolId!,
-                toBlock: endBlock,
-                mode: mode as OhlcMode,
-              }),
+          const metadataLookup = await runOptionalWorkWithinBudget(EVM_OHLC_METADATA_BUDGET_MS[mode as OhlcMode], () =>
+            getCachedOrResolveUniswapV4PoolMetadata({
+              dataset,
+              poolManagerAddress: normalizedPoolManagerAddress!,
+              poolId: normalizedPoolId!,
+              toBlock: endBlock,
+              mode: mode as OhlcMode,
+            }),
           )
           resolvedV4Metadata = metadataLookup.value
           v4MetadataResolutionStatus = metadataLookup.timedOut
@@ -1322,41 +1356,6 @@ export function registerEvmOhlcTool(server: McpServer) {
       const resolvedToken1Symbol = token1_symbol ?? token1ListMetadata?.symbol
       const token0Label = resolveTokenLabel('token0', resolvedToken0Symbol, effectiveToken0Address)
       const token1Label = resolveTokenLabel('token1', resolvedToken1Symbol, effectiveToken1Address)
-      const responseCacheKey = !paginationCursor
-        ? buildOhlcResponseCacheKey({
-            dataset,
-            source: source as EvmOhlcSource,
-            interval: resolvedInterval,
-            duration,
-            mode: mode as OhlcMode,
-            endBlock,
-            poolAddress: normalizedPoolAddress,
-            poolId: normalizedPoolId,
-            poolManagerAddress: normalizedPoolManagerAddress,
-            priceIn: price_in as PriceDisplayMode,
-            includeRecentTrades: include_recent_trades,
-            recentTradesLimit: recent_trades_limit,
-            currency0Address: normalizedCurrency0Address,
-            currency1Address: normalizedCurrency1Address,
-            fee,
-            tickSpacing: tick_spacing,
-            hooksAddress: normalizedHooksAddress,
-            token0Symbol: resolvedToken0Symbol,
-            token1Symbol: resolvedToken1Symbol,
-            token0Decimals: resolvedToken0Decimals,
-            token1Decimals: resolvedToken1Decimals,
-            token0Address: effectiveToken0Address,
-            token1Address: effectiveToken1Address,
-          })
-        : undefined
-
-      if (responseCacheKey) {
-        const cached = evmOhlcResponseCache.get(responseCacheKey)
-        if (cached) {
-          return cloneResponse(cached.response)
-        }
-      }
-
       const volumePanel = !isReserveSyncSource(source as EvmOhlcSource)
       const sourceFamily = getSourceFamily(source as EvmOhlcSource)
       const priceMethod = getPriceMethod(source as EvmOhlcSource)
@@ -1635,7 +1634,8 @@ export function registerEvmOhlcTool(server: McpServer) {
         isFilled: (bucket) => bucket.sample_count > 0,
         anchor: seriesAnchor,
         windowComplete:
-          !backfillInterrupted && (initialScanCoversSeriesStart || earliestObservedBelowPageEnd <= seriesStartTimestamp),
+          !backfillInterrupted &&
+          (initialScanCoversSeriesStart || earliestObservedBelowPageEnd <= seriesStartTimestamp),
         ...(earliestObservedTimestamp !== Number.MAX_SAFE_INTEGER
           ? { firstObservedTimestamp: earliestObservedTimestamp }
           : {}),
@@ -2052,8 +2052,7 @@ export function registerEvmOhlcTool(server: McpServer) {
             id: 'candles',
             kind: 'chart_panel',
             title: `${summary.pair_label} price action`,
-            subtitle:
-              'Candles plus color-matched volume bars. Hover for O/H/L/C and volume; drag to zoom narrower windows.',
+            subtitle: 'Candles plus color-matched volume bars. Hover or focus a candle for O/H/L/C and volume.',
             chart_key: 'chart',
             emphasis: 'primary',
           }),
@@ -2084,7 +2083,7 @@ export function registerEvmOhlcTool(server: McpServer) {
           ...(recentTrades.length > 0
             ? [{ label: 'Show recent trades', intent: 'show_raw' as const, target: 'recent_trades' }]
             : []),
-          { label: 'Zoom into the latest move', intent: 'zoom_in', target: 'chart' },
+          { label: 'Query a shorter recent window', intent: 'zoom_in', target: 'chart' },
         ],
       })
 
@@ -2170,7 +2169,9 @@ export function registerEvmOhlcTool(server: McpServer) {
         {
           toolName: 'portal_evm_get_ohlc',
           ...(notices.length > 0 ? { notices } : {}),
-          pagination: buildPaginationInfo(expectedBuckets, ohlc.length, nextCursor),
+          pagination: buildPaginationInfo(expectedBuckets, ohlc.length, nextCursor, {
+            continuationScope: 'adjacent_window',
+          }),
           ordering: buildChronologicalPageOrdering({
             sortedBy: 'timestamp',
             continuation: nextCursor ? 'older' : 'none',
@@ -2233,8 +2234,8 @@ export function registerEvmOhlcTool(server: McpServer) {
         },
       )
 
-      if (responseCacheKey) {
-        evmOhlcResponseCache.set(responseCacheKey, { key: responseCacheKey, response: result }, estimateSize(result))
+      if (requestCacheKey) {
+        evmOhlcResponseCache.set(requestCacheKey, { key: requestCacheKey, response: result }, estimateSize(result))
       }
 
       return result

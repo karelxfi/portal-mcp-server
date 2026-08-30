@@ -1,12 +1,12 @@
 # SQD Plugin
 
-Query blockchain data across 140+ networks with SQD Portal, including Ethereum, Base, Solana, Polkadot, Bitcoin, Tron, and Hyperliquid. The SQD plugin also includes Pipes SDK and Squid SDK skills for building, migrating, troubleshooting, and improving blockchain data projects.
+Query blockchain data across 130+ networks with SQD Portal, including Ethereum, Base, Solana, Polkadot, Bitcoin, Tron, and Hyperliquid. The SQD plugin also includes Pipes SDK and Squid SDK skills for building, migrating, troubleshooting, and improving blockchain data projects.
 
 The plugin uses the public SQD endpoint at `https://portal.sqd.dev/mcp`. No account or login is required.
 
 The packaged server runtime uses stateless HTTP and negotiates MCP 2026-07-28, matching the current Claude rollout. Set `REQUIRE_MCP_2026_LIVE=1` when running the plugin checks after deployment to verify the public endpoint.
 
-It also includes the four official SQD agent skills for Portal, Pipes SDK, Portal migration, and indexer performance. The bundled snapshot comes from `subsquid-labs/skills` at commit `06936ddfa9ae423638e187d8e9ac5d1f831095a8`; see `skills/SOURCE.md`.
+It also includes the four official SQD agent skills for Portal, Pipes SDK, Portal migration, and indexer performance. The bundled snapshot comes from `subsquid-labs/skills` at commit `6eed8d82d0ceac35855742d6e4b5cc150bc5d402`; see `skills/SOURCE.md`. The upstream Squid SDK subtree is flattened into two top-level skills so Claude, Codex, Grok, Gemini, and Cursor discover all four skills consistently.
 
 ## Name and logo
 
@@ -78,6 +78,15 @@ npm run test:cursor-plugin
 ```
 
 The checks validate the name, black logo, listing copy, marketplace files, hosted endpoint, Gemini archive, Cursor package, and Grok compatibility.
+
+For an exact local release candidate, generate a temporary package that keeps every skill and manifest unchanged but points the MCP connection at the current built stdio server:
+
+```bash
+npm run build
+npm run prepare:client-candidate -- /path/to/empty/temp-directory
+```
+
+The generated `candidate.json` records the package digest and the limits of the proof. Do not commit the temporary candidate.
 
 ## Public directory submission
 

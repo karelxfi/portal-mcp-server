@@ -1,6 +1,6 @@
 ---
 name: portal
-description: "Query blockchain data across 140+ networks with SQD Portal, including EVM, Solana, Substrate, Bitcoin, Tron, and Hyperliquid, and choose the right execution path: Portal MCP for bounded answers, Portal Stream API/curl for raw exports, or Pipes/Squid for durable pipelines."
+description: "Query blockchain data across 130+ networks with SQD Portal, including EVM, Solana, Substrate, Bitcoin, Tron, and Hyperliquid, and choose the right execution path: Portal MCP for bounded answers, Portal Stream API/curl for raw exports, or Pipes/Squid for durable pipelines."
 allowed-tools:
   - Bash
   - WebFetch
@@ -13,7 +13,7 @@ metadata:
 
 # Portal
 
-Query and analyze blockchain data across 140+ networks using SQD Portal. Use this skill to decide whether the job belongs in SQD Portal MCP tools, a raw Portal Stream API/curl request, or a durable Pipes/Squid indexer.
+Query and analyze blockchain data across 130+ networks using SQD Portal. Use this skill to decide whether the job belongs in SQD Portal MCP tools, a raw Portal Stream API/curl request, or a durable Pipes/Squid indexer.
 
 This skill should not be treated as a static copy of the MCP tool catalog. When the SQD Portal MCP server is available, read `sqd://tools` for the current grouped tool guide and `sqd://tools/{tool_name}` for exact per-tool guidance.
 

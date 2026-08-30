@@ -1,33 +1,44 @@
 import { CLIENT_INFO_META_KEY, McpServer, type ServerContext } from '@modelcontextprotocol/server'
 
+import {
+  classifyUiCapability,
+  recordActivityExplorerResult,
+  registerActivityExplorerResource,
+} from './apps/activity-explorer.js'
 import { RequestCancelledError } from './helpers/errors.js'
+import { attachEvidenceReceipt } from './helpers/evidence-receipt.js'
 import { runWithPortalRequestSignal } from './helpers/request-context.js'
+import { getToolWorkProfile, toolAdmission } from './helpers/tool-admission.js'
 import { formatToolError } from './helpers/tool-error.js'
 import { toolCallDuration, toolCallsActive, toolCallsTotal } from './metrics.js'
 import {
-  classifyToolOutcome,
   type RuntimeRequestContext,
+  classifyToolOutcome,
   createInvocationId,
   recordToolOutcome,
 } from './observability.js'
 import { registerSchemaResource } from './resources/schema.js'
 import { registerAllTools } from './tools/index.js'
 import { npmVersion } from './version.js'
+import { registerInvestigationPromptsAndResources } from './investigations.js'
 
 // ============================================================================
 // Server Factory
 // ============================================================================
 
 export const PORTAL_SERVER_INSTRUCTIONS =
-  'SQD provides read-only blockchain data from SQD Portal. Start with portal_list_networks to resolve a network, then use portal_get_network_info to check availability and freshness. Use chain-specific query tools for Ethereum-compatible networks, Tron, Solana, Bitcoin, Polkadot and other Substrate networks, and Hyperliquid. Prefer timeframe for recent windows and from_block/to_block for exact evidence. Check _coverage and _pagination before claiming completeness, and reuse _pagination.next_cursor when present. No authentication is required.'
+  'SQD provides read-only blockchain data from SQD Portal. Start with portal_list_networks to resolve a network, then use portal_get_network_info to check availability and freshness. Check _coverage and _pagination before claiming completeness, and reuse _pagination.next_cursor when present. Chain-specific MCP query tools cover Ethereum-compatible networks, Solana, Bitcoin, Polkadot and other Substrate networks, and Hyperliquid. Tron is available for dataset discovery, head, freshness, and timestamp-to-block lookups; use the bundled SQD Portal skill for native Tron Stream API queries. Prefer timeframe for recent windows and from_block/to_block for exact evidence. No authentication is required.'
 
 export function createPortalServer(runtimeContext: RuntimeRequestContext = { transport: 'stdio' }): McpServer {
-  const server = new McpServer({
-    name: 'sqd-portal-mcp-server',
-    version: npmVersion,
-  }, {
-    instructions: PORTAL_SERVER_INSTRUCTIONS,
-  })
+  const server = new McpServer(
+    {
+      name: 'sqd-portal-mcp-server',
+      version: npmVersion,
+    },
+    {
+      instructions: PORTAL_SERVER_INSTRUCTIONS,
+    },
+  )
 
   function instrumentToolHandler<TArgs extends unknown[]>(
     toolName: string,
@@ -37,7 +48,8 @@ export function createPortalServer(runtimeContext: RuntimeRequestContext = { tra
       const invocationId = createInvocationId()
       const startedAt = Date.now()
       const end = toolCallDuration.startTimer({ tool: toolName, transport: runtimeContext.transport })
-      toolCallsActive.inc({ tool: toolName, transport: runtimeContext.transport })
+      let admitted = false
+      let releaseAdmission: (() => void) | undefined
       const extraCandidate = handlerArgs[handlerArgs.length - 1]
       const requestContext =
         extraCandidate && typeof extraCandidate === 'object' && 'mcpReq' in extraCandidate
@@ -60,9 +72,15 @@ export function createPortalServer(runtimeContext: RuntimeRequestContext = { tra
           typeof declaredClient?.version === 'string' ? declaredClient.version : runtimeContext.clientVersion,
         protocolVersion: server.server.getNegotiatedProtocolVersion(),
       }
+      const uiCapability = classifyUiCapability(envelope, server.server.getClientCapabilities())
 
       try {
-        const result = await runWithPortalRequestSignal(requestSignal, () => handler(...handlerArgs))
+        const lease = await toolAdmission.acquire(getToolWorkProfile(toolName), runtimeContext.transport, requestSignal)
+        releaseAdmission = lease.release
+        admitted = true
+        toolCallsActive.inc({ tool: toolName, transport: runtimeContext.transport })
+        const handlerResult = await runWithPortalRequestSignal(requestSignal, () => handler(...handlerArgs))
+        const result = attachEvidenceReceipt(toolName, toolArgs, handlerResult)
         const status = classifyToolOutcome({ result })
         toolCallsTotal.inc({
           tool: toolName,
@@ -79,6 +97,13 @@ export function createPortalServer(runtimeContext: RuntimeRequestContext = { tra
           invocationId,
           status,
         })
+        recordActivityExplorerResult({
+          toolName,
+          result,
+          transport: runtimeContext.transport,
+          uiCapability,
+          resultState: status,
+        })
         return result
       } catch (error) {
         const cancelled = requestSignal?.aborted || error instanceof RequestCancelledError
@@ -88,19 +113,25 @@ export function createPortalServer(runtimeContext: RuntimeRequestContext = { tra
         recordToolOutcome({
           toolName,
           args: toolArgs,
-          ...(cancelled
-            ? { error: new RequestCancelledError() }
-            : { result: toolErrorResult }),
+          ...(cancelled ? { error: new RequestCancelledError() } : { result: toolErrorResult }),
           durationMs: Date.now() - startedAt,
           runtime: effectiveRuntime,
           invocationId,
           status,
         })
+        recordActivityExplorerResult({
+          toolName,
+          result: toolErrorResult,
+          transport: runtimeContext.transport,
+          uiCapability,
+          resultState: status,
+        })
         if (cancelled) throw error
         return toolErrorResult
       } finally {
         end()
-        toolCallsActive.dec({ tool: toolName, transport: runtimeContext.transport })
+        if (admitted) toolCallsActive.dec({ tool: toolName, transport: runtimeContext.transport })
+        releaseAdmission?.()
       }
     }
   }
@@ -123,6 +154,8 @@ export function createPortalServer(runtimeContext: RuntimeRequestContext = { tra
 
   // Register resources
   registerSchemaResource(server)
+  registerInvestigationPromptsAndResources(server)
+  registerActivityExplorerResource(server, runtimeContext)
 
   // Register all tools
   registerAllTools(server)

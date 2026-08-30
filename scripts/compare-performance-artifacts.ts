@@ -47,13 +47,13 @@ async function main() {
       candidateSamples.slice(0, pairedCount).map((sample) => sample.endToEndMs),
     )
     console.log(
-      `${key}: median ratio=${comparison.observedMedianRatio.toFixed(3)} CI=${comparison.confidenceInterval.lower.toFixed(3)}-${comparison.confidenceInterval.upper.toFixed(3)} ${comparison.regression ? 'REGRESSION' : 'PASS'}`,
+      `${key}: median ratio=${comparison.observedMedianRatio.toFixed(3)} ratio-CI=${comparison.confidenceInterval.lower.toFixed(3)}-${comparison.confidenceInterval.upper.toFixed(3)} increase=${comparison.observedMedianIncreaseMs.toFixed(1)}ms increase-CI=${comparison.absoluteConfidenceIntervalMs.lower.toFixed(1)}-${comparison.absoluteConfidenceIntervalMs.upper.toFixed(1)}ms ${comparison.regression ? 'REGRESSION' : 'PASS'}`,
     )
     if (comparison.regression) regressions.push({ key, comparison })
   }
 
   if (regressions.length > 0) {
-    throw new Error(`${regressions.length} statistically supported latency regressions exceeded the 10% gate`)
+    throw new Error(`${regressions.length} statistically supported latency regressions exceeded both the 10% and 5ms gates`)
   }
   console.log(`PASS  ${baseline.gitSha.slice(0, 12)} -> ${candidate.gitSha.slice(0, 12)} performance comparison`)
 }
