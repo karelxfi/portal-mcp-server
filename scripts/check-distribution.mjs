@@ -41,6 +41,7 @@ function validateMetadata() {
   assert(server.title === 'SQD', 'server.json title must be SQD')
   assert(server.version === packageJson.version, 'server.json version must match package.json')
   assert(server.repository?.url === REPOSITORY, 'server.json repository must use the canonical GitHub URL')
+  assert(server.description.length <= 100, 'server.json description must fit the MCP Registry 100-character limit')
   assert(
     server.remotes?.some((remote) => remote.url === SERVER_URL),
     'server.json must publish the hosted MCP URL',

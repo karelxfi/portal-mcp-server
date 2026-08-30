@@ -10,6 +10,10 @@ on:
         description: Existing release tag to publish, for example v0.8.1
         required: true
         type: string
+      metadata_ref:
+        description: Optional ref containing repaired registry metadata
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -30,7 +34,7 @@ jobs:
       - name: Check out release
         uses: actions/checkout@v5
         with:
-          ref: ${{ inputs.tag || github.ref_name }}
+          ref: ${{ inputs.metadata_ref || inputs.tag || github.ref_name }}
 
       - name: Set up Node.js
         uses: actions/setup-node@v5
