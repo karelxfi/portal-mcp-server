@@ -178,8 +178,9 @@
     "portal_debug_hyperliquid_query_replica_commands": {
       "median_chars": 9064,
       "p95_chars": 9066,
-      "max_median_chars": 10032,
-      "max_p95_chars": 10032
+      "max_median_chars": 16000,
+      "max_p95_chars": 16000,
+      "rationale": "One replica action can contain a variable batch of orders and statuses; keep the complete action below a fixed 16k product budget."
     }
   }
 }

@@ -330,7 +330,10 @@ async function runQualityPass(params: {
     try {
       const args = spec.args(context)
       let result = await callToolWithRetry(client, spec.name, args)
-      assert(!result.isError, `${spec.name} should succeed in the quality audit`)
+      assert(
+        !result.isError,
+        `${spec.name} should succeed in the quality audit: ${truncateText(result.text, 4)}`,
+      )
 
       const intent = getIntent(result.data)
       const hardLatencyBudget = getHardLatencyBudget(intent, spec.name)
