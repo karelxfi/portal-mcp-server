@@ -6,6 +6,7 @@ import {
   canonicalizeEvidenceValue,
   stableEvidenceJson,
 } from '../src/helpers/evidence-receipt.ts'
+import { inferPrimaryEvidencePath } from '../src/helpers/format.ts'
 import { assert } from './test-helpers.ts'
 
 const completePayload = {
@@ -110,6 +111,15 @@ function main() {
     )
     assert(exampleReceipt.result.row_count === 2, `${example.label} receipt should count every primary row`)
   }
+
+  const headPayload = { number: 123, hash: '0x123', network: 'base-mainnet' }
+  const headReceipt = buildEvidenceReceipt('portal_get_head', { network: 'base-mainnet' }, headPayload)
+  assert(inferPrimaryEvidencePath(headPayload) === 'number', 'scalar head investigation should lead with block number')
+  assert(headReceipt.result.row_count === 0, 'scalar lookups should not pretend to return evidence rows')
+  assert(
+    headReceipt.result.primary_evidence_path === undefined,
+    'scalar lookups should not expose a row-oriented primary evidence path',
+  )
 
   const partial = buildEvidenceReceipt('portal_evm_query_transactions', args, {
     ...completePayload,

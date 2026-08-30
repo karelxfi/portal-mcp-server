@@ -887,10 +887,11 @@ export function inferPrimaryEvidencePath(
     'overview',
     'summary',
     'interactions',
-    'network',
     'block_details',
     'block_number',
+    'number',
     'timestamp',
+    'network',
   ]
 
   return [...tablePaths, ...chartPaths, ...preferredKeys].find((path) => {
@@ -915,7 +916,7 @@ function inferPrimaryEvidenceKind(payload: RecordLike, primaryPath?: string): st
   if (primaryPath.includes('transfer')) return 'token_transfers'
   if (primaryPath.includes('top_')) return 'ranked_summary'
   if (primaryPath.includes('overview') || primaryPath.includes('summary')) return 'summary'
-  if (primaryPath.includes('block_number') || primaryPath.includes('timestamp')) return 'lookup'
+  if (primaryPath === 'number' || primaryPath.includes('block_number') || primaryPath.includes('timestamp')) return 'lookup'
   return 'records'
 }
 
