@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 
-import { createHash } from 'node:crypto'
 import { cp, mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
 import { basename, resolve } from 'node:path'
+
+import { digestClientCandidate } from './lib/client-candidate-digest.mjs'
 
 const destination = process.argv[2]
 if (!destination) {
@@ -50,18 +51,24 @@ const manifestFiles = [
   'plugins/portal/gemini-extension.json',
   'plugins/portal/.mcp.json',
 ]
-const digest = createHash('sha256')
-for (const file of manifestFiles) digest.update(await readFile(resolve(root, file)))
-digest.update(await readFile(runtime))
+const candidateDigest = await digestClientCandidate({
+  projectRoot: resolve('.'),
+  manifestRoot: root,
+  manifestFiles,
+  runtimeRoot: resolve('dist'),
+  runtimeMetadataFiles: [resolve('package.json'), resolve('package-lock.json')],
+})
 
 const metadata = {
   schemaVersion: 'sqd_local_client_candidate_v1',
   releaseVersion: packageJson.version,
   transport: 'stdio',
   runtime: basename(runtime),
-  packageSha256: digest.digest('hex'),
+  packageSha256: candidateDigest.packageSha256,
+  runtimeFileCount: candidateDigest.runtimeFileCount,
+  hashedFileCount: candidateDigest.hashedFileCount,
   proofBoundary:
-    'This package swaps only the hosted MCP connection for the exact local release-candidate stdio build. Public release packages keep https://portal.sqd.dev/mcp.',
+    'This package swaps only the hosted MCP connection for the exact local release-candidate stdio build. The digest covers every compiled JavaScript runtime module, package metadata, the lockfile, and all client manifests. Public release packages keep https://portal.sqd.dev/mcp.',
 }
 await writeFile(resolve(root, 'candidate.json'), `${JSON.stringify(metadata, null, 2)}\n`)
 console.log(JSON.stringify({ root, ...metadata }))
