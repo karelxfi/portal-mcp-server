@@ -61,7 +61,7 @@ Exercises the shared upstream boundary without depending on live Portal state. I
 Forces 32 large concurrent MCP responses through a slow stdout fixture and verifies response writes stay serialized, listener-bounded, and fully drained.
 
 ### `npm run test:performance-harness`
-Validates the open-loop measurement code itself. It checks intended-start queue delay, a no-change A/A comparison, and detection of an injected 20 percent regression.
+Validates the open-loop measurement code itself. It checks intended-start queue delay, a no-change A/A comparison, detection of an injected 20 percent regression, and the five-millisecond practical-effect floor for very fast calls.
 
 ### `npm run test:pagination`
 Validates exact cursor continuation when more than one page of matching rows shares the same block. It fails on repeated or skipped rows.
@@ -95,7 +95,7 @@ Compare exact baseline and candidate artifacts with:
 npm run benchmark:compare -- artifacts/baseline.json artifacts/candidate.json
 ```
 
-The comparison uses paired seeded bootstrap intervals and fails a statistically supported latency regression above 10 percent.
+The comparison uses seeded bootstrap intervals over population medians and fails only when the supported latency increase is above both 10 percent and 5 milliseconds.
 
 For the release regression gate, use the interleaved paired runner so baseline and candidate see the same live upstream conditions:
 
@@ -106,9 +106,9 @@ BENCHMARK_SAMPLES=50 \
 npm run benchmark:paired
 ```
 
-The runner starts both exact commits, sends each sample pair at the same intended time, alternates which side starts first, and cools down between tools. Its default rate is two pairs per second, which produces four shared upstream requests per second. The paired gate uses c1 only. Running concurrent load on both versions would make one version consume shared Portal capacity and change the other's result. Candidate-only c4, c8, and burst behavior belongs to `benchmark:v082` and the release soak instead.
+The runner starts both exact commits, schedules each sample pair at the same intended time, runs the two calls sequentially, alternates which side starts first, and cools down between tools. Its default target is two pairs per second. The paired gate uses c1 only. Running both calls concurrently would make one version consume shared Portal capacity and change the other's result. Candidate-only c4, c8, and burst behavior belongs to `benchmark:v082` and the release soak instead.
 
-Release mode requires at least 80 percent successful pairs per warm profile and fails statistically supported service-latency regressions above 10 percent, candidate tool errors above 1 percent, or any profile with insufficient evidence. An insufficient profile or initial regression gets one cooldown-separated confirmation attempt, and both attempts remain in the artifact. A regression must repeat after cooldown to fail the live gate. `BENCHMARK_TARGET_RPS`, `BENCHMARK_COOLDOWN_MS`, and `BENCHMARK_PROFILE_ATTEMPTS` can override the default pair rate, 5-second cooldown, and release confirmation count. Sequential artifacts remain useful for standalone capacity evidence, but are not used as the release regression gate.
+Release mode requires at least 80 percent successful pairs per warm profile and fails statistically supported service-latency regressions above both 10 percent and 5 milliseconds, candidate tool errors above 1 percent, or any profile with insufficient evidence. An insufficient profile or initial regression gets one cooldown-separated confirmation attempt, and both attempts remain in the artifact. A regression must repeat after cooldown to fail the live gate. `BENCHMARK_TARGET_RPS`, `BENCHMARK_COOLDOWN_MS`, and `BENCHMARK_PROFILE_ATTEMPTS` can override the default pair rate, 5-second cooldown, and release confirmation count. Sequential artifacts remain useful for standalone capacity evidence, but are not used as the release regression gate.
 
 ### `npm run soak:v082`
 Runs mixed tools with periodic eight-call bursts while recording tool errors, latency recovery, and MCP child-process RSS. Development runs may override the duration. Release mode requires a clean commit, at least 60 minutes, and no more than 1 percent tool errors:

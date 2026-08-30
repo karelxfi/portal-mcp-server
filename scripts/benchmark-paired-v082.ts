@@ -273,7 +273,7 @@ async function main() {
       )
     }
     if (releaseMode && regressions > 0) {
-      throw new Error(`${regressions} statistically supported paired latency regressions exceeded 10%`)
+      throw new Error(`${regressions} statistically supported paired latency regressions exceeded both 10% and 5ms`)
     }
     if (releaseMode && insufficientProfiles > 0) {
       throw new Error(`${insufficientProfiles} profiles did not produce enough successful baseline/candidate pairs`)
