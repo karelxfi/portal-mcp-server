@@ -30,7 +30,7 @@ function assertManifest() {
   const description = manifest.description as string
   for (const phrase of [
     'blockchain',
-    '140+ networks',
+    '130+ networks',
     'Ethereum',
     'Base',
     'Solana',

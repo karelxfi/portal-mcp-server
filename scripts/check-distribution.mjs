@@ -45,7 +45,7 @@ function validateMetadata() {
     server.remotes?.some((remote) => remote.url === SERVER_URL),
     'server.json must publish the hosted MCP URL',
   )
-  assert(/140\+ networks/.test(server.description), 'server.json description must state the full network coverage')
+  assert(/130\+ networks/.test(server.description), 'server.json description must state the full network coverage')
   assert(/Tron/.test(server.description), 'server.json description must include Tron')
   assert(!/[\u2013\u2014]/.test(server.description), 'server.json description must not use en or em dashes')
 
@@ -196,7 +196,7 @@ async function checkAwesomeList() {
 
 async function checkSmithery() {
   const body = await fetchText('https://smithery.ai/servers/sqd/sqd')
-  if (!body.includes('Connect AI agents to live blockchain data across 140+ networks')) {
+  if (!body.includes('Connect AI agents to live blockchain data across 130+ networks')) {
     return result('Smithery', 'fail', 'official listing metadata is missing')
   }
   if (!body.includes(SERVER_URL)) {

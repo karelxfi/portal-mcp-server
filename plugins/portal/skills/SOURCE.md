@@ -5,7 +5,7 @@ These skills are bundled from `subsquid-labs/skills` so Codex, Claude, and Grok 
 - Repository: `https://github.com/subsquid-labs/skills`
 - Commit: `6eed8d82d0ceac35855742d6e4b5cc150bc5d402`
 - Synced: `2026-08-30`
-- Packaging normalization: trailing spaces were removed from the generated report wrapper.
+- Packaging normalization: trailing spaces were removed from the generated report wrapper, and public coverage copy was changed from 140+ to 130+ so it remains true for the current 138-entry public catalog.
 
 Bundled skills:
 

@@ -217,7 +217,7 @@ function assertManifest() {
   assertRecord(manifest.interface, 'plugin interface must be an object')
   assert(manifest.interface.displayName === 'SQD', 'plugin display name should be SQD')
   assert(
-    manifest.interface.shortDescription === 'Query blockchain data across 140+ networks.',
+    manifest.interface.shortDescription === 'Query blockchain data across 130+ networks.',
     'plugin short description should lead with broad network coverage',
   )
   const publicCopy = [
@@ -228,7 +228,7 @@ function assertManifest() {
   ].join(' ')
   for (const phrase of [
     'blockchain',
-    '140+ networks',
+    '130+ networks',
     'Ethereum',
     'Base',
     'Solana',
@@ -330,7 +330,7 @@ function assertChatgptSubmission() {
   const publicCopy = `${submission.app_info.subtitle} ${submission.app_info.description}`
   for (const phrase of [
     'blockchain',
-    '140+',
+    '130+',
     'Ethereum',
     'Base',
     'Solana',

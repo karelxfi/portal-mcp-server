@@ -23,11 +23,11 @@ Category: `Data & Analytics`
 
 Short description:
 
-> Query blockchain data across 140+ networks with SQD Portal.
+> Query blockchain data across 130+ networks with SQD Portal.
 
 Long description:
 
-> Query blockchain data across 140+ networks with SQD Portal, including Ethereum, Base, Solana, Polkadot, Bitcoin, Tron, and Hyperliquid. The SQD plugin also includes Pipes SDK and Squid SDK skills for building, migrating, troubleshooting, and improving blockchain data projects.
+> Query blockchain data across 130+ networks with SQD Portal, including Ethereum, Base, Solana, Polkadot, Bitcoin, Tron, and Hyperliquid. The SQD plugin also includes Pipes SDK and Squid SDK skills for building, migrating, troubleshooting, and improving blockchain data projects.
 
 Starter prompts:
 
@@ -66,8 +66,8 @@ For a new version or listing change, use the connector submission portal in the 
 - Connection model: one URL for every user
 - Authentication: none
 - Name: `SQD`
-- Tagline: `Query blockchain data across 140+ networks`
-- Description: `Query blockchain data across 140+ networks with SQD Portal, including Ethereum, Base, Solana, Polkadot, Bitcoin, Tron, and Hyperliquid.`
+- Tagline: `Query blockchain data across 130+ networks`
+- Description: `Query blockchain data across 130+ networks with SQD Portal, including Ethereum, Base, Solana, Polkadot, Bitcoin, Tron, and Hyperliquid.`
 - Documentation: `https://docs.sqd.dev/en/ai/claude-connector`
 - Privacy: `https://sqd.dev/imprint/`
 - Support: `https://sqd.dev/contact/`
@@ -109,7 +109,7 @@ Treat submitted OpenAI metadata as a versioned snapshot. Prepare the MCP App upd
 
 Suggested initial release notes:
 
-> Initial SQD plugin submission. Query blockchain data across 140+ networks with SQD Portal, including Ethereum, Base, Solana, Polkadot, Bitcoin, Tron, and Hyperliquid. The plugin also includes Pipes SDK and Squid SDK skills for building, migrating, troubleshooting, and improving blockchain data projects.
+> Initial SQD plugin submission. Query blockchain data across 130+ networks with SQD Portal, including Ethereum, Base, Solana, Polkadot, Bitcoin, Tron, and Hyperliquid. The plugin also includes Pipes SDK and Squid SDK skills for building, migrating, troubleshooting, and improving blockchain data projects.
 
 ### Positive review tests
 
@@ -138,7 +138,7 @@ Add this entry to `.grok-plugin/marketplace.json` after the SQD source change is
 ```json
 {
   "name": "sqd",
-  "description": "Query blockchain data across 140+ networks with SQD Portal, including Ethereum, Base, Solana, Polkadot, Bitcoin, Tron, and Hyperliquid. The SQD plugin also includes Pipes SDK and Squid SDK skills for building, migrating, troubleshooting, and improving blockchain data projects.",
+  "description": "Query blockchain data across 130+ networks with SQD Portal, including Ethereum, Base, Solana, Polkadot, Bitcoin, Tron, and Hyperliquid. The SQD plugin also includes Pipes SDK and Squid SDK skills for building, migrating, troubleshooting, and improving blockchain data projects.",
   "category": "development",
   "source": {
     "source": "url",
@@ -214,7 +214,7 @@ Use these listing values:
 - Logo: `plugins/portal/assets/sqd-logo.svg`
 - Authentication: none
 - Components: one read-only MCP server and four skills
-- Short description: `Query blockchain data across 140+ networks with SQD Portal.`
-- Long description: `Query blockchain data across 140+ networks with SQD Portal, including Ethereum, Base, Solana, Polkadot, Bitcoin, Tron, and Hyperliquid. The SQD plugin also includes Pipes SDK and Squid SDK skills for building, migrating, troubleshooting, and improving blockchain data projects.`
+- Short description: `Query blockchain data across 130+ networks with SQD Portal.`
+- Long description: `Query blockchain data across 130+ networks with SQD Portal, including Ethereum, Base, Solana, Polkadot, Bitcoin, Tron, and Hyperliquid. The SQD plugin also includes Pipes SDK and Squid SDK skills for building, migrating, troubleshooting, and improving blockchain data projects.`
 
 Before submitting at `https://cursor.com/marketplace/publish`, run `npm run test:cursor-plugin` and test the plugin locally in Cursor. Cursor reviews every public marketplace submission.

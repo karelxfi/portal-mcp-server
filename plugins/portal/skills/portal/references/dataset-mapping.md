@@ -1,6 +1,6 @@
 # Full Portal Chain Name Mapping
 
-SQD documentation summarizes coverage as **140+ networks**, including non-public datasets. The public Portal catalog returned **138 entries on 2026-08-26**. This file maps common chain names to Portal dataset names. For the always-current public list:
+SQD public product copy summarizes coverage as **130+ networks**. The public Portal catalog returned **138 entries on 2026-08-26**. This file maps common chain names to Portal dataset names. For the always-current public list:
 
 ```bash
 curl -sS -A 'Mozilla/5.0' https://portal.sqd.dev/datasets   # public catalog with real_time flags

@@ -275,5 +275,5 @@ Dashboard-grade ClickHouse patterns (time bucketing, conditional aggregation, pa
 
 ## Related
 
-- **portal:** query blockchain data across 140+ networks via Portal MCP or the SQD Portal Stream API. Use it to verify contract events, discover dataset names, cross-check indexed data, and decide when a query should become a Pipes/Squid pipeline.
+- **portal:** query blockchain data across 130+ networks via Portal MCP or the SQD Portal Stream API. Use it to verify contract events, discover dataset names, cross-check indexed data, and decide when a query should become a Pipes/Squid pipeline.
 - **Ponder on Portal** — if the user already has a [Ponder](https://ponder.sh) indexer, [`@subsquid/ponder`](https://docs.sqd.dev/en/sdk/alternative-clients/ponder) backs its historical sync with Portal as a drop-in (same handlers/schema; one `portal:` line per chain) — no Pipes rewrite needed.
