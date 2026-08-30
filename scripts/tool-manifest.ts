@@ -368,8 +368,8 @@ export async function loadToolTestContext(client: Client): Promise<ToolTestConte
     pickRecentBaseDeployment(baseHead),
     callToolWithRetry(client, 'portal_evm_query_logs', {
       network: 'base-mainnet',
-      from_timestamp: '1h ago',
-      to_timestamp: 'now',
+      from_block: baseHead - 10_000,
+      to_block: baseHead,
       addresses: [BASE_UNISWAP_V4_POOL_MANAGER],
       topic0: [EVENT_SIGNATURES.UNISWAP_V4_SWAP],
       limit: 20,
