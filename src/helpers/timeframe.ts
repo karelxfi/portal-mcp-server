@@ -2,7 +2,7 @@
 // Converts "24h", "7d" etc. into block numbers using Portal's /timestamps/ API
 // Falls back to per-chain block time estimation when the endpoint is unavailable.
 
-import { getBlockHead } from '../cache/datasets.js'
+import { getBlockHead, getDatasetMetadata } from '../cache/datasets.js'
 import { PORTAL_URL } from '../constants/index.js'
 import { detectChainType } from './chain.js'
 import { ActionableError } from './errors.js'
@@ -75,6 +75,9 @@ export type ParsedTimestampInput = {
 
 export interface BlockAtTimestampResult extends ParsedTimestampInput {
   block_number: number
+  block_timestamp?: number
+  block_timestamp_human?: string
+  boundary?: 'from' | 'to' | 'nearest'
   dataset: string
   resolution: 'exact' | 'estimated'
   timestamp_human: string
@@ -327,82 +330,57 @@ const TIMESTAMP_TIMEOUT = 3000
  * time estimation. The fallback remains explicit in the result provenance,
  * while avoiding duplicate timestamp traffic during concurrent workloads.
  */
+function portalTimestampValue(dataset: string, timestamp: number): number {
+  const chainType = detectChainType(dataset)
+  return chainType === 'hyperliquidFills' || chainType === 'tron'
+    ? Math.floor(timestamp * 1000)
+    : Math.floor(timestamp)
+}
+
 export async function timestampToBlock(dataset: string, timestamp: number): Promise<number> {
+  const portalTimestamp = portalTimestampValue(dataset, timestamp)
   const result = await portalFetch<{ block_number: number }>(
-    `${PORTAL_URL}/datasets/${dataset}/timestamps/${Math.floor(timestamp)}/block`,
+    `${PORTAL_URL}/datasets/${dataset}/timestamps/${portalTimestamp}/block`,
     { timeout: TIMESTAMP_TIMEOUT, retries: 0 },
   )
   return result.block_number
 }
 
 /**
- * Get the head block's timestamp by querying Portal for the actual block data.
+ * Read and normalize the timestamp on one indexed block. This is deliberately
+ * used to verify /timestamps/ responses before they are described as exact.
  */
-export async function getHeadTimestamp(dataset: string, headBlock: number): Promise<number> {
+export async function getBlockTimestamp(dataset: string, blockNumber: number): Promise<number> {
   const chainType = detectChainType(dataset)
-
-  // Determine the query type and field key based on chain type
-  let type: string
-  let fieldKey: string
-  switch (chainType) {
-    case 'solana':
-      type = 'solana'
-      fieldKey = 'block'
-      break
-    case 'tron':
-      type = 'tron'
-      fieldKey = 'block'
-      break
-    case 'bitcoin':
-      type = 'bitcoin'
-      fieldKey = 'block'
-      break
-    case 'substrate':
-      type = 'substrate'
-      fieldKey = 'block'
-      break
-    case 'hyperliquidFills':
-      type = 'hyperliquidFills'
-      fieldKey = 'block'
-      break
-    case 'hyperliquidReplicaCmds':
-      type = 'hyperliquidReplicaCmds'
-      fieldKey = 'block'
-      break
-    default:
-      type = 'evm'
-      fieldKey = 'block'
-  }
-
-  const query = {
-    type,
-    fromBlock: headBlock,
-    toBlock: headBlock,
-    includeAllBlocks: true,
-    fields: {
-      [fieldKey]: {
-        number: true,
-        timestamp: true,
-      },
-    },
-  }
-
   const response = await portalFetchStream(
     `${PORTAL_URL}/datasets/${dataset}/stream`,
-    query,
+    {
+      type: chainType,
+      fromBlock: blockNumber,
+      toBlock: blockNumber,
+      includeAllBlocks: true,
+      fields: { block: { number: true, timestamp: true } },
+    },
     TIMESTAMP_TIMEOUT,
   )
 
   if (!response || response.length === 0) {
-    throw new Error(`Could not get timestamp for head block ${headBlock}`)
+    throw new Error(`Could not get timestamp for block ${blockNumber}`)
   }
 
   const block = (response[0] as any).header || response[0]
   const timestamp = Number(block.timestamp)
   if (!Number.isFinite(timestamp) || timestamp <= 0) {
-    throw new Error(`Could not parse timestamp for head block ${headBlock}`)
+    throw new Error(`Could not parse timestamp for block ${blockNumber}`)
   }
   return timestamp > 1_000_000_000_000 ? Math.floor(timestamp / 1000) : Math.floor(timestamp)
+}
+
+/**
+ * Get the head block's timestamp by querying Portal for the actual block data.
+ */
+export async function getHeadTimestamp(dataset: string, headBlock: number): Promise<number> {
+  return getBlockTimestamp(dataset, headBlock)
 }
 
 function parseRelativeTimestamp(input: string, nowUnix: number): ParsedTimestampInput | undefined {
@@ -535,37 +513,187 @@ export function describeTimeWindowInput(input: string): string {
   return `last ${trimmed}`
 }
 
-export async function resolveBlockAtTimestamp(dataset: string, input: string | number): Promise<BlockAtTimestampResult> {
-  const parsed = parseTimestampInput(input)
+type TimestampBoundary = 'from' | 'to' | 'nearest'
 
-  try {
-    const blockNumber = await timestampToBlock(dataset, parsed.timestamp)
+function boundarySatisfied(boundary: TimestampBoundary, actual: number, target: number): boolean {
+  if (boundary === 'from') return actual >= target
+  if (boundary === 'to') return actual <= target
+  return true
+}
+
+async function refineTimestampBoundary(params: {
+  dataset: string
+  targetTimestamp: number
+  initialBlock: number
+  startBlock: number
+  headBlock: number
+  boundary: TimestampBoundary
+}): Promise<{ blockNumber: number; blockTimestamp: number }> {
+  const { dataset, targetTimestamp, startBlock, headBlock, boundary } = params
+  const chainType = detectChainType(dataset)
+  const blockTime = estimateBlockTime(dataset, chainType)
+  const verificationTolerance = Math.max(2, Math.ceil(blockTime * 2))
+  const timestampCache = new Map<number, number>()
+
+  const readTimestamp = async (blockNumber: number) => {
+    const cached = timestampCache.get(blockNumber)
+    if (cached !== undefined) return cached
+    const timestamp = await getBlockTimestamp(dataset, blockNumber)
+    timestampCache.set(blockNumber, timestamp)
+    return timestamp
+  }
+
+  let blockNumber = Math.max(startBlock, Math.min(headBlock, Math.floor(params.initialBlock)))
+
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    const blockTimestamp = await readTimestamp(blockNumber)
+    const deltaSeconds = targetTimestamp - blockTimestamp
+    const closeEnough = Math.abs(deltaSeconds) <= verificationTolerance
+
+    if (boundarySatisfied(boundary, blockTimestamp, targetTimestamp) && closeEnough) {
+      if (boundary === 'nearest') {
+        const candidates = [{ blockNumber, blockTimestamp }]
+        for (const neighbor of [blockNumber - 1, blockNumber + 1]) {
+          if (neighbor < startBlock || neighbor > headBlock) continue
+          try {
+            candidates.push({ blockNumber: neighbor, blockTimestamp: await readTimestamp(neighbor) })
+          } catch {
+            // The verified current block remains a safe fallback when an
+            // adjacent block is temporarily unavailable.
+          }
+        }
+        return candidates.sort((left, right) => {
+          const leftDelta = Math.abs(left.blockTimestamp - targetTimestamp)
+          const rightDelta = Math.abs(right.blockTimestamp - targetTimestamp)
+          return leftDelta - rightDelta || left.blockNumber - right.blockNumber
+        })[0]
+      }
+
+      const neighbor = boundary === 'from' ? blockNumber - 1 : blockNumber + 1
+      if (neighbor < startBlock || neighbor > headBlock) {
+        return { blockNumber, blockTimestamp }
+      }
+
+      try {
+        const neighborTimestamp = await readTimestamp(neighbor)
+        const neighborAlsoSatisfies = boundarySatisfied(boundary, neighborTimestamp, targetTimestamp)
+        if (!neighborAlsoSatisfies) {
+          return { blockNumber, blockTimestamp }
+        }
+        blockNumber = neighbor
+        continue
+      } catch {
+        return { blockNumber, blockTimestamp }
+      }
+    }
+
+    const estimatedStep = Math.round(deltaSeconds / blockTime)
+    const signedMinimumStep = deltaSeconds > 0 ? 1 : -1
+    const step = estimatedStep === 0 ? signedMinimumStep : estimatedStep
+    const nextBlock = Math.max(startBlock, Math.min(headBlock, blockNumber + step))
+    if (nextBlock === blockNumber) break
+    blockNumber = nextBlock
+  }
+
+  throw new Error(`Could not verify ${boundary} timestamp boundary for ${dataset}`)
+}
+
+export async function resolveBlockAtTimestamp(
+  dataset: string,
+  input: string | number,
+  options: { boundary?: TimestampBoundary; headBlock?: number; headTimestamp?: number } = {},
+): Promise<BlockAtTimestampResult> {
+  const parsed = parseTimestampInput(input)
+  const boundary = options.boundary ?? 'nearest'
+  const metadata = await getDatasetMetadata(dataset)
+  const headBlock = options.headBlock ?? metadata.head.number
+  const headTimestamp = options.headTimestamp ?? await getHeadTimestamp(dataset, headBlock)
+  const chainType = detectChainType(dataset)
+  const blockTime = estimateBlockTime(dataset, chainType)
+  // "now" is wall-clock based while Portal answers from the indexed head.
+  // Allow normal indexing/block-production lag, but reject genuinely future
+  // windows instead of silently clamping them to current data.
+  const futureTolerance = Math.max(60, Math.ceil(blockTime * 2))
+
+  if (parsed.timestamp > headTimestamp + futureTolerance) {
+    throw new ActionableError(
+      'The requested timestamp is after the latest indexed block.',
+      [
+        `Use a timestamp at or before ${formatTimestamp(headTimestamp)}.`,
+        'Use portal_get_network_info to inspect current indexing freshness.',
+      ],
+      {
+        requested_timestamp: parsed.timestamp,
+        requested_timestamp_human: formatTimestamp(parsed.timestamp),
+        indexed_head_block: headBlock,
+        indexed_head_timestamp: headTimestamp,
+        indexed_head_timestamp_human: formatTimestamp(headTimestamp),
+      },
+    )
+  }
+
+  if (parsed.timestamp >= headTimestamp) {
     return {
       ...parsed,
-      block_number: blockNumber,
+      block_number: headBlock,
+      block_timestamp: headTimestamp,
+      block_timestamp_human: formatTimestamp(headTimestamp),
+      boundary,
       dataset,
       resolution: 'exact',
       timestamp_human: formatTimestamp(parsed.timestamp),
+      head_block_number: headBlock,
+      head_timestamp: headTimestamp,
+      head_timestamp_human: formatTimestamp(headTimestamp),
+    }
+  }
+
+  try {
+    let blockNumber: number
+    try {
+      blockNumber = await timestampToBlock(dataset, parsed.timestamp)
+    } catch {
+      const estimatedOffset = Math.round((headTimestamp - parsed.timestamp) / blockTime)
+      blockNumber = Math.max(metadata.start_block, headBlock - estimatedOffset)
+    }
+
+    const verified = await refineTimestampBoundary({
+      dataset,
+      targetTimestamp: parsed.timestamp,
+      initialBlock: blockNumber,
+      startBlock: metadata.start_block,
+      headBlock,
+      boundary,
+    })
+    return {
+      ...parsed,
+      block_number: verified.blockNumber,
+      block_timestamp: verified.blockTimestamp,
+      block_timestamp_human: formatTimestamp(verified.blockTimestamp),
+      boundary,
+      dataset,
+      resolution: 'exact',
+      timestamp_human: formatTimestamp(parsed.timestamp),
+      head_block_number: headBlock,
+      head_timestamp: headTimestamp,
+      head_timestamp_human: formatTimestamp(headTimestamp),
     }
   } catch {
-    const head = await getBlockHead(dataset)
-    const headTimestamp = await getHeadTimestamp(dataset, head.number)
-    const chainType = detectChainType(dataset)
-    const estimatedBlockTimeSeconds = estimateBlockTime(dataset, chainType)
     const deltaSeconds = Math.max(0, headTimestamp - parsed.timestamp)
-    const estimatedOffset = Math.round(deltaSeconds / estimatedBlockTimeSeconds)
-    const estimatedBlockNumber = parsed.timestamp >= headTimestamp ? head.number : Math.max(0, head.number - estimatedOffset)
+    const estimatedOffset = Math.round(deltaSeconds / blockTime)
+    const estimatedBlockNumber = Math.max(metadata.start_block, headBlock - estimatedOffset)
 
     return {
       ...parsed,
       block_number: estimatedBlockNumber,
+      boundary,
       dataset,
       resolution: 'estimated',
       timestamp_human: formatTimestamp(parsed.timestamp),
-      head_block_number: head.number,
+      head_block_number: headBlock,
       head_timestamp: headTimestamp,
       head_timestamp_human: formatTimestamp(headTimestamp),
-      estimated_block_time_seconds: estimatedBlockTimeSeconds,
+      estimated_block_time_seconds: blockTime,
     }
   }
 }
@@ -639,24 +767,20 @@ export async function resolveTimeframeOrBlocks(params: {
     try {
       const headTimestamp = await getHeadTimestamp(dataset, latestBlock)
       const targetTimestamp = Math.max(0, headTimestamp - seconds)
-      const fromBlock = await timestampToBlock(dataset, targetTimestamp)
+      const lookup = await resolveBlockAtTimestamp(dataset, targetTimestamp, {
+        boundary: 'from',
+        headBlock: latestBlock,
+        headTimestamp,
+      })
+      if (lookup.resolution !== 'exact') {
+        throw new Error(`Could not verify the ${timeframe} boundary for ${dataset}`)
+      }
       markTimestampEndpointUp(dataset)
       return {
-        from_block: Math.min(fromBlock, latestBlock),
+        from_block: Math.min(lookup.block_number, latestBlock),
         to_block: latestBlock,
         range_kind: 'timeframe',
-        from_lookup: {
-          timestamp: targetTimestamp,
-          source: 'relative',
-          normalized_input: `${timeframe} before indexed head`,
-          block_number: Math.min(fromBlock, latestBlock),
-          dataset,
-          resolution: 'exact',
-          timestamp_human: formatTimestamp(targetTimestamp),
-          head_block_number: latestBlock,
-          head_timestamp: headTimestamp,
-          head_timestamp_human: formatTimestamp(headTimestamp),
-        },
+        from_lookup: { ...lookup, normalized_input: `${timeframe} before indexed head` },
       }
     } catch {
       // Cache the failure so subsequent calls skip straight to estimation
@@ -667,14 +791,36 @@ export async function resolveTimeframeOrBlocks(params: {
       }
     }
   } else if (hasTimestampWindow) {
+    const head = await getBlockHead(dataset)
+    const headTimestamp = await getHeadTimestamp(dataset, head.number)
     const [resolvedFrom, resolvedTo] = await Promise.all([
-      from_timestamp !== undefined ? resolveBlockAtTimestamp(dataset, from_timestamp) : Promise.resolve(undefined),
-      to_timestamp !== undefined ? resolveBlockAtTimestamp(dataset, to_timestamp) : Promise.resolve(undefined),
+      from_timestamp !== undefined
+        ? resolveBlockAtTimestamp(dataset, from_timestamp, { boundary: 'from', headBlock: head.number, headTimestamp })
+        : Promise.resolve(undefined),
+      to_timestamp !== undefined
+        ? resolveBlockAtTimestamp(dataset, to_timestamp, { boundary: 'to', headBlock: head.number, headTimestamp })
+        : Promise.resolve(undefined),
     ])
 
-    const head = resolvedTo ? undefined : await getBlockHead(dataset)
+    if (resolvedFrom?.resolution === 'estimated' || resolvedTo?.resolution === 'estimated') {
+      throw new ActionableError(
+        'SQD could not verify the requested timestamp boundaries against indexed block timestamps.',
+        [
+          'Retry the same request after the timestamp index catches up.',
+          'Use portal_debug_resolve_time_to_block to inspect one boundary.',
+          'Use exact from_block/to_block values if you already know the intended block window.',
+        ],
+        {
+          from_timestamp: resolvedFrom?.normalized_input ?? from_timestamp,
+          to_timestamp: resolvedTo?.normalized_input ?? to_timestamp,
+          from_resolution: resolvedFrom?.resolution,
+          to_resolution: resolvedTo?.resolution,
+        },
+      )
+    }
+
     const resolvedFromBlock = resolvedFrom?.block_number ?? resolvedTo?.block_number
-    const resolvedToBlock = resolvedTo?.block_number ?? head?.number
+    const resolvedToBlock = resolvedTo?.block_number ?? head.number
 
     if (resolvedFromBlock === undefined || resolvedToBlock === undefined) {
       throw new Error('Could not resolve timestamp window to block numbers.')

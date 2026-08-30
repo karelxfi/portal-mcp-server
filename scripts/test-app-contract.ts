@@ -17,6 +17,7 @@ import { evidenceArguments, planFollowup, shorterDuration } from '../src/app-ui/
 import { buildEvidenceExport } from '../src/app-ui/export.js'
 import { APP_FIXTURES } from '../src/app-ui/fixtures.js'
 import { buildCandlestickChart, buildTimeSeriesChart } from '../src/helpers/chart-metadata.js'
+import { formatResult } from '../src/helpers/format.js'
 import { register } from '../src/metrics.js'
 import { createPortalServer } from '../src/server.js'
 
@@ -25,6 +26,16 @@ function assert(condition: unknown, message: string): asserts condition {
 }
 
 async function main() {
+  const appResult = formatResult(
+    { items: [{ primary_id: 'fixture-row' }] },
+    'Fixture result',
+    { toolName: 'portal_get_recent_activity', ui: { version: 'portal_ui_v1' } },
+  )
+  assert(
+    appResult.structuredContent?._app?.name === 'SQD Blockchain Activity Explorer' &&
+      appResult.structuredContent?._app?.host_render_confirmed === false,
+    'App-enabled results must expose the canonical product name without claiming a host render',
+  )
   assert(shorterDuration('in last 38 mins') === '19m', 'natural-language chart windows should narrow deterministically')
   assert(
     evidenceArguments(

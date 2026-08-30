@@ -108,6 +108,10 @@ const PORTAL_TOOL_OUTPUT_SCHEMA = z
       .describe('Replayable arguments, exact-data digest, row count, and completeness receipt.'),
     _execution: z.record(z.string(), z.unknown()).optional().describe('Bounded execution and scan details.'),
     _ui: z.unknown().optional().describe('Optional chart, table, and follow-up presentation metadata.'),
+    _app: z
+      .record(z.string(), z.unknown())
+      .optional()
+      .describe('SQD Blockchain Activity Explorer identity and honest host-render state.'),
     pipes_handoff: z.unknown().optional().describe('Optional SQD Pipes guidance for custom data needs.'),
     _notice: z.string().optional().describe('Important limitation or truncation notice.'),
     _notices: z.array(z.string()).optional().describe('Important limitations or truncation notices.'),
@@ -139,6 +143,7 @@ export function registerPortalTool<InputShape extends ZodRawShape>(
   options?: { deadlineMs?: number },
 ): RegisteredTool {
   const deadlineMs = options?.deadlineMs
+  const activityExplorerMeta = getActivityExplorerToolMeta(name)
   const boundedHandler =
     deadlineMs !== undefined
       ? (args: z.infer<z.ZodObject<InputShape>>, context: ServerContext) =>
@@ -149,11 +154,13 @@ export function registerPortalTool<InputShape extends ZodRawShape>(
     name,
     {
       title: getPortalToolTitle(name),
-      description,
+      description: activityExplorerMeta
+        ? `${description}\n\nMCP APP: A successful result can open in the SQD Blockchain Activity Explorer with exact charts, tables, timelines, coverage, freshness, and safe follow-ups. A tool result is ready for the App but is not proof that the host rendered it.`
+        : description,
       inputSchema: z.object(inputShape),
       outputSchema: PORTAL_TOOL_OUTPUT_SCHEMA,
       annotations: READ_ONLY_TOOL_ANNOTATIONS,
-      _meta: getActivityExplorerToolMeta(name),
+      _meta: activityExplorerMeta,
     },
     boundedHandler,
   )

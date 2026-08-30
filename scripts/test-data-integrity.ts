@@ -210,7 +210,7 @@ async function main() {
       scan_order: 'earliest',
       field_preset: 'full',
       response_format: 'full',
-      limit: 200,
+      limit: 25,
     })
     assert(directTypeOne.length === 1, 'Ethereum type-1 fixture should contain exactly one transaction')
     assert(directTypeOne[0]?.hash === ETH_TYPE_ONE_HASH, 'Direct Portal data should retain the known type-1 hash')
@@ -291,7 +291,7 @@ async function main() {
       from_block: 170,
       to_block: 170,
       response_format: 'full',
-      limit: 200,
+      limit: 25,
     })
     assertEqualSet(
       bitcoinData.items.map((item: JsonRecord) => item.txid),
@@ -330,7 +330,7 @@ async function main() {
               from_block: POLKADOT_FROM,
               to_block: POLKADOT_TO,
               response_format: 'compact',
-              limit: 20,
+              limit: 10,
             },
       )
       assertChatSurface(page, `Polkadot events page ${substratePage + 1}`)
@@ -338,7 +338,7 @@ async function main() {
       finalSubstratePage = page
       substrateCursor = page._pagination?.has_more ? page._pagination.next_cursor : undefined
       substratePage += 1
-      assert(substratePage <= 12, 'Polkadot event pagination should terminate')
+      assert(substratePage <= 25, 'Polkadot event pagination should terminate')
     } while (substrateCursor)
     assertEqualSet(
       pagedEvents.map((item: JsonRecord) => item.primary_id),
@@ -362,7 +362,7 @@ async function main() {
       to_block: POLKADOT_TO,
       event_names: [rareEventName],
       response_format: 'full',
-      limit: 200,
+      limit: 10,
     })
     assertEqualSet(
       substrateSample.items.map((item: JsonRecord) => item.primary_id),
@@ -421,7 +421,7 @@ async function main() {
       to_block: solanaHead,
       fee_payer: [payer],
       response_format: 'full',
-      limit: 200,
+      limit: 25,
     })
     const signature = (item: JsonRecord) => item.signatures?.[0]
     assertEqualSet(

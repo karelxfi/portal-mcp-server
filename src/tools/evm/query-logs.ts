@@ -350,10 +350,12 @@ export function registerQueryLogsTool(server: McpServer) {
         ),
       limit: z
         .number()
-        .max(200)
+        .int()
+        .min(1)
+        .max(25)
         .optional()
         .default(20)
-        .describe('Max logs to return (default: 20, max: 200). Note: Lower default for MCP to reduce context usage.'),
+        .describe('Max logs to return (default: 20, max: 25). This verified ceiling keeps pages within MCP client budgets.'),
       field_preset: z
         .enum(['minimal', 'standard', 'full'])
         .optional()

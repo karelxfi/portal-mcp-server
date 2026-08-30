@@ -246,12 +246,12 @@ export function registerGetTopContractsTool(server: McpServer) {
                 lastProcessedBlock = getRecordBlockNumber(record) ?? lastProcessedBlock
 
                 transactions.forEach((tx) => {
+                  chunkTotalTxs++
                   if (!tx.to) {
                     return
                   }
 
                   const address = tx.to.toLowerCase()
-                  chunkTotalTxs++
 
                   if (!chunkCounts.has(address)) {
                     chunkCounts.set(address, { count: 0, samples: [] })

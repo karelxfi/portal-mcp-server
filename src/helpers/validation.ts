@@ -4,12 +4,109 @@ import type { ChainType } from '../types/index.js'
 // Address Validation
 // ============================================================================
 
+import { sha256 } from '@noble/hashes/sha256'
+
 export function isValidEvmAddress(address: string): boolean {
   return /^0x[a-fA-F0-9]{40}$/.test(address)
 }
 
+const BASE58_ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'
+
+function decodeBase58(value: string): Uint8Array | undefined {
+  if (!value) return undefined
+  let decoded = 0n
+  for (const character of value) {
+    const index = BASE58_ALPHABET.indexOf(character)
+    if (index < 0) return undefined
+    decoded = decoded * 58n + BigInt(index)
+  }
+  const bytes: number[] = []
+  for (let current = decoded; current > 0n; current >>= 8n) bytes.push(Number(current & 0xffn))
+  bytes.reverse()
+  const leadingZeroBytes = value.match(/^1*/)?.[0].length ?? 0
+  return Uint8Array.from([...new Array(leadingZeroBytes).fill(0), ...bytes])
+}
+
+function hasBase58CheckVersion(value: string, versions: number[]): boolean {
+  const decoded = decodeBase58(value)
+  if (!decoded || decoded.length !== 25 || !versions.includes(decoded[0])) return false
+  const payload = decoded.slice(0, 21)
+  const checksum = sha256(sha256(payload)).slice(0, 4)
+  return checksum.every((byte, index) => byte === decoded[21 + index])
+}
+
+const BECH32_ALPHABET = 'qpzry9x8gf2tvdw0s3jn54khce6mua7l'
+
+function bech32Polymod(values: number[]): number {
+  const generators = [0x3b6a57b2, 0x26508e6d, 0x1ea119fa, 0x3d4233dd, 0x2a1462b3]
+  let checksum = 1
+  for (const value of values) {
+    const top = checksum >>> 25
+    checksum = ((checksum & 0x1ffffff) << 5) ^ value
+    for (let index = 0; index < 5; index += 1) {
+      if ((top >>> index) & 1) checksum ^= generators[index]
+    }
+  }
+  return checksum >>> 0
+}
+
+function convertBech32Program(values: number[]): Uint8Array | undefined {
+  let accumulator = 0
+  let bits = 0
+  const bytes: number[] = []
+  for (const value of values) {
+    if (value < 0 || value > 31) return undefined
+    accumulator = (accumulator << 5) | value
+    bits += 5
+    while (bits >= 8) {
+      bits -= 8
+      bytes.push((accumulator >>> bits) & 0xff)
+    }
+  }
+  if (bits >= 5 || ((accumulator << (8 - bits)) & 0xff) !== 0) return undefined
+  return Uint8Array.from(bytes)
+}
+
+function isValidMainnetSegwitAddress(address: string): boolean {
+  if (address !== address.toLowerCase() && address !== address.toUpperCase()) return false
+  const normalized = address.toLowerCase()
+  const separator = normalized.lastIndexOf('1')
+  if (separator !== 2 || normalized.slice(0, separator) !== 'bc' || normalized.length > 90) return false
+  const data = [...normalized.slice(separator + 1)].map((character) => BECH32_ALPHABET.indexOf(character))
+  if (data.length < 7 || data.some((value) => value < 0)) return false
+  const hrpValues = [3, 3, 0, 2, 3]
+  const encoding = bech32Polymod([...hrpValues, ...data])
+  const version = data[0]
+  if (version > 16 || (version === 0 ? encoding !== 1 : encoding !== 0x2bc830a3)) return false
+  const program = convertBech32Program(data.slice(1, -6))
+  if (!program || program.length < 2 || program.length > 40) return false
+  return version !== 0 || program.length === 20 || program.length === 32
+}
+
 export function isValidSolanaAddress(address: string): boolean {
-  return /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address)
+  if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address)) return false
+  let decoded = 0n
+  for (const character of address) {
+    const index = BASE58_ALPHABET.indexOf(character)
+    if (index < 0) return false
+    decoded = decoded * 58n + BigInt(index)
+  }
+  let decodedBytes = 0
+  for (let value = decoded; value > 0n; value >>= 8n) decodedBytes += 1
+  const leadingZeroBytes = address.match(/^1*/)?.[0].length ?? 0
+  return decodedBytes + leadingZeroBytes === 32
+}
+
+export function isValidBitcoinAddress(address: string): boolean {
+  return isValidMainnetSegwitAddress(address) || hasBase58CheckVersion(address, [0x00, 0x05])
+}
+
+export function isValidHyperliquidAddress(address: string): boolean {
+  return isValidEvmAddress(address)
+}
+
+export function isValidTronAddress(address: string): boolean {
+  return /^41[0-9a-fA-F]{40}$/.test(address) || hasBase58CheckVersion(address, [0x41])
 }
 
 export function normalizeEvmAddress(address: string): string {

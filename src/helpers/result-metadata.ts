@@ -3,7 +3,14 @@ import type { BlockAtTimestampResult, EstimatedTimeframeResolution, ResolvedBloc
 
 type TimestampBoundarySummary = Pick<
   BlockAtTimestampResult,
-  'timestamp' | 'timestamp_human' | 'normalized_input' | 'resolution'
+  | 'timestamp'
+  | 'timestamp_human'
+  | 'normalized_input'
+  | 'resolution'
+  | 'block_number'
+  | 'block_timestamp'
+  | 'block_timestamp_human'
+  | 'boundary'
 >
 
 export interface QueryFreshness {
@@ -40,6 +47,9 @@ export interface BlockLookupFreshness {
   requested_timestamp_human: string
   normalized_input: string
   resolved_block_number: number
+  resolved_block_timestamp?: number
+  resolved_block_timestamp_human?: string
+  boundary?: 'from' | 'to' | 'nearest'
   head_block_number?: number
   head_timestamp?: number
   head_timestamp_human?: string
@@ -143,6 +153,14 @@ export function buildQueryFreshness(params: {
       timestamp_human: resolvedWindow.from_lookup.timestamp_human,
       normalized_input: resolvedWindow.from_lookup.normalized_input,
       resolution: resolvedWindow.from_lookup.resolution,
+      block_number: resolvedWindow.from_lookup.block_number,
+      ...(resolvedWindow.from_lookup.block_timestamp !== undefined
+        ? { block_timestamp: resolvedWindow.from_lookup.block_timestamp }
+        : {}),
+      ...(resolvedWindow.from_lookup.block_timestamp_human
+        ? { block_timestamp_human: resolvedWindow.from_lookup.block_timestamp_human }
+        : {}),
+      ...(resolvedWindow.from_lookup.boundary ? { boundary: resolvedWindow.from_lookup.boundary } : {}),
     }
   }
 
@@ -152,6 +170,14 @@ export function buildQueryFreshness(params: {
       timestamp_human: resolvedWindow.to_lookup.timestamp_human,
       normalized_input: resolvedWindow.to_lookup.normalized_input,
       resolution: resolvedWindow.to_lookup.resolution,
+      block_number: resolvedWindow.to_lookup.block_number,
+      ...(resolvedWindow.to_lookup.block_timestamp !== undefined
+        ? { block_timestamp: resolvedWindow.to_lookup.block_timestamp }
+        : {}),
+      ...(resolvedWindow.to_lookup.block_timestamp_human
+        ? { block_timestamp_human: resolvedWindow.to_lookup.block_timestamp_human }
+        : {}),
+      ...(resolvedWindow.to_lookup.boundary ? { boundary: resolvedWindow.to_lookup.boundary } : {}),
     }
   }
 
@@ -205,6 +231,9 @@ export function buildBlockLookupFreshness(result: BlockAtTimestampResult): Block
     requested_timestamp_human: result.timestamp_human,
     normalized_input: result.normalized_input,
     resolved_block_number: result.block_number,
+    ...(result.block_timestamp !== undefined ? { resolved_block_timestamp: result.block_timestamp } : {}),
+    ...(result.block_timestamp_human ? { resolved_block_timestamp_human: result.block_timestamp_human } : {}),
+    ...(result.boundary ? { boundary: result.boundary } : {}),
     ...(result.head_block_number !== undefined ? { head_block_number: result.head_block_number } : {}),
     ...(result.head_timestamp !== undefined ? { head_timestamp: result.head_timestamp } : {}),
     ...(result.head_timestamp_human ? { head_timestamp_human: result.head_timestamp_human } : {}),

@@ -90,8 +90,8 @@ type CandleAccumulator = {
   high: number | null
   low: number | null
   close: number | null
-  base_volume: number
-  quote_volume: number
+  base_volume_raw: bigint
+  quote_volume_raw: bigint
   sample_count: number
 }
 
@@ -99,12 +99,14 @@ type OhlcRow = {
   bucket_index: number
   timestamp: number
   timestamp_human: string
+  bucket_end_exclusive: number
+  bucket_complete: boolean
   open: number | null
   high: number | null
   low: number | null
   close: number | null
-  base_volume: number
-  quote_volume: number
+  base_volume: string
+  quote_volume: string
   sample_count: number
   direction: 'up' | 'down' | 'flat' | 'none'
 }
@@ -332,8 +334,8 @@ function getOrCreateBucket(buckets: Map<number, CandleAccumulator>, timestamp: n
       high: null,
       low: null,
       close: null,
-      base_volume: 0,
-      quote_volume: 0,
+      base_volume_raw: 0n,
+      quote_volume_raw: 0n,
       sample_count: 0,
     }
     buckets.set(timestamp, bucket)
@@ -377,6 +379,23 @@ function decodeSignedInt24(word: string | undefined): number | undefined {
 function toScaledNumber(value: bigint, decimals?: number): number {
   const divisor = decimals !== undefined ? 10 ** decimals : 1
   return Number(value) / divisor
+}
+
+export function formatTokenUnitsExact(value: bigint, decimals?: number): string {
+  const sign = value < 0n ? '-' : ''
+  const absolute = value < 0n ? -value : value
+  const scale = decimals ?? 0
+  if (scale <= 0) return `${sign}${absolute.toString()}`
+
+  const digits = absolute.toString().padStart(scale + 1, '0')
+  const integer = digits.slice(0, -scale)
+  const fraction = digits.slice(-scale).replace(/0+$/, '')
+  return fraction ? `${sign}${integer}.${fraction}` : `${sign}${integer}`
+}
+
+function absoluteBigInt(value: bigint | undefined): bigint {
+  if (value === undefined) return 0n
+  return value < 0n ? -value : value
 }
 
 function shortenAddressLabel(address: string) {
@@ -528,14 +547,14 @@ function decodePriceSample(params: {
 function projectPriceSample(
   sample: DecodedPriceSample,
   baseToken: BaseTokenSide,
-): { price: number; baseVolume: number; quoteVolume: number } | undefined {
+): { price: number; baseVolumeRaw: bigint; quoteVolumeRaw: bigint } | undefined {
   const price = baseToken === 'token0' ? sample.priceToken1PerToken0 : 1 / sample.priceToken1PerToken0
   if (price === undefined) return undefined
 
   return {
     price,
-    baseVolume: baseToken === 'token0' ? sample.token0Volume : sample.token1Volume,
-    quoteVolume: baseToken === 'token0' ? sample.token1Volume : sample.token0Volume,
+    baseVolumeRaw: absoluteBigInt(baseToken === 'token0' ? sample.token0Delta : sample.token1Delta),
+    quoteVolumeRaw: absoluteBigInt(baseToken === 'token0' ? sample.token1Delta : sample.token0Delta),
   }
 }
 
@@ -568,9 +587,13 @@ function buildRecentTradeRow(
   baseTokenSide: BaseTokenSide,
   baseLabel: string,
   quoteLabel: string,
+  token0Decimals?: number,
+  token1Decimals?: number,
 ): Record<string, unknown> {
-  const baseAmount = baseTokenSide === 'token0' ? trade.token0Volume : trade.token1Volume
-  const quoteAmount = baseTokenSide === 'token0' ? trade.token1Volume : trade.token0Volume
+  const baseAmountRaw = absoluteBigInt(baseTokenSide === 'token0' ? trade.token0Delta : trade.token1Delta)
+  const quoteAmountRaw = absoluteBigInt(baseTokenSide === 'token0' ? trade.token1Delta : trade.token0Delta)
+  const baseDecimals = baseTokenSide === 'token0' ? token0Decimals : token1Decimals
+  const quoteDecimals = baseTokenSide === 'token0' ? token1Decimals : token0Decimals
   const baseDelta = baseTokenSide === 'token0' ? trade.token0Delta : trade.token1Delta
   const price = formatPriceForOutput(
     baseTokenSide === 'token0' ? trade.priceToken1PerToken0 : 1 / trade.priceToken1PerToken0,
@@ -583,8 +606,8 @@ function buildRecentTradeRow(
     side,
     color_hint: side === 'buy' ? 'green' : side === 'sell' ? 'red' : 'neutral',
     price,
-    base_amount: Number(baseAmount.toFixed(6)),
-    quote_amount: Number(quoteAmount.toFixed(6)),
+    base_amount: formatTokenUnitsExact(baseAmountRaw, baseDecimals),
+    quote_amount: formatTokenUnitsExact(quoteAmountRaw, quoteDecimals),
     tx_hash: trade.tx_hash,
     sender: trade.sender,
   }
@@ -1226,10 +1249,6 @@ export function registerEvmOhlcTool(server: McpServer) {
       let earliestObservedBelowPageEnd = Number.MAX_SAFE_INTEGER
       let earliestObservedBlock = Number.MAX_SAFE_INTEGER
       let totalSamples = 0
-      const totalVolumesByBase: Record<BaseTokenSide, { base: number; quote: number }> = {
-        token0: { base: 0, quote: 0 },
-        token1: { base: 0, quote: 0 },
-      }
       let chunksFetched = 0
       let scannedFromBlock = 0
       let seriesStartTimestamp = 0
@@ -1447,12 +1466,9 @@ export function registerEvmOhlcTool(server: McpServer) {
               bucket.high = bucket.high === null ? projected.price : Math.max(bucket.high, projected.price)
               bucket.low = bucket.low === null ? projected.price : Math.min(bucket.low, projected.price)
               bucket.close = projected.price
-              bucket.base_volume += projected.baseVolume
-              bucket.quote_volume += projected.quoteVolume
+              bucket.base_volume_raw += projected.baseVolumeRaw
+              bucket.quote_volume_raw += projected.quoteVolumeRaw
               bucket.sample_count += 1
-
-              totalVolumesByBase[baseSide].base += projected.baseVolume
-              totalVolumesByBase[baseSide].quote += projected.quoteVolume
             }
 
             if (sample.kind === 'swap') {
@@ -1552,8 +1568,14 @@ export function registerEvmOhlcTool(server: McpServer) {
         backfillInterrupted = true
       }
 
-      const buildOhlcSeries = (baseSide: BaseTokenSide): OhlcRow[] =>
-        Array.from({ length: expectedBuckets }, (_, bucketIndex) => {
+      const indexedEvidenceEndExclusive = paginationCursor
+        ? seriesEndExclusive
+        : Math.min(seriesEndExclusive, (resolvedWindow.from_lookup?.head_timestamp ?? latestTimestamp) + 1)
+
+      const buildOhlcSeries = (baseSide: BaseTokenSide): OhlcRow[] => {
+        const baseDecimals = baseSide === 'token0' ? resolvedToken0Decimals : resolvedToken1Decimals
+        const quoteDecimals = baseSide === 'token0' ? resolvedToken1Decimals : resolvedToken0Decimals
+        return Array.from({ length: expectedBuckets }, (_, bucketIndex) => {
           const bucketTimestamp = seriesStartTimestamp + bucketIndex * intervalSeconds
           const bucket = bucketsByBase[baseSide].get(bucketTimestamp)
           const open = formatPriceForOutput(bucket?.open)
@@ -1567,16 +1589,19 @@ export function registerEvmOhlcTool(server: McpServer) {
             bucket_index: bucketIndex,
             timestamp: bucketTimestamp,
             timestamp_human: formatTimestamp(bucketTimestamp),
+            bucket_end_exclusive: Math.min(bucketTimestamp + intervalSeconds, indexedEvidenceEndExclusive),
+            bucket_complete: bucketTimestamp + intervalSeconds <= indexedEvidenceEndExclusive,
             open,
             high,
             low,
             close,
-            base_volume: bucket ? parseFloat(bucket.base_volume.toFixed(6)) : 0,
-            quote_volume: bucket ? parseFloat(bucket.quote_volume.toFixed(6)) : 0,
+            base_volume: formatTokenUnitsExact(bucket?.base_volume_raw ?? 0n, baseDecimals),
+            quote_volume: formatTokenUnitsExact(bucket?.quote_volume_raw ?? 0n, quoteDecimals),
             sample_count: bucket?.sample_count ?? 0,
             direction,
           }
         })
+      }
 
       const ohlcByBase = {
         token0: buildOhlcSeries('token0'),
@@ -1604,11 +1629,24 @@ export function registerEvmOhlcTool(server: McpServer) {
       const ohlc = ohlcByBase[baseTokenSide]
       const priceScale =
         resolvedToken0Decimals !== undefined && resolvedToken1Decimals !== undefined ? 'adjusted' : 'raw_ratio'
-      const totalBaseVolume = totalVolumesByBase[baseTokenSide].base
-      const totalQuoteVolume = totalVolumesByBase[baseTokenSide].quote
+      // Headline totals must reconcile with the exact candle rows returned below.
+      // The initial scan can include events outside the bucket-aligned series window.
+      const totalBaseVolumeRaw = ohlcByBase[baseTokenSide].reduce(
+        (sum, _, index) => sum + (bucketsByBase[baseTokenSide].get(seriesStartTimestamp + index * intervalSeconds)?.base_volume_raw ?? 0n),
+        0n,
+      )
+      const totalQuoteVolumeRaw = ohlcByBase[baseTokenSide].reduce(
+        (sum, _, index) => sum + (bucketsByBase[baseTokenSide].get(seriesStartTimestamp + index * intervalSeconds)?.quote_volume_raw ?? 0n),
+        0n,
+      )
+      const baseDecimals = baseTokenSide === 'token0' ? resolvedToken0Decimals : resolvedToken1Decimals
+      const quoteDecimals = baseTokenSide === 'token0' ? resolvedToken1Decimals : resolvedToken0Decimals
+      const totalBaseVolume = formatTokenUnitsExact(totalBaseVolumeRaw, baseDecimals)
+      const totalQuoteVolume = formatTokenUnitsExact(totalQuoteVolumeRaw, quoteDecimals)
+      const totalWindowSamples = ohlc.reduce((sum, bucket) => sum + bucket.sample_count, 0)
       const priceValues = baseTokenSide === 'token0' ? token0Values : token1Values
       const priceValueFormat = inferPriceValueFormat(priceValues)
-      const maxObservedVolume = Math.max(Math.abs(totalBaseVolume), Math.abs(totalQuoteVolume))
+      const maxObservedVolume = Math.max(Math.abs(Number(totalBaseVolume)), Math.abs(Number(totalQuoteVolume)))
       const volumeValueFormat: TableValueFormat =
         maxObservedVolume >= 1e15 ? 'scientific' : maxObservedVolume >= 100_000 ? 'compact_number' : 'decimal'
       const filledBuckets = ohlc.filter((bucket) => bucket.sample_count > 0).length
@@ -1635,6 +1673,7 @@ export function registerEvmOhlcTool(server: McpServer) {
         anchor: seriesAnchor,
         windowComplete:
           !backfillInterrupted &&
+          seriesEndExclusive <= indexedEvidenceEndExclusive &&
           (initialScanCoversSeriesStart || earliestObservedBelowPageEnd <= seriesStartTimestamp),
         ...(earliestObservedTimestamp !== Number.MAX_SAFE_INTEGER
           ? { firstObservedTimestamp: earliestObservedTimestamp }
@@ -1644,9 +1683,19 @@ export function registerEvmOhlcTool(server: McpServer) {
       const recentTrades =
         volumePanel && include_recent_trades
           ? recentTradeCandidates
+              .filter((trade) => trade.timestamp >= seriesStartTimestamp && trade.timestamp < indexedEvidenceEndExclusive)
               .sort((left, right) => right.timestamp - left.timestamp || (right.log_index ?? 0) - (left.log_index ?? 0))
               .slice(0, tradeLimit)
-              .map((trade) => buildRecentTradeRow(trade, baseTokenSide, baseLabel, quoteLabel))
+              .map((trade) =>
+                buildRecentTradeRow(
+                  trade,
+                  baseTokenSide,
+                  baseLabel,
+                  quoteLabel,
+                  resolvedToken0Decimals,
+                  resolvedToken1Decimals,
+                ),
+              )
           : []
       const nextCursor =
         seriesStartTimestamp > 0
@@ -1865,9 +1914,9 @@ export function registerEvmOhlcTool(server: McpServer) {
         total_buckets: ohlc.length,
         filled_buckets: filledBuckets,
         empty_buckets: ohlc.length - filledBuckets,
-        total_samples: totalSamples,
-        total_base_volume: parseFloat(totalBaseVolume.toFixed(6)),
-        total_quote_volume: parseFloat(totalQuoteVolume.toFixed(6)),
+        total_samples: totalWindowSamples,
+        total_base_volume: totalBaseVolume,
+        total_quote_volume: totalQuoteVolume,
         recent_trades_count: recentTrades.length,
         from_block: scannedFromBlock,
         to_block: endBlock,
@@ -1875,8 +1924,9 @@ export function registerEvmOhlcTool(server: McpServer) {
         latest_event_timestamp_human: formatTimestamp(latestTimestamp),
         window_start_timestamp: seriesStartTimestamp,
         window_start_timestamp_human: formatTimestamp(seriesStartTimestamp),
-        window_end_exclusive: seriesEndExclusive,
-        window_end_exclusive_human: formatTimestamp(Math.max(seriesStartTimestamp, seriesEndExclusive - 1)),
+        window_end_exclusive: indexedEvidenceEndExclusive,
+        window_end_exclusive_human: formatTimestamp(Math.max(seriesStartTimestamp, indexedEvidenceEndExclusive - 1)),
+        final_bucket_complete: ohlc.at(-1)?.bucket_complete ?? false,
         ...(firstFilled ? { series_open: firstFilled.open } : {}),
         ...(lastFilled ? { series_close: lastFilled.close } : {}),
         ...(latestFilled?.open !== null && latestFilled?.open !== undefined ? { latest_open: latestFilled.open } : {}),
@@ -2223,6 +2273,7 @@ export function registerEvmOhlcTool(server: McpServer) {
             anchor: seriesAnchor,
             windowComplete:
               !backfillInterrupted &&
+              seriesEndExclusive <= indexedEvidenceEndExclusive &&
               (initialScanCoversSeriesStart || earliestObservedBelowPageEnd <= seriesStartTimestamp),
           }),
           metadata: {

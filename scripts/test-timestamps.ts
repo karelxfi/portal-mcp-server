@@ -6,6 +6,7 @@ import { buildQueryFreshness } from '../dist/helpers/result-metadata.js'
 import { detectChainType } from '../dist/helpers/chain.js'
 import {
   getTimestampWindowNotices,
+  getBlockTimestamp,
   getHeadTimestamp,
   parseTimeframeToSeconds,
   parseTimestampInput,
@@ -113,6 +114,11 @@ async function assertHyperliquidFillsExactTimestampLookup() {
   assert(fiveMinuteWindow.from_block < fiveMinuteWindow.to_block, '5m Hyperliquid fills window should produce an ordered block range')
   assert(fiveMinuteWindow.from_lookup?.resolution === 'exact', '5m Hyperliquid fills window should use exact Portal timestamp lookup')
   assert(fiveMinuteWindow.from_lookup.block_number === fiveMinuteWindow.from_block, '5m Hyperliquid fills lookup metadata should match the resolved window')
+  assert(
+    fiveMinuteWindow.from_lookup.block_timestamp !== undefined
+      && fiveMinuteWindow.from_lookup.block_timestamp >= targetTimestamp,
+    '5m Hyperliquid fills boundary should expose a verified block timestamp inside the requested window',
+  )
   assert(exactProbeBlock <= head.number, 'Hyperliquid fills timestamp endpoint should return a block at or before head')
 
   const directLookup = await retryPortalProbe(
@@ -123,6 +129,53 @@ async function assertHyperliquidFillsExactTimestampLookup() {
   assert(directLookup.block_number <= head.number, 'Hyperliquid fills direct lookup should not exceed indexed head')
 
   console.log(`PASS  Hyperliquid fills 5m window -> ${fiveMinuteWindow.from_block}..${fiveMinuteWindow.to_block} (exact)`)
+}
+
+async function assertSubstrateTimestampBoundaryIsVerified() {
+  const dataset = 'polkadot'
+  const head = await getBlockHead(dataset)
+  const headTimestamp = await getHeadTimestamp(dataset, head.number)
+  const fromTimestamp = headTimestamp - 3_600
+  const toTimestamp = headTimestamp - 3_000
+  const window = await resolveTimeframeOrBlocks({
+    dataset,
+    from_timestamp: fromTimestamp,
+    to_timestamp: toTimestamp,
+  })
+
+  assert(window.from_lookup?.resolution === 'exact', 'Polkadot from boundary should be verified')
+  assert(window.to_lookup?.resolution === 'exact', 'Polkadot to boundary should be verified')
+  assert(
+    (window.from_lookup?.block_timestamp ?? 0) >= fromTimestamp,
+    'Polkadot from block must not precede the requested timestamp',
+  )
+  assert(
+    (window.to_lookup?.block_timestamp ?? Number.MAX_SAFE_INTEGER) <= toTimestamp,
+    'Polkadot to block must not follow the requested timestamp',
+  )
+
+  const actualFrom = await getBlockTimestamp(dataset, window.from_block)
+  const actualTo = await getBlockTimestamp(dataset, window.to_block)
+  assert(actualFrom === window.from_lookup?.block_timestamp, 'Polkadot from metadata should match direct block data')
+  assert(actualTo === window.to_lookup?.block_timestamp, 'Polkadot to metadata should match direct block data')
+
+  console.log(`PASS  Polkadot verified window -> ${window.from_block}..${window.to_block}`)
+}
+
+async function assertFutureWindowFailsClosed() {
+  const future = '2030-01-01T00:00:00Z'
+  let rejected = false
+  try {
+    await resolveTimeframeOrBlocks({
+      dataset: 'base-mainnet',
+      from_timestamp: future,
+      to_timestamp: '2030-01-01T00:05:00Z',
+    })
+  } catch (error) {
+    rejected = /after the latest indexed block/i.test(error instanceof Error ? error.message : String(error))
+  }
+  assert(rejected, 'Future timestamp windows should fail closed instead of returning current data')
+  console.log('PASS  future timestamp window -> rejected before data query')
 }
 
 function assertNaturalLanguageTimeInputs() {
@@ -240,6 +293,8 @@ async function main() {
   console.log(`PASS  Solana now lookup -> ${nowLookup.block_number} (${nowLookup.resolution})`)
 
   await assertHyperliquidFillsExactTimestampLookup()
+  await assertSubstrateTimestampBoundaryIsVerified()
+  await assertFutureWindowFailsClosed()
 
   await assertRealtimeTimestampMatrix()
 

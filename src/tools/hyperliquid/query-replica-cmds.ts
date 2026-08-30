@@ -93,7 +93,7 @@ export function registerQueryHyperliquidReplicaCmdsTool(server: McpServer) {
       user: z.array(z.string()).optional().describe('User wallet addresses (0x-prefixed, lowercase)'),
       vault_address: z.array(z.string()).optional().describe('Vault addresses (0x-prefixed, lowercase)'),
       status: z.enum(['ok', 'err']).optional().describe('Filter by action status'),
-      limit: z.number().optional().default(50).describe('Max actions to return'),
+      limit: z.number().int().min(1).max(1).optional().default(1).describe('Max actions to return (1). Replica command payloads can contain large batches, so this exact one-record cursor page is the verified safe response budget.'),
       cursor: z.string().optional().describe('Continuation cursor from a previous response'),
     },
     async ({
@@ -186,14 +186,16 @@ export function registerQueryHyperliquidReplicaCmdsTool(server: McpServer) {
         actions: [actionFilter],
       }
 
-      const hasFilters = !!(action_type || user || vault_address || status)
       const cursorSkip = paginationCursor?.skip_inclusive_block ?? 0
       const fetchLimit = limit + cursorSkip + 1
       const results = await portalFetchRecentRecords(`${PORTAL_URL}/datasets/${dataset}/stream`, query, {
         itemKeys: ['actions'],
         limit: fetchLimit,
-        chunkSize: hasFilters ? 5_000 : 100,
-        maxBytes: 100 * 1024 * 1024,
+        // Replica blocks are extremely dense. A small scan chunk prevents one
+        // upstream response from materializing tens of megabytes before the
+        // one-record page limit can stop the search.
+        chunkSize: 1,
+        maxBytes: 25 * 1024 * 1024,
       })
 
       const allActions = sortActions(

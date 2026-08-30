@@ -167,7 +167,10 @@ async function validate(page: Page, fixture: string, viewport: (typeof viewports
     await ranges.nth(1).fill('11')
     await page.getByRole('button', { name: 'Focus range' }).click()
     assert((await page.locator('.sqd-chart-hit').count()) === 6, 'range focus should redraw only the selected six points')
-    assert((await page.locator('table.sqd-table tbody tr').count()) === expected.length, 'range focus must keep the full exact evidence table')
+    assert((await page.locator('table.sqd-table tbody tr').count()) === Math.min(20, expected.length), 'range focus must keep the current exact evidence page')
+    if (expected.length > 20) {
+      assert(await page.locator('.sqd-table-pagination').isVisible(), 'long chart evidence must remain reachable through table pages')
+    }
     await page.getByRole('button', { name: 'Reset range' }).click()
     assert((await page.locator('.sqd-chart-hit').count()) === expected.length, 'reset range should restore every point')
   }
@@ -247,8 +250,12 @@ async function validate(page: Page, fixture: string, viewport: (typeof viewports
   }
   if (fixture === 'large_table') {
     const rows = APP_FIXTURES.large_table.items as Array<Record<string, unknown>>
-    assert((await page.locator('table.sqd-table tbody tr').count()) === 100, 'Large tables should keep a bounded DOM')
-    assert((await page.locator('.sqd-display-limit').innerText()).includes('100 of 125'), 'Large tables should disclose the local display cap')
+    assert((await page.locator('table.sqd-table tbody tr').count()) === 20, 'Large tables should use short local pages')
+    assert((await page.locator('.sqd-display-limit').innerText()).includes('20 of 125'), 'Large tables should disclose the local page size')
+    assert((await page.locator('.sqd-table-pagination').innerText()).includes('Page 1 of 7'), 'Large tables should expose page state')
+    await page.getByRole('button', { name: 'Next rows' }).click()
+    assert((await page.locator('.sqd-table-pagination').innerText()).includes('Page 2 of 7'), 'Large table paging should advance')
+    assert((await page.locator('table.sqd-table').innerText()).includes(String(rows[20]?.address)), 'The second page should start at the exact next row')
     const lastAddress = String(rows.at(-1)?.address)
     await page.locator('.sqd-input').fill(lastAddress)
     assert((await page.locator('table.sqd-table tbody tr').count()) === 1, 'Table search should include rows beyond the first rendered page')

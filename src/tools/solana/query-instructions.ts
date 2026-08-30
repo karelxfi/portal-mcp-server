@@ -21,7 +21,7 @@ import { buildPaginationInfo, decodeRecentPageCursor, encodeRecentPageCursor, pa
 import { buildChronologicalPageOrdering, buildQueryCoverage, buildQueryFreshness } from '../../helpers/result-metadata.js'
 import { getTimestampWindowNotices, type TimestampInput, resolveTimeframeOrBlocks } from '../../helpers/timeframe.js'
 import { buildExecutionMetadata, buildToolDescription } from '../../helpers/tool-ux.js'
-import { getValidationNotices, validateSolanaQuerySize } from '../../helpers/validation.js'
+import { getValidationNotices, isValidSolanaAddress, validateSolanaQuerySize } from '../../helpers/validation.js'
 
 // ============================================================================
 // Tool: Query Solana Instructions
@@ -160,7 +160,7 @@ export function registerQuerySolanaInstructionsTool(server: McpServer) {
       mentions_account: stringListInput('Accounts mentioned anywhere in the instruction.'),
       is_committed: z.boolean().optional().describe('Only committed transactions'),
       transaction_fee_payer: stringListInput('Fee payer filter.'),
-      limit: z.number().optional().default(50).describe('Max instructions'),
+      limit: z.number().int().min(1).max(25).optional().default(20).describe('Max instructions (default: 20, max: 25)'),
       include_transaction: z.boolean().optional().default(false).describe('Include transaction data'),
       include_transaction_balances: z.boolean().optional().default(false).describe('Include SOL balance changes'),
       include_transaction_token_balances: z
@@ -291,6 +291,33 @@ export function registerQuerySolanaInstructionsTool(server: McpServer) {
         include_inner_instructions = paginationCursor.request.include_inner_instructions
         include_logs = paginationCursor.request.include_logs
         include_transaction_instructions = paginationCursor.request.include_transaction_instructions
+      }
+
+      for (const [label, values] of [
+        ['program_id', program_id],
+        ['a0', a0], ['a1', a1], ['a2', a2], ['a3', a3], ['a4', a4], ['a5', a5],
+        ['a6', a6], ['a7', a7], ['a8', a8], ['a9', a9], ['a10', a10], ['a11', a11],
+        ['a12', a12], ['a13', a13], ['a14', a14], ['a15', a15],
+        ['mentions_account', mentions_account],
+        ['transaction_fee_payer', transaction_fee_payer],
+      ] as Array<[string, string[] | undefined]>) {
+        const invalid = values?.find((value) => !isValidSolanaAddress(value))
+        if (invalid) {
+          throw new ActionableError(`${label} contains an invalid Solana public key.`, [
+            'Use a base58-encoded 32-byte Solana public key.',
+            'Correct or remove the invalid filter before retrying.',
+          ], { field: label }, { code: 'invalid_request', origin: 'client_input', retryable: false })
+        }
+      }
+      for (const [label, values, bytes] of [
+        ['d1', d1, 1], ['d2', d2, 2], ['d4', d4, 4], ['d8', d8, 8],
+      ] as Array<[string, string[] | undefined, number]>) {
+        const invalid = values?.find((value) => !new RegExp(`^0x[0-9a-fA-F]{${bytes * 2}}$`).test(value))
+        if (invalid) {
+          throw new ActionableError(`${label} must contain exactly ${bytes} byte${bytes === 1 ? '' : 's'} of 0x-prefixed hex.`, [
+            `Correct the ${label} discriminator before retrying.`,
+          ], { field: label }, { code: 'invalid_request', origin: 'client_input', retryable: false })
+        }
       }
 
       // Resolve timeframe or use explicit blocks

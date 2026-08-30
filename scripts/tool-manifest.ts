@@ -1563,10 +1563,10 @@ export const TOOL_SPECS: ToolSpec[] = [
   {
     name: 'portal_debug_hyperliquid_query_replica_commands',
     prompt: 'show me recent Hyperliquid order and cancel commands',
-    args: () => ({
+    args: (context) => ({
       network: 'hyperliquid-replica-cmds',
-      from_timestamp: '5m ago',
-      to_timestamp: 'now',
+      from_block: Math.max(0, context.hlReplicaHead - 10_000),
+      to_block: context.hlReplicaHead,
       action_type: ['order'],
       limit: 1,
     }),

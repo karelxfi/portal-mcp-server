@@ -6,7 +6,7 @@ import { z } from 'zod'
 import { resolveDataset, validateBlockRange } from '../../cache/datasets.js'
 import { PORTAL_URL } from '../../constants/index.js'
 import { detectChainType } from '../../helpers/chain.js'
-import { createUnsupportedChainError } from '../../helpers/errors.js'
+import { ActionableError, createUnsupportedChainError } from '../../helpers/errors.js'
 import { portalFetchRecentRecords } from '../../helpers/fetch.js'
 import { normalizeSolanaTransactionResult } from '../../helpers/normalized-results.js'
 import { buildPaginationInfo, decodeRecentPageCursor, encodeRecentPageCursor, paginateAscendingItems } from '../../helpers/pagination.js'
@@ -23,7 +23,7 @@ import {
 } from '../../helpers/fields.js'
 import { formatResult } from '../../helpers/format.js'
 import { applyResponseFormat, resolveDefaultResponseFormat, type ResponseFormat } from '../../helpers/response-modes.js'
-import { getValidationNotices, validateSolanaQuerySize } from '../../helpers/validation.js'
+import { getValidationNotices, isValidSolanaAddress, validateSolanaQuerySize } from '../../helpers/validation.js'
 
 // ============================================================================
 // Tool: Query Solana Transactions
@@ -131,7 +131,7 @@ export function registerQuerySolanaTransactionsTool(server: McpServer) {
         .optional()
         .default(false)
         .describe('Include block rewards (validator staking rewards). Filter by pubkey using mentions_account.'),
-      limit: z.number().int().min(1).max(200).optional().default(50).describe('Max transactions to return (default: 50, max: 200)'),
+      limit: z.number().int().min(1).max(25).optional().default(20).describe('Max transactions to return (default: 20, max: 25)'),
       response_format: z.enum(['full', 'compact', 'summary']).optional().describe("Response format: defaults to 'compact' for chat-friendly output, or stays 'full' when inline instruction, balance, log, or reward context is requested. Use 'summary' for aggregate stats."),
       cursor: z.string().optional().describe('Continuation cursor from a previous response'),
     },
@@ -191,6 +191,18 @@ export function registerQuerySolanaTransactionsTool(server: McpServer) {
         include_logs = paginationCursor.request.include_logs
         include_rewards = paginationCursor.request.include_rewards
         response_format = paginationCursor.request.response_format
+      }
+      for (const [label, values] of [
+        ['fee_payer', fee_payer],
+        ['mentions_account', mentions_account],
+      ] as Array<[string, string[] | undefined]>) {
+        const invalid = values?.find((value) => !isValidSolanaAddress(value))
+        if (invalid) {
+          throw new ActionableError(`${label} contains an invalid Solana public key.`, [
+            'Use a base58-encoded 32-byte Solana public key.',
+            'Correct or remove the invalid filter before retrying.',
+          ], { field: label }, { code: 'invalid_request', origin: 'client_input', retryable: false })
+        }
       }
       const effectiveResponseFormat = resolveDefaultResponseFormat(response_format, {
         preserveFullIf:

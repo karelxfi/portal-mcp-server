@@ -84,7 +84,7 @@ export function registerSubstrateQueryEventsTool(server: McpServer) {
       include_call: z.boolean().optional().default(false).describe('Attach the emitting call inline when the event has call context'),
       include_stack: z.boolean().optional().default(false).describe('Attach the parent call stack when the event has nested call context'),
       response_format: z.enum(['full', 'compact', 'summary']).optional().describe("Response format: defaults to 'compact' for chat-friendly output. Compact mode keeps requested extrinsic or call context in a smaller inline shape."),
-      limit: z.number().optional().default(50).describe('Max events to return'),
+      limit: z.number().int().min(1).max(10).optional().default(10).describe('Max events to return (max: 10; use compact mode for context-rich rows)'),
       cursor: z.string().optional().describe('Continuation cursor from a previous response'),
     },
     async ({ network, timeframe, from_block, to_block, from_timestamp, to_timestamp, finalized_only, event_names, include_extrinsic, include_call, include_stack, response_format, limit, cursor }) => {

@@ -9,6 +9,8 @@ import type { PipesRecipe } from './pipes-recipe.js'
 import { getToolContract } from './tool-ux.js'
 import type { UiFollowUpAction } from './ui-metadata.js'
 import { ActionableError } from './errors.js'
+import { ACTIVITY_EXPLORER_RESOURCE_URI } from '../apps/activity-explorer.js'
+import { npmVersion } from '../version.js'
 
 const MAX_RESPONSE_BYTES = 50_000
 
@@ -124,6 +126,43 @@ const DISPLAY_NAME_OVERRIDES: Record<string, string> = {
 
 function isRecord(value: unknown): value is RecordLike {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+export function assertUniqueNormalizedIds(value: unknown, path = '$', visited = new WeakSet<object>()): void {
+  if (typeof value !== 'object' || value === null) return
+  if (visited.has(value)) return
+  visited.add(value)
+
+  if (Array.isArray(value)) {
+    const normalizedRows = value.filter(
+      (entry): entry is RecordLike =>
+        isRecord(entry) && typeof entry.chain_kind === 'string' && typeof entry.record_type === 'string',
+    )
+    if (normalizedRows.length > 0) {
+      const ids = new Set<string>()
+      for (const [index, row] of normalizedRows.entries()) {
+        const id = typeof row.primary_id === 'string' ? row.primary_id.trim() : ''
+        if (!id) {
+          throw new ActionableError(`Normalized evidence at ${path}[${index}] has no stable primary_id.`, [
+            'Retry after the server identity contract is repaired.',
+          ], { path, index }, { code: 'incomplete_result', origin: 'server', retryable: false })
+        }
+        if (ids.has(id)) {
+          throw new ActionableError(`Normalized evidence at ${path} contains duplicate primary_id ${id}.`, [
+            'Retry after the server identity contract is repaired.',
+          ], { path, primary_id: id }, { code: 'incomplete_result', origin: 'server', retryable: false })
+        }
+        ids.add(id)
+      }
+    }
+
+    value.forEach((entry, index) => assertUniqueNormalizedIds(entry, `${path}[${index}]`, visited))
+    return
+  }
+
+  for (const [key, entry] of Object.entries(value)) {
+    assertUniqueNormalizedIds(entry, `${path}.${key}`, visited)
+  }
 }
 
 function asArray<T>(value: unknown): T[] {
@@ -293,6 +332,27 @@ function makeCompletenessAwareAnswer(answer: string, payload: RecordLike): strin
   }
 
   return suffixes.length > 0 ? `${answer} ${suffixes.join(' ')}` : answer
+}
+
+function freshnessProvesExactWindow(freshness: unknown): boolean {
+  if (!isRecord(freshness)) return true
+  if (freshness.kind === 'timestamp_lookup') return freshness.resolution !== 'estimated'
+  if (freshness.estimated_timeframe !== undefined) return false
+  const timestampBounds = freshness.timestamp_bounds
+  if (!isRecord(timestampBounds)) return true
+
+  return ['from', 'to'].every((key) => {
+    const boundary = timestampBounds[key]
+    return !isRecord(boundary) || boundary.resolution !== 'estimated'
+  })
+}
+
+function reconcileCoverageWithFreshness(coverage: unknown, freshness: unknown): unknown {
+  if (!isRecord(coverage) || freshnessProvesExactWindow(freshness)) return coverage
+  return {
+    ...coverage,
+    window_complete: false,
+  }
 }
 
 export function humanizeLabel(value: unknown): string | undefined {
@@ -1234,6 +1294,8 @@ export function formatResult(
   let dataToFormat = data
   const notices = [...(options?.notices || [])]
 
+  assertUniqueNormalizedIds(dataToFormat)
+
   let jsonString: string
   try {
     jsonString = JSON.stringify(dataToFormat, null, 2)
@@ -1294,10 +1356,22 @@ export function formatResult(
     payloadRecord._pagination = options?.pagination ?? buildDefaultPagination()
     payloadRecord._ordering = options?.ordering ?? buildDefaultOrdering()
     payloadRecord._freshness = options?.freshness ?? buildDefaultFreshness()
-    payloadRecord._coverage = options?.coverage ?? buildDefaultCoverage()
+    payloadRecord._coverage = reconcileCoverageWithFreshness(
+      options?.coverage ?? buildDefaultCoverage(),
+      payloadRecord._freshness,
+    )
     payloadRecord._execution = execution
     if (options?.ui !== undefined) {
       payloadRecord._ui = options.ui
+      payloadRecord._app = {
+        name: 'SQD Blockchain Activity Explorer',
+        version: npmVersion,
+        capability: 'mcp_app',
+        resource_uri: ACTIVITY_EXPLORER_RESOURCE_URI,
+        result_state: 'ready_for_host_render',
+        host_render_confirmed: false,
+        guidance: 'Only the MCP host can confirm that this App payload rendered.',
+      }
     }
     if (options?.pipes !== undefined) {
       payloadRecord.pipes_handoff = options.pipes
@@ -1345,7 +1419,10 @@ export function formatResult(
   }
 
   try {
-    jsonString = JSON.stringify(responsePayload, null, 2)
+    // Measure and return the actual compact wire representation. Counting
+    // indentation here rejected valid results even though MCP clients receive
+    // the compact JSON form below.
+    jsonString = JSON.stringify(responsePayload)
   } catch {
     try {
       jsonString = JSON.stringify(responsePayload)
