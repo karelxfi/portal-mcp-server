@@ -95,11 +95,16 @@ async function main() {
   const firstCaller = new AbortController()
   const secondCaller = new AbortController()
   let resolveShared!: (value: string) => void
+  let sharedSignal: AbortSignal | undefined
   const shared = runWithPortalRequestSignal(firstCaller.signal, () =>
     runAsSharedPortalWork(
       () =>
         new Promise<string>((resolve) => {
-          assert(getPortalRequestSignal() === undefined, 'shared work should not inherit one caller signal')
+          sharedSignal = getPortalRequestSignal()
+          assert(
+            sharedSignal !== undefined && sharedSignal !== firstCaller.signal,
+            'shared work should use an independent cancellation signal',
+          )
           resolveShared = resolve
         }),
     ),
@@ -111,14 +116,37 @@ async function main() {
     () => false,
     (error) => error instanceof RequestCancelledError,
   )
+  assert(sharedSignal?.aborted === false, 'shared work should continue while another caller is waiting')
   resolveShared('shared result')
   assert(firstCancelled, 'one cancelled caller should stop waiting for shared work')
   assert((await secondWait) === 'shared result', 'another caller should still receive the shared result')
 
+  const finalCaller = new AbortController()
+  let sharedAbortObserved = false
+  const abandoned = runAsSharedPortalWork(
+    () =>
+      new Promise<string>((_resolve, reject) => {
+        const signal = getPortalRequestSignal()
+        assert(signal !== undefined, 'shared work should expose its cancellation signal upstream')
+        signal.addEventListener('abort', () => {
+          sharedAbortObserved = true
+          reject(new RequestCancelledError())
+        }, { once: true })
+      }),
+  )
+  const abandonedWait = waitForSharedPortalWork(abandoned, finalCaller.signal)
+  finalCaller.abort()
+  const finalCancelled = await abandonedWait.then(
+    () => false,
+    (error) => error instanceof RequestCancelledError,
+  )
+  assert(finalCancelled, 'the final cancelled caller should stop waiting for shared work')
+  assert(sharedAbortObserved, 'shared upstream work should abort when its last caller leaves')
+
   console.log('PASS  weighted profiles preserve capacity for low-cost discovery')
   console.log('PASS  fair promotion avoids head-of-line blocking without starving analytics')
   console.log('PASS  queued cancellation, timeout, and overload release all scheduler state')
-  console.log('PASS  shared analytics work isolates caller cancellation')
+  console.log('PASS  shared analytics work stays live for active callers and aborts when abandoned')
 }
 
 main().catch((error) => {

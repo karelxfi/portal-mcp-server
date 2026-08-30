@@ -24,34 +24,69 @@ export function getPortalRequestSignal(): AbortSignal | undefined {
   return requestSignalStorage.getStore()
 }
 
-/**
- * Start cacheable work outside one caller's cancellation scope. Callers still
- * observe their own cancellation through waitForSharedPortalWork, while an
- * identical request can reuse the bounded upstream scan already in flight.
- */
-export function runAsSharedPortalWork<T>(callback: () => T): T {
-  return requestSignalStorage.exit(callback)
+export type SharedPortalWork<T> = {
+  promise: Promise<T>
+  controller: AbortController
+  settled: boolean
+  waiters: number
 }
 
-export function waitForSharedPortalWork<T>(promise: Promise<T>, signal = getPortalRequestSignal()): Promise<T> {
-  if (!signal) return promise
-  if (signal.aborted) return Promise.reject(new RequestCancelledError())
+/**
+ * Start cacheable work with its own cancellation scope. Identical callers can
+ * share the scan, and the scan is cancelled when its last waiter leaves.
+ */
+export function runAsSharedPortalWork<T>(callback: () => Promise<T>): SharedPortalWork<T> {
+  const controller = new AbortController()
+  const promise = runWithPortalRequestSignal(controller.signal, callback)
+  const work: SharedPortalWork<T> = {
+    promise,
+    controller,
+    settled: false,
+    waiters: 0,
+  }
+  promise.then(
+    () => {
+      work.settled = true
+    },
+    () => {
+      work.settled = true
+    },
+  )
+  return work
+}
+
+export function waitForSharedPortalWork<T>(work: SharedPortalWork<T>, signal = getPortalRequestSignal()): Promise<T> {
+  if (signal?.aborted) {
+    if (work.waiters === 0 && !work.settled) work.controller.abort()
+    return Promise.reject(new RequestCancelledError())
+  }
+
+  work.waiters += 1
 
   return new Promise<T>((resolve, reject) => {
+    let waiting = true
+    const leave = (cancelWhenIdle: boolean) => {
+      if (!waiting) return
+      waiting = false
+      signal?.removeEventListener('abort', cancel)
+      work.waiters = Math.max(0, work.waiters - 1)
+      if (cancelWhenIdle && work.waiters === 0 && !work.settled) {
+        work.controller.abort()
+      }
+    }
     const cancel = () => {
-      cleanup()
+      leave(true)
       reject(new RequestCancelledError())
     }
-    const cleanup = () => signal.removeEventListener('abort', cancel)
 
-    signal.addEventListener('abort', cancel, { once: true })
-    promise.then(
+    signal?.addEventListener('abort', cancel, { once: true })
+    work.promise.then(
       (value) => {
-        cleanup()
+        leave(false)
         resolve(value)
       },
       (error) => {
-        cleanup()
+        leave(false)
         reject(error)
       },
     )
