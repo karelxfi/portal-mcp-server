@@ -27,9 +27,12 @@ export type LatencySummary = {
 export type PairedRegressionResult = {
   samples: number
   thresholdRatio: number
+  minAbsoluteIncreaseMs: number
   observedMedianRatio: number
+  observedMedianIncreaseMs: number
   confidence: number
   confidenceInterval: { lower: number; upper: number }
+  absoluteConfidenceIntervalMs: { lower: number; upper: number }
   regression: boolean
 }
 
@@ -152,6 +155,7 @@ export function comparePairedLatencies(
   candidateMs: number[],
   options?: {
     thresholdRatio?: number
+    minAbsoluteIncreaseMs?: number
     confidence?: number
     bootstrapIterations?: number
     seed?: number
@@ -161,33 +165,45 @@ export function comparePairedLatencies(
     throw new Error('Paired latency comparison requires matching runs with at least five samples')
   }
 
-  const ratios = baselineMs.map((baseline, index) => {
+  for (let index = 0; index < baselineMs.length; index += 1) {
+    const baseline = baselineMs[index]
     if (!Number.isFinite(baseline) || baseline <= 0 || !Number.isFinite(candidateMs[index])) {
       throw new Error('Latency samples must be finite and baseline samples must be positive')
     }
-    return candidateMs[index] / baseline
-  })
+  }
   const thresholdRatio = options?.thresholdRatio ?? 1.1
+  const minAbsoluteIncreaseMs = options?.minAbsoluteIncreaseMs ?? 5
   const confidence = Math.min(0.999, Math.max(0.5, options?.confidence ?? 0.9))
   const iterations = positiveInteger(options?.bootstrapIterations ?? 2_000, 2_000)
   const random = seededRandom(options?.seed ?? 0x5_1d_08_02)
-  const bootstrappedMedians: number[] = []
+  const bootstrappedRatios: number[] = []
+  const bootstrappedIncreasesMs: number[] = []
 
   for (let iteration = 0; iteration < iterations; iteration += 1) {
-    const resample = Array.from({ length: ratios.length }, () => ratios[Math.floor(random() * ratios.length)])
-    bootstrappedMedians.push(median(resample))
+    const indexes = Array.from({ length: baselineMs.length }, () => Math.floor(random() * baselineMs.length))
+    const baselineMedian = median(indexes.map((index) => baselineMs[index]!))
+    const candidateMedian = median(indexes.map((index) => candidateMs[index]!))
+    bootstrappedRatios.push(candidateMedian / baselineMedian)
+    bootstrappedIncreasesMs.push(candidateMedian - baselineMedian)
   }
 
   const tail = ((1 - confidence) / 2) * 100
-  const lower = calculatePercentile(bootstrappedMedians, tail) ?? 0
-  const upper = calculatePercentile(bootstrappedMedians, 100 - tail) ?? 0
+  const lower = calculatePercentile(bootstrappedRatios, tail) ?? 0
+  const upper = calculatePercentile(bootstrappedRatios, 100 - tail) ?? 0
+  const absoluteLower = calculatePercentile(bootstrappedIncreasesMs, tail) ?? 0
+  const absoluteUpper = calculatePercentile(bootstrappedIncreasesMs, 100 - tail) ?? 0
+  const baselineMedian = median(baselineMs)
+  const candidateMedian = median(candidateMs)
 
   return {
-    samples: ratios.length,
+    samples: baselineMs.length,
     thresholdRatio,
-    observedMedianRatio: median(ratios),
+    minAbsoluteIncreaseMs,
+    observedMedianRatio: candidateMedian / baselineMedian,
+    observedMedianIncreaseMs: candidateMedian - baselineMedian,
     confidence,
     confidenceInterval: { lower, upper },
-    regression: lower > thresholdRatio,
+    absoluteConfidenceIntervalMs: { lower: absoluteLower, upper: absoluteUpper },
+    regression: lower > thresholdRatio && absoluteLower > minAbsoluteIncreaseMs,
   }
 }

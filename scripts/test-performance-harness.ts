@@ -59,7 +59,31 @@ async function main() {
   const regression = comparePairedLatencies(baseline, regressedCandidate, { seed: 8_202 })
   assert(regression.regression, `injected 20% regression should be detected: ${JSON.stringify(regression)}`)
   assert(regression.confidenceInterval.lower > 1.1, 'regression confidence interval should clear the 10% gate')
+  assert(
+    regression.absoluteConfidenceIntervalMs.lower > regression.minAbsoluteIncreaseMs,
+    'regression absolute confidence interval should clear the practical-effect gate',
+  )
   console.log('PASS  paired bootstrap catches an injected 20% latency regression')
+
+  const tinyBaseline = Array.from({ length: 50 }, (_, index) => 3.5 + (index % 5) * 0.1)
+  const tinyCandidate = tinyBaseline.map((value) => value + 0.8)
+  const tinyChange = comparePairedLatencies(tinyBaseline, tinyCandidate, { seed: 8_203 })
+  assert(
+    !tinyChange.regression,
+    `sub-millisecond noise should stay below the practical-effect gate: ${JSON.stringify(tinyChange)}`,
+  )
+  console.log('PASS  paired bootstrap ignores low-latency ratio noise below five milliseconds')
+
+  const skewedBaseline = Array.from({ length: 50 }, (_, index) =>
+    index < 5 ? 2 + index * 0.1 : 30_000 + index * 17,
+  )
+  const skewedCandidate = skewedBaseline.map((value, index) => value + (index < 5 ? 1 : 300))
+  const skewedChange = comparePairedLatencies(skewedBaseline, skewedCandidate, { seed: 8_204 })
+  assert(
+    !skewedChange.regression,
+    `a sub-10% median change should not be distorted by tiny tail samples: ${JSON.stringify(skewedChange)}`,
+  )
+  console.log('PASS  paired bootstrap uses population medians instead of unstable per-sample ratios')
 }
 
 main().catch((error) => {

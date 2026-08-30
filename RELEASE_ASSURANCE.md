@@ -123,7 +123,7 @@ The exact release commit must have all of these artifacts:
 
 1. `npm run test:release` passes.
 2. A paired baseline/candidate artifact from `npm run benchmark:paired`, created from two clean commits with every registered tool and at least 50 interleaved sample pairs per warm profile.
-3. The paired benchmark reports no statistically supported regression above 10 percent and at most 1 percent candidate tool errors. Sequential `benchmark:v082` artifacts remain useful capacity evidence, but are not the release regression gate because live upstream conditions can drift between runs.
+3. The paired benchmark alternates baseline and candidate calls without making them compete for the same upstream request, and reports no statistically supported median regression above both 10 percent and 5 milliseconds. It also permits at most 1 percent candidate tool errors. Sequential `benchmark:v082` artifacts remain useful capacity evidence, but are not the release regression gate because live upstream conditions can drift between runs.
 4. `SOAK_RELEASE=1 npm run soak:v082` completes the default 60-minute mixed-tool run with at most 1 percent tool errors and records latency and child-process RSS.
 5. Installed Claude, Codex, Grok, Gemini, and Cursor hosts each complete the declared user journeys. `test:client-journeys` verifies protocol identity and behavior, but does not replace installed-host proof.
 
