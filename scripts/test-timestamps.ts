@@ -203,12 +203,31 @@ async function main() {
   )
 
   assert(oneHourWindow.to_block === head.number, '1h Solana window should anchor to the cached latest slot')
-  assert(oneHourWindow.from_lookup?.resolution === 'exact', '1h Solana window should use Portal timestamp lookup from the head timestamp')
-  assert(oneHourWindow.from_lookup.timestamp === targetTimestamp, '1h Solana lookup should be anchored to the resolved head timestamp')
-  assert(
-    Math.abs(oneHourWindow.from_block - exactFromBlock) <= 50,
-    '1h Solana timestamp lookup should stay within a small live-index tolerance',
-  )
+  if (oneHourWindow.from_lookup?.resolution === 'exact') {
+    assert(oneHourWindow.from_lookup.timestamp === targetTimestamp, '1h Solana lookup should be anchored to the resolved head timestamp')
+    assert(
+      Math.abs(oneHourWindow.from_block - exactFromBlock) <= 50,
+      '1h Solana timestamp lookup should stay within a small live-index tolerance',
+    )
+  } else {
+    assert(
+      oneHourWindow.estimated_timeframe?.resolution === 'estimated',
+      'A transient Solana timestamp failure should expose estimated timeframe provenance',
+    )
+    assert(
+      ['timestamp_endpoint_down', 'timestamp_endpoint_unavailable'].includes(oneHourWindow.estimated_timeframe?.reason ?? ''),
+      'A transient Solana timestamp fallback should explain why exact resolution was unavailable',
+    )
+    assert(
+      oneHourWindow.estimated_timeframe?.dataset === dataset,
+      'A transient Solana timestamp fallback should identify the source dataset',
+    )
+    assert(
+      oneHourWindow.estimated_timeframe?.from_block === oneHourWindow.from_block
+        && oneHourWindow.estimated_timeframe?.to_block === oneHourWindow.to_block,
+      'A transient Solana timestamp fallback should describe the exact returned block bounds',
+    )
+  }
   assert(oneHourWindow.from_block < oneHourWindow.to_block, '1h Solana window should produce an ordered slot range')
   console.log(`PASS  Solana 1h window -> ${oneHourWindow.from_block}..${oneHourWindow.to_block}`)
 
