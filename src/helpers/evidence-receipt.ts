@@ -30,14 +30,10 @@ export interface EvidenceReceipt {
     primary_evidence_path?: string
     completeness: 'complete' | 'partial' | 'unknown'
     partial_reasons?: string[]
-    coverage?: unknown
-    freshness?: unknown
-    ordering?: unknown
-    pagination?: unknown
+    metadata: Array<'_coverage' | '_freshness' | '_ordering' | '_pagination'>
   }
   replay: {
-    tool: string
-    arguments: JsonRecord
+    arguments_path: '_evidence.request.arguments'
   }
 }
 
@@ -130,7 +126,6 @@ function requestedWindow(args: JsonRecord): JsonRecord | undefined {
     'interval',
     'finalized_only',
     'scan_order',
-    'limit',
   ])
 }
 
@@ -180,6 +175,11 @@ function primaryEvidence(payload: JsonRecord): { path?: string; count: number } 
   for (const key of preferredKeys) {
     if (Array.isArray(payload[key])) return { path: key, count: payload[key].length }
   }
+  const nestedPaths = ['activity.items', 'interactions.top_callers', 'events.top_event_types', 'fund_flow.largest_movements']
+  for (const path of nestedPaths) {
+    const value = path.split('.').reduce<unknown>((current, key) => (isRecord(current) ? current[key] : undefined), payload)
+    if (Array.isArray(value)) return { path, count: value.length }
+  }
 
   const meta = isRecord(payload._meta) ? payload._meta : undefined
   const returned = meta?.returned
@@ -198,7 +198,9 @@ function completeness(payload: JsonRecord): {
   if (coverage?.window_complete === false) reasons.push('requested_window_not_fully_analyzed')
   if (coverage?.result_complete === false) reasons.push('more_matching_results_exist')
   if (coverage?.sampled === true) reasons.push('sampled_window')
-  if (pagination?.has_more === true) reasons.push('continuation_available')
+  if (pagination?.has_more === true && pagination.continuation_scope !== 'adjacent_window') {
+    reasons.push('continuation_available')
+  }
 
   if (reasons.length > 0) return { completeness: 'partial', partialReasons: reasons }
   if (coverage?.window_complete === true && coverage?.result_complete === true) return { completeness: 'complete' }
@@ -246,14 +248,10 @@ export function buildEvidenceReceipt(toolName: string, toolArgs: JsonRecord, pay
       ...(evidence.path ? { primary_evidence_path: evidence.path } : {}),
       completeness: completion.completeness,
       ...(completion.partialReasons ? { partial_reasons: completion.partialReasons } : {}),
-      ...(payload._coverage !== undefined ? { coverage: payload._coverage } : {}),
-      ...(payload._freshness !== undefined ? { freshness: payload._freshness } : {}),
-      ...(payload._ordering !== undefined ? { ordering: payload._ordering } : {}),
-      ...(payload._pagination !== undefined ? { pagination: payload._pagination } : {}),
+      metadata: ['_coverage', '_freshness', '_ordering', '_pagination'],
     },
     replay: {
-      tool: toolName,
-      arguments: normalizedArgs,
+      arguments_path: '_evidence.request.arguments',
     },
   }
 }

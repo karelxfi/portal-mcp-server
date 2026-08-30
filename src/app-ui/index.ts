@@ -1,6 +1,7 @@
 import { App, applyDocumentTheme, applyHostFonts, applyHostStyleVariables } from '@modelcontextprotocol/ext-apps'
 
 import { planFollowup } from './followup-state.js'
+import { downloadEvidence } from './export.js'
 import { type ExplorerActions, type ExplorerState, isRecord, renderExplorer } from './view.js'
 
 const root = document.getElementById('app')
@@ -12,13 +13,34 @@ let state: ExplorerState = {
   loading: true,
   error: '',
   currentArgs: {},
+  historyIndex: -1,
+  historyLength: 0,
 }
+
+type Snapshot = Pick<ExplorerState, 'payload' | 'rawText' | 'currentArgs' | 'error'>
+const history: Snapshot[] = []
+let historyIndex = -1
 
 const app = new App({ name: 'sqd-blockchain-activity-explorer', version: '0.8.3' }, {}, { strict: true })
 
 function update(next: Partial<ExplorerState>) {
   state = { ...state, ...next }
   renderExplorer(root!, state, actions)
+}
+
+function showSnapshot(index: number) {
+  const snapshot = history[index]
+  if (!snapshot) return
+  historyIndex = index
+  update({ ...snapshot, loading: false, historyIndex, historyLength: history.length })
+}
+
+function remember(snapshot: Snapshot) {
+  if (historyIndex < history.length - 1) history.splice(historyIndex + 1)
+  history.push(snapshot)
+  if (history.length > 20) history.shift()
+  historyIndex = history.length - 1
+  update({ ...snapshot, loading: false, historyIndex, historyLength: history.length })
 }
 
 function extractText(content: unknown): string {
@@ -85,11 +107,10 @@ const actions: ExplorerActions = {
       const result = await app.callServerTool({ name: toolName, arguments: plan.callArgs })
       const rawText = extractText(result.content)
       const payload = isRecord(result.structuredContent) ? result.structuredContent : parseText(rawText)
-      update({
+      remember({
         payload,
         rawText,
         currentArgs: plan.persistedArgs,
-        loading: false,
         error: result.isError ? rawText || 'SQD returned an error.' : '',
       })
     } catch (error) {
@@ -103,13 +124,27 @@ const actions: ExplorerActions = {
       /* Host can decline full screen. */
     }
   },
+  goBack() {
+    showSnapshot(historyIndex - 1)
+  },
+  goForward() {
+    showSnapshot(historyIndex + 1)
+  },
+  exportEvidence(format) {
+    if (state.payload) downloadEvidence(state.payload, format)
+  },
 }
 
 app.ontoolinput = (params) => update({ currentArgs: params.arguments ?? {}, loading: true, error: '' })
 app.ontoolresult = (result) => {
   const rawText = extractText(result.content)
   const payload = isRecord(result.structuredContent) ? result.structuredContent : parseText(rawText)
-  update({ payload, rawText, loading: false, error: result.isError ? rawText || 'SQD returned an error.' : '' })
+  remember({
+    payload,
+    rawText,
+    currentArgs: state.currentArgs,
+    error: result.isError ? rawText || 'SQD returned an error.' : '',
+  })
 }
 app.ontoolcancelled = () => update({ loading: false, error: 'The request was cancelled. You can run it again.' })
 app.onhostcontextchanged = applyHostContext

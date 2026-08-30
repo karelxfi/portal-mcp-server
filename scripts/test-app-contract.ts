@@ -14,6 +14,8 @@ import {
 } from '../src/apps/activity-explorer.js'
 import { ACTIVITY_EXPLORER_BYTES, ACTIVITY_EXPLORER_HASH } from '../src/generated/activity-explorer.version.js'
 import { planFollowup, shorterDuration } from '../src/app-ui/followup-state.js'
+import { buildEvidenceExport } from '../src/app-ui/export.js'
+import { APP_FIXTURES } from '../src/app-ui/fixtures.js'
 import { buildCandlestickChart, buildTimeSeriesChart } from '../src/helpers/chart-metadata.js'
 import { register } from '../src/metrics.js'
 import { createPortalServer } from '../src/server.js'
@@ -34,14 +36,24 @@ async function main() {
       JSON.stringify(continuationPlan.persistedArgs) === JSON.stringify({ network: 'hyperliquid-fills', coin: 'BTC', duration: '1h' }),
     'continuation should call by cursor while preserving the investigation arguments for later follow-ups',
   )
-  const timeSeriesContract = buildTimeSeriesChart({ interval: '1m', totalPoints: 2 })
-  const candleContract = buildCandlestickChart({ interval: '1m', totalCandles: 2 })
+  const timeSeriesContract = buildTimeSeriesChart({ interval: '1m', totalPoints: 12 })
+  const candleContract = buildCandlestickChart({ interval: '1m', totalCandles: 12 })
   for (const [name, chart] of [['time series', timeSeriesContract], ['candlestick', candleContract]] as const) {
     assert(chart.interactions?.hover?.enabled === true, `${name} charts should declare exact point inspection`)
-    assert(chart.interactions?.zoom?.enabled === false, `${name} charts must not advertise unimplemented zoom`)
-    assert(chart.interactions?.toolbar?.enabled === false, `${name} charts must not advertise an unimplemented toolbar`)
-    assert(chart.interactions?.toolbar?.actions.length === 0, `${name} charts must not advertise unavailable actions`)
+    assert(chart.interactions?.zoom?.enabled === true, `${name} charts should declare implemented x-axis range focus`)
+    assert(chart.interactions?.toolbar?.enabled === true, `${name} charts should expose the implemented range controls`)
+    assert(chart.interactions?.toolbar?.actions.includes('reset_zoom') === true, `${name} charts should expose reset range`)
   }
+  const shortChart = buildTimeSeriesChart({ interval: '1m', totalPoints: 4 })
+  assert(shortChart.interactions?.zoom?.enabled === false, 'short charts should not advertise unnecessary range controls')
+
+  const jsonExport = buildEvidenceExport(APP_FIXTURES.hyperliquid, 'json')
+  const csvExport = buildEvidenceExport(APP_FIXTURES.hyperliquid, 'csv')
+  const hyperliquidRows = (APP_FIXTURES.hyperliquid.ohlc as unknown[]).length
+  assert(jsonExport.filename.endsWith('.json') && jsonExport.rowCount === hyperliquidRows, 'JSON evidence export should include all candles')
+  assert(csvExport.filename.endsWith('.csv') && csvExport.rowCount === hyperliquidRows, 'CSV evidence export should include all candles')
+  assert(csvExport.content.includes('sqd_evidence_sha256'), 'CSV evidence export should preserve receipt identity')
+  assert(csvExport.content.split('\r\n').length === hyperliquidRows + 2, 'CSV export should contain one header and every exact row')
   assert(
     ACTIVITY_EXPLORER_HASH !== 'unbuilt' && /^[a-f0-9]{12}$/.test(ACTIVITY_EXPLORER_HASH),
     'app resource needs a content hash',

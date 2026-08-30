@@ -11,7 +11,8 @@ import { APP_FIXTURES } from '../src/app-ui/fixtures.ts'
 
 const preview = path.resolve('output/activity-explorer/index.html')
 const screenshots = path.resolve('output/activity-explorer/screenshots')
-const fixtures = ['hyperliquid', 'ratio', 'timeseries', 'grouped', 'sparse', 'mixed', 'activity', 'large_table', 'error', 'empty']
+const fixtures = ['hyperliquid', 'ratio', 'timeseries', 'grouped', 'sparse', 'mixed', 'activity', 'wallet', 'contract', 'large_table', 'error', 'empty']
+const WALLET_FIXTURE_ROW_COUNT = ((APP_FIXTURES.wallet.activity as Record<string, unknown>).items as unknown[]).length
 const viewports = [
   { name: 'desktop-light', width: 1280, height: 900, colorScheme: 'light' as const },
   { name: 'desktop-dark', width: 1280, height: 900, colorScheme: 'dark' as const },
@@ -140,12 +141,35 @@ async function validate(page: Page, fixture: string, viewport: (typeof viewports
     assert(await page.locator('.sqd-raw').getAttribute('open') !== null, 'Raw candle action should open exact JSON evidence')
     const rawRows = JSON.parse(await page.locator('.sqd-raw pre').innerText())
     assert(Array.isArray(rawRows) && rawRows.length === expected.length, 'Raw candle action should target the exact candle rows')
+    await hit.click()
+    assert((await page.locator('table.sqd-table tbody tr[data-selected="true"]').count()) === 1, 'Selecting a chart point should link to one exact table row')
+    assert((await hit.getAttribute('aria-pressed')) === 'true', 'Selected chart points should expose their state')
+    const receipt = page.locator('.sqd-receipt')
+    assert((await receipt.count()) === 1, 'Successful results should show one factual evidence receipt')
+    assert((await receipt.innerText()).includes('SHA-256'), 'Evidence receipt should expose a short exact-data digest')
+    await page.getByRole('button', { name: 'Download JSON' }).click()
+    assert((await page.locator('body').getAttribute('data-export-format')) === 'json', 'JSON export action should be wired')
+    await page.getByRole('button', { name: 'Download CSV' }).click()
+    assert((await page.locator('body').getAttribute('data-export-format')) === 'csv', 'CSV export action should be wired')
+    await page.getByRole('button', { name: 'Open previous result in this session' }).click()
+    assert((await page.locator('body').getAttribute('data-history-action')) === 'back', 'session history should support back navigation')
+    await page.getByRole('button', { name: 'Open next result in this session' }).click()
+    assert((await page.locator('body').getAttribute('data-history-action')) === 'forward', 'session history should support forward navigation')
   }
   if (fixture === 'timeseries') {
     const expected = APP_FIXTURES.timeseries.time_series as Array<Record<string, number>>
     assert((await page.locator('.sqd-chart-hit').count()) === expected.length, 'Time series should render every source point')
     assert(Number(await page.locator('.sqd-chart-line').getAttribute('data-point-count')) === expected.length, 'Time-series line should contain every source point')
     assert(Number(await page.locator('[data-final-value]').getAttribute('data-final-value')) === expected.at(-1)?.value, 'Time-series final value should match structured content')
+    const ranges = page.locator('.sqd-range')
+    assert((await ranges.count()) === 2, 'long charts should expose an exact start and end range')
+    await ranges.nth(0).fill('6')
+    await ranges.nth(1).fill('11')
+    await page.getByRole('button', { name: 'Focus range' }).click()
+    assert((await page.locator('.sqd-chart-hit').count()) === 6, 'range focus should redraw only the selected six points')
+    assert((await page.locator('table.sqd-table tbody tr').count()) === expected.length, 'range focus must keep the full exact evidence table')
+    await page.getByRole('button', { name: 'Reset range' }).click()
+    assert((await page.locator('.sqd-chart-hit').count()) === expected.length, 'reset range should restore every point')
   }
   if (fixture === 'grouped') {
     const rows = APP_FIXTURES.grouped.time_series as Array<{ series_values: Record<string, number> }>
@@ -210,6 +234,17 @@ async function validate(page: Page, fixture: string, viewport: (typeof viewports
     const expectedHash = String((APP_FIXTURES.activity.items as Array<Record<string, unknown>>)[0].tx_hash)
     assert((await page.locator('table.sqd-table').innerText()).includes(expectedHash), 'Activity tables should keep exact transaction hashes')
   }
+  if (fixture === 'wallet') {
+    assert((await page.locator('.sqd-card').count()) >= 3, 'wallet workspace should combine timeline, exact rows, and counterparties')
+    assert((await page.locator('.sqd-event').count()) === WALLET_FIXTURE_ROW_COUNT, 'wallet timeline should preserve every exact activity row')
+    assert((await page.locator('table.sqd-table tbody tr').count()) === WALLET_FIXTURE_ROW_COUNT, 'wallet table should preserve every exact activity row')
+    assert((await page.locator('.sqd-ranked-row').count()) === 3, 'wallet workspace should rank the exact counterparties')
+  }
+  if (fixture === 'contract') {
+    assert((await page.locator('.sqd-metric').count()) === 4, 'contract workspace should expose interactions, callers, events, and event types')
+    assert((await page.locator('.sqd-card').count()) === 2, 'contract workspace should compare callers and event types')
+    assert((await page.locator('.sqd-ranked-row').count()) === 7, 'contract workspace should retain four callers and three event types')
+  }
   if (fixture === 'large_table') {
     const rows = APP_FIXTURES.large_table.items as Array<Record<string, unknown>>
     assert((await page.locator('table.sqd-table tbody tr').count()) === 100, 'Large tables should keep a bounded DOM')
@@ -243,6 +278,13 @@ async function validate(page: Page, fixture: string, viewport: (typeof viewports
 let baseUrl = ''
 
 async function main() {
+  const wallet = APP_FIXTURES.wallet as Record<string, any>
+  const walletRows = wallet.activity.items as Array<Record<string, any>>
+  assert(wallet.fund_flow.summary.total_in_usd === walletRows.filter((row) => row.direction === 'in').reduce((sum, row) => sum + row.value_usd, 0), 'Wallet inbound total must reconcile with exact rows')
+  assert(wallet.fund_flow.summary.total_out_usd === walletRows.filter((row) => row.direction === 'out').reduce((sum, row) => sum + row.value_usd, 0), 'Wallet outbound total must reconcile with exact rows')
+  const contract = APP_FIXTURES.contract as Record<string, any>
+  assert(contract.interactions.total_transactions === contract.interactions.top_callers.reduce((sum: number, row: any) => sum + row.interaction_count, 0), 'Contract interaction total must reconcile with callers')
+  assert(contract.events.total_events === Object.values(contract.events.events_by_type).reduce((sum: number, value) => sum + Number(value), 0), 'Contract event total must reconcile with event types')
   const hyperliquid = APP_FIXTURES.hyperliquid as Record<string, any>
   assert(
     hyperliquid.summary.total_fills === hyperliquid.ohlc.reduce((sum: number, row: any) => sum + row.fill_count, 0),

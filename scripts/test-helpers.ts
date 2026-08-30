@@ -282,8 +282,10 @@ export function assertChatSurface(parsed: any, label: string, options?: { expect
     `${label} should classify evidence completeness`,
   )
   assertRecord(parsed._evidence.replay, `${label} _evidence.replay`)
-  assert(parsed._evidence.replay.tool === parsed._tool_contract.name, `${label} replay tool should match the tool contract`)
-  assertRecord(parsed._evidence.replay.arguments, `${label} _evidence.replay.arguments`)
+  assert(
+    parsed._evidence.replay.arguments_path === '_evidence.request.arguments',
+    `${label} replay should point to canonical arguments without duplicating them`,
+  )
 
   assertRecord(parsed.investigation, `${label} investigation`)
   assert(parsed.investigation.version === 'portal_investigation_v1', `${label} should include investigation guide`)

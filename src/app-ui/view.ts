@@ -7,11 +7,16 @@ export type ExplorerState = {
   error: string
   currentArgs: Record<string, unknown>
   displayMode?: string
+  historyIndex?: number
+  historyLength?: number
 }
 
 export type ExplorerActions = {
   runFollowup: (intent: string, target?: string, action?: Record<string, unknown>) => void
   requestFullscreen?: () => void
+  goBack?: () => void
+  goForward?: () => void
+  exportEvidence?: (format: 'json' | 'csv') => void
 }
 
 type Column = {
@@ -163,6 +168,19 @@ function appHeader(actions: ExplorerActions, state: ExplorerState): HTMLElement 
   topbar.append(brand)
 
   const actionBar = element('div', 'sqd-actions')
+  if (actions.goBack || actions.goForward) {
+    const back = element('button', 'sqd-button', 'Back')
+    back.type = 'button'
+    back.disabled = (state.historyIndex ?? 0) <= 0
+    back.setAttribute('aria-label', 'Open previous result in this session')
+    back.addEventListener('click', () => actions.goBack?.())
+    const forward = element('button', 'sqd-button', 'Forward')
+    forward.type = 'button'
+    forward.disabled = (state.historyIndex ?? 0) >= (state.historyLength ?? 1) - 1
+    forward.setAttribute('aria-label', 'Open next result in this session')
+    forward.addEventListener('click', () => actions.goForward?.())
+    actionBar.append(back, forward)
+  }
   if (actions.requestFullscreen && state.displayMode !== 'fullscreen') {
     const fullscreen = element('button', 'sqd-button', 'Open full screen')
     fullscreen.type = 'button'
@@ -171,6 +189,79 @@ function appHeader(actions: ExplorerActions, state: ExplorerState): HTMLElement 
   }
   topbar.append(actionBar)
   return topbar
+}
+
+function workspaceMode(payload: Record<string, unknown>): { label: string; className: string; capabilities: string[] } {
+  const contract = isRecord(payload._tool_contract) ? payload._tool_contract : {}
+  const name = text(contract.name)
+  if (name.includes('wallet')) return { label: 'Wallet investigation', className: 'wallet', capabilities: ['Flows', 'Counterparties', 'Exact records'] }
+  if (name.includes('contract') || name.includes('_logs') || name.includes('token_transfers')) {
+    return { label: 'Contract investigation', className: 'contract', capabilities: ['Activity', 'Actors', 'Exact events'] }
+  }
+  if (name.includes('ohlc') || name.includes('hyperliquid') || name.includes('analytics')) {
+    return { label: 'Market workspace', className: 'market', capabilities: ['Price and volume', 'Exact fills', 'Period comparison'] }
+  }
+  if (name.includes('network') || name === 'portal_get_head') {
+    return { label: 'Network workspace', className: 'network', capabilities: ['Coverage', 'Freshness', 'Indexed head'] }
+  }
+  if (name.includes('transaction') || name.includes('recent_activity')) {
+    return { label: 'Transaction investigation', className: 'transaction', capabilities: ['Timeline', 'Exact rows', 'Safe pivots'] }
+  }
+  return { label: 'Blockchain investigation', className: 'blockchain', capabilities: ['Charts', 'Exact rows', 'Evidence receipt'] }
+}
+
+function workspaceStrip(payload: Record<string, unknown>): HTMLElement {
+  const mode = workspaceMode(payload)
+  const strip = element('section', `sqd-workspace-strip sqd-workspace-strip--${mode.className}`)
+  strip.setAttribute('aria-label', 'Investigation workspace mode')
+  strip.append(element('strong', 'sqd-workspace-name', mode.label))
+  const capabilities = element('div', 'sqd-workspace-capabilities')
+  mode.capabilities.forEach((capability) => capabilities.append(element('span', undefined, capability)))
+  strip.append(capabilities)
+  return strip
+}
+
+function evidenceReceipt(payload: Record<string, unknown>, actions: ExplorerActions): HTMLElement | null {
+  const evidence = isRecord(payload._evidence) ? payload._evidence : undefined
+  if (!evidence) return null
+  const request = isRecord(evidence.request) ? evidence.request : {}
+  const result = isRecord(evidence.result) ? evidence.result : {}
+  const source = isRecord(evidence.source) ? evidence.source : {}
+  const analyzed = isRecord(request.analyzed_window) ? request.analyzed_window : {}
+  const completeness = text(result.completeness || 'unknown')
+  const section = element('section', 'sqd-receipt')
+  section.setAttribute('aria-labelledby', 'sqd-receipt-title')
+  const copy = element('div', 'sqd-receipt-copy')
+  const eyebrow = element('div', 'sqd-eyebrow')
+  eyebrow.append(element('span', `sqd-dot${completeness === 'partial' ? ' sqd-dot--warning' : completeness === 'unknown' ? ' sqd-dot--warning' : ''}`))
+  eyebrow.append(document.createTextNode(`${humanize(completeness)} evidence`))
+  copy.append(eyebrow)
+  const title = element('h2', 'sqd-receipt-title', 'Reproducible evidence receipt')
+  title.id = 'sqd-receipt-title'
+  copy.append(title)
+  const digest = text(result.exact_data_sha256)
+  const rowCount = numeric(result.row_count) ?? 0
+  const details = [
+    text(source.network ?? source.dataset),
+    `${rowCount} exact row${rowCount === 1 ? '' : 's'}`,
+    digest ? `SHA-256 ${digest.slice(0, 12)}` : '',
+    analyzed.window_from_block !== undefined && analyzed.window_to_block !== undefined
+      ? `Blocks ${text(analyzed.window_from_block)} to ${text(analyzed.window_to_block)}`
+      : '',
+  ].filter(Boolean)
+  copy.append(element('p', 'sqd-receipt-meta', details.join(' · ')))
+  section.append(copy)
+  if (actions.exportEvidence) {
+    const actionBar = element('div', 'sqd-actions')
+    for (const format of ['json', 'csv'] as const) {
+      const button = element('button', 'sqd-button', `Download ${format.toUpperCase()}`)
+      button.type = 'button'
+      button.addEventListener('click', () => actions.exportEvidence?.(format))
+      actionBar.append(button)
+    }
+    section.append(actionBar)
+  }
+  return section
 }
 
 function resultState(payload: Record<string, unknown>): { label: string; tone: string; partial: boolean } {
@@ -238,6 +329,15 @@ function metricCards(payload: Record<string, unknown>): HTMLElement | null {
   const specs = asArray(ui.metric_cards).filter(isRecord)
   const fallbacks: Record<string, unknown>[] = []
   if (!specs.length) {
+    const contract = isRecord(payload._tool_contract) ? payload._tool_contract : {}
+    if (contract.name === 'portal_evm_get_contract_activity') {
+      fallbacks.push(
+        { label: 'Interactions', value_path: 'interactions.total_transactions', format: 'integer' },
+        { label: 'Unique callers', value_path: 'interactions.unique_callers', format: 'integer' },
+        { label: 'Events', value_path: 'events.total_events', format: 'integer' },
+        { label: 'Event types', value_path: 'events.unique_event_types', format: 'integer' },
+      )
+    }
     const summaryCandidates = ['summary', 'overview', 'page_summary', 'metrics']
     const summary = summaryCandidates.map((key) => payload[key]).find(isRecord)
     if (summary) {
@@ -307,7 +407,15 @@ function isIdentifierColumn(column: Column, value: unknown): boolean {
 }
 
 function numberRows(payload: Record<string, unknown>, descriptor: Record<string, unknown>): Record<string, unknown>[] {
-  return asArray(getByPath(payload, text(descriptor.data_key))).filter(isRecord)
+  const value = getByPath(payload, text(descriptor.data_key))
+  if (descriptor.object_map === true && isRecord(value)) {
+    const categoryKey = text(descriptor.category_key || 'category')
+    const valueKey = text(descriptor.value_key || 'value')
+    return Object.entries(value)
+      .map(([category, item]) => ({ [categoryKey]: category, [valueKey]: item }))
+      .sort((left, right) => (numeric(right[valueKey]) ?? 0) - (numeric(left[valueKey]) ?? 0))
+  }
+  return asArray(value).filter(isRecord)
 }
 
 function sortRowsByX(rows: Record<string, unknown>[], chart: Record<string, unknown>): Record<string, unknown>[] {
@@ -339,6 +447,49 @@ type ChartSeries = {
   key: string
   label: string
   color: string
+}
+
+function evidenceIdentity(row: Record<string, unknown>): string {
+  const keys = [
+    'primary_id',
+    'hash',
+    'tx_hash',
+    'transactionHash',
+    'logIndex',
+    'block_number',
+    'blockNumber',
+    'timestamp',
+    'bucket_index',
+    'coin',
+  ]
+  const identity = Object.fromEntries(keys.filter((key) => row[key] !== undefined).map((key) => [key, row[key]]))
+  return JSON.stringify(Object.keys(identity).length ? identity : row)
+}
+
+function selectEvidenceRow(row: Record<string, unknown>, selectedHit: SVGElement) {
+  const identity = evidenceIdentity(row)
+  document.querySelectorAll<SVGElement>('.sqd-chart-hit[aria-pressed]').forEach((hit) => {
+    hit.setAttribute('aria-pressed', String(hit === selectedHit))
+  })
+  let selectedTableRow: HTMLTableRowElement | undefined
+  document.querySelectorAll<HTMLTableRowElement>('tr[data-evidence-key]').forEach((tableRow) => {
+    const selected = tableRow.dataset.evidenceKey === identity
+    tableRow.dataset.selected = String(selected)
+    if (selected && !selectedTableRow) selectedTableRow = tableRow
+  })
+  selectedTableRow?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+}
+
+function bindPointSelection(hit: SVGElement, row: Record<string, unknown>) {
+  hit.setAttribute('role', 'button')
+  hit.setAttribute('aria-pressed', 'false')
+  hit.addEventListener('click', () => selectEvidenceRow(row, hit))
+  hit.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault()
+      selectEvidenceRow(row, hit)
+    }
+  })
 }
 
 function normalizeSeries(rows: Record<string, unknown>[], chart: Record<string, unknown>): {
@@ -417,11 +568,51 @@ function chartPanel(payload: Record<string, unknown>, panel: Panel): HTMLElement
     panel.emphasis === 'primary' ? 'sqd-card--primary' : '',
   )
   const wrap = element('div', 'sqd-chart-wrap')
-  const rows = sortRowsByX(numberRows(payload, chart), chart)
+  const allRows = sortRowsByX(numberRows(payload, chart), chart)
+  const requestedStart = Number(panel.__range_start)
+  const requestedEnd = Number(panel.__range_end)
+  const rangeStart = Number.isInteger(requestedStart) ? Math.max(0, Math.min(requestedStart, allRows.length - 1)) : 0
+  const rangeEnd = Number.isInteger(requestedEnd)
+    ? Math.max(rangeStart, Math.min(requestedEnd, allRows.length - 1))
+    : Math.max(0, allRows.length - 1)
+  const rows = allRows.slice(rangeStart, rangeEnd + 1)
   if (!rows.length) {
     wrap.append(element('div', 'sqd-chart-empty', 'No chart points were returned for this window.'))
     body.append(wrap)
     return root
+  }
+  if (allRows.length > 8) {
+    const rangeTools = element('div', 'sqd-chart-range')
+    const rangeCopy = element(
+      'span',
+      'sqd-chart-range-copy',
+      `Viewing ${rangeStart + 1} to ${rangeEnd + 1} of ${allRows.length} exact points`,
+    )
+    const start = element('input', 'sqd-range')
+    start.type = 'range'
+    start.min = '0'
+    start.max = String(allRows.length - 1)
+    start.value = String(rangeStart)
+    start.setAttribute('aria-label', 'First visible chart point')
+    const end = element('input', 'sqd-range')
+    end.type = 'range'
+    end.min = '0'
+    end.max = String(allRows.length - 1)
+    end.value = String(rangeEnd)
+    end.setAttribute('aria-label', 'Last visible chart point')
+    const focus = element('button', 'sqd-button', 'Focus range')
+    focus.type = 'button'
+    focus.addEventListener('click', () => {
+      const nextStart = Math.min(Number(start.value), Number(end.value))
+      const nextEnd = Math.max(Number(start.value), Number(end.value))
+      root.replaceWith(chartPanel(payload, { ...panel, __range_start: nextStart, __range_end: nextEnd }))
+    })
+    const reset = element('button', 'sqd-button', 'Reset range')
+    reset.type = 'button'
+    reset.disabled = rangeStart === 0 && rangeEnd === allRows.length - 1
+    reset.addEventListener('click', () => root.replaceWith(chartPanel(payload, { ...panel, __range_start: 0, __range_end: allRows.length - 1 })))
+    rangeTools.append(rangeCopy, start, end, focus, reset)
+    body.append(rangeTools)
   }
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
   svg.setAttribute('class', 'sqd-chart')
@@ -585,7 +776,6 @@ function chartPanel(payload: Record<string, unknown>, panel: Panel): HTMLElement
         width: String(Math.max(6, plotW / Math.max(rows.length, 1))),
         height: String(priceHeight + volumeGap + volumeHeight),
         class: 'sqd-chart-hit',
-        role: 'img',
         tabindex: '0',
         'aria-label': `${timeLabel}. ${exactValues.join('. ')}.`,
       })
@@ -593,6 +783,7 @@ function chartPanel(payload: Record<string, unknown>, panel: Panel): HTMLElement
       hit.addEventListener('focus', () => hit.dispatchEvent(new Event('pointerenter')))
       hit.addEventListener('pointerleave', hideTooltip)
       hit.addEventListener('blur', hideTooltip)
+      bindPointSelection(hit, row)
     })
     const finalClose = numeric(getByPath(rows.at(-1), closeField))
     if (finalClose !== undefined) {
@@ -819,7 +1010,6 @@ function chartPanel(payload: Record<string, unknown>, panel: Panel): HTMLElement
         width: String(Math.max(6, plotW / Math.max(normalized.points.length, 1))),
         height: String(plotH),
         class: 'sqd-chart-hit',
-        role: 'img',
         tabindex: '0',
         'data-point-index': String(index),
         'data-x-value': text(getByPath(point.row, xField)),
@@ -830,6 +1020,7 @@ function chartPanel(payload: Record<string, unknown>, panel: Panel): HTMLElement
       hit.addEventListener('focus', () => hit.dispatchEvent(new Event('pointerenter')))
       hit.addEventListener('pointerleave', hideTooltip)
       hit.addEventListener('blur', hideTooltip)
+      bindPointSelection(hit, point.row)
     })
     updatePointLabels()
 
@@ -1060,6 +1251,8 @@ function tablePanel(payload: Record<string, unknown>, panel: Panel): HTMLElement
     tbody.replaceChildren()
     for (const [index, row] of visible.entries()) {
       const tr = element('tr')
+      tr.dataset.evidenceKey = evidenceIdentity(row)
+      tr.dataset.selected = 'false'
       for (const [columnIndex, column] of effectiveColumns.entries()) {
         const td = element('td')
         td.dataset.align = column.align ?? 'left'
@@ -1209,9 +1402,58 @@ function panels(payload: Record<string, unknown>): HTMLElement | null {
     else if (kind === 'ranked_bars_panel') grid.append(rankedPanel(payload, panel))
     else if (kind === 'stat_list_panel') grid.append(statPanel(payload, panel))
   }
+  const tableKeys = new Set(
+    specs
+      .filter((panel) => text(panel.kind) === 'table_panel')
+      .map((panel) => {
+        const descriptor = tableDescriptor(payload, text(panel.table_id))
+        return text(descriptor?.data_key ?? panel.data_key)
+      })
+      .filter(Boolean),
+  )
+  const chartKeys = specs
+    .filter((panel) => text(panel.kind) === 'chart_panel')
+    .map((panel) => getByPath(payload, text(panel.chart_key)))
+    .filter(isRecord)
+    .map((chart) => text(chart.data_key))
+    .filter(Boolean)
+  for (const dataKey of new Set(chartKeys)) {
+    if (!tableKeys.has(dataKey) && asArray(getByPath(payload, dataKey)).some(isRecord)) {
+      grid.append(tablePanel(payload, { title: `Exact ${humanize(dataKey)} evidence`, data_key: dataKey }))
+      tableKeys.add(dataKey)
+    }
+  }
   if (!specs.length) {
-    const inferred = inferredPanel(payload)
-    if (inferred) grid.append(inferred)
+    const contract = isRecord(payload._tool_contract) ? payload._tool_contract : {}
+    if (contract.name === 'portal_evm_get_contract_activity') {
+      grid.append(
+        rankedPanel(payload, {
+          title: 'Top callers',
+          subtitle: 'Caller frequency inside the exact analyzed window.',
+          data_key: 'interactions.top_callers',
+          category_key: 'address',
+          value_key: 'interaction_count',
+          value_format: 'integer',
+          emphasis: 'primary',
+        }),
+      )
+      if (isRecord(getByPath(payload, 'events.events_by_type'))) {
+        grid.append(
+          rankedPanel(payload, {
+            title: 'Top event types',
+            subtitle: 'Observed event signatures ranked by count.',
+            data_key: 'events.events_by_type',
+            object_map: true,
+            category_key: 'event',
+            value_key: 'count',
+            value_format: 'integer',
+          }),
+        )
+      }
+    } else {
+      const inferred = inferredPanel(payload)
+      if (inferred) grid.append(inferred)
+    }
   }
   return grid.childElementCount ? grid : null
 }
@@ -1304,7 +1546,10 @@ export function renderExplorer(root: HTMLElement, state: ExplorerState, actions:
   if (state.loading && !state.payload) shell.append(loadingState())
   else if (!state.payload) shell.append(emptyState(state.error))
   else {
+    shell.append(workspaceStrip(state.payload))
     shell.append(hero(state.payload))
+    const receipt = evidenceReceipt(state.payload, actions)
+    if (receipt) shell.append(receipt)
     const metrics = metricCards(state.payload)
     if (metrics) shell.append(metrics)
     const resultNotices = notices(state.payload)

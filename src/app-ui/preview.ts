@@ -15,6 +15,8 @@ function show(name: string) {
     loading: false,
     error: '',
     currentArgs: { duration: '24h' },
+    historyIndex: 1,
+    historyLength: 3,
   }
   renderExplorer(root!, state, {
     runFollowup(intent, target) {
@@ -35,6 +37,15 @@ function show(name: string) {
     },
     requestFullscreen() {
       document.body.dataset.fullscreenRequested = 'true'
+    },
+    goBack() {
+      document.body.dataset.historyAction = 'back'
+    },
+    goForward() {
+      document.body.dataset.historyAction = 'forward'
+    },
+    exportEvidence(format) {
+      document.body.dataset.exportFormat = format
     },
   })
   document.body.dataset.fixture = name

@@ -61,6 +61,10 @@ function main() {
   assert(receipt.result.primary_evidence_path === 'items', 'receipt should locate primary evidence')
   assert(receipt.result.completeness === 'complete', 'receipt should prove complete results')
   assert(receipt.request.analyzed_window?.window_from_block === 2, 'receipt should expose the analyzed window')
+  assert(
+    receipt.replay.arguments_path === '_evidence.request.arguments',
+    'receipt should replay the canonical tool field and arguments without duplicating them',
+  )
 
   const reorderedRows = buildEvidenceReceipt('portal_evm_query_transactions', args, {
     ...completePayload,

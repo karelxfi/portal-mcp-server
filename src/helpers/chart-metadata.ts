@@ -241,9 +241,9 @@ export function buildTimeSeriesChart(params: {
     },
     interactions: params.interactions ?? {
       hover: { enabled: true, crosshair: true, snap_to_data: true },
-      zoom: { enabled: false, axis: 'x', brush: false },
+      zoom: { enabled: params.totalPoints > 8, axis: 'x', brush: false },
       legend: { enabled: Boolean(params.groupedValueField), position: 'top', toggle_series: true },
-      toolbar: { enabled: false, actions: [] },
+      toolbar: { enabled: params.totalPoints > 8, actions: params.totalPoints > 8 ? ['reset_zoom'] : [] },
     },
     height_hint: params.heightHint ?? (params.groupedValueField ? 'tall' : 'medium'),
   }
@@ -431,9 +431,9 @@ export function buildCandlestickChart(params: {
     },
     interactions: params.interactions ?? {
       hover: { enabled: true, crosshair: true, snap_to_data: true },
-      zoom: { enabled: false, axis: 'x', brush: false },
+      zoom: { enabled: params.totalCandles > 8, axis: 'x', brush: false },
       legend: { enabled: false },
-      toolbar: { enabled: false, actions: [] },
+      toolbar: { enabled: params.totalCandles > 8, actions: params.totalCandles > 8 ? ['reset_zoom'] : [] },
     },
     height_hint: params.heightHint ?? 'tall',
   }
