@@ -26,8 +26,12 @@ v0.8.3 keeps the complete v0.8.2 hardening baseline and adds the following requi
 | Sustained process memory | 60-minute peak RSS at or below 512 MB and first-to-last-quarter median growth at or below 128 MB | `soak:v082` with `SOAK_RELEASE=1` |
 | Lean app boundary | One self-contained bundle, no external app fetches or assets, under 700 KB | `test:app-contract`, `test:lean`, `test:package` |
 | Cross-client fallback journeys | Claude, Codex, Grok, Gemini, and Cursor | `test:client-journeys` |
+| Reproducible evidence receipts | Canonical arguments, digest, source windows, row reconciliation, and honest exact or semantic replay mode | `test:evidence-receipts`, `test:client-journeys` |
+| Golden factual investigations | Wallet rows involve the requested wallet, contract aggregations reconcile, and Hyperliquid candles reproduce raw fills and volume | `test:investigation-journeys` |
+| Guided investigations | Wallet, contract, and Hyperliquid prompts are discoverable with their guide resources in all five declared client families | `test:investigation-prompts`, `test:client-journeys` |
+| In-session evidence workspace | Overview, Chart, Evidence, and Investigation views, range focus, session history, and JSON or CSV export without persistent browser storage | `test:app-contract`, `test:app-ui` |
 
-Installed-host UI proof requires a deployed candidate endpoint and remains an explicit approval-gated release step. The local release candidate proves the protocol resource contract, browser rendering, fallback behavior, and client-declared journeys without changing production.
+Installed-host proof uses an exact temporary candidate package that swaps only the MCP endpoint for the current built stdio server and records a package digest. Codex, Claude Code, and Grok Build must each complete a real tool call with evidence and a supported install lifecycle before release. Gemini CLI and Cursor runtime calls are required when those clients are authenticated in the test environment; if local client authentication is unavailable, the release record must say package-validated rather than runtime-passed. The local release candidate proves the protocol resource contract, browser rendering, fallback behavior, and client-declared journeys without changing production.
 
 ## v0.8.2 baseline
 
@@ -96,7 +100,7 @@ All 28 tools pass through one instrumented registration surface. This guarantees
 
 Metric labels never contain wallet addresses, transaction hashes, free-form prompts, authorization values, request bodies, raw error messages, or arbitrary client headers. Structured event export records bounded client identity and failure attribution but never captures forwarded user questions.
 
-The Grafana dashboard is checked against emitted metric names during `test:http-runtime`, so stale dashboard queries fail CI. The metrics endpoint is disabled unless deliberately configured and is separate from v0.8.2’s public, credential-free MCP product surface.
+The Grafana dashboard is checked against emitted metric names during `test:http-runtime`, so stale dashboard queries fail CI. The metrics endpoint is disabled unless deliberately configured and is separate from the public, credential-free v0.8.x MCP product surface.
 
 ## Reliability invariants
 

@@ -65,6 +65,16 @@ function main() {
     receipt.replay.arguments_path === '_evidence.request.arguments',
     'receipt should replay the canonical tool field and arguments without duplicating them',
   )
+  assert(receipt.replay.mode === 'exact', 'fixed block bounds should be marked as exact replay')
+  const relativeReceipt = buildEvidenceReceipt(
+    'portal_hyperliquid_get_ohlc',
+    { network: 'hyperliquid-fills', coin: 'BTC', duration: '5m', interval: '1m' },
+    completePayload,
+  )
+  assert(
+    relativeReceipt.replay.mode === 'semantic',
+    'relative windows should not claim that a later replay reproduces the same snapshot',
+  )
 
   const reorderedRows = buildEvidenceReceipt('portal_evm_query_transactions', args, {
     ...completePayload,
@@ -97,7 +107,7 @@ function main() {
     'text and structured results should remain exactly equivalent',
   )
 
-  console.log('PASS  canonical evidence receipts are stable, complete, replayable, and lossless')
+  console.log('PASS  canonical evidence receipts are stable, complete, replay-honest, and lossless')
 }
 
 main()

@@ -34,6 +34,7 @@ export interface EvidenceReceipt {
   }
   replay: {
     arguments_path: '_evidence.request.arguments'
+    mode: 'exact' | 'semantic'
   }
 }
 
@@ -157,6 +158,12 @@ function analyzedWindow(payload: JsonRecord): JsonRecord | undefined {
   return Object.keys(window).length > 0 ? window : undefined
 }
 
+function replayMode(args: JsonRecord): EvidenceReceipt['replay']['mode'] {
+  if (typeof args.cursor === 'string' && args.cursor.length > 0) return 'exact'
+  if (args.from_block !== undefined && args.to_block !== undefined) return 'exact'
+  return 'semantic'
+}
+
 function primaryEvidence(payload: JsonRecord): { path?: string; count: number } {
   const preferredKeys = [
     'items',
@@ -252,6 +259,7 @@ export function buildEvidenceReceipt(toolName: string, toolArgs: JsonRecord, pay
     },
     replay: {
       arguments_path: '_evidence.request.arguments',
+      mode: replayMode(normalizedArgs),
     },
   }
 }

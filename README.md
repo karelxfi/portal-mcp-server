@@ -8,7 +8,7 @@ This server does not index chains itself. It validates user input, maps it onto 
 
 The current v0.8.2 release supports the stateless MCP `2026-07-28` protocol over HTTP and stdio, while retaining the SDK-managed legacy negotiation path for clients still rolling out the revision. No SQD account, API key, or client credential is required.
 
-The unreleased v0.8.3 candidate adds the SQD Blockchain Activity Explorer, adaptive tool execution, complete app runtime metrics, authoritative data-integrity tests against direct Portal responses, and fast reuse of repeated EVM candle snapshots. The app uses the current SQD Design System with embedded Inter and JetBrains Mono fonts. It renders distinct market, analytics, and investigation layouts with exact multi-series charts, candle and volume views, evidence tables, chronological gaps, and honest local display limits. It has not been tagged, published, or deployed.
+The unreleased v0.8.3 candidate adds reproducible evidence receipts, three guided investigation prompts, the SQD Blockchain Activity Explorer, adaptive tool execution, complete app runtime metrics, authoritative data-integrity tests against direct Portal responses, and fast reuse of repeated EVM candle snapshots. The app uses the current SQD Design System with embedded Inter and JetBrains Mono fonts. It renders distinct wallet, contract, network, and market workspaces with exact multi-series charts, candle and volume views, searchable evidence tables, chronological gaps, range focus, saved in-session investigations, and JSON or CSV export. It has not been tagged, published, or deployed.
 
 ## Current public surface
 
@@ -96,13 +96,19 @@ Most tools return the same envelope in MCP `structuredContent` and in a compact 
 - `_pagination`
 - `_ordering`
 
-`investigation` is a compact evidence guide for agents: it identifies the primary result path, bounded window, useful pivot fields such as addresses or transaction hashes, follow-up filters, and limitations before a result is treated as complete.
+`investigation` is a compact evidence guide for agents: it identifies the primary result path, bounded window, useful pivot fields such as addresses or transaction hashes, follow-up filters, and limitations before a result is treated as complete. Successful material results also carry an `_evidence` receipt with canonical arguments, a deterministic digest, row reconciliation, source windows, and either exact or semantic replay semantics. Exact receipts pin their evidence window. Semantic receipts disclose that rerunning a moving relative window can return a newer snapshot.
 
 When a response uses estimated, partial, sampled, capped, or paginated data, the top-level answer and metadata disclose it. Safe pagination follow-ups include executable tool-call metadata with explicit cursor arguments; suggestions that cannot be reconstructed safely are marked non-executable.
 
 Chart-oriented tools also return chart and table descriptors so MCP clients or LLMs can render them without reverse-engineering the payload.
 
-The v0.8.3 candidate includes one portable SQD Blockchain Activity Explorer for 21 data tools. Compatible MCP App hosts can show exact metrics, multi-series and signed-value charts, right-scaled price candles with linked volume, evidence tables, timelines, coverage, freshness, and continuation controls. Pointer and keyboard inspection expose exact plotted values. Missing buckets remain visible as gaps, identifiers stay unshortened, and any local row cap is separate from server completeness. The app is self-contained and makes no browser-side network requests. Hosts without MCP App support receive the same `structuredContent` and compact JSON text fallback, so the underlying answer never depends on the UI.
+The v0.8.3 candidate includes one portable SQD Blockchain Activity Explorer for 21 data tools. Compatible MCP App hosts can move between Overview, Chart, Evidence, and Investigation views; inspect exact metrics, multi-series and signed-value charts, right-scaled price candles with linked volume, tables, timelines, coverage, freshness, and continuation controls; focus a time range; retain investigation history for the current app session; and export the received evidence as JSON or CSV. Pointer and keyboard inspection expose exact plotted values. Missing buckets remain visible as gaps, identifiers stay unshortened, and any local row cap is separate from server completeness. The app is self-contained, does not use persistent browser storage, and makes no browser-side network requests. Hosts without MCP App support receive the same `structuredContent` and compact JSON text fallback, so the underlying answer never depends on the UI.
+
+Three MCP prompts provide reproducible starting points without adding tools:
+
+- `sqd_investigate_wallet_activity`
+- `sqd_investigate_contract_activity`
+- `sqd_investigate_hyperliquid_market`
 
 ## Install
 
@@ -165,7 +171,7 @@ Grok chat can use SQD as a custom connector:
 1. Open `grok.com/connectors`.
 2. Choose **New Connector**, then **Custom**.
 3. Enter `https://portal.sqd.dev/mcp` as the MCP server URL.
-4. Leave authentication unset for v0.8.2.
+4. Leave authentication unset for the credential-free v0.8.x server.
 
 Grok Build reads Claude Code plugins directly, so it uses the same package rather than a made-up Grok-only manifest:
 
@@ -173,11 +179,11 @@ Grok Build reads Claude Code plugins directly, so it uses the same package rathe
 grok plugin install --trust subsquid-labs/portal-mcp-server#plugins/portal
 ```
 
-The v0.8.2 release gate validates the Codex, Claude Code, Grok Build, Gemini CLI, and Cursor packages. Where a client CLI is available, it also exercises its local package workflow.
+The v0.8.3 release gate validates the Codex, Claude Code, Grok Build, Gemini CLI, and Cursor packages, then runs the same discovery, prompt, resource, fallback, evidence, continuation, concurrency, and recovery journeys for all five declared client families. Real installed-client calls are recorded separately so package validation is never presented as runtime proof.
 
 ## ChatGPT
 
-In a workspace with custom MCP apps enabled, open **Settings → Apps → Create**, enter `https://portal.sqd.dev/mcp`, choose no authentication, scan the tools, and create the draft app. The server is read-only and does not require user credentials in v0.8.2.
+In a workspace with custom MCP apps enabled, open **Settings → Apps → Create**, enter `https://portal.sqd.dev/mcp`, choose no authentication, scan the tools, and create the draft app. The server is read-only and does not require user credentials in v0.8.x.
 
 ## Claude Desktop
 
@@ -207,7 +213,7 @@ Add an entry like this to `claude_desktop_config.json`:
 
 HTTP mode exposes MCP at `/` and `/mcp`, with health state at `/health`.
 
-- MCP and health are public in v0.8.2. User authentication is deferred to a unified `auth.sqd.dev` flow in v0.9.0.
+- MCP and health are public in v0.8.x. User authentication is deferred to a unified `auth.sqd.dev` flow in v0.9.0.
 - Tool and resource discovery use the MCP protocol; retired `/tools` and `/tools.json` routes return `404`.
 - Set `MCP_CURSOR_SECRET` in production so pagination cursors are signed with a deployment-specific secret. Local development uses a deterministic fallback for convenience.
 
@@ -228,6 +234,9 @@ npm run test:protocol
 npm run test:tool-admission
 npm run test:app-contract
 npm run test:app-ui
+npm run test:evidence-receipts
+npm run test:investigation-prompts
+npm run test:investigation-journeys
 npm run test:tools
 npm run test:routing
 npm run test:substrate
@@ -238,6 +247,7 @@ npm run test:grok-plugin
 npm run test:conversations
 npm run test:negative
 npm run test:quality
+npm run test:client-journeys
 npm run test:ci
 ```
 

@@ -18,6 +18,34 @@ function assertCompleteOrContinuable(data: any, label: string) {
   assert(complete || continuable, `${label} should be complete or expose an exact continuation cursor`)
 }
 
+function readPath(value: unknown, path: string): unknown {
+  return path.split('.').reduce<unknown>((current, key) => {
+    if (!current || typeof current !== 'object' || Array.isArray(current)) return undefined
+    return (current as Record<string, unknown>)[key]
+  }, value)
+}
+
+function assertEvidence(data: any, tool: string, label: string) {
+  const evidence = data?._evidence
+  assert(evidence?.version === 'sqd_evidence_v1', `${label} should include the v1 evidence receipt`)
+  assert(evidence?.tool === tool, `${label} receipt should identify ${tool}`)
+  assert(evidence?.source?.provider === 'SQD Portal', `${label} receipt should identify SQD Portal`)
+  assert(/^[a-f0-9]{64}$/.test(String(evidence?.request?.arguments_sha256 ?? '')), `${label} should hash its request`)
+  assert(/^[a-f0-9]{64}$/.test(String(evidence?.result?.exact_data_sha256 ?? '')), `${label} should hash exact data`)
+  assert(Number.isInteger(evidence?.result?.row_count) && evidence.result.row_count >= 0, `${label} should count exact rows`)
+  if (typeof evidence?.result?.primary_evidence_path === 'string') {
+    const rows = readPath(data, evidence.result.primary_evidence_path)
+    assert(Array.isArray(rows), `${label} primary evidence path should resolve to rows`)
+    assert(rows.length === evidence.result.row_count, `${label} receipt row count should match the exact rows`)
+  }
+  if (evidence?.result?.completeness === 'partial') {
+    assert(
+      Array.isArray(evidence.result.partial_reasons) && evidence.result.partial_reasons.length > 0,
+      `${label} partial receipt should explain why`,
+    )
+  }
+}
+
 async function runClientJourney(clientIdentity: (typeof CLIENTS)[number]) {
   const connected = await connectTestClient(clientIdentity.name)
   const startedAt = Date.now()
@@ -26,11 +54,35 @@ async function runClientJourney(clientIdentity: (typeof CLIENTS)[number]) {
   try {
     const { tools } = await connected.client.listTools()
     assert(tools.length === 28, `${clientIdentity.family} should discover 28 tools`)
-    steps.push({ step: 'discovery', tools: tools.length })
+    const prompts = await connected.client.listPrompts()
+    assert(
+      ['investigate-wallet', 'investigate-contract', 'investigate-market'].every((name) =>
+        prompts.prompts.some((prompt) => prompt.name === name),
+      ),
+      `${clientIdentity.family} should discover all three investigation prompts`,
+    )
+    const marketPrompt = await connected.client.getPrompt({
+      name: 'investigate-market',
+      arguments: { network: 'hyperliquid-fills', market: 'BTC', timeframe: '1h' },
+    })
+    assert(
+      marketPrompt.messages.some(
+        (message) => message.content.type === 'text' && message.content.text.includes('Never make a claim'),
+      ),
+      `${clientIdentity.family} market prompt should enforce factual evidence`,
+    )
+    const resources = await connected.client.listResources()
+    assert(
+      resources.resources.some((resource) => resource.uri === 'sqd://investigations') &&
+        resources.resources.some((resource) => resource.uri.startsWith('ui://sqd/activity-explorer.')),
+      `${clientIdentity.family} should discover the investigation guide and MCP App`,
+    )
+    steps.push({ step: 'discovery', tools: tools.length, prompts: prompts.prompts.length, resources: resources.resources.length })
 
     const firstPage = await callToolWithRetry(connected.client, 'portal_list_networks', { limit: 3 }, { retries: 1 })
     assert(!firstPage.isError, `${clientIdentity.family} first call should succeed`)
     assert(firstPage.dataSource === 'structuredContent', `${clientIdentity.family} should receive structuredContent`)
+    assertEvidence(firstPage.data, 'portal_list_networks', `${clientIdentity.family} network discovery`)
     assert(
       JSON.stringify(firstPage.structuredContent) ===
         JSON.stringify(JSON.parse(firstPage.result.content.map((entry: any) => entry?.text ?? '').join('\n'))),
@@ -49,6 +101,7 @@ async function runClientJourney(clientIdentity: (typeof CLIENTS)[number]) {
       { retries: 1 },
     )
     assert(!head.isError && Number.isFinite(head.data?.number), `${clientIdentity.family} should resolve Base head`)
+    assertEvidence(head.data, 'portal_get_head', `${clientIdentity.family} Base head`)
     const transactions = await callToolWithRetry(
       connected.client,
       'portal_evm_query_transactions',
@@ -62,6 +115,7 @@ async function runClientJourney(clientIdentity: (typeof CLIENTS)[number]) {
       { retries: 1 },
     )
     assert(!transactions.isError, `${clientIdentity.family} multi-step evidence query should succeed`)
+    assertEvidence(transactions.data, 'portal_evm_query_transactions', `${clientIdentity.family} transaction result`)
     assertCompleteOrContinuable(transactions.data, `${clientIdentity.family} transaction result`)
     if (typeof transactions.data?._pagination?.next_cursor === 'string') {
       const continuedTransactions = await callToolWithRetry(
@@ -104,6 +158,7 @@ async function runClientJourney(clientIdentity: (typeof CLIENTS)[number]) {
       { retries: 1 },
     )
     assert(!recovery.isError, `${clientIdentity.family} should recover after a tool error`)
+    assertEvidence(recovery.data, 'portal_hyperliquid_query_fills', `${clientIdentity.family} recovery result`)
     assertCompleteOrContinuable(recovery.data, `${clientIdentity.family} recovery result`)
     steps.push({ step: 'tool_error_recovery', elapsedMs: invalid.elapsedMs + recovery.elapsedMs })
 

@@ -71,6 +71,15 @@ Runs the same protocol-level journey matrix for declared Claude, Codex, Grok, Ge
 
 This is protocol compatibility evidence, not proof that the five installed host applications rendered and completed the journeys. Installed-host proof remains a separate release artifact.
 
+### `npm run test:evidence-receipts`
+Checks canonical receipt arguments, deterministic digests, row reconciliation, source windows, and exact versus semantic replay semantics.
+
+### `npm run test:investigation-journeys`
+Runs three live golden investigations. It verifies wallet evidence against the requested wallet, contract summary arithmetic against returned events, and Hyperliquid candle counts and volume against raw fills.
+
+### `npm run prepare:client-candidate -- /path/to/empty/temp-directory`
+Builds a temporary client package for exact installed-host testing. It copies the public plugin packages, changes only the hosted connection to the current built stdio runtime, and writes `candidate.json` with the package digest and proof boundary. The output is temporary and must not be committed.
+
 ### `npm run benchmark:v082`
 Runs open-loop cold c1, warm c1/c4/c8, and c8 burst profiles. The artifact records intended-start queue delay, service and end-to-end latency, bytes, outcomes, version, commit, and dirty state.
 

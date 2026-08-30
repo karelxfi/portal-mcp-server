@@ -128,6 +128,19 @@ async function main() {
       publicCopySources.every((source) => !source.includes('—')),
       'public app copy must not contain em dashes',
     )
+    const appBridgeSource = publicCopySources[1]
+    assert(
+      appBridgeSource.includes("from '@modelcontextprotocol/ext-apps'") &&
+        appBridgeSource.includes('new App(') &&
+        appBridgeSource.includes('{ strict: true }') &&
+        appBridgeSource.includes('app.callServerTool') &&
+        appBridgeSource.includes('app.requestDisplayMode'),
+      'the app should use the strict portable MCP Apps bridge for results, follow-ups, and display mode',
+    )
+    assert(
+      !appBridgeSource.includes('localStorage') && !appBridgeSource.includes('sessionStorage'),
+      'the app should keep ephemeral history in the active UI instance instead of browser storage',
+    )
     assert(content._meta?.ui?.csp?.connectDomains?.length === 0, 'the app must not make external network requests')
     assert(content._meta?.ui?.csp?.resourceDomains?.length === 0, 'the app must not load external resources')
     assert(

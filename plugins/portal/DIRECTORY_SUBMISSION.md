@@ -75,7 +75,7 @@ For a new version or listing change, use the connector submission portal in the 
 - Setup requirement: no account, login, or API key
 - Data handling: SQD's own public read-only blockchain data API; no health data or sponsored content
 
-Before submitting an update, confirm that Claude syncs all 28 tools, every tool has a title and the applicable annotations, and each tool passes an end-to-end call. No carousel screenshots are needed because SQD v0.8.0 does not ship an MCP App UI.
+Before submitting an update, confirm that Claude syncs all 28 tools and the three investigation prompts, every tool has a title and the applicable annotations, and each tool passes an end-to-end call. The current Claude Code tool namespace for an install from this package is `mcp__plugin_portal_SQD__<tool-name>`, for example `mcp__plugin_portal_SQD__portal_get_head`. Treat this as client-generated configuration, not part of the public MCP tool name.
 
 ## OpenAI directory
 
@@ -105,7 +105,7 @@ OpenAI submission values:
 
 After scanning, confirm all 28 tools show `readOnlyHint: true`, `destructiveHint: false`, and `openWorldHint: true`. Upload the four skill folders from `plugins/portal/skills`, enter the prompts and tests from this packet, and submit the completed draft for review.
 
-Do not upload screenshots. SQD does not ship a plugin user interface in this release.
+Treat submitted OpenAI metadata as a versioned snapshot. Prepare the MCP App update only after the current review concludes, use screenshots captured from the deployed exact release, and keep the underlying non-UI fallback tests in the review packet.
 
 Suggested initial release notes:
 

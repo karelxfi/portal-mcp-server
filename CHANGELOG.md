@@ -19,6 +19,12 @@ The v0.8.3 release candidate turns SQD results into a fast, portable blockchain 
 - **Visual and accessibility hardening**: 30 deterministic browser cells cover desktop and mobile layouts under light and dark host preferences, USD and token-ratio candles, success, partial, empty, and error states, keyboard point inspection, searchable and sortable evidence, overflow, and serious or critical accessibility findings.
 - **Truthful interaction metadata**: chart contracts advertise point inspection and supported series toggles, but do not claim zoom, visual switching, or image export that the app does not implement.
 - **Lean product surface**: the app reuses the existing tool results and follow-up contracts, adds no browser API layer, loads no external assets, and does not add tools merely to power the UI.
+- **Reproducible evidence receipts**: material results include canonical tool arguments, a deterministic digest, source windows, row reconciliation, and an honest exact or semantic replay mode so a moving relative query is never described as a frozen snapshot.
+- **Three guided investigations**: wallet activity, contract activity, and Hyperliquid market prompts produce reusable investigation plans and remain discoverable alongside their MCP guide resources.
+- **Golden factual journeys**: live gates prove that returned wallet rows involve the requested wallet, contract caller totals cannot exceed complete interaction totals, and Hyperliquid candle fill counts and volume reconcile with the reported summary.
+- **Evidence workspace**: Overview, Chart, Evidence, and Investigation views add range focus, searchable records, session-only investigation history, and JSON or CSV export without persistent browser storage.
+- **Current SQD skills**: the plugin packages the latest verified `subsquid-labs/skills` snapshot and intentionally flattens the upstream Squid SDK subtree so all five supported client families discover Portal, Pipes SDK, migration, and performance skills.
+- **Real client proof**: an exact temporary candidate workflow records a package digest and separates installed-client runtime calls from manifest validation. Codex, Claude Code, and Grok Build completed real evidence-bearing calls and install lifecycles; unauthenticated local Gemini and Cursor clients remain package-validated rather than misreported as runtime passes.
 
 ## [0.8.2] - 2026-08-29
 
