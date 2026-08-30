@@ -203,6 +203,20 @@ export function registerGetRecentTransactionsTool(server: McpServer) {
         to_addresses = paginationCursor.to_addresses
       }
 
+      if (chainType === 'tron') {
+        throw createUnsupportedChainError({
+          toolName: 'portal_get_recent_activity',
+          dataset,
+          actualChainType: chainType,
+          supportedChains: ['evm', 'solana', 'bitcoin', 'hyperliquidFills'],
+          suggestions: [
+            'Use portal_get_network_info for Tron availability and freshness.',
+            'Use portal_debug_resolve_time_to_block for Tron timestamp-to-block lookups.',
+            'Use the native Tron Stream API examples in the bundled SQD Portal skill for raw Tron records.',
+          ],
+        })
+      }
+
       // Resolve block range — numeric values are exact block counts,
       // time-based values (1h, 6h, etc.) use Portal's /timestamps/ API
       let resolvedBlocks: ResolvedBlockWindow

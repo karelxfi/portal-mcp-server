@@ -1151,16 +1151,23 @@ export function registerGetWalletSummaryTool(server: McpServer) {
       const chainType = detectChainType(dataset)
       const networkLabel = humanizeLabel(dataset) ?? dataset
 
-      if (chainType === 'substrate') {
+      if (chainType === 'substrate' || chainType === 'tron') {
         throw createUnsupportedChainError({
           toolName: 'portal_get_wallet_summary',
           dataset,
           actualChainType: chainType,
           supportedChains: ['evm', 'solana', 'bitcoin', 'hyperliquidFills'],
-          suggestions: [
-            'Use portal_debug_query_blocks plus a Substrate-specific event or call query for now.',
-            'Add a dedicated Substrate wallet summary once address and account filters are productized for Substrate networks.',
-          ],
+          suggestions:
+            chainType === 'tron'
+              ? [
+                  'Use portal_get_network_info for Tron availability and freshness.',
+                  'Use portal_debug_resolve_time_to_block for Tron timestamp-to-block lookups.',
+                  'Use the native Tron Stream API examples in the bundled SQD Portal skill for wallet-filtered Tron records.',
+                ]
+              : [
+                  'Use portal_debug_query_blocks plus a Substrate-specific event or call query for now.',
+                  'Add a dedicated Substrate wallet summary once address and account filters are productized for Substrate networks.',
+                ],
         })
       }
 

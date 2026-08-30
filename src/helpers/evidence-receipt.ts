@@ -2,6 +2,7 @@ import { Buffer } from 'node:buffer'
 import { createHash } from 'node:crypto'
 
 import { ActionableError } from './errors.js'
+import { inferPrimaryEvidencePath } from './format.js'
 
 const MAX_RESPONSE_BYTES = 50_000
 const RECEIPT_VERSION = 'sqd_evidence_v1'
@@ -165,26 +166,11 @@ function replayMode(args: JsonRecord): EvidenceReceipt['replay']['mode'] {
 }
 
 function primaryEvidence(payload: JsonRecord): { path?: string; count: number } {
-  const preferredKeys = [
-    'items',
-    'fills',
-    'candles',
-    'buckets',
-    'transactions',
-    'transfers',
-    'logs',
-    'events',
-    'calls',
-    'instructions',
-    'blocks',
-    'networks',
-  ]
-  for (const key of preferredKeys) {
-    if (Array.isArray(payload[key])) return { path: key, count: payload[key].length }
-  }
-  const nestedPaths = ['activity.items', 'interactions.top_callers', 'events.top_event_types', 'fund_flow.largest_movements']
-  for (const path of nestedPaths) {
-    const value = path.split('.').reduce<unknown>((current, key) => (isRecord(current) ? current[key] : undefined), payload)
+  const path = inferPrimaryEvidencePath(payload, { arraysOnly: true })
+  if (path) {
+    const value = path
+      .split('.')
+      .reduce<unknown>((current, key) => (isRecord(current) ? current[key] : undefined), payload)
     if (Array.isArray(value)) return { path, count: value.length }
   }
 

@@ -106,9 +106,9 @@ v0.8.3 includes one portable SQD Blockchain Activity Explorer for 21 data tools.
 
 Three MCP prompts provide reproducible starting points without adding tools:
 
-- `sqd_investigate_wallet_activity`
-- `sqd_investigate_contract_activity`
-- `sqd_investigate_hyperliquid_market`
+- `investigate-wallet`
+- `investigate-contract`
+- `investigate-market`
 
 ## Install
 

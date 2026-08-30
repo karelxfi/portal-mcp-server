@@ -1,9 +1,10 @@
 import { type McpServer, ResourceTemplate, completable } from '@modelcontextprotocol/server'
 import { z } from 'zod'
 
+import { detectChainType } from './helpers/chain.js'
 import { npmVersion } from './version.js'
 
-const COMMON_NETWORKS = [
+const WALLET_NETWORKS = [
   'ethereum-mainnet',
   'base-mainnet',
   'arbitrum-one',
@@ -11,16 +12,43 @@ const COMMON_NETWORKS = [
   'polygon-mainnet',
   'solana-mainnet',
   'bitcoin-mainnet',
-  'tron-mainnet',
-  'polkadot',
   'hyperliquid-fills',
 ]
 
+const CONTRACT_NETWORKS = WALLET_NETWORKS.filter((network) => detectChainType(network) === 'evm')
+const MARKET_NETWORKS = [...CONTRACT_NETWORKS, 'hyperliquid-fills']
+
 const TIMEFRAMES = ['1h', '6h', '24h', '7d', '30d']
 
-const networkArgument = completable(
-  z.string().min(1).describe('Blockchain network or SQD network name'),
-  (value) => COMMON_NETWORKS.filter((network) => network.includes(String(value ?? '').toLowerCase())).slice(0, 10),
+function networkArgument(
+  networks: string[],
+  supported: Array<ReturnType<typeof detectChainType>>,
+  description: string,
+) {
+  return completable(
+    z
+      .string()
+      .min(1)
+      .refine((network) => supported.includes(detectChainType(network)), description)
+      .describe(description),
+    (value) => networks.filter((network) => network.includes(String(value ?? '').toLowerCase())).slice(0, 10),
+  )
+}
+
+const walletNetworkArgument = networkArgument(
+  WALLET_NETWORKS,
+  ['evm', 'solana', 'bitcoin', 'hyperliquidFills'],
+  'Network supported by the wallet investigation: EVM, Solana, Bitcoin, or Hyperliquid fills',
+)
+const contractNetworkArgument = networkArgument(
+  CONTRACT_NETWORKS,
+  ['evm'],
+  'EVM network supported by the smart-contract investigation',
+)
+const marketNetworkArgument = networkArgument(
+  MARKET_NETWORKS,
+  ['evm', 'hyperliquidFills'],
+  'EVM or Hyperliquid fills network supported by the market investigation',
 )
 
 const timeframeArgument = completable(
@@ -210,7 +238,7 @@ export function registerInvestigationPromptsAndResources(server: McpServer) {
       title: 'Investigate a wallet incident',
       description: 'Trace wallet activity, token flows, counterparties, and exact blockchain evidence.',
       argsSchema: z.object({
-        network: networkArgument,
+        network: walletNetworkArgument,
         address: z.string().min(1).describe('Wallet address to investigate'),
         timeframe: timeframeArgument,
         question: z.string().optional().describe('Optional incident question or concern'),
@@ -242,7 +270,7 @@ export function registerInvestigationPromptsAndResources(server: McpServer) {
       title: 'Investigate a smart contract',
       description: 'Explain deployment, calls, events, token flows, actors, and changes over time.',
       argsSchema: z.object({
-        network: networkArgument,
+        network: contractNetworkArgument,
         contract: z.string().min(1).describe('Contract address, token, or protocol name'),
         timeframe: timeframeArgument,
         question: z.string().optional().describe('Optional behavior or event to explain'),
@@ -274,7 +302,7 @@ export function registerInvestigationPromptsAndResources(server: McpServer) {
       title: 'Investigate blockchain market activity',
       description: 'Analyze Hyperliquid or onchain price, volume, fills, swaps, and exact market evidence.',
       argsSchema: z.object({
-        network: networkArgument,
+        network: marketNetworkArgument,
         market: z.string().min(1).describe('Coin, token, pool, or market to investigate'),
         timeframe: timeframeArgument,
         question: z.string().optional().describe('Optional price or trading question'),

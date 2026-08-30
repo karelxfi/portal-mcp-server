@@ -663,6 +663,20 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
         notices.push(longWindowNotice)
       }
 
+      if (chainType === 'tron') {
+        throw createUnsupportedChainError({
+          toolName: 'portal_get_time_series',
+          dataset,
+          actualChainType: chainType,
+          supportedChains: ['evm', 'solana', 'bitcoin', 'hyperliquidFills'],
+          suggestions: [
+            'Use portal_get_network_info for Tron availability and freshness.',
+            'Use portal_debug_resolve_time_to_block for Tron timestamp-to-block lookups.',
+            'Use the native Tron Stream API examples in the bundled SQD Portal skill for custom Tron time series.',
+          ],
+        })
+      }
+
       if (compare_previous && group_by === 'contract') {
         throw new Error('compare_previous and group_by="contract" cannot be used together in v0.7.7.')
       }

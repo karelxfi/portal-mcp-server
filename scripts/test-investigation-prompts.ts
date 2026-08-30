@@ -36,6 +36,29 @@ async function main() {
     })
     assert(completion.completion.values.includes('base-mainnet'), 'network completion should suggest Base')
 
+    for (const name of ['investigate-wallet', 'investigate-contract', 'investigate-market']) {
+      const tronCompletion = await client.complete({
+        ref: { type: 'ref/prompt', name },
+        argument: { name: 'network', value: 'tron' },
+      })
+      assert(tronCompletion.completion.values.length === 0, `${name} should not suggest unsupported Tron queries`)
+      let rejected = false
+      try {
+        await client.getPrompt({
+          name,
+          arguments:
+            name === 'investigate-wallet'
+              ? { network: 'tron-mainnet', address: 'TExampleAddress', timeframe: '1h' }
+              : name === 'investigate-contract'
+                ? { network: 'tron-mainnet', contract: 'TExampleContract', timeframe: '1h' }
+                : { network: 'tron-mainnet', market: 'TRX', timeframe: '1h' },
+        })
+      } catch {
+        rejected = true
+      }
+      assert(rejected, `${name} should reject an unsupported Tron workflow before suggesting query tools`)
+    }
+
     const resources = await client.listResources()
     assert(
       resources.resources.some((resource) => resource.uri === 'sqd://investigations'),

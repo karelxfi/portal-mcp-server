@@ -85,6 +85,32 @@ function main() {
     'row order should be part of exact evidence',
   )
 
+  for (const example of [
+    { label: 'OHLC', path: 'ohlc', payload: { ohlc: [{ close: 1 }, { close: 2 }] } },
+    { label: 'time series', path: 'time_series', payload: { time_series: [{ value: 1 }, { value: 2 }] } },
+    { label: 'fills', path: 'fills', payload: { fills: [{ hash: '0x1' }, { hash: '0x2' }] } },
+    {
+      label: 'ranked table',
+      path: 'top_contracts',
+      payload: {
+        top_contracts: [{ address: '0x1' }, { address: '0x2' }],
+        tables: [{ id: 'ranked', data_key: 'top_contracts' }],
+      },
+    },
+    {
+      label: 'nested activity',
+      path: 'activity.items',
+      payload: { activity: { items: [{ hash: '0x1' }, { hash: '0x2' }] } },
+    },
+  ]) {
+    const exampleReceipt = buildEvidenceReceipt('portal_get_time_series', args, example.payload)
+    assert(
+      exampleReceipt.result.primary_evidence_path === example.path,
+      `${example.label} receipt should locate its primary evidence`,
+    )
+    assert(exampleReceipt.result.row_count === 2, `${example.label} receipt should count every primary row`)
+  }
+
   const partial = buildEvidenceReceipt('portal_evm_query_transactions', args, {
     ...completePayload,
     _coverage: { ...completePayload._coverage, result_complete: false },

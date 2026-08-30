@@ -45,8 +45,9 @@ function validateMetadata() {
     server.remotes?.some((remote) => remote.url === SERVER_URL),
     'server.json must publish the hosted MCP URL',
   )
-  assert(/130\+ networks/.test(server.description), 'server.json description must state the full network coverage')
+  assert(/130\+ SQD Portal datasets/.test(server.description), 'server.json description must state the conservative dataset coverage')
   assert(/Tron/.test(server.description), 'server.json description must include Tron')
+  assert(/heads and timestamps/.test(server.description), 'server.json must describe the bounded Tron MCP capability')
   assert(!/[\u2013\u2014]/.test(server.description), 'server.json description must not use en or em dashes')
 
   for (const [name, manifest] of [
@@ -95,6 +96,10 @@ function validateMetadata() {
     )
     assert(/Hyperliquid/.test(packet?.description ?? ''), `${targetId} submission must mention Hyperliquid`)
     assert(/Tron/.test(packet?.description ?? ''), `${targetId} submission must mention Tron`)
+    assert(
+      /Tron dataset heads and timestamps|Tron datasets and resolve their heads and timestamps/.test(packet?.description ?? ''),
+      `${targetId} submission must describe the bounded Tron MCP capability`,
+    )
     assert(
       !/[\u2013\u2014]/.test(`${packet?.tagline} ${packet?.description}`),
       `${targetId} submission must not use en or em dashes`,

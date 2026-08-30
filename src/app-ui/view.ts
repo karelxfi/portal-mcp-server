@@ -1530,7 +1530,7 @@ function emptyState(error = ''): HTMLElement {
       'p',
       undefined,
       error ||
-        'Explore wallets, contracts, token flows, network activity, Bitcoin, Tron, Solana, Polkadot, Hyperliquid, and every other blockchain dataset available through SQD Portal.',
+        'Explore wallets, contracts, token flows, network activity, Bitcoin, Solana, Polkadot, Hyperliquid, and other queryable blockchain datasets. Tron discovery, freshness, and timestamps remain available through SQD metadata tools.',
     ),
   )
   empty.append(copy)

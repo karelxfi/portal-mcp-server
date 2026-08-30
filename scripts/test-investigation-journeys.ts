@@ -22,11 +22,13 @@ function assertEvidence(data: any, tool: string, label: string) {
     ['complete', 'partial', 'unknown'].includes(receipt?.result?.completeness),
     `${label} should disclose completeness`,
   )
-  if (typeof receipt?.result?.primary_evidence_path === 'string') {
-    const rows = readPath(data, receipt.result.primary_evidence_path)
-    assert(Array.isArray(rows), `${label} primary evidence path should resolve`)
-    assert(rows.length === receipt.result.row_count, `${label} receipt row count should reconcile`)
-  }
+  assert(
+    typeof receipt?.result?.primary_evidence_path === 'string',
+    `${label} should identify the primary material evidence path`,
+  )
+  const rows = readPath(data, receipt.result.primary_evidence_path)
+  assert(Array.isArray(rows), `${label} primary evidence path should resolve to rows`)
+  assert(rows.length === receipt.result.row_count, `${label} receipt row count should reconcile exactly`)
   if (receipt?.result?.completeness === 'partial') {
     assert(
       Array.isArray(receipt.result.partial_reasons) && receipt.result.partial_reasons.length > 0,

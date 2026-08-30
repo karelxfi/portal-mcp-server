@@ -83,6 +83,9 @@ async function main() {
     ACTIVITY_EXPLORER_BYTES > 20_000 && ACTIVITY_EXPLORER_BYTES < 700_000,
     'embedded app must stay inside its release byte budget',
   )
+  for (const tool of ['portal_list_networks', 'portal_get_network_info', 'portal_get_head', 'portal_debug_resolve_time_to_block']) {
+    assert(!ACTIVITY_EXPLORER_TOOLS.has(tool), `${tool} is metadata evidence and must not advertise a data explorer`)
+  }
 
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
   const server = createPortalServer({ transport: 'stdio' })
