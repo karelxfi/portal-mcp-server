@@ -13,7 +13,7 @@ import {
   recordActivityExplorerResult,
 } from '../src/apps/activity-explorer.js'
 import { ACTIVITY_EXPLORER_BYTES, ACTIVITY_EXPLORER_HASH } from '../src/generated/activity-explorer.version.js'
-import { planFollowup, shorterDuration } from '../src/app-ui/followup-state.js'
+import { evidenceArguments, planFollowup, shorterDuration } from '../src/app-ui/followup-state.js'
 import { buildEvidenceExport } from '../src/app-ui/export.js'
 import { APP_FIXTURES } from '../src/app-ui/fixtures.js'
 import { buildCandlestickChart, buildTimeSeriesChart } from '../src/helpers/chart-metadata.js'
@@ -26,6 +26,23 @@ function assert(condition: unknown, message: string): asserts condition {
 
 async function main() {
   assert(shorterDuration('in last 38 mins') === '19m', 'natural-language chart windows should narrow deterministically')
+  assert(
+    evidenceArguments(
+      { _evidence: { request: { arguments: { duration: '1h', coin: 'BTC' } } } },
+      { coin: 'BTC' },
+    ).duration === '1h',
+    'follow-ups should recover schema defaults from the factual evidence receipt',
+  )
+  assert(
+    planFollowup({
+      intent: 'zoom_in',
+      currentArgs: evidenceArguments(
+        { _evidence: { request: { arguments: { duration: '1h', coin: 'BTC' } } } },
+        { coin: 'BTC' },
+      ),
+    }).callArgs?.duration === '30m',
+    'default one-hour chart windows should narrow to thirty minutes',
+  )
   const continuationPlan = planFollowup({
     intent: 'continue',
     currentArgs: { network: 'hyperliquid-fills', coin: 'BTC', duration: '1h', cursor: 'old' },

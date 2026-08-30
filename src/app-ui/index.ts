@@ -1,6 +1,6 @@
 import { App, applyDocumentTheme, applyHostFonts, applyHostStyleVariables } from '@modelcontextprotocol/ext-apps'
 
-import { planFollowup } from './followup-state.js'
+import { evidenceArguments, planFollowup } from './followup-state.js'
 import { downloadEvidence } from './export.js'
 import { type ExplorerActions, type ExplorerState, isRecord, renderExplorer } from './view.js'
 
@@ -110,7 +110,7 @@ const actions: ExplorerActions = {
       remember({
         payload,
         rawText,
-        currentArgs: plan.persistedArgs,
+        currentArgs: evidenceArguments(payload, plan.persistedArgs),
         error: result.isError ? rawText || 'SQD returned an error.' : '',
       })
     } catch (error) {
@@ -142,7 +142,7 @@ app.ontoolresult = (result) => {
   remember({
     payload,
     rawText,
-    currentArgs: state.currentArgs,
+    currentArgs: evidenceArguments(payload, state.currentArgs),
     error: result.isError ? rawText || 'SQD returned an error.' : '',
   })
 }

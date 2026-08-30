@@ -8,6 +8,16 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value))
 }
 
+export function evidenceArguments(
+  payload: Record<string, unknown> | null,
+  fallback: Record<string, unknown>,
+): Record<string, unknown> {
+  if (!payload) return fallback
+  const evidence = isRecord(payload._evidence) ? payload._evidence : undefined
+  const request = evidence && isRecord(evidence.request) ? evidence.request : undefined
+  return request && isRecord(request.arguments) ? request.arguments : fallback
+}
+
 export function shorterDuration(value: unknown): string | undefined {
   if (typeof value !== 'string') return undefined
   const match = /(\d+(?:\.\d+)?)\s*(seconds?|secs?|s|minutes?|mins?|m|hours?|hrs?|h|days?|d)\b/i.exec(value)
