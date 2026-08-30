@@ -6,6 +6,7 @@ import {
   registerActivityExplorerResource,
 } from './apps/activity-explorer.js'
 import { RequestCancelledError } from './helpers/errors.js'
+import { attachEvidenceReceipt } from './helpers/evidence-receipt.js'
 import { runWithPortalRequestSignal } from './helpers/request-context.js'
 import { getToolWorkProfile, toolAdmission } from './helpers/tool-admission.js'
 import { formatToolError } from './helpers/tool-error.js'
@@ -19,6 +20,7 @@ import {
 import { registerSchemaResource } from './resources/schema.js'
 import { registerAllTools } from './tools/index.js'
 import { npmVersion } from './version.js'
+import { registerInvestigationPromptsAndResources } from './investigations.js'
 
 // ============================================================================
 // Server Factory
@@ -77,7 +79,8 @@ export function createPortalServer(runtimeContext: RuntimeRequestContext = { tra
         releaseAdmission = lease.release
         admitted = true
         toolCallsActive.inc({ tool: toolName, transport: runtimeContext.transport })
-        const result = await runWithPortalRequestSignal(requestSignal, () => handler(...handlerArgs))
+        const handlerResult = await runWithPortalRequestSignal(requestSignal, () => handler(...handlerArgs))
+        const result = attachEvidenceReceipt(toolName, toolArgs, handlerResult)
         const status = classifyToolOutcome({ result })
         toolCallsTotal.inc({
           tool: toolName,
@@ -151,6 +154,7 @@ export function createPortalServer(runtimeContext: RuntimeRequestContext = { tra
 
   // Register resources
   registerSchemaResource(server)
+  registerInvestigationPromptsAndResources(server)
   registerActivityExplorerResource(server, runtimeContext)
 
   // Register all tools

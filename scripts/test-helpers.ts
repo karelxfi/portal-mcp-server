@@ -193,6 +193,7 @@ export function assertChatSurface(parsed: any, label: string, options?: { expect
     '_ordering',
     '_tool_contract',
     '_execution',
+    '_evidence',
   ]
 
   assertRecord(parsed, `${label} response`)
@@ -265,6 +266,24 @@ export function assertChatSurface(parsed: any, label: string, options?: { expect
       parsed._execution.resolution !== undefined,
     `${label} _execution should describe either its query window or why execution metadata is not applicable`,
   )
+
+  assertRecord(parsed._evidence, `${label} _evidence`)
+  assert(parsed._evidence.version === 'sqd_evidence_v1', `${label} _evidence.version should be sqd_evidence_v1`)
+  assert(parsed._evidence.tool === parsed._tool_contract.name, `${label} evidence tool should match the tool contract`)
+  assertRecord(parsed._evidence.source, `${label} _evidence.source`)
+  assert(parsed._evidence.source.provider === 'SQD Portal', `${label} should identify SQD Portal as the evidence source`)
+  assertRecord(parsed._evidence.request, `${label} _evidence.request`)
+  assertRecord(parsed._evidence.request.arguments, `${label} _evidence.request.arguments`)
+  assertNonEmptyString(parsed._evidence.request.arguments_sha256, `${label} arguments digest`)
+  assertRecord(parsed._evidence.result, `${label} _evidence.result`)
+  assertNonEmptyString(parsed._evidence.result.exact_data_sha256, `${label} exact-data digest`)
+  assert(
+    ['complete', 'partial', 'unknown'].includes(parsed._evidence.result.completeness),
+    `${label} should classify evidence completeness`,
+  )
+  assertRecord(parsed._evidence.replay, `${label} _evidence.replay`)
+  assert(parsed._evidence.replay.tool === parsed._tool_contract.name, `${label} replay tool should match the tool contract`)
+  assertRecord(parsed._evidence.replay.arguments, `${label} _evidence.replay.arguments`)
 
   assertRecord(parsed.investigation, `${label} investigation`)
   assert(parsed.investigation.version === 'portal_investigation_v1', `${label} should include investigation guide`)
