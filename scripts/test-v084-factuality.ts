@@ -15,7 +15,11 @@ import {
   formatSatsAsBtc,
 } from '../dist/tools/convenience/wallet-summary.js'
 import { callToolWithRetry, closeTestClient, connectTestClient } from './test-helpers.js'
-import { isValidBitcoinAddress, isValidTronAddress } from '../dist/helpers/validation.js'
+import {
+  isValidBitcoinAddress,
+  isValidTronAddress,
+  normalizeBitcoinAddressForPortal,
+} from '../dist/helpers/validation.js'
 
 function assert(condition: boolean, message: string) {
   if (!condition) throw new Error(`Assertion failed: ${message}`)
@@ -143,6 +147,10 @@ function assertChecksumValidation() {
   assert(isValidBitcoinAddress('1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa'), 'known Bitcoin mainnet address must pass checksum validation')
   assert(!isValidBitcoinAddress('1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNb'), 'corrupted Bitcoin checksum must fail')
   assert(!isValidBitcoinAddress('mipcBbFg9gMiCh81Kj8tqqdgoZub1ZJRfn'), 'Bitcoin testnet addresses must fail on the mainnet dataset')
+  assert(
+    normalizeBitcoinAddressForPortal('BC1QEXAMPLE') === 'bc1qexample',
+    'uppercase bech32 addresses must be normalized before Portal filtering',
+  )
   assert(isValidTronAddress('TJRabPrwbZy45sbavfcjinPJC18kjpRTv8'), 'known Tron base58check address must pass')
   assert(!isValidTronAddress('TJRabPrwbZy45sbavfcjinPJC18kjpRTv9'), 'corrupted Tron checksum must fail')
 }

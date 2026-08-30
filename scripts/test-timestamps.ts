@@ -175,6 +175,19 @@ async function assertFutureWindowFailsClosed() {
     rejected = /after the latest indexed block/i.test(error instanceof Error ? error.message : String(error))
   }
   assert(rejected, 'Future timestamp windows should fail closed instead of returning current data')
+
+  const dataset = 'base-mainnet'
+  const head = await getBlockHead(dataset)
+  const headTimestamp = await getHeadTimestamp(dataset, head.number)
+  let nearHeadStartRejected = false
+  try {
+    await resolveTimeframeOrBlocks({ dataset, from_timestamp: headTimestamp + 30 })
+  } catch (error) {
+    nearHeadStartRejected = /start timestamp is after the latest indexed block/i.test(
+      error instanceof Error ? error.message : String(error),
+    )
+  }
+  assert(nearHeadStartRejected, 'A future from boundary inside normal head-lag tolerance must still fail closed')
   console.log('PASS  future timestamp window -> rejected before data query')
 }
 
@@ -204,17 +217,15 @@ function assertNaturalLanguageTimeInputs() {
   console.log('PASS  natural-language time inputs -> past 30 minutes / in the past 1h / in last 38 mins')
 }
 
-async function assertEstimatedTimeframeProvenance() {
+async function assertHyperliquidReplicaExactTimestampLookup() {
   const dataset = 'hyperliquid-replica-cmds'
   const window = await resolveTimeframeOrBlocks({ dataset, timeframe: '5m' })
-  const estimated = window.estimated_timeframe
-
-  assert(estimated?.resolution === 'estimated', 'Unsupported timestamp endpoint windows should expose estimated timeframe provenance')
-  assert(estimated.dataset === dataset, 'Estimated timeframe provenance should include dataset')
-  assert(estimated.from_block === window.from_block, 'Estimated timeframe provenance should include from_block')
-  assert(estimated.to_block === window.to_block, 'Estimated timeframe provenance should include to_block')
-  assert(estimated.estimated_block_time_seconds === 0.083, 'Estimated timeframe provenance should include the block-time estimate')
-  assert(estimated.reason === 'timestamp_endpoint_unsupported', 'Estimated timeframe provenance should explain why estimation was used')
+  assert(window.from_lookup?.resolution === 'exact', 'Hyperliquid replica timeframe should use its seconds timestamp endpoint')
+  assert(window.from_lookup?.boundary === 'from', 'Hyperliquid replica timeframe should expose a from boundary')
+  assert(
+    (window.from_lookup?.block_timestamp ?? 0) >= window.from_lookup!.timestamp,
+    'Hyperliquid replica from block must not precede the requested timestamp',
+  )
 
   const freshness = buildQueryFreshness({
     finality: 'latest',
@@ -223,17 +234,17 @@ async function assertEstimatedTimeframeProvenance() {
     resolvedWindow: window,
   })
   assert(
-    freshness.estimated_timeframe?.reason === 'timestamp_endpoint_unsupported',
-    'Query freshness should preserve estimated timeframe provenance',
+    freshness.timestamp_bounds?.from?.resolution === 'exact',
+    'Hyperliquid replica freshness should preserve exact timestamp provenance',
   )
 
   const notices = getTimestampWindowNotices(window)
   assert(
-    notices.some((notice) => /timeframe block window was estimated/i.test(notice)),
-    'Estimated timeframe windows should produce an estimation notice',
+    !notices.some((notice) => /estimated/i.test(notice)),
+    'Verified Hyperliquid replica windows should not claim estimation',
   )
 
-  console.log(`PASS  estimated timeframe provenance -> ${window.from_block}..${window.to_block} (${estimated.reason})`)
+  console.log(`PASS  Hyperliquid replica 5m window -> ${window.from_block}..${window.to_block} (exact)`)
 }
 
 async function main() {
@@ -241,7 +252,7 @@ async function main() {
 
   assert(detectChainType('tron-mainnet') === 'tron', 'Tron should use its native Portal query type')
   assertNaturalLanguageTimeInputs()
-  await assertEstimatedTimeframeProvenance()
+  await assertHyperliquidReplicaExactTimestampLookup()
 
   const dataset = 'solana-mainnet'
   const head = await getBlockHead(dataset)

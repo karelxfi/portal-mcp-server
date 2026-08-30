@@ -54,6 +54,7 @@ import {
   isValidEvmAddress,
   isValidHyperliquidAddress,
   isValidSolanaAddress,
+  normalizeBitcoinAddressForPortal,
   normalizeEvmAddress,
 } from '../../helpers/validation.js'
 
@@ -1202,6 +1203,8 @@ export function registerGetWalletSummaryTool(server: McpServer) {
         }
         if (chainType === 'evm' || chainType === 'hyperliquidFills' || chainType === 'hyperliquidReplicaCmds') {
           address = address.toLowerCase()
+        } else if (chainType === 'bitcoin') {
+          address = normalizeBitcoinAddressForPortal(address)
         }
       }
 

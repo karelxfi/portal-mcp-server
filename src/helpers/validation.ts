@@ -101,6 +101,10 @@ export function isValidBitcoinAddress(address: string): boolean {
   return isValidMainnetSegwitAddress(address) || hasBase58CheckVersion(address, [0x00, 0x05])
 }
 
+export function normalizeBitcoinAddressForPortal(address: string): string {
+  return address.toLowerCase().startsWith('bc1') ? address.toLowerCase() : address
+}
+
 export function isValidHyperliquidAddress(address: string): boolean {
   return isValidEvmAddress(address)
 }

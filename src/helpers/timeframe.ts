@@ -543,9 +543,49 @@ async function refineTimestampBoundary(params: {
     return timestamp
   }
 
+  const findTransition = async (currentBlock: number): Promise<{ blockNumber: number; blockTimestamp: number }> => {
+    let span = Math.max(4, Math.ceil(verificationTolerance / blockTime) * 2)
+
+    if (boundary === 'from') {
+      let high = currentBlock
+      let low = Math.max(startBlock, high - span)
+      while (low > startBlock && (await readTimestamp(low)) >= targetTimestamp) {
+        high = low
+        span *= 2
+        low = Math.max(startBlock, high - span)
+      }
+      if ((await readTimestamp(low)) >= targetTimestamp) {
+        return { blockNumber: low, blockTimestamp: await readTimestamp(low) }
+      }
+      while (high - low > 1) {
+        const middle = Math.floor((low + high) / 2)
+        if ((await readTimestamp(middle)) >= targetTimestamp) high = middle
+        else low = middle
+      }
+      return { blockNumber: high, blockTimestamp: await readTimestamp(high) }
+    }
+
+    let low = currentBlock
+    let high = Math.min(headBlock, low + span)
+    while (high < headBlock && (await readTimestamp(high)) <= targetTimestamp) {
+      low = high
+      span *= 2
+      high = Math.min(headBlock, low + span)
+    }
+    if ((await readTimestamp(high)) <= targetTimestamp) {
+      return { blockNumber: high, blockTimestamp: await readTimestamp(high) }
+    }
+    while (high - low > 1) {
+      const middle = Math.floor((low + high) / 2)
+      if ((await readTimestamp(middle)) <= targetTimestamp) low = middle
+      else high = middle
+    }
+    return { blockNumber: low, blockTimestamp: await readTimestamp(low) }
+  }
+
   let blockNumber = Math.max(startBlock, Math.min(headBlock, Math.floor(params.initialBlock)))
 
-  for (let attempt = 0; attempt < 10; attempt += 1) {
+  for (let attempt = 0; attempt < 12; attempt += 1) {
     const blockTimestamp = await readTimestamp(blockNumber)
     const deltaSeconds = targetTimestamp - blockTimestamp
     const closeEnough = Math.abs(deltaSeconds) <= verificationTolerance
@@ -569,22 +609,7 @@ async function refineTimestampBoundary(params: {
         })[0]
       }
 
-      const neighbor = boundary === 'from' ? blockNumber - 1 : blockNumber + 1
-      if (neighbor < startBlock || neighbor > headBlock) {
-        return { blockNumber, blockTimestamp }
-      }
-
-      try {
-        const neighborTimestamp = await readTimestamp(neighbor)
-        const neighborAlsoSatisfies = boundarySatisfied(boundary, neighborTimestamp, targetTimestamp)
-        if (!neighborAlsoSatisfies) {
-          return { blockNumber, blockTimestamp }
-        }
-        blockNumber = neighbor
-        continue
-      } catch {
-        return { blockNumber, blockTimestamp }
-      }
+      return findTransition(blockNumber)
     }
 
     const estimatedStep = Math.round(deltaSeconds / blockTime)
@@ -620,6 +645,23 @@ export async function resolveBlockAtTimestamp(
       'The requested timestamp is after the latest indexed block.',
       [
         `Use a timestamp at or before ${formatTimestamp(headTimestamp)}.`,
+        'Use portal_get_network_info to inspect current indexing freshness.',
+      ],
+      {
+        requested_timestamp: parsed.timestamp,
+        requested_timestamp_human: formatTimestamp(parsed.timestamp),
+        indexed_head_block: headBlock,
+        indexed_head_timestamp: headTimestamp,
+        indexed_head_timestamp_human: formatTimestamp(headTimestamp),
+      },
+    )
+  }
+
+  if (boundary === 'from' && parsed.timestamp > headTimestamp) {
+    throw new ActionableError(
+      'The requested start timestamp is after the latest indexed block.',
+      [
+        `Use a start timestamp at or before ${formatTimestamp(headTimestamp)}.`,
         'Use portal_get_network_info to inspect current indexing freshness.',
       ],
       {
@@ -749,11 +791,7 @@ export async function resolveTimeframeOrBlocks(params: {
     const chainType = detectChainType(dataset)
     const seconds = parseTimeframeToSeconds(timeframe)
 
-    const estimationReason = chainType === 'hyperliquidReplicaCmds'
-      ? 'timestamp_endpoint_unsupported'
-      : isTimestampEndpointDown(dataset)
-        ? 'timestamp_endpoint_down'
-        : undefined
+    const estimationReason = isTimestampEndpointDown(dataset) ? 'timestamp_endpoint_down' : undefined
 
     if (estimationReason) {
       return {
