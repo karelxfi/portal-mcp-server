@@ -2084,7 +2084,9 @@ async function buildNonEvmWalletSummary(params: {
     const results = await portalFetchRecentRecords(`${PORTAL_URL}/datasets/${dataset}/stream`, txQuery, {
       itemKeys: ['transactions'],
       limit: limit_per_type,
-      chunkSize: Math.max(25, Math.min(100, limit_per_type * 4)),
+      chunkSize: Math.max(100, Math.min(500, limit_per_type * 50)),
+      concurrency: 6,
+      initialSequentialChunks: 1,
       timeout: WALLET_QUERY_TIMEOUT_MS,
       retries: WALLET_QUERY_RETRIES,
     })
