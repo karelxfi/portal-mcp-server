@@ -319,16 +319,16 @@ function parseNaturalDuration(input: string): ParsedDuration | undefined {
 // ---------------------------------------------------------------------------
 
 /** Timeout for the /timestamps/ endpoint — fast-fail since we have a fallback. */
-const TIMESTAMP_TIMEOUT = 3000
+const TIMESTAMP_TIMEOUT = 2500
 
 /**
  * Convert a Unix timestamp to a block number using Portal's /timestamps/ endpoint.
  * Works for supported Portal datasets, including real-time datasets that expose
  * timestamp lookups.
  *
- * Uses a short timeout and zero retries before the caller falls back to block
- * time estimation. The fallback remains explicit in the result provenance,
- * while avoiding duplicate timestamp traffic during concurrent workloads.
+ * Uses a short timeout and one bounded retry before the caller falls back to
+ * block time estimation. The fallback remains explicit in the result
+ * provenance while a single retry absorbs normal worker rotation.
  */
 function portalTimestampValue(dataset: string, timestamp: number): number {
   const chainType = detectChainType(dataset)
@@ -341,7 +341,7 @@ export async function timestampToBlock(dataset: string, timestamp: number): Prom
   const portalTimestamp = portalTimestampValue(dataset, timestamp)
   const result = await portalFetch<{ block_number: number }>(
     `${PORTAL_URL}/datasets/${dataset}/timestamps/${portalTimestamp}/block`,
-    { timeout: TIMESTAMP_TIMEOUT, retries: 0 },
+    { timeout: TIMESTAMP_TIMEOUT, retries: 1 },
   )
   return result.block_number
 }
@@ -350,7 +350,11 @@ export async function timestampToBlock(dataset: string, timestamp: number): Prom
  * Read and normalize the timestamp on one indexed block. This is deliberately
  * used to verify /timestamps/ responses before they are described as exact.
  */
-export async function getBlockTimestamp(dataset: string, blockNumber: number): Promise<number> {
+export async function getBlockTimestamp(
+  dataset: string,
+  blockNumber: number,
+  options: { retries?: number } = {},
+): Promise<number> {
   const chainType = detectChainType(dataset)
   const response = await portalFetchStream(
     `${PORTAL_URL}/datasets/${dataset}/stream`,
@@ -361,7 +365,7 @@ export async function getBlockTimestamp(dataset: string, blockNumber: number): P
       includeAllBlocks: true,
       fields: { block: { number: true, timestamp: true } },
     },
-    TIMESTAMP_TIMEOUT,
+    { timeout: TIMESTAMP_TIMEOUT, retries: options.retries ?? 2 },
   )
 
   if (!response || response.length === 0) {
@@ -379,8 +383,8 @@ export async function getBlockTimestamp(dataset: string, blockNumber: number): P
 /**
  * Get the head block's timestamp by querying Portal for the actual block data.
  */
-export async function getHeadTimestamp(dataset: string, headBlock: number): Promise<number> {
-  return getBlockTimestamp(dataset, headBlock)
+export async function getHeadTimestamp(dataset: string, headBlock: number, retries = 2): Promise<number> {
+  return getBlockTimestamp(dataset, headBlock, { retries })
 }
 
 function parseRelativeTimestamp(input: string, nowUnix: number): ParsedTimestampInput | undefined {
@@ -528,8 +532,9 @@ async function refineTimestampBoundary(params: {
   startBlock: number
   headBlock: number
   boundary: TimestampBoundary
+  retries: number
 }): Promise<{ blockNumber: number; blockTimestamp: number }> {
-  const { dataset, targetTimestamp, startBlock, headBlock, boundary } = params
+  const { dataset, targetTimestamp, startBlock, headBlock, boundary, retries } = params
   const chainType = detectChainType(dataset)
   const blockTime = estimateBlockTime(dataset, chainType)
   const verificationTolerance = Math.max(2, Math.ceil(blockTime * 2))
@@ -538,13 +543,84 @@ async function refineTimestampBoundary(params: {
   const readTimestamp = async (blockNumber: number) => {
     const cached = timestampCache.get(blockNumber)
     if (cached !== undefined) return cached
-    const timestamp = await getBlockTimestamp(dataset, blockNumber)
+    const timestamp = await getBlockTimestamp(dataset, blockNumber, { retries })
     timestampCache.set(blockNumber, timestamp)
     return timestamp
   }
 
+  const readTimestampRange = async (fromBlock: number, toBlock: number) => {
+    const response = await portalFetchStream(
+      `${PORTAL_URL}/datasets/${dataset}/stream`,
+      {
+        type: chainType,
+        fromBlock,
+        toBlock,
+        includeAllBlocks: true,
+        fields: { block: { number: true, timestamp: true } },
+      },
+      {
+        timeout: TIMESTAMP_TIMEOUT,
+        retries,
+        maxBlocks: Math.max(1, toBlock - fromBlock + 1),
+        maxBytes: 2 * 1024 * 1024,
+      },
+    )
+
+    return response
+      .map((record: any) => record?.header ?? record)
+      .map((block: any) => ({
+        blockNumber: Number(block?.number),
+        blockTimestamp: Number(block?.timestamp),
+      }))
+      .filter(
+        (block) =>
+          Number.isFinite(block.blockNumber) &&
+          Number.isFinite(block.blockTimestamp) &&
+          block.blockTimestamp > 0,
+      )
+      .map((block) => ({
+        blockNumber: Math.floor(block.blockNumber),
+        blockTimestamp:
+          block.blockTimestamp > 1_000_000_000_000
+            ? Math.floor(block.blockTimestamp / 1000)
+            : Math.floor(block.blockTimestamp),
+      }))
+      .sort((left, right) => left.blockNumber - right.blockNumber)
+  }
+
   const findTransition = async (currentBlock: number): Promise<{ blockNumber: number; blockTimestamp: number }> => {
     let span = Math.max(4, Math.ceil(verificationTolerance / blockTime) * 2)
+
+    const rangeFrom = Math.max(startBlock, currentBlock - span)
+    const rangeTo = Math.min(headBlock, currentBlock + span)
+    try {
+      const samples = await readTimestampRange(rangeFrom, rangeTo)
+      if (boundary === 'from') {
+        const candidateIndex = samples.findIndex((sample) => sample.blockTimestamp >= targetTimestamp)
+        if (candidateIndex >= 0) {
+          const candidate = samples[candidateIndex]!
+          const previous = samples[candidateIndex - 1]
+          if ((previous && previous.blockTimestamp < targetTimestamp) || (!previous && rangeFrom === startBlock)) {
+            return candidate
+          }
+        }
+      } else {
+        let candidateIndex = -1
+        for (let index = 0; index < samples.length; index += 1) {
+          if (samples[index]!.blockTimestamp <= targetTimestamp) candidateIndex = index
+        }
+        if (candidateIndex >= 0) {
+          const candidate = samples[candidateIndex]!
+          const next = samples[candidateIndex + 1]
+          if ((next && next.blockTimestamp > targetTimestamp) || (!next && rangeTo === headBlock)) {
+            return candidate
+          }
+        }
+      }
+    } catch {
+      // Fall through to the exact single-block search when the bounded range
+      // probe is temporarily unavailable.
+    }
 
     if (boundary === 'from') {
       let high = currentBlock
@@ -626,13 +702,14 @@ async function refineTimestampBoundary(params: {
 export async function resolveBlockAtTimestamp(
   dataset: string,
   input: string | number,
-  options: { boundary?: TimestampBoundary; headBlock?: number; headTimestamp?: number } = {},
+  options: { boundary?: TimestampBoundary; headBlock?: number; headTimestamp?: number; verificationRetries?: number } = {},
 ): Promise<BlockAtTimestampResult> {
   const parsed = parseTimestampInput(input)
   const boundary = options.boundary ?? 'nearest'
   const metadata = await getDatasetMetadata(dataset)
   const headBlock = options.headBlock ?? metadata.head.number
-  const headTimestamp = options.headTimestamp ?? await getHeadTimestamp(dataset, headBlock)
+  const verificationRetries = options.verificationRetries ?? 2
+  const headTimestamp = options.headTimestamp ?? await getHeadTimestamp(dataset, headBlock, verificationRetries)
   const chainType = detectChainType(dataset)
   const blockTime = estimateBlockTime(dataset, chainType)
   // "now" is wall-clock based while Portal answers from the indexed head.
@@ -706,6 +783,7 @@ export async function resolveBlockAtTimestamp(
       startBlock: metadata.start_block,
       headBlock,
       boundary,
+      retries: verificationRetries,
     })
     return {
       ...parsed,
@@ -803,12 +881,13 @@ export async function resolveTimeframeOrBlocks(params: {
     // Real-time datasets expose head block timestamps, so anchor relative
     // windows to the latest indexed block instead of wall-clock time.
     try {
-      const headTimestamp = await getHeadTimestamp(dataset, latestBlock)
+      const headTimestamp = await getHeadTimestamp(dataset, latestBlock, 1)
       const targetTimestamp = Math.max(0, headTimestamp - seconds)
       const lookup = await resolveBlockAtTimestamp(dataset, targetTimestamp, {
         boundary: 'from',
         headBlock: latestBlock,
         headTimestamp,
+        verificationRetries: 1,
       })
       if (lookup.resolution !== 'exact') {
         throw new Error(`Could not verify the ${timeframe} boundary for ${dataset}`)
@@ -830,13 +909,23 @@ export async function resolveTimeframeOrBlocks(params: {
     }
   } else if (hasTimestampWindow) {
     const head = await getBlockHead(dataset)
-    const headTimestamp = await getHeadTimestamp(dataset, head.number)
+    const headTimestamp = await getHeadTimestamp(dataset, head.number, 2)
     const [resolvedFrom, resolvedTo] = await Promise.all([
       from_timestamp !== undefined
-        ? resolveBlockAtTimestamp(dataset, from_timestamp, { boundary: 'from', headBlock: head.number, headTimestamp })
+        ? resolveBlockAtTimestamp(dataset, from_timestamp, {
+            boundary: 'from',
+            headBlock: head.number,
+            headTimestamp,
+            verificationRetries: 2,
+          })
         : Promise.resolve(undefined),
       to_timestamp !== undefined
-        ? resolveBlockAtTimestamp(dataset, to_timestamp, { boundary: 'to', headBlock: head.number, headTimestamp })
+        ? resolveBlockAtTimestamp(dataset, to_timestamp, {
+            boundary: 'to',
+            headBlock: head.number,
+            headTimestamp,
+            verificationRetries: 2,
+          })
         : Promise.resolve(undefined),
     ])
 
@@ -854,6 +943,7 @@ export async function resolveTimeframeOrBlocks(params: {
           from_resolution: resolvedFrom?.resolution,
           to_resolution: resolvedTo?.resolution,
         },
+        { code: 'incomplete_result', origin: 'upstream', retryable: true },
       )
     }
 

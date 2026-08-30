@@ -41,7 +41,7 @@ export type ToolAdmissionLease = {
 
 const PROFILES: Record<ToolWorkClass, ToolWorkProfile> = {
   lookup: { class: 'lookup', weight: 1 },
-  raw_query: { class: 'raw_query', weight: 8 },
+  raw_query: { class: 'raw_query', weight: 12 },
   summary: { class: 'summary', weight: 8 },
   analytics: { class: 'analytics', weight: 16 },
 }

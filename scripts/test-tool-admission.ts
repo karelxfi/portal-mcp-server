@@ -22,13 +22,17 @@ function sleep(ms: number) {
 }
 
 async function main() {
-  const controller = new WeightedToolAdmissionController(16, 3, 80, false)
+  const controller = new WeightedToolAdmissionController(24, 3, 80, false)
   const lookup = getToolWorkProfile('portal_get_head')
   const raw = getToolWorkProfile('portal_evm_query_transactions')
   const analytics = getToolWorkProfile('portal_hyperliquid_get_analytics')
   const wallet = getToolWorkProfile('portal_get_wallet_summary')
-  assert(lookup.weight === 1 && raw.weight === 8 && analytics.weight === 16, 'tool cost classes should stay explicit')
+  assert(lookup.weight === 1 && raw.weight === 12 && analytics.weight === 16, 'tool cost classes should stay explicit')
   assert(wallet.class === 'summary' && wallet.weight === 16, 'wallet scans should admit at most two concurrent calls')
+  assert(
+    DEFAULT_TOOL_WEIGHT_BUDGET / wallet.weight === 2,
+    'the default scheduler budget must cap concurrent complete wallet investigations at two',
+  )
   assert(
     DEFAULT_TOOL_WEIGHT_BUDGET / analytics.weight === 2,
     'the default scheduler budget must cap concurrent analytics at the measured memory-safe level',
@@ -36,7 +40,7 @@ async function main() {
 
   const first = await controller.acquire(raw, 'stdio')
   const second = await controller.acquire(raw, 'http')
-  assert(controller.snapshot().activeWeight === 16, 'two raw calls should fill the test budget')
+  assert(controller.snapshot().activeWeight === 24, 'two raw calls should fill the test budget')
 
   const order: string[] = []
   const expensive = controller.acquire(analytics, 'http').then((lease) => {
@@ -61,7 +65,8 @@ async function main() {
     'all capacity should return to zero',
   )
 
-  const blocker = await controller.acquire(analytics, 'stdio')
+  const blocker = await controller.acquire(raw, 'stdio')
+  const secondBlocker = await controller.acquire(raw, 'http')
   const cancellation = new AbortController()
   const cancelled = controller.acquire(lookup, 'http', cancellation.signal).then(
     () => false,
@@ -70,6 +75,7 @@ async function main() {
   cancellation.abort()
   assert(await cancelled, 'queued cancellation should reject with a cancellation outcome')
   blocker.release()
+  secondBlocker.release()
   assert(
     controller.snapshot().activeWeight === 0 && controller.snapshot().queuedCalls === 0,
     'cancelled work must not leak queue or weight',
