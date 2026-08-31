@@ -131,7 +131,7 @@ export function registerQueryBitcoinTransactionsTool(server: McpServer) {
         .describe(
           "Response format: defaults to 'compact' for chat-friendly output. Compact mode keeps inline inputs and outputs in a smaller shape when requested.",
         ),
-      limit: z.number().int().min(1).max(200).optional().default(50).describe('Max transactions to return (default: 50, max: 200)'),
+      limit: z.number().int().min(1).max(25).optional().default(20).describe('Max transactions to return (default: 20, max: 25)'),
       cursor: z.string().optional().describe('Continuation cursor from a previous response'),
     },
     async ({

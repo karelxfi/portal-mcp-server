@@ -185,7 +185,7 @@ export function registerQueryHyperliquidFillsTool(server: McpServer) {
       builder: z.array(z.string()).optional().describe('Builder addresses (0x-prefixed, lowercase)'),
       fee_token: z.array(z.string()).optional().describe('Fee token symbols'),
       cloid: z.array(z.string()).optional().describe('Client order IDs (0x-prefixed hex)'),
-      limit: z.number().int().min(1).max(200).optional().default(50).describe('Max fills to return (default: 50, max: 200)'),
+      limit: z.number().int().min(1).max(25).optional().default(20).describe('Max fills to return (default: 20, max: 25)'),
       include_pnl: z.boolean().optional().default(true).describe('Include closedPnl and startPosition fields'),
       include_builder_info: z.boolean().optional().default(false).describe('Include builder and builderFee fields'),
       response_format: z.enum(['full', 'compact', 'summary']).optional().describe("Response format: defaults to 'compact' for chat-friendly output. Use 'summary' for aggregate stats or 'full' when you truly need every fill field."),

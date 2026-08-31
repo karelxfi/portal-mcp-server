@@ -445,6 +445,25 @@ function aggregateTransactions(
     .map((row, index) => ({ rank: index + 1, ...row }))
 }
 
+export async function fetchAdaptiveTransactionRange<T>(
+  fromBlock: number,
+  toBlock: number,
+  fetchRange: (rangeFrom: number, rangeTo: number) => Promise<T[]>,
+): Promise<T[]> {
+  try {
+    return await fetchRange(fromBlock, toBlock)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    if (/response too large/i.test(message) && fromBlock < toBlock) {
+      const midpoint = fromBlock + Math.floor((toBlock - fromBlock) / 2)
+      const left = await fetchAdaptiveTransactionRange(fromBlock, midpoint, fetchRange)
+      const right = await fetchAdaptiveTransactionRange(midpoint + 1, toBlock, fetchRange)
+      return [...left, ...right]
+    }
+    throw error
+  }
+}
+
 async function fetchTransactionsByScanOrder({
   url,
   query,
@@ -477,6 +496,7 @@ async function fetchTransactionsByScanOrder({
     candidateLimit ??
     (orderBy && orderBy !== 'chronological' ? Math.max((offset + limit) * 20, 500) : targetCount)
   const collected: EvmTransactionItem[] = []
+  let candidateLimitReached = false
   const scan = await scanBoundedBlockRange<EvmTransactionItem>({
     fromBlock,
     toBlock,
@@ -485,17 +505,22 @@ async function fetchTransactionsByScanOrder({
     maxScanBlocks,
     shouldContinue: () => collected.length < effectiveCandidateLimit,
     fetchChunk: async (chunk) => {
-      const records = await portalFetchStreamRange(url, {
-        ...query,
-        fromBlock: chunk.fromBlock,
-        toBlock: chunk.toBlock,
-      })
+      const records = await fetchAdaptiveTransactionRange(chunk.fromBlock, chunk.toBlock, (rangeFrom, rangeTo) =>
+        portalFetchStreamRange(url, {
+            ...query,
+            fromBlock: rangeFrom,
+            toBlock: rangeTo,
+          }),
+      )
       const txs = sortTransactions(flattenTransactionsWithBlockContext(records) as EvmTransactionItem[])
         .filter((tx) => matchesClientTransactionFilters(tx, clientFilters))
       const orderedChunk = scanOrder === 'latest' ? txs.reverse() : txs
       const selected: EvmTransactionItem[] = []
       for (const tx of orderedChunk) {
-        if (collected.length + selected.length >= effectiveCandidateLimit) break
+        if (collected.length + selected.length >= effectiveCandidateLimit) {
+          candidateLimitReached = true
+          break
+        }
         selected.push(tx)
       }
       collected.push(...selected)
@@ -510,6 +535,9 @@ async function fetchTransactionsByScanOrder({
     candidates: ordered,
     hasMore: collected.length > offset + limit,
     candidateCount: collected.length,
+    candidateLimit: effectiveCandidateLimit,
+    candidateLimitReached,
+    hasUnscannedBlocks: scan.hasUnscannedBlocks || candidateLimitReached,
     offset,
   }
 }
@@ -655,10 +683,12 @@ export function registerQueryTransactionsTool(server: McpServer) {
       last_nonce: z.number().optional().describe('Maximum nonce'),
       limit: z
         .number()
-        .max(200)
+        .int()
+        .min(1)
+        .max(25)
         .optional()
         .default(20)
-        .describe('Max transactions (default: 20, max: 200). Note: Lower default for MCP to reduce context usage.'),
+        .describe('Max transactions (default: 20, max: 25). This verified ceiling keeps pages within MCP client budgets.'),
       field_preset: z
         .enum(['minimal', 'standard', 'full'])
         .optional()
@@ -1118,12 +1148,16 @@ export function registerQueryTransactionsTool(server: McpServer) {
           limit,
         )
         const aggregateKey = aggregate_by === 'sender' ? 'top_senders' : 'top_receivers'
-        if (scanResult?.hasUnscannedBlocks) {
+        if (scanResult?.candidateLimitReached) {
+          notices.push(
+            `Aggregation stopped after ${scanResult.candidateCount.toLocaleString()} candidate transactions. The ranking is partial for the requested window and must not be treated as a complete top-${limit}; narrow the window or add filters for a complete ranking.`,
+          )
+        } else if (scanResult?.hasUnscannedBlocks) {
           notices.push(
             `Aggregation is bounded to ${scanResult.candidateCount.toLocaleString()} scanned candidate transactions across blocks ${scanResult.scannedFromBlock}-${scanResult.scannedToBlock}; narrow the window or raise max_scan_blocks for deeper coverage.`,
           )
         }
-        const boundedSearchNotice = scanResult
+        const boundedSearchNotice = scanResult && !scanResult.candidateLimitReached
           ? buildBoundedSearchNotice(scanResult, 'EVM transaction aggregation')
           : undefined
         if (boundedSearchNotice) notices.push(boundedSearchNotice)
@@ -1135,12 +1169,21 @@ export function registerQueryTransactionsTool(server: McpServer) {
             aggregate_metric: effectiveAggregateMetric,
             scanned_transactions: scanResult?.candidateCount ?? allTxs.length,
             scanned_blocks: scanResult?.scannedBlocks,
+            window_complete: scanResult ? !scanResult.hasUnscannedBlocks : true,
+            candidate_limit_reached: scanResult?.candidateLimitReached ?? false,
           },
           tables: [
             buildTableDescriptor({
               id: aggregateKey,
               dataKey: aggregateKey,
-              title: aggregate_by === 'sender' ? 'Top Senders' : 'Top Receivers',
+              title:
+                scanResult?.hasUnscannedBlocks
+                  ? aggregate_by === 'sender'
+                    ? 'Partial Sender Ranking'
+                    : 'Partial Receiver Ranking'
+                  : aggregate_by === 'sender'
+                    ? 'Top Senders'
+                    : 'Top Receivers',
               rowCount: aggregateRows.length,
               keyField: 'address',
               defaultSort: {
@@ -1202,7 +1245,7 @@ export function registerQueryTransactionsTool(server: McpServer) {
 
         return formatResult(
           aggregatePayload,
-          `Ranked ${aggregateRows.length} ${aggregate_by === 'sender' ? 'senders' : 'receivers'} by ${effectiveAggregateMetric} from ${scanResult?.candidateCount ?? allTxs.length} scanned transactions.`,
+          `${scanResult?.hasUnscannedBlocks ? 'Partial ranking' : 'Ranked'} ${aggregateRows.length} ${aggregate_by === 'sender' ? 'senders' : 'receivers'} by ${effectiveAggregateMetric} from ${scanResult?.candidateCount ?? allTxs.length} scanned transactions.`,
           {
             toolName: 'portal_evm_query_transactions',
             notices,
@@ -1232,6 +1275,12 @@ export function registerQueryTransactionsTool(server: McpServer) {
                 normalized_output: true,
               }),
               ...(scanResult ? buildBoundedSearchExecution(scanResult) : {}),
+              ...(scanResult
+                ? {
+                    candidate_limit: scanResult.candidateLimit,
+                    candidate_limit_reached: scanResult.candidateLimitReached,
+                  }
+                : {}),
             },
             metadata: {
               network: dataset,

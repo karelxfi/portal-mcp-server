@@ -1136,9 +1136,9 @@ export const TOOL_SPECS: ToolSpec[] = [
       const callOhlcVariant = async (label: string, args: Record<string, unknown>) => {
         try {
           return await callToolWithRetry(client, 'portal_evm_get_ohlc', args, {
-            retries: 1,
-            retryDelayMs: 1_200,
-            totalBudgetMs: 50_000,
+            retries: 3,
+            retryDelayMs: 2_500,
+            totalBudgetMs: 120_000,
           })
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error)
@@ -1171,6 +1171,9 @@ export const TOOL_SPECS: ToolSpec[] = [
       })
 
       const aerodromeSlipstreamData = aerodromeSlipstreamResult.data
+      if (aerodromeSlipstreamResult.isError || !aerodromeSlipstreamData) {
+        throw new Error(`aerodrome slipstream OHLC follow-up: ${aerodromeSlipstreamResult.text.slice(0, 240)}`)
+      }
       const aerodromeSlipstreamCandles = Array.isArray(aerodromeSlipstreamData.ohlc) ? aerodromeSlipstreamData.ohlc : []
       assert(
         aerodromeSlipstreamData.summary?.source === 'aerodrome_slipstream_swap',
@@ -1199,6 +1202,9 @@ export const TOOL_SPECS: ToolSpec[] = [
       })
 
       const uniswapV4Data = uniswapV4Result.data
+      if (uniswapV4Result.isError || !uniswapV4Data) {
+        throw new Error(`uniswap v4 OHLC follow-up: ${uniswapV4Result.text.slice(0, 240)}`)
+      }
       const uniswapV4Candles = Array.isArray(uniswapV4Data.ohlc) ? uniswapV4Data.ohlc : []
       assert(uniswapV4Data.summary?.source === 'uniswap_v4_swap', 'Expected Uniswap v4 OHLC source')
       assert(uniswapV4Data.summary?.source_family === 'uniswap_v4', 'Expected Uniswap v4 source family')
@@ -1565,8 +1571,7 @@ export const TOOL_SPECS: ToolSpec[] = [
     prompt: 'show me recent Hyperliquid order and cancel commands',
     args: () => ({
       network: 'hyperliquid-replica-cmds',
-      from_timestamp: '5m ago',
-      to_timestamp: 'now',
+      timeframe: '5m',
       action_type: ['order'],
       limit: 1,
     }),

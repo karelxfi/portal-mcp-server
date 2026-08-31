@@ -379,8 +379,6 @@ function compactSubstrateEventContext(event: any): Record<string, unknown> | und
     event_name: event.event_name || event.name,
     call_address: event.call_address,
     extrinsic_index: event.extrinsicIndex ?? event.extrinsic_index,
-    block_number: getBlockNumber(event),
-    timestamp: getTimestamp(event),
   }
 
   return Object.values(compact).some((value) => value !== undefined) ? compact : undefined

@@ -4,6 +4,8 @@ import { evidenceArguments, planFollowup } from './followup-state.js'
 import { downloadEvidence } from './export.js'
 import { type ExplorerActions, type ExplorerState, isRecord, renderExplorer } from './view.js'
 
+declare const __SQD_APP_VERSION__: string
+
 const root = document.getElementById('app')
 if (!root) throw new Error('SQD Activity Explorer root is missing')
 
@@ -21,7 +23,11 @@ type Snapshot = Pick<ExplorerState, 'payload' | 'rawText' | 'currentArgs' | 'err
 const history: Snapshot[] = []
 let historyIndex = -1
 
-const app = new App({ name: 'sqd-blockchain-activity-explorer', version: '0.8.3' }, {}, { strict: true })
+const app = new App(
+  { name: 'sqd-blockchain-activity-explorer', version: __SQD_APP_VERSION__ },
+  {},
+  { strict: true },
+)
 
 function update(next: Partial<ExplorerState>) {
   state = { ...state, ...next }
@@ -88,7 +94,7 @@ const actions: ExplorerActions = {
     const toolName =
       typeof action?.tool === 'string' ? action.tool : typeof contract?.name === 'string' ? contract.name : undefined
     if (!toolName) {
-      update({ error: 'This result does not include a safe follow-up tool.' })
+      update({ payload: null, error: 'This result does not include a safe follow-up tool.' })
       return
     }
     const pagination = state.payload && isRecord(state.payload._pagination) ? state.payload._pagination : undefined
@@ -99,7 +105,7 @@ const actions: ExplorerActions = {
       actionArguments: action?.arguments,
     })
     if (plan.error || !plan.callArgs || !plan.persistedArgs) {
-      update({ error: plan.error ?? 'This follow-up cannot be reconstructed safely.' })
+      update({ payload: null, error: plan.error ?? 'This follow-up cannot be reconstructed safely.' })
       return
     }
     update({ loading: true, error: '' })
@@ -107,14 +113,24 @@ const actions: ExplorerActions = {
       const result = await app.callServerTool({ name: toolName, arguments: plan.callArgs })
       const rawText = extractText(result.content)
       const payload = isRecord(result.structuredContent) ? result.structuredContent : parseText(rawText)
+      if (result.isError) {
+        update({
+          payload: null,
+          rawText,
+          currentArgs: plan.persistedArgs,
+          loading: false,
+          error: rawText || 'SQD returned an error.',
+        })
+        return
+      }
       remember({
         payload,
         rawText,
         currentArgs: evidenceArguments(payload, plan.persistedArgs),
-        error: result.isError ? rawText || 'SQD returned an error.' : '',
+        error: '',
       })
     } catch (error) {
-      update({ loading: false, error: error instanceof Error ? error.message : 'The follow-up request failed.' })
+      update({ payload: null, loading: false, error: error instanceof Error ? error.message : 'The follow-up request failed.' })
     }
   },
   async requestFullscreen() {
@@ -135,18 +151,30 @@ const actions: ExplorerActions = {
   },
 }
 
-app.ontoolinput = (params) => update({ currentArgs: params.arguments ?? {}, loading: true, error: '' })
+app.ontoolinput = (params) =>
+  update({ payload: null, rawText: '', currentArgs: params.arguments ?? {}, loading: true, error: '' })
 app.ontoolresult = (result) => {
   const rawText = extractText(result.content)
   const payload = isRecord(result.structuredContent) ? result.structuredContent : parseText(rawText)
+  if (result.isError) {
+    update({
+      payload: null,
+      rawText,
+      currentArgs: state.currentArgs,
+      loading: false,
+      error: rawText || 'SQD returned an error.',
+    })
+    return
+  }
   remember({
     payload,
     rawText,
     currentArgs: evidenceArguments(payload, state.currentArgs),
-    error: result.isError ? rawText || 'SQD returned an error.' : '',
+    error: '',
   })
 }
-app.ontoolcancelled = () => update({ loading: false, error: 'The request was cancelled. You can run it again.' })
+app.ontoolcancelled = () =>
+  update({ payload: null, loading: false, error: 'The request was cancelled. You can run it again.' })
 app.onhostcontextchanged = applyHostContext
 
 renderExplorer(root, state, actions)

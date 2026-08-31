@@ -234,6 +234,7 @@ button { color: inherit; }
 .sqd-dialog pre { margin: 0; white-space: pre-wrap; word-break: break-word; font: 400 13px/1.7 var(--font-mono); }
 .sqd-footer { display: flex; justify-content: space-between; gap: 12px; padding: 4px 0; border-top: 1px solid var(--edge-subtle); color: var(--fg-muted); font: 400 11px/16px var(--font-mono); letter-spacing: 0.06em; }
 .sqd-visually-hidden { position: absolute !important; width: 1px !important; height: 1px !important; padding: 0 !important; margin: -1px !important; overflow: hidden !important; clip: rect(0, 0, 0, 0) !important; white-space: nowrap !important; border: 0 !important; }
+.sqd-table-pagination { display: flex; align-items: center; justify-content: flex-end; gap: 10px; padding-top: 12px; }
 
 @media (max-width: 820px) {
   .sqd-app { padding-inline: 16px; }
@@ -259,6 +260,7 @@ button { color: inherit; }
   .sqd-chart-wrap { min-height: 0; }
   .sqd-chart { height: auto; aspect-ratio: 900 / 320; }
   .sqd-input { font-size: 16px; }
+  .sqd-table-pagination { justify-content: space-between; }
   .sqd-event { grid-template-columns: 8px 1fr; }
   .sqd-event-time { grid-column: 2; }
   .sqd-ranked-row { grid-template-columns: minmax(88px, 0.8fr) minmax(80px, 1.2fr) auto; gap: 8px; }

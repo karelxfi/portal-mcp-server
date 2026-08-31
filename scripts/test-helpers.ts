@@ -368,7 +368,7 @@ export async function callToolWithRetry(
   },
 ): Promise<ToolCallResult> {
   const retries = options?.retries ?? 3
-  const retryDelayMs = options?.retryDelayMs ?? 800
+  const retryDelayMs = options?.retryDelayMs ?? 2_000
   const requestTimeoutMs = options?.requestTimeoutMs ?? 45_000
   const totalBudgetMs = options?.totalBudgetMs ?? 90_000
   const budgetStartedAt = Date.now()
@@ -388,16 +388,26 @@ export async function callToolWithRetry(
         { timeout: Math.max(1, Math.min(requestTimeoutMs, remainingBudgetMs)) },
       )
       const text = getText(result)
+      const structuredContent = getStructuredContent(result)
+      const structuredError = structuredContent?.error
       const isError = Boolean((result as any).isError) || text.startsWith('Error:')
       const elapsedMs = Date.now() - start
 
-      if (isError && attempt <= retries && isRetryableError(text)) {
-        const retryDelay = retryDelayMs * attempt
+      if (
+        isError &&
+        attempt <= retries &&
+        (isRetryableError(text) || (structuredError && typeof structuredError === 'object' && structuredError.retryable === true))
+      ) {
+        const declaredRetryAfterMs =
+          structuredError && typeof structuredError === 'object' && typeof structuredError.retry_after_ms === 'number'
+            ? structuredError.retry_after_ms
+            : 0
+        const retryDelay = Math.max(retryDelayMs * attempt, declaredRetryAfterMs)
         if (Date.now() - budgetStartedAt + retryDelay >= totalBudgetMs)
           return {
             result,
             text,
-            structuredContent: getStructuredContent(result),
+            structuredContent,
             isError,
             elapsedMs,
             attempts: attempt,
@@ -406,7 +416,6 @@ export async function callToolWithRetry(
         continue
       }
 
-      const structuredContent = getStructuredContent(result)
       const parsedData = !isError && options?.parseJson !== false ? parseToolResultData(result) : undefined
 
       return {

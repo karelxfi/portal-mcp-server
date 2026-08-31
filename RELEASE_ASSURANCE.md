@@ -1,5 +1,22 @@
 # MCP Release Assurance
 
+## v0.8.4 additions
+
+v0.8.4 keeps every v0.8.2 and v0.8.3 gate and adds factuality checks for the defects confirmed during the v0.8.3 review. The exact release candidate must pass every applicable cell before publication.
+
+| Release property | Required coverage | Automated gate |
+|---|---:|---|
+| Timestamp units and boundaries | EVM, Solana, Bitcoin, Substrate, Hyperliquid, and Tron metadata paths; nearest observed boundary; future-window rejection | `test:timestamps`, `test:substrate`, `test:v084-factuality` |
+| Stable primary identities | 10,000 generated rows per Solana, Bitcoin, Substrate, and Hyperliquid family; nested Substrate evidence; no missing or duplicate IDs | `test:v084-factuality`, `test:data-integrity` |
+| Wallet membership and paging | Exact requested wallet membership, five-row page size, signed continuation, and zero page overlap for supported live families | `test:v084-factuality`, `test:reliability-live` |
+| Bitcoin joins and units | Parent transaction hash on inputs and outputs, separate identity namespaces, BTC values, exact satoshi companions | `test:v084-factuality`, `test:data-integrity` |
+| Aggregate correctness | EVM transaction totals include contract creation while destination rankings exclude absent destinations | `test:v084-factuality`, `test:data-integrity` |
+| Exact OHLC arithmetic | Integer-safe raw swap volume, returned-window summaries, bounded recent trades, final bucket bounds and completeness | `test:v084-factuality`, `test:data-integrity` |
+| Pre-query validation | Solana, Bitcoin, Hyperliquid, and Tron identifiers plus exact Solana discriminator widths | `test:v084-factuality`, `test:negative` |
+| Wire response budget | Compact wire encoding, measured per-tool public limits, no silent evidence truncation, bounded replica scans | `test:quality`, `test:v084-factuality`, `test:fetch-reliability` |
+| Honest app lifecycle | Canonical identity, host-ready wording, no unobservable render claim, stale-data clearing on failure, 20-row local evidence pages | `test:app-contract`, `test:app-ui` |
+| Current MCP publication contract | Stateless `2026-07-28`, `server/discover`, deterministic cache hints, routing headers, strict standard MCP Apps bridge, exact CSP | `test:protocol`, `test:http-runtime`, `test:plugin`, `test:claude-plugin`, `test:app-contract` |
+
 ## v0.8.3 additions
 
 v0.8.3 keeps the complete v0.8.2 hardening baseline and adds the following required cells. The release must pass every cell on one exact commit before publication.

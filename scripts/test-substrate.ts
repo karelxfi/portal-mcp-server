@@ -163,7 +163,8 @@ async function main() {
     assert(!olderLookup.isError, 'older Substrate timestamp lookup should succeed')
     const olderLookupData = extractJson(olderLookup.text)
     assert(olderLookupData.resolution === 'exact', 'older Substrate timestamp lookup should be exact')
-    assert(olderLookupData.block_number === 9992550, 'older Substrate timestamp lookup should resolve expected block')
+    assert(olderLookupData.block_number === 10000000, 'older Substrate timestamp lookup should resolve the nearest verified block')
+    assert(olderLookupData.block_timestamp === POLKADOT_OLD_TIMESTAMP_SECONDS, 'older Substrate timestamp lookup should match the indexed block timestamp')
     console.log('PASS  portal_debug_resolve_time_to_block -> older ISO timestamp resolves exactly')
 
     const millisLookup = await callExactTimestampLookup(client, POLKADOT_RECENT_TIMESTAMP_MS)

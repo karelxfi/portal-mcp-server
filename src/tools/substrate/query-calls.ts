@@ -84,7 +84,7 @@ export function registerSubstrateQueryCallsTool(server: McpServer) {
       include_stack: z.boolean().optional().default(false).describe('Attach the parent call stack for each matching call'),
       include_events: z.boolean().optional().default(false).describe('Attach events emitted directly by each matching call'),
       response_format: z.enum(['full', 'compact', 'summary']).optional().describe("Response format: defaults to 'compact' for chat-friendly output. Compact mode keeps requested subcalls, events, and extrinsic context in a smaller inline shape."),
-      limit: z.number().optional().default(50).describe('Max calls to return'),
+      limit: z.number().int().min(1).max(10).optional().default(10).describe('Max calls to return (max: 10; use compact mode for context-rich rows)'),
       cursor: z.string().optional().describe('Continuation cursor from a previous response'),
     },
     async ({ network, timeframe, from_block, to_block, from_timestamp, to_timestamp, finalized_only, call_names, include_subcalls, include_extrinsic, include_stack, include_events, response_format, limit, cursor }) => {

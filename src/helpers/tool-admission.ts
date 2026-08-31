@@ -41,10 +41,12 @@ export type ToolAdmissionLease = {
 
 const PROFILES: Record<ToolWorkClass, ToolWorkProfile> = {
   lookup: { class: 'lookup', weight: 1 },
-  raw_query: { class: 'raw_query', weight: 8 },
+  raw_query: { class: 'raw_query', weight: 12 },
   summary: { class: 'summary', weight: 8 },
   analytics: { class: 'analytics', weight: 16 },
 }
+
+const WALLET_PROFILE: ToolWorkProfile = { class: 'summary', weight: 16 }
 
 const ANALYTICS = new Set([
   'portal_evm_get_analytics',
@@ -72,6 +74,7 @@ const LOOKUPS = new Set([
 ])
 
 export function getToolWorkProfile(toolName: string): ToolWorkProfile {
+  if (toolName === 'portal_get_wallet_summary') return WALLET_PROFILE
   if (ANALYTICS.has(toolName)) return PROFILES.analytics
   if (SUMMARIES.has(toolName)) return PROFILES.summary
   if (LOOKUPS.has(toolName)) return PROFILES.lookup

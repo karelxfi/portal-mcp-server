@@ -3,7 +3,7 @@
   "name": "io.github.subsquid-labs/portal-mcp-server",
   "title": "SQD",
   "description": "Query 130+ SQD Portal datasets across blockchains. Discover Tron and resolve heads and timestamps.",
-  "version": "0.8.3",
+  "version": "0.8.4",
   "repository": {
     "url": "https://github.com/subsquid-labs/portal-mcp-server",
     "source": "github"

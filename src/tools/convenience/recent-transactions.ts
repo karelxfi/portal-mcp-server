@@ -168,7 +168,7 @@ export function registerGetRecentTransactionsTool(server: McpServer) {
         .describe('Ending timestamp. Accepts Unix seconds, Unix milliseconds, ISO datetime, or relative input like "now".'),
       from_addresses: z.array(z.string()).optional().describe('Filter by sender addresses'),
       to_addresses: z.array(z.string()).optional().describe('Filter by recipient addresses'),
-      limit: z.number().max(200).optional().default(10).describe('Max transactions to return (max: 200)'),
+      limit: z.number().int().min(1).max(25).optional().default(10).describe('Max activity rows to return (default: 10, max: 25)'),
       cursor: z.string().optional().describe('Continuation cursor from a previous response'),
     },
     async ({ network, timeframe, from_timestamp, to_timestamp, from_addresses, to_addresses, limit, cursor }) => {
@@ -215,6 +215,30 @@ export function registerGetRecentTransactionsTool(server: McpServer) {
             'Use the native Tron Stream API examples in the bundled SQD Portal skill for raw Tron records.',
           ],
         })
+      }
+
+      if ((chainType === 'bitcoin' || chainType === 'hyperliquidFills' || chainType === 'hyperliquidReplicaCmds') && (from_addresses?.length || to_addresses?.length)) {
+        throw new ActionableError(
+          `from_addresses and to_addresses are not valid ${chainType === 'bitcoin' ? 'Bitcoin' : 'Hyperliquid'} recent-activity filters.`,
+          chainType === 'bitcoin'
+            ? [
+                'Use portal_get_wallet_summary with a Bitcoin address for wallet-specific inputs and outputs.',
+                'Omit address filters to browse network-wide recent Bitcoin transactions.',
+              ]
+            : [
+                'Use portal_hyperliquid_query_fills with user for trader-specific activity.',
+                'Omit address filters to browse network-wide recent Hyperliquid fills.',
+              ],
+          { network: dataset },
+          { code: 'invalid_request', origin: 'client_input', retryable: false },
+        )
+      }
+
+      if (chainType === 'solana' && to_addresses?.length) {
+        throw new ActionableError('to_addresses is not a Solana transaction concept and cannot be applied safely.', [
+          'Use from_addresses to filter by Solana fee payer.',
+          'Use portal_solana_query_transactions with mentions_account to find transactions involving an account.',
+        ], { network: dataset }, { code: 'invalid_request', origin: 'client_input', retryable: false })
       }
 
       // Resolve block range — numeric values are exact block counts,
@@ -317,6 +341,7 @@ export function registerGetRecentTransactionsTool(server: McpServer) {
         })
       }
       if (chainType === 'solana') {
+        const normalizedFrom = normalizeAddresses(from_addresses, chainType)
         return await querySolanaRecent({
           dataset,
           fromBlock,
@@ -326,7 +351,7 @@ export function registerGetRecentTransactionsTool(server: McpServer) {
           fromTimestamp: from_timestamp,
           toTimestamp: to_timestamp,
           rangeLabel,
-          from_addresses,
+          from_addresses: normalizedFrom,
           limit,
           fetchLimit,
           cursor: paginationCursor,

@@ -285,7 +285,8 @@ export async function portalFetch<T>(
 
       releaseAdmission?.()
       releaseAdmission = undefined
-      if (!(await waitForRetry(attempt, retries, retryStartedAt))) break
+      const retryDelay = lastError instanceof ActionableError ? lastError.retryAfterMs : undefined
+      if (!(await waitForRetry(attempt, retries, retryStartedAt, retryDelay ?? computeRetryDelayMs(attempt)))) break
     } finally {
       releaseAdmission?.()
       abortContext.cleanup()
@@ -473,7 +474,8 @@ export async function portalFetchStream(
 
       releaseAdmission?.()
       releaseAdmission = undefined
-      if (!(await waitForRetry(attempt, options.retries, retryStartedAt))) break
+      const retryDelay = lastError instanceof ActionableError ? lastError.retryAfterMs : undefined
+      if (!(await waitForRetry(attempt, options.retries, retryStartedAt, retryDelay ?? computeRetryDelayMs(attempt)))) break
     } finally {
       releaseAdmission?.()
       abortContext.cleanup()
@@ -651,7 +653,16 @@ export async function portalFetchStreamVisit(
 
       releaseAdmission?.()
       releaseAdmission = undefined
-      if (!(await waitForRetry(attempt, normalizedOptions.retries, retryStartedAt))) break
+      const retryDelay = lastError instanceof ActionableError ? lastError.retryAfterMs : undefined
+      if (
+        !(await waitForRetry(
+          attempt,
+          normalizedOptions.retries,
+          retryStartedAt,
+          retryDelay ?? computeRetryDelayMs(attempt),
+        ))
+      )
+        break
     } finally {
       releaseAdmission?.()
       abortContext.cleanup()

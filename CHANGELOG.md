@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.8.4] - 2026-08-31
+
+Portal MCP v0.8.4 makes factual completeness a release requirement across every supported data family. It fixes confirmed timestamp, identity, pagination, aggregate, wallet, candle, validation, and response-budget defects, then checks the same answers against direct SQD Portal evidence.
+
+### Highlights
+- **Verified time windows**: EVM, Solana, Bitcoin, Substrate, Hyperliquid, and Tron use the correct timestamp units, refine Portal boundary matches against observed block timestamps, disclose requested and actual bounds, and reject future or unverified explicit intervals.
+- **Collision-free evidence identities**: Solana, Bitcoin, Substrate, and Hyperliquid rows receive deterministic primary IDs, including nested Substrate events and calls. Missing or duplicate normalized IDs now fail as incomplete results instead of looking complete.
+- **Exact wallet continuation**: Solana and Hyperliquid wallet pages continue without overlap, Bitcoin inputs and outputs use distinct identities and their parent transaction hashes, and compact output no longer hides page activity.
+- **Correct units and totals**: Bitcoin values are reported as BTC with exact satoshi companions, EVM transaction totals include contract creation, and contract rankings still exclude absent destination addresses.
+- **Exact candle arithmetic**: EVM OHLC volume uses integer-safe decimal math, summary totals cover only returned candles, recent trades stay inside the resolved window, and final bucket completeness is explicit.
+- **Strict input validation**: Solana public keys and discriminators, Bitcoin addresses, Hyperliquid addresses, and Tron addresses fail before any Portal request when malformed or unsupported for the selected query.
+- **Bounded complete responses**: public limits now match measured response budgets, compact results are measured on their real wire encoding, and Hyperliquid replica-command scans cannot materialize unbounded upstream data. Portal overloads return structured retry guidance, while weighted wallet and raw-query admission prevents the server from creating avoidable upstream pressure.
+- **Truthful SQD app identity**: every applicable result names the SQD Blockchain Activity Explorer, advertises host readiness without claiming a render the server cannot observe, clears stale data on failed follow-ups, and pages large evidence tables inside the app.
+- **Portable current protocol**: the server keeps the strict standard MCP Apps bridge, self-contained CSP, stateless MCP `2026-07-28` discovery, deterministic cache hints, and header-routed HTTP requests while retaining the supported compatibility path.
+- **Direct evidence release gate**: generated identity stress tests cover 40,000 rows, live wallet pages are checked for exact membership and continuation, complete sender and receiver rankings match direct Portal rows, partial rankings identify their candidate ceiling, EVM analytics include contract creation, Base candles reconcile with raw swaps, and the existing five-family data-integrity matrix remains mandatory.
+
+**Full Changelog**: https://github.com/subsquid-labs/portal-mcp-server/compare/v0.8.3...v0.8.4
+
 ## [0.8.3] - 2026-08-30
 
 Portal MCP v0.8.3 turns SQD results into a fast, portable blockchain investigation experience while preserving the exact structured and text answers used by every existing client.

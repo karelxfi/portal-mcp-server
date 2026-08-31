@@ -55,6 +55,18 @@ function expectDescending(items: any[], field: string, label: string) {
   }
 }
 
+function rankAddressCounts(transactions: any[], field: 'from' | 'to', limit = 5) {
+  const counts = new Map<string, number>()
+  for (const transaction of transactions) {
+    const address = typeof transaction?.[field] === 'string' ? transaction[field].toLowerCase() : undefined
+    if (address) counts.set(address, (counts.get(address) ?? 0) + 1)
+  }
+  return [...counts.entries()]
+    .map(([address, transaction_count]) => ({ address, transaction_count }))
+    .sort((left, right) => right.transaction_count - left.transaction_count || left.address.localeCompare(right.address))
+    .slice(0, limit)
+}
+
 function topicAddress(topic: string): string {
   const clean = topic.toLowerCase().replace(/^0x/, '')
   assert(clean.length === 64, 'Expected indexed address topic')
@@ -473,7 +485,7 @@ async function main() {
         },
       },
       {
-        name: 'top senders and receivers in a bounded window',
+        name: 'partial aggregate disclosure and exact sender/receiver parity',
         run: async () => {
           const senders = await callToolWithRetry(client, 'portal_evm_query_transactions', {
             network: 'base',
@@ -485,23 +497,72 @@ async function main() {
             limit: 5,
             field_preset: 'minimal',
           })
+          assert(!senders.isError, `Expected bounded sender ranking: ${senders.text.slice(0, 300)}`)
           const senderRows = senders.data.top_senders ?? []
           assert(senderRows.length > 0, 'Expected top_senders rows')
           expectDescending(senderRows, 'transaction_count', 'Top senders')
+          assert(senders.data._execution?.candidate_limit_reached === true, 'Expected candidate ceiling disclosure')
+          assert(senders.data.summary?.window_complete === false, 'Expected busy 500-block ranking to disclose partial coverage')
+          assert(senders.data._coverage?.window_complete === false, 'Expected partial aggregate coverage metadata')
+          assert(senders.data.tables?.[0]?.title === 'Partial Sender Ranking', 'Expected an explicit partial table title')
+          assert(/^Partial ranking/.test(senders.data.answer), 'Expected partial aggregate answer wording')
+          const aggregateNotices = [senders.data._notice, ...(senders.data._notices ?? [])].filter(Boolean)
+          assert(
+            aggregateNotices.some((notice: string) => /must not be treated as a complete top-5/i.test(notice)),
+            'Expected an explicit warning against presenting the partial ranking as a complete top-5',
+          )
 
-          const receivers = await callToolWithRetry(client, 'portal_evm_query_transactions', {
-            network: 'base',
-            from_block: context.baseHead - 500,
-            to_block: context.baseHead,
-            aggregate_by: 'receiver',
-            aggregate_metric: 'count',
-            max_scan_blocks: 500,
-            limit: 5,
-            field_preset: 'minimal',
+          const parityBlock = context.baseHead - 10
+          const directResponse = await fetch('https://portal.sqd.dev/datasets/base-mainnet/stream', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({
+              type: 'evm',
+              fromBlock: parityBlock,
+              toBlock: parityBlock,
+              fields: {
+                block: { number: true },
+                transaction: { from: true, to: true },
+              },
+              transactions: [{}],
+            }),
           })
-          const receiverRows = receivers.data.top_receivers ?? []
-          assert(receiverRows.length > 0, 'Expected top_receivers rows')
-          expectDescending(receiverRows, 'transaction_count', 'Top receivers')
+          assert(directResponse.ok, `Expected direct Portal aggregate fixture (${directResponse.status})`)
+          const directText = await directResponse.text()
+          const directTransactions = directText
+            .trim()
+            .split('\n')
+            .filter(Boolean)
+            .flatMap((line) => JSON.parse(line).transactions ?? [])
+          assert(directTransactions.length > 0, 'Expected transactions in direct Portal aggregate fixture')
+
+          for (const [aggregateBy, field, key] of [
+            ['sender', 'from', 'top_senders'],
+            ['receiver', 'to', 'top_receivers'],
+          ] as const) {
+            const result = await callToolWithRetry(client, 'portal_evm_query_transactions', {
+              network: 'base',
+              from_block: parityBlock,
+              to_block: parityBlock,
+              aggregate_by: aggregateBy,
+              aggregate_metric: 'count',
+              max_scan_blocks: 1,
+              limit: 5,
+              field_preset: 'minimal',
+            })
+            assert(!result.isError, `Expected exact ${aggregateBy} ranking: ${result.text.slice(0, 300)}`)
+            assert(result.data.summary?.window_complete === true, `Expected complete ${aggregateBy} ranking`)
+            assert(result.data._coverage?.window_complete === true, `Expected complete ${aggregateBy} coverage metadata`)
+            const actual = (result.data[key] ?? []).map((row: any) => ({
+              address: String(row.address).toLowerCase(),
+              transaction_count: Number(row.transaction_count),
+            }))
+            const expected = rankAddressCounts(directTransactions, field)
+            assert(
+              JSON.stringify(actual) === JSON.stringify(expected),
+              `Expected ${aggregateBy} ranking to match direct Portal evidence`,
+            )
+          }
         },
       },
     ]

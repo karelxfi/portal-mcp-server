@@ -31,7 +31,7 @@ type Column = {
 type Panel = Record<string, unknown>
 
 const ROOT_STYLE_ID = 'sqd-activity-explorer-style'
-const MAX_TABLE_ROWS = 100
+const TABLE_PAGE_SIZE = 20
 const MAX_TIMELINE_ROWS = 40
 const MAX_RANKED_ROWS = 16
 const MAX_STAT_ROWS = 30
@@ -1206,6 +1206,7 @@ function tablePanel(payload: Record<string, unknown>, panel: Panel): HTMLElement
   let sortKey = ''
   let sortDirection: 'asc' | 'desc' = 'asc'
   let filter = ''
+  let pageIndex = 0
   const headerByKey = new Map<string, HTMLTableCellElement>()
   for (const column of effectiveColumns) {
     const th = element('th')
@@ -1220,6 +1221,7 @@ function tablePanel(payload: Record<string, unknown>, panel: Panel): HTMLElement
       headerByKey.forEach((header, key) =>
         header.setAttribute('aria-sort', key === sortKey ? (sortDirection === 'asc' ? 'ascending' : 'descending') : 'none'),
       )
+      pageIndex = 0
       renderBody()
     })
     th.append(button)
@@ -1231,6 +1233,16 @@ function tablePanel(payload: Record<string, unknown>, panel: Panel): HTMLElement
   table.append(tbody)
   wrap.append(table)
   body.append(wrap)
+  const pagination = element('nav', 'sqd-table-pagination')
+  pagination.setAttribute('aria-label', `${text(panel.title ?? 'Evidence')} table pages`)
+  const previous = element('button', 'sqd-button', 'Previous rows')
+  previous.type = 'button'
+  const pageStatus = element('span', 'sqd-brand-subtitle')
+  pageStatus.setAttribute('aria-live', 'polite')
+  const next = element('button', 'sqd-button', 'Next rows')
+  next.type = 'button'
+  pagination.append(previous, pageStatus, next)
+  body.append(pagination)
 
   function renderBody() {
     const matches = rows.filter((row) => !filter || JSON.stringify(row).toLowerCase().includes(filter))
@@ -1243,11 +1255,15 @@ function tablePanel(payload: Record<string, unknown>, panel: Panel): HTMLElement
             { numeric: true },
           ) * (sortDirection === 'asc' ? 1 : -1),
       )
-    const visible = matches.slice(0, MAX_TABLE_ROWS)
-    count.textContent =
-      matches.length > visible.length
-        ? `${visible.length} of ${matches.length} matching rows shown`
-        : `${visible.length} row${visible.length === 1 ? '' : 's'}`
+    const totalPages = Math.max(1, Math.ceil(matches.length / TABLE_PAGE_SIZE))
+    pageIndex = Math.min(pageIndex, totalPages - 1)
+    const pageStart = pageIndex * TABLE_PAGE_SIZE
+    const visible = matches.slice(pageStart, pageStart + TABLE_PAGE_SIZE)
+    count.textContent = `${matches.length} matching row${matches.length === 1 ? '' : 's'}`
+    pageStatus.textContent = `Page ${pageIndex + 1} of ${totalPages}`
+    previous.disabled = pageIndex === 0
+    next.disabled = pageIndex >= totalPages - 1
+    pagination.hidden = matches.length <= TABLE_PAGE_SIZE
     tbody.replaceChildren()
     for (const [index, row] of visible.entries()) {
       const tr = element('tr')
@@ -1263,7 +1279,7 @@ function tablePanel(payload: Record<string, unknown>, panel: Panel): HTMLElement
           const button = element('button', 'sqd-row-button', formatted)
           button.type = 'button'
           button.title = 'Open exact row'
-          button.addEventListener('click', () => showDetails(`Evidence row ${index + 1}`, row))
+          button.addEventListener('click', () => showDetails(`Evidence row ${pageStart + index + 1}`, row))
           td.append(button)
         } else {
           td.textContent = formatted
@@ -1276,12 +1292,21 @@ function tablePanel(payload: Record<string, unknown>, panel: Panel): HTMLElement
   }
   search.addEventListener('input', () => {
     filter = search.value.trim().toLowerCase()
+    pageIndex = 0
+    renderBody()
+  })
+  previous.addEventListener('click', () => {
+    pageIndex = Math.max(0, pageIndex - 1)
+    renderBody()
+  })
+  next.addEventListener('click', () => {
+    pageIndex += 1
     renderBody()
   })
   renderBody()
   const declaredRows = Number(descriptor.row_count)
   const totalRows = Number.isFinite(declaredRows) ? Math.max(rows.length, declaredRows) : rows.length
-  const limitNotice = displayLimitNotice('evidence rows', Math.min(rows.length, MAX_TABLE_ROWS), rows.length, totalRows)
+  const limitNotice = displayLimitNotice('evidence rows', Math.min(rows.length, TABLE_PAGE_SIZE), rows.length, totalRows)
   if (limitNotice) body.append(limitNotice)
   return root
 }
