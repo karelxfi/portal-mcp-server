@@ -220,7 +220,7 @@ const TOOL_DEFINITIONS: Record<string, ToolDefinition> = {
       'Summarize wallet activity and fund flow with shared overview, asset movement, counterparties, evidence pivots, and follow-up filters across supported networks.',
     when_to_use: [
       'You want a single high-level answer about what one wallet has been doing and where value appears to move.',
-      'You want inbound/outbound flow, top counterparties, largest movements, and exact next pivots before drilling into raw transactions or fills.',
+      'You want inbound/outbound flow, activity and asset-movement counterparties, largest movements within each asset, and exact next pivots before drilling into raw transactions or fills.',
       'The user asks to investigate a suspicious wallet, stolen-funds path, exploit counterparty, or incident address.',
     ],
     avoid_when: ['You need every raw record with full chain-specific fields and no summarization.'],

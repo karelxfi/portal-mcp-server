@@ -2205,7 +2205,7 @@ export function registerEvmOhlcTool(server: McpServer) {
                         align: 'right',
                       },
                       { key: 'sender', label: 'Sender', kind: 'dimension', format: 'address' },
-                      { key: 'tx_hash', label: 'Tx hash', kind: 'dimension', format: 'address' },
+                      { key: 'tx_hash', label: 'Tx hash', kind: 'dimension', format: 'identifier' },
                     ],
                   }),
                 ]

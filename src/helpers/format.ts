@@ -11,6 +11,7 @@ import type { UiFollowUpAction } from './ui-metadata.js'
 import { ActionableError } from './errors.js'
 import { ACTIVITY_EXPLORER_RESOURCE_URI } from '../apps/activity-explorer.js'
 import { npmVersion } from '../version.js'
+import { formatIntegerUnitsExact } from './exact-decimal.js'
 
 const MAX_RESPONSE_BYTES = 50_000
 
@@ -409,29 +410,26 @@ export function hexToDecimal(hex: string): string {
  * Convert wei (hex or bigint) to ETH with specified decimals.
  */
 export function weiToEth(wei: string | bigint, decimals: number = 18): string {
-  const weiValue = typeof wei === 'string' ? hexToBigInt(wei) : wei
-  const divisor = 10n ** BigInt(decimals)
-  const ethValue = Number(weiValue) / Number(divisor)
-
-  if (ethValue === 0) return '0'
-  if (ethValue < 0.000001) return ethValue.toExponential(4)
-  if (ethValue < 0.01) return ethValue.toFixed(6)
-  if (ethValue < 1) return ethValue.toFixed(4)
-  if (ethValue < 1000) return ethValue.toFixed(2)
-  return ethValue.toLocaleString('en-US', { maximumFractionDigits: 2 })
+  const weiValue =
+    typeof wei === 'bigint'
+      ? wei
+      : /^-?\d+$/.test(wei.trim())
+        ? BigInt(wei.trim())
+        : hexToBigInt(wei)
+  return formatIntegerUnitsExact(weiValue, decimals)
 }
 
 /**
  * Convert wei to Gwei for gas prices.
  */
 export function weiToGwei(wei: string | bigint): string {
-  const weiValue = typeof wei === 'string' ? hexToBigInt(wei) : wei
-  const gwei = Number(weiValue) / 1e9
-
-  if (gwei === 0) return '0'
-  if (gwei < 0.01) return gwei.toFixed(4)
-  if (gwei < 100) return gwei.toFixed(2)
-  return gwei.toFixed(1)
+  const weiValue =
+    typeof wei === 'bigint'
+      ? wei
+      : /^-?\d+$/.test(wei.trim())
+        ? BigInt(wei.trim())
+        : hexToBigInt(wei)
+  return formatIntegerUnitsExact(weiValue, 9)
 }
 
 export function formatTokenAmount(value: string, decimals: number = 18, symbol?: string): string {
@@ -450,19 +448,7 @@ export function formatTokenValue(
 } {
   const decimal = hexToDecimal(hexValue)
   const bigIntValue = BigInt(decimal)
-  const divisor = BigInt(10) ** BigInt(decimals)
-  const integerPart = bigIntValue / divisor
-  const fractionalPart = bigIntValue % divisor
-  const fractionalStr = fractionalPart.toString().padStart(decimals, '0')
-  const trimmedFractional = fractionalStr.replace(/0+$/, '')
-
-  let formatted: string
-  if (trimmedFractional.length > 0) {
-    const displayDecimals = Math.min(trimmedFractional.length, 6)
-    formatted = `${integerPart}.${trimmedFractional.slice(0, displayDecimals)}`
-  } else {
-    formatted = integerPart.toString()
-  }
+  let formatted = formatIntegerUnitsExact(bigIntValue, decimals)
 
   if (symbol) formatted += ` ${symbol}`
 
@@ -674,7 +660,9 @@ export function formatUSD(n: number): string {
   if (abs >= 1e9) return sign + '$' + (abs / 1e9).toFixed(2) + 'B'
   if (abs >= 1e6) return sign + '$' + (abs / 1e6).toFixed(2) + 'M'
   if (abs >= 1e3) return sign + '$' + (abs / 1e3).toFixed(1) + 'K'
-  return sign + '$' + abs.toFixed(2)
+  if (abs >= 0.01) return sign + '$' + abs.toFixed(2)
+  if (abs >= 0.00000001) return sign + '$' + abs.toFixed(8).replace(/0+$/, '')
+  return sign + '$' + abs.toExponential(4)
 }
 
 export function formatPct(n: number): string {
@@ -1352,6 +1340,10 @@ export function formatResult(
     }
     if (toolContract) {
       payloadRecord._tool_contract = toolContract
+    }
+    payloadRecord._server = {
+      name: 'SQD',
+      version: npmVersion,
     }
     payloadRecord._pagination = options?.pagination ?? buildDefaultPagination()
     payloadRecord._ordering = options?.ordering ?? buildDefaultOrdering()

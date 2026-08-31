@@ -77,7 +77,7 @@ function numeric(value: unknown): number | undefined {
 function formatValue(value: unknown, format?: string, unit?: string): string {
   if (value === null || value === undefined || value === '') return 'Not available'
   if (typeof value === 'string' && format !== 'timestamp') {
-    return value
+    return unit && !value.toLowerCase().includes(unit.toLowerCase()) ? `${value} ${unit}` : value
   }
   const numberValue = typeof value === 'number' ? value : Number(value)
   if (!Number.isFinite(numberValue)) return text(value)
@@ -162,8 +162,8 @@ function appHeader(actions: ExplorerActions, state: ExplorerState): HTMLElement 
   const brand = element('div', 'sqd-brand')
   brand.append(logoMark())
   const copy = element('div', 'sqd-brand-copy')
-  copy.append(element('div', 'sqd-brand-name', 'SQD'))
-  copy.append(element('div', 'sqd-brand-subtitle', 'Blockchain Activity Explorer'))
+  copy.append(element('div', 'sqd-brand-name', 'SQD Blockchain Activity Explorer'))
+  copy.append(element('div', 'sqd-brand-subtitle', 'Read-only data from SQD Portal'))
   brand.append(copy)
   topbar.append(brand)
 

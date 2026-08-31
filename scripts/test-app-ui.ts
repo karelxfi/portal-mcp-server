@@ -236,6 +236,10 @@ async function validate(page: Page, fixture: string, viewport: (typeof viewports
   if (fixture === 'activity') {
     const expectedHash = String((APP_FIXTURES.activity.items as Array<Record<string, unknown>>)[0].tx_hash)
     assert((await page.locator('table.sqd-table').innerText()).includes(expectedHash), 'Activity tables should keep exact transaction hashes')
+    assert(
+      (await page.locator('table.sqd-table').innerText()).includes('0.000000009 USDC'),
+      'Activity tables should keep exact tiny non-zero amounts',
+    )
   }
   if (fixture === 'wallet') {
     assert((await page.locator('.sqd-card').count()) >= 3, 'wallet workspace should combine timeline, exact rows, and counterparties')

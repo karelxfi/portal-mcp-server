@@ -9,6 +9,7 @@ export type TableValueFormat =
   | 'bytes'
   | 'btc'
   | 'address'
+  | 'identifier'
   | 'timestamp'
   | 'timestamp_human'
 
@@ -450,6 +451,7 @@ export function buildOhlcTable(params: {
   priceUnit?: string
   priceFormat?: TableValueFormat
   volumeUnit?: string
+  extraColumns?: TableColumnDescriptor[]
   interactions?: TableInteractionsDescriptor
 }): TableDescriptor {
   const columns: TableColumnDescriptor[] = [
@@ -469,6 +471,10 @@ export function buildOhlcTable(params: {
       ...(params.volumeUnit ? { unit: params.volumeUnit } : {}),
       align: 'right',
     })
+  }
+
+  if (params.extraColumns) {
+    columns.push(...params.extraColumns)
   }
 
   return buildTableDescriptor({

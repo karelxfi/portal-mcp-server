@@ -177,13 +177,18 @@ function getByPath(value: unknown, path?: string): unknown {
 function formatScalar(value: unknown, format?: TableValueFormat, unit?: string): string | undefined {
   if (value === undefined || value === null) return undefined
 
-  if (format === 'address') {
-    const text = String(value)
-    return text.length > 18 ? `${text.slice(0, 8)}...${text.slice(-6)}` : text
+  if (format === 'address' || format === 'identifier') {
+    return String(value)
   }
 
   if (format === 'timestamp_human') {
     return String(value)
+  }
+
+  // Strings are labels, identifiers, or exact decimal representations. Never
+  // run them through Number(), even when a numeric display format is declared.
+  if (typeof value === 'string' && format !== 'timestamp') {
+    return unit ? `${value} ${unit}` : value
   }
 
   const numeric = typeof value === 'number' ? value : Number(value)

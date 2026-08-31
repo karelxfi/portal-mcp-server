@@ -132,7 +132,7 @@ const ACTIVITY_ROWS = Array.from({ length: 12 }, (_, index) => ({
   tx_hash: `0x${String(index + 1).padStart(64, 'a')}`,
   sender: index % 2 ? '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913' : '0x4200000000000000000000000000000000000006',
   recipient: index % 2 ? '0x4200000000000000000000000000000000000006' : '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913',
-  value_formatted: `${(1200 + index * 83).toLocaleString()} USDC`, status: 'success',
+  value_formatted: index === 0 ? '0.000000009 USDC' : `${(1200 + index * 83).toLocaleString()} USDC`, status: 'success',
 }))
 
 const LARGE_TABLE_ROWS = Array.from({ length: 125 }, (_, index) => ({
@@ -257,7 +257,7 @@ const RAW_APP_FIXTURES: Record<string, Record<string, unknown>> = {
     activity: { count: WALLET_ACTIVITY_ROWS.length, items: WALLET_ACTIVITY_ROWS },
     fund_flow: {
       summary: { total_in_usd: 14600, total_out_usd: 6900, net_usd: 7700 },
-      counterparties: [
+      movement_counterparties: [
         { address: '0x3333333333333333333333333333333333333333', interaction_count: 2, volume_usd: 5800 },
         { address: '0x1111111111111111111111111111111111111111', interaction_count: 1, volume_usd: 12500 },
         { address: '0x5555555555555555555555555555555555555555', interaction_count: 1, volume_usd: 2100 },
@@ -282,7 +282,7 @@ const RAW_APP_FIXTURES: Record<string, Record<string, unknown>> = {
       panels: [
         { kind: 'timeline_panel', title: 'Wallet timeline', data_key: 'activity.items', timestamp_key: 'timestamp_human', title_key: 'primary_id', subtitle_keys: ['record_type', 'asset', 'direction'], emphasis: 'primary' },
         { kind: 'table_panel', title: 'Exact wallet rows', table_id: 'activity' },
-        { kind: 'ranked_bars_panel', title: 'Top counterparties', data_key: 'fund_flow.counterparties', category_key: 'address', value_key: 'interaction_count', value_format: 'integer' },
+        { kind: 'ranked_bars_panel', title: 'Asset movement counterparties', data_key: 'fund_flow.movement_counterparties', category_key: 'address', value_key: 'interaction_count', value_format: 'integer' },
       ],
     },
   },

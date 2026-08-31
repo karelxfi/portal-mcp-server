@@ -17,7 +17,7 @@
   ],
   "scripts": {
     "clean": "node scripts/clean-dist.mjs",
-    "build:app": "node scripts/build-activity-explorer.mjs",
+    "build:app": "node scripts/generate-app-compat-manifest.mjs && node scripts/build-activity-explorer.mjs",
     "build:app-preview": "node scripts/build-activity-explorer-preview.mjs",
     "build": "npm run clean && npm run build:app && tsc",
     "start": "node dist/index.js",

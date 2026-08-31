@@ -9,6 +9,7 @@ import {
   ACTIVITY_EXPLORER_RESOURCE_URI,
   ACTIVITY_EXPLORER_TOOLS,
   MCP_APP_MIME_TYPE,
+  RETAINED_ACTIVITY_EXPLORER_RESOURCE_URIS,
   classifyUiCapability,
   recordActivityExplorerResult,
 } from '../src/apps/activity-explorer.js'
@@ -83,6 +84,13 @@ async function main() {
   assert(csvExport.filename.endsWith('.csv') && csvExport.rowCount === hyperliquidRows, 'CSV evidence export should include all candles')
   assert(csvExport.content.includes('sqd_evidence_sha256'), 'CSV evidence export should preserve receipt identity')
   assert(csvExport.content.split('\r\n').length === hyperliquidRows + 2, 'CSV export should contain one header and every exact row')
+  const activityJson = buildEvidenceExport(APP_FIXTURES.activity, 'json')
+  const activityCsv = buildEvidenceExport(APP_FIXTURES.activity, 'csv')
+  const exactActivityHash = String((APP_FIXTURES.activity.items as Array<Record<string, unknown>>)[0]?.tx_hash)
+  for (const exported of [activityJson, activityCsv]) {
+    assert(exported.content.includes(exactActivityHash), 'evidence exports should keep transaction hashes byte-for-byte exact')
+    assert(exported.content.includes('0.000000009 USDC'), 'evidence exports should keep tiny non-zero amounts exact')
+  }
   assert(
     ACTIVITY_EXPLORER_HASH !== 'unbuilt' && /^[a-f0-9]{12}$/.test(ACTIVITY_EXPLORER_HASH),
     'app resource needs a content hash',
@@ -127,6 +135,16 @@ async function main() {
       }
       assert(tool.annotations?.readOnlyHint === true, `${tool.name} must remain read-only`)
     }
+    const fillsTool = listedTools.tools.find((tool) => tool.name === 'portal_hyperliquid_query_fills')
+    const walletTool = listedTools.tools.find((tool) => tool.name === 'portal_get_wallet_summary')
+    assert(
+      fillsTool?.inputSchema?.properties?.limit?.maximum === 200,
+      'fills should accept the retained installed-client limit and adapt it to a safe page',
+    )
+    assert(
+      walletTool?.inputSchema?.properties?.limit_per_type?.maximum === 10,
+      'wallet summary should accept the retained installed-client category limit and adapt it to a safe page',
+    )
 
     const resources = await client.listResources()
     const resource = resources.resources.find((entry) => entry.uri === ACTIVITY_EXPLORER_RESOURCE_URI)
@@ -139,7 +157,7 @@ async function main() {
       'resource bytes must match the generated artifact',
     )
     assert(
-      content.text.includes('Blockchain Activity Explorer')
+      content.text.includes('SQD Blockchain Activity Explorer')
         && content.text.includes(`version:${JSON.stringify(packageVersion)}`)
         && content.text.includes('viewBox="0 0 306 306"')
         && content.text.includes('#08090a')
@@ -180,6 +198,21 @@ async function main() {
       content._meta?.['openai/widgetDomain'] === 'https://portal.sqd.dev',
       'ChatGPT compatibility metadata should use the canonical SQD domain',
     )
+    for (const retainedUri of RETAINED_ACTIVITY_EXPLORER_RESOURCE_URIS) {
+      assert(
+        resources.resources.some((entry) => entry.uri === retainedUri),
+        `resources/list should retain installed-client App URI ${retainedUri}`,
+      )
+      const retained = await client.readResource({ uri: retainedUri })
+      const retainedContent = retained.contents[0] as Record<string, any> | undefined
+      assert(
+        retainedContent?.uri === retainedUri &&
+          retainedContent.mimeType === MCP_APP_MIME_TYPE &&
+          typeof retainedContent.text === 'string' &&
+          Buffer.byteLength(retainedContent.text) === ACTIVITY_EXPLORER_BYTES,
+        `retained App URI ${retainedUri} should resolve to the current factual App artifact`,
+      )
+    }
 
     const declared = classifyUiCapability(
       {

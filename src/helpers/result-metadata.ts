@@ -59,12 +59,18 @@ export interface BlockLookupFreshness {
 export interface BucketCoverage {
   kind: 'bucket_window'
   window_complete: boolean
-  result_complete: true
+  result_complete: boolean
   expected_buckets: number
   returned_buckets: number
   filled_buckets: number
   empty_buckets: number
   anchor: string
+  requested_from_timestamp?: number
+  requested_to_timestamp?: number
+  analyzed_from_timestamp?: number
+  analyzed_to_timestamp?: number
+  indexed_evidence_end_timestamp?: number
+  final_bucket_complete?: boolean
 }
 
 export interface AnalysisCoverage {
@@ -249,16 +255,35 @@ export function buildBucketCoverage(params: {
   filledBuckets: number
   anchor: string
   windowComplete?: boolean
+  resultComplete?: boolean
+  requestedFromTimestamp?: number
+  requestedToTimestamp?: number
+  analyzedFromTimestamp?: number
+  analyzedToTimestamp?: number
+  indexedEvidenceEndTimestamp?: number
+  finalBucketComplete?: boolean
 }): BucketCoverage {
   return {
     kind: 'bucket_window',
     window_complete: params.windowComplete ?? true,
-    result_complete: true,
+    result_complete: params.resultComplete ?? true,
     expected_buckets: params.expectedBuckets,
     returned_buckets: params.returnedBuckets,
     filled_buckets: params.filledBuckets,
     empty_buckets: Math.max(0, params.returnedBuckets - params.filledBuckets),
     anchor: params.anchor,
+    ...(params.requestedFromTimestamp !== undefined
+      ? { requested_from_timestamp: params.requestedFromTimestamp }
+      : {}),
+    ...(params.requestedToTimestamp !== undefined ? { requested_to_timestamp: params.requestedToTimestamp } : {}),
+    ...(params.analyzedFromTimestamp !== undefined
+      ? { analyzed_from_timestamp: params.analyzedFromTimestamp }
+      : {}),
+    ...(params.analyzedToTimestamp !== undefined ? { analyzed_to_timestamp: params.analyzedToTimestamp } : {}),
+    ...(params.indexedEvidenceEndTimestamp !== undefined
+      ? { indexed_evidence_end_timestamp: params.indexedEvidenceEndTimestamp }
+      : {}),
+    ...(params.finalBucketComplete !== undefined ? { final_bucket_complete: params.finalBucketComplete } : {}),
   }
 }
 

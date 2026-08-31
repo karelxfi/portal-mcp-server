@@ -112,6 +112,13 @@ const PORTAL_TOOL_OUTPUT_SCHEMA = z
       .record(z.string(), z.unknown())
       .optional()
       .describe('SQD Blockchain Activity Explorer identity and honest host-render state.'),
+    _server: z
+      .object({
+        name: z.string(),
+        version: z.string(),
+      })
+      .optional()
+      .describe('Observable SQD server identity and exact release version.'),
     pipes_handoff: z.unknown().optional().describe('Optional SQD Pipes guidance for custom data needs.'),
     _notice: z.string().optional().describe('Important limitation or truncation notice.'),
     _notices: z.array(z.string()).optional().describe('Important limitations or truncation notices.'),

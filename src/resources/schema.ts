@@ -90,7 +90,7 @@ function buildDeveloperToolGuide() {
           'portal_hyperliquid_query_fills',
         ],
         reason:
-          'Wallet summary returns fund_flow, counterparties, largest movements, and investigation pivots before raw record drill-down.',
+          'Wallet summary returns fund_flow, separate activity and asset-movement counterparties, largest movements within each asset, and investigation pivots before raw record drill-down.',
       },
       {
         ask: 'Trace USDC or token outflows',

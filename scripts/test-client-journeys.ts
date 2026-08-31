@@ -3,6 +3,7 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 
 import { assert, callToolWithRetry, closeTestClient, connectTestClient } from './test-helpers.ts'
+import { RETAINED_ACTIVITY_EXPLORER_RESOURCE_URIS } from '../dist/apps/activity-explorer-compat.js'
 
 const CLIENTS = [
   { family: 'claude', name: 'claude-desktop' },
@@ -11,6 +12,12 @@ const CLIENTS = [
   { family: 'gemini', name: 'gemini-cli' },
   { family: 'cursor', name: 'cursor' },
 ] as const
+
+const PRE_UPGRADE_SCHEMA_FIXTURE = {
+  hyperliquid_fill_limit: 200,
+  wallet_limit_per_type: 10,
+  app_resource_uri: RETAINED_ACTIVITY_EXPLORER_RESOURCE_URIS[0],
+} as const
 
 function assertCompleteOrContinuable(data: any, label: string) {
   const complete = data?._coverage?.result_complete === true
@@ -74,8 +81,16 @@ async function runClientJourney(clientIdentity: (typeof CLIENTS)[number]) {
     const resources = await connected.client.listResources()
     assert(
       resources.resources.some((resource) => resource.uri === 'sqd://investigations') &&
-        resources.resources.some((resource) => resource.uri.startsWith('ui://sqd/activity-explorer.')),
+        resources.resources.some((resource) => resource.uri.startsWith('ui://sqd/activity-explorer.')) &&
+        resources.resources.some((resource) => resource.uri === PRE_UPGRADE_SCHEMA_FIXTURE.app_resource_uri),
       `${clientIdentity.family} should discover the investigation guide and MCP App`,
+    )
+    const retainedApp = await connected.client.readResource({ uri: PRE_UPGRADE_SCHEMA_FIXTURE.app_resource_uri })
+    assert(
+      retainedApp.contents.some(
+        (content) => content.uri === PRE_UPGRADE_SCHEMA_FIXTURE.app_resource_uri && content.mimeType === 'text/html;profile=mcp-app',
+      ),
+      `${clientIdentity.family} should read the App URI cached before the upgrade`,
     )
     steps.push({ step: 'discovery', tools: tools.length, prompts: prompts.prompts.length, resources: resources.resources.length })
 
@@ -154,13 +169,45 @@ async function runClientJourney(clientIdentity: (typeof CLIENTS)[number]) {
     const recovery = await callToolWithRetry(
       connected.client,
       'portal_hyperliquid_query_fills',
-      { network: 'hyperliquid-fills', timeframe: '5m', limit: 3 },
+      {
+        network: 'hyperliquid-fills',
+        timeframe: '5m',
+        coin: ['BTC'],
+        limit: PRE_UPGRADE_SCHEMA_FIXTURE.hyperliquid_fill_limit,
+      },
       { retries: 1 },
     )
     assert(!recovery.isError, `${clientIdentity.family} should recover after a tool error`)
     assertEvidence(recovery.data, 'portal_hyperliquid_query_fills', `${clientIdentity.family} recovery result`)
     assertCompleteOrContinuable(recovery.data, `${clientIdentity.family} recovery result`)
+    assert(recovery.data?._pagination?.page_size === 25, `${clientIdentity.family} retained fill limit should adapt to 25 rows`)
     steps.push({ step: 'tool_error_recovery', elapsedMs: invalid.elapsedMs + recovery.elapsedMs })
+
+    const retainedWallet = await callToolWithRetry(
+      connected.client,
+      'portal_get_wallet_summary',
+      {
+        network: 'base-mainnet',
+        address: '0x0000000000000000000000000000000000000001',
+        timeframe: '10',
+        limit_per_type: PRE_UPGRADE_SCHEMA_FIXTURE.wallet_limit_per_type,
+      },
+      { retries: 1 },
+    )
+    assert(!retainedWallet.isError, `${clientIdentity.family} retained wallet schema should remain callable`)
+    assert(retainedWallet.data?._pagination?.page_size === 5, `${clientIdentity.family} retained wallet limit should adapt to 5 rows`)
+    steps.push({ step: 'retained_schema_execution', elapsedMs: recovery.elapsedMs + retainedWallet.elapsedMs })
+
+    const reconnected = await connectTestClient(`${clientIdentity.name}-reconnected`)
+    try {
+      const reconnectedApp = await reconnected.client.readResource({ uri: PRE_UPGRADE_SCHEMA_FIXTURE.app_resource_uri })
+      assert(reconnectedApp.contents.length === 1, `${clientIdentity.family} reconnect should retain the cached App resource`)
+      const reconnectedDiscovery = await callToolWithRetry(reconnected.client, 'portal_list_networks', { limit: 1 }, { retries: 1 })
+      assert(!reconnectedDiscovery.isError, `${clientIdentity.family} reconnect should execute a tool after resource restoration`)
+      steps.push({ step: 'retained_connection_reconnect', elapsedMs: reconnectedDiscovery.elapsedMs })
+    } finally {
+      await closeTestClient(reconnected)
+    }
 
     return {
       family: clientIdentity.family,
