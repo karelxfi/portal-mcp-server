@@ -219,7 +219,10 @@ function assertNaturalLanguageTimeInputs() {
 
 async function assertHyperliquidReplicaExactTimestampLookup() {
   const dataset = 'hyperliquid-replica-cmds'
-  const window = await resolveTimeframeOrBlocks({ dataset, timeframe: '5m' })
+  const window = await retryPortalProbe(
+    () => resolveTimeframeOrBlocks({ dataset, timeframe: '5m' }),
+    (candidate) => candidate.from_lookup?.resolution === 'exact',
+  )
   assert(window.from_lookup?.resolution === 'exact', 'Hyperliquid replica timeframe should use its seconds timestamp endpoint')
   assert(window.from_lookup?.boundary === 'from', 'Hyperliquid replica timeframe should expose a from boundary')
   assert(

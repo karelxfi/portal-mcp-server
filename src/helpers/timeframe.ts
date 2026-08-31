@@ -145,24 +145,32 @@ function estimateFromBlock(
 // Timestamp endpoint failure cache
 // ---------------------------------------------------------------------------
 // The Portal /timestamps/ endpoint can lag ~1-2h behind the chain head.
-// When it fails for a dataset, we cache that failure to skip the attempt
-// entirely on subsequent calls (avoiding wasted retries + timeout).
+// Repeated failures are cached so one transient response does not force every
+// caller onto estimated windows for the next five minutes.
 
 const TIMESTAMP_FAILURE_TTL = 5 * 60 * 1000 // 5 minutes
-const timestampFailures = new Map<string, number>() // dataset → failure timestamp
+const TIMESTAMP_FAILURE_THRESHOLD = 3
+const timestampFailures = new Map<string, { failedAt: number; count: number }>()
 
 function isTimestampEndpointDown(dataset: string): boolean {
-  const failedAt = timestampFailures.get(dataset)
-  if (!failedAt) return false
-  if (Date.now() - failedAt > TIMESTAMP_FAILURE_TTL) {
+  const failure = timestampFailures.get(dataset)
+  if (!failure) return false
+  if (Date.now() - failure.failedAt > TIMESTAMP_FAILURE_TTL) {
     timestampFailures.delete(dataset)
     return false
   }
-  return true
+  return failure.count >= TIMESTAMP_FAILURE_THRESHOLD
 }
 
 function markTimestampEndpointDown(dataset: string): void {
-  timestampFailures.set(dataset, Date.now())
+  const now = Date.now()
+  const previous = timestampFailures.get(dataset)
+  timestampFailures.set(dataset, {
+    failedAt: now,
+    count: previous && now - previous.failedAt <= TIMESTAMP_FAILURE_TTL
+      ? previous.count + 1
+      : 1,
+  })
 }
 
 function markTimestampEndpointUp(dataset: string): void {
