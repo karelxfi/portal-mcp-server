@@ -40,7 +40,8 @@ type JsonRecord = Record<string, any>
 
 async function fetchNdjson(dataset: string, body: JsonRecord): Promise<JsonRecord[]> {
   let lastError: Error | undefined
-  for (let attempt = 1; attempt <= 3; attempt += 1) {
+  const maxAttempts = 4
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     try {
       const response = await fetch(`${PORTAL}/datasets/${dataset}/stream`, {
         method: 'POST',
@@ -49,7 +50,21 @@ async function fetchNdjson(dataset: string, body: JsonRecord): Promise<JsonRecor
       })
       const text = await response.text()
       if (!response.ok) {
-        throw new Error(`Portal HTTP ${response.status}: ${text.slice(0, 300)}`)
+        const error = new Error(`Portal HTTP ${response.status}: ${text.slice(0, 300)}`)
+        const retryable = response.status === 429 || response.status === 529 || response.status >= 500
+        if (!retryable) {
+          Object.assign(error, { retryable: false })
+          throw error
+        }
+        if (attempt === maxAttempts) throw error
+
+        lastError = error
+        const retryAfterSeconds = Number(response.headers.get('retry-after') ?? '')
+        const retryDelayMs = Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0
+          ? retryAfterSeconds * 1_000
+          : attempt * 1_500
+        await new Promise((resolve) => setTimeout(resolve, retryDelayMs))
+        continue
       }
       return text
         .split('\n')
@@ -58,7 +73,8 @@ async function fetchNdjson(dataset: string, body: JsonRecord): Promise<JsonRecor
         .map((line) => JSON.parse(line) as JsonRecord)
     } catch (error) {
       lastError = error instanceof Error ? error : new Error(String(error))
-      if (attempt < 3) await new Promise((resolve) => setTimeout(resolve, attempt * 500))
+      if ((error as { retryable?: boolean }).retryable === false) throw lastError
+      if (attempt < maxAttempts) await new Promise((resolve) => setTimeout(resolve, attempt * 1_500))
     }
   }
   throw lastError ?? new Error(`Portal request failed for ${dataset}`)
