@@ -10,7 +10,13 @@ import { normalizeHyperliquidFillResult } from '../../helpers/normalized-results
 import { buildPaginationInfo, decodeRecentPageCursor, encodeRecentPageCursor, paginateAscendingItems } from '../../helpers/pagination.js'
 import { buildChronologicalPageOrdering, buildQueryCoverage, buildQueryFreshness } from '../../helpers/result-metadata.js'
 import { applyResponseFormat, resolveDefaultResponseFormat, type ResponseFormat } from '../../helpers/response-modes.js'
-import { getTimestampWindowNotices, type TimestampInput, resolveTimeframeOrBlocks } from '../../helpers/timeframe.js'
+import {
+  getTimestampWindowNotices,
+  type BlockAtTimestampResult,
+  type EstimatedTimeframeResolution,
+  type TimestampInput,
+  resolveTimeframeOrBlocks,
+} from '../../helpers/timeframe.js'
 import { buildExecutionMetadata, buildToolDescription } from '../../helpers/tool-ux.js'
 import { buildMetricCard, buildPortalUi, buildTablePanel, buildTimelinePanel } from '../../helpers/ui-metadata.js'
 import { fetchRecentHyperliquidFillBlocks } from './fill-stream.js'
@@ -34,6 +40,9 @@ type HyperliquidFillsRequest = {
   include_pnl: boolean
   include_builder_info: boolean
   response_format: ResponseFormat
+  from_lookup?: BlockAtTimestampResult
+  to_lookup?: BlockAtTimestampResult
+  estimated_timeframe?: EstimatedTimeframeResolution
 }
 
 type HyperliquidFillItem = Record<string, unknown> & {
@@ -258,6 +267,11 @@ export function registerQueryHyperliquidFillsTool(server: McpServer) {
                 : paginationCursor.request.timeframe
                   ? 'timeframe'
                   : 'block_range',
+            ...(paginationCursor.request.from_lookup ? { from_lookup: paginationCursor.request.from_lookup } : {}),
+            ...(paginationCursor.request.to_lookup ? { to_lookup: paginationCursor.request.to_lookup } : {}),
+            ...(paginationCursor.request.estimated_timeframe
+              ? { estimated_timeframe: paginationCursor.request.estimated_timeframe }
+              : {}),
           }
         : await resolveTimeframeOrBlocks({
             dataset,
@@ -378,6 +392,11 @@ export function registerQueryHyperliquidFillsTool(server: McpServer) {
               include_pnl,
               include_builder_info,
               response_format: effectiveResponseFormat,
+              ...(resolvedBlocks.from_lookup ? { from_lookup: resolvedBlocks.from_lookup } : {}),
+              ...(resolvedBlocks.to_lookup ? { to_lookup: resolvedBlocks.to_lookup } : {}),
+              ...(resolvedBlocks.estimated_timeframe
+                ? { estimated_timeframe: resolvedBlocks.estimated_timeframe }
+                : {}),
             },
             window_from_block: resolvedFromBlock,
             window_to_block: endBlock,

@@ -2,6 +2,7 @@ import type { CallToolResult } from '@modelcontextprotocol/server'
 
 import { describeToolError } from './errors.js'
 import { getToolContract } from './tool-ux.js'
+import { npmVersion } from '../version.js'
 
 /**
  * Convert expected handler failures into a stable MCP tool result. Protocol
@@ -27,6 +28,7 @@ export function formatToolError(error: unknown, toolName: string): CallToolResul
     _freshness: { kind: 'not_applicable' },
     _coverage: { kind: 'not_applicable', result_complete: false },
     _execution: { kind: 'failed', source: 'portal_mcp', tool: toolName },
+    _server: { name: 'SQD', version: npmVersion },
     _llm: {
       primary_path: 'error',
       safe_to_retry: descriptor.retryable,

@@ -1990,6 +1990,28 @@ export function registerGetWalletSummaryTool(server: McpServer) {
               }),
             ]
           : []),
+        ...(fundFlow.movement_counterparties.length > 0
+          ? [
+              buildTablePanel({
+                id: 'wallet-flow-counterparties',
+                kind: 'table_panel',
+                title: 'Asset movement counterparties',
+                subtitle: 'Counterparties ranked by observed inbound and outbound asset movements.',
+                table_id: 'flow_counterparties',
+              }),
+            ]
+          : []),
+        ...(fundFlow.largest_movements.length > 0
+          ? [
+              buildTablePanel({
+                id: 'wallet-largest-movements',
+                kind: 'table_panel',
+                title: 'Largest movements within each asset',
+                subtitle: 'Exact largest observed movements, ranked only within the same asset.',
+                table_id: 'largest_movements',
+              }),
+            ]
+          : []),
       ]
 
       const summary: Record<string, unknown> = {
@@ -2024,11 +2046,16 @@ export function registerGetWalletSummaryTool(server: McpServer) {
         fund_flow: fundFlow,
         relationships: {
           activity_counterparties: topCounterparties,
+          activity_counterparty_count: topCounterparties.length,
           definition: 'Counterparties observed across transaction and transfer activity rows in this page.',
         },
         assets: {
-          token_transfers: include_tokens ? compactTokenTransfers.length : 0,
-          nft_transfers: include_nfts ? compactNftTransfers.length : 0,
+          ...(include_tokens && !sectionFailures.some((failure) => failure.key === 'token_transfers')
+            ? { token_transfers: compactTokenTransfers.length }
+            : {}),
+          ...(include_nfts && !sectionFailures.some((failure) => failure.key === 'nft_transfers')
+            ? { nft_transfers: compactNftTransfers.length }
+            : {}),
         },
         evm: {
           transactions: {
@@ -2109,7 +2136,7 @@ export function registerGetWalletSummaryTool(server: McpServer) {
               : windowToBlock - fromBlock + 1 <= 50_000
                 ? 'long_window'
                 : 'expensive',
-          recommended_window: 'Use timeframe="6h" for a smaller interactive triage window, or continue with the cursor for older rows.',
+          recommended_window: 'Use timeframe="30m" for a bounded interactive EVM triage window, or continue with the cursor for more rows in this window.',
           from_block: fromBlock,
           to_block: windowToBlock,
           range_kind: resolvedWindow.range_kind,
@@ -2132,21 +2159,25 @@ export function registerGetWalletSummaryTool(server: McpServer) {
             buildMetricCard({
               id: 'counterparties',
               label: 'Counterparties',
-              value_path: 'relationships.activity_counterparties.length',
+              value_path: 'relationships.activity_counterparty_count',
               format: 'integer',
             }),
-            buildMetricCard({
-              id: 'token-transfers',
-              label: 'Token transfers',
-              value_path: 'assets.token_transfers',
-              format: 'integer',
-            }),
-            buildMetricCard({
-              id: 'nft-transfers',
-              label: 'NFT transfers',
-              value_path: 'assets.nft_transfers',
-              format: 'integer',
-            }),
+            ...(include_tokens && !sectionFailures.some((failure) => failure.key === 'token_transfers')
+              ? [buildMetricCard({
+                  id: 'token-transfers',
+                  label: 'Token transfers',
+                  value_path: 'assets.token_transfers',
+                  format: 'integer',
+                })]
+              : []),
+            ...(include_nfts && !sectionFailures.some((failure) => failure.key === 'nft_transfers')
+              ? [buildMetricCard({
+                  id: 'nft-transfers',
+                  label: 'NFT transfers',
+                  value_path: 'assets.nft_transfers',
+                  format: 'integer',
+                })]
+              : []),
           ],
           panels,
           followUpActions: [
@@ -2493,7 +2524,7 @@ async function buildNonEvmWalletSummary(params: {
           estimated_scan_blocks: Math.max(0, toBlock - fromBlock + 1),
           estimated_runtime_class:
             toBlock - fromBlock + 1 <= 2_000 ? 'interactive' : toBlock - fromBlock + 1 <= 100_000 ? 'long_window' : 'expensive',
-          recommended_window: 'Use timeframe="6h" for a smaller interactive Solana triage window.',
+          recommended_window: 'Use timeframe="15m" for a bounded interactive Solana triage window.',
           from_block: fromBlock,
           to_block: toBlock,
           range_kind: resolvedWindow.range_kind,
@@ -3125,6 +3156,7 @@ async function buildNonEvmWalletSummary(params: {
       },
       fund_flow: fundFlow,
       assets: {
+        traded_coin_count: byCoin.size,
         volume_by_coin: Array.from(byCoin.entries())
           .sort((left, right) => compareExactDecimals(right[1], left[1]))
           .map(([coin, volume]) => ({ coin, volume_usd: formatExactDecimal(volume) })),
@@ -3202,7 +3234,7 @@ async function buildNonEvmWalletSummary(params: {
           buildMetricCard({
             id: 'coins',
             label: 'Coins traded',
-            value_path: 'assets.volume_by_coin.length',
+            value_path: 'assets.traded_coin_count',
             format: 'integer',
           }),
         ],

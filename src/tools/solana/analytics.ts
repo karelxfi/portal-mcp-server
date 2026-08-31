@@ -6,6 +6,7 @@ import { z } from 'zod'
 import { resolveDataset, validateBlockRange } from '../../cache/datasets.js'
 import { PORTAL_URL } from '../../constants/index.js'
 import { detectChainType } from '../../helpers/chain.js'
+import { buildTableDescriptor } from '../../helpers/chart-metadata.js'
 import { ActionableError, createUnsupportedChainError } from '../../helpers/errors.js'
 import { portalFetchStream, portalFetchStreamRangeVisit } from '../../helpers/fetch.js'
 import {
@@ -21,8 +22,10 @@ import { buildPaginationInfo, decodeOffsetPageCursor, encodeOffsetPageCursor, pa
 import { buildAnalysisCoverage, buildQueryFreshness } from '../../helpers/result-metadata.js'
 import type { ResponseFormat } from '../../helpers/response-modes.js'
 import { buildPercentileSummary } from '../../helpers/statistics.js'
+import { divideExactDecimals, formatIntegerUnitsExact } from '../../helpers/exact-decimal.js'
 import { parseTimeframeToSeconds, resolveTimeframeOrBlocks, type TimestampInput } from '../../helpers/timeframe.js'
 import { buildExecutionMetadata, buildToolDescription } from '../../helpers/tool-ux.js'
+import { buildMetricCard, buildPortalUi, buildRankedBarsPanel, buildTablePanel } from '../../helpers/ui-metadata.js'
 
 // ============================================================================
 // Tool: Solana Network Analytics
@@ -201,6 +204,91 @@ function formatSolanaAnalyticsResponse(response: Record<string, any>, responseFo
     },
     activity: response.activity,
     ...(response.top_programs ? { top_programs: response.top_programs } : {}),
+  }
+}
+
+function decorateSolanaAnalyticsPresentation(response: Record<string, any>) {
+  const programRows = Array.isArray(response.top_programs?.programs)
+    ? response.top_programs.programs
+    : response.top_program
+      ? [response.top_program]
+      : []
+  const tables = programRows.length > 0
+    ? [buildTableDescriptor({
+        id: 'top_programs',
+        dataKey: 'top_programs.programs',
+        rowCount: programRows.length,
+        title: 'Top Solana programs',
+        subtitle: 'Programs ranked by observed instruction count in the analyzed slots',
+        keyField: 'program_id',
+        defaultSort: { key: 'rank', direction: 'asc' },
+        dense: true,
+        columns: [
+          { key: 'rank', label: 'Rank', kind: 'rank', format: 'integer', align: 'right' },
+          { key: 'program_name', label: 'Program', kind: 'dimension' },
+          { key: 'program_id', label: 'Program ID', kind: 'dimension', format: 'address' },
+          { key: 'instruction_count', label: 'Instructions', kind: 'metric', format: 'integer', align: 'right' },
+          { key: 'share', label: 'Share', kind: 'metric', align: 'right' },
+          { key: 'avg_compute_units', label: 'Avg compute', kind: 'metric', format: 'integer', unit: 'compute units', align: 'right' },
+        ],
+      })]
+    : []
+  const overview = response.overview ?? {}
+  const summary = {
+    tps: response.throughput?.tps ?? overview.tps,
+    total_transactions: response.throughput?.total_transactions ?? overview.total_transactions,
+    total_fees_sol: response.fees?.total_fees_sol ?? overview.total_fees_sol,
+    success_rate: response.activity?.success_rate ?? overview.success_rate,
+    slots_analyzed: response.network?.slots_analyzed ?? overview.slots_analyzed,
+  }
+  const normalizedResponse = {
+    ...response,
+    presentation_summary: summary,
+    ...(response.top_program && !response.top_programs
+      ? { top_programs: { programs: programRows, total_programs: programRows.length, has_more: false } }
+      : {}),
+    ...(tables.length > 0 ? { tables } : {}),
+  }
+
+  return {
+    response: normalizedResponse,
+    ui: buildPortalUi({
+      version: 'portal_ui_v1',
+      layout: 'dashboard',
+      density: 'compact',
+      design_intent: 'analytics_dashboard',
+      headline: { title: 'Solana network analytics' },
+      metric_cards: [
+        buildMetricCard({ id: 'tps', label: 'TPS', value_path: 'presentation_summary.tps', format: 'decimal', emphasis: 'primary' }),
+        buildMetricCard({ id: 'fees', label: 'Fees', value_path: 'presentation_summary.total_fees_sol', format: 'decimal', unit: 'SOL' }),
+        buildMetricCard({ id: 'success', label: 'Success rate', value_path: 'presentation_summary.success_rate', format: 'percent' }),
+      ],
+      panels: [
+        ...(programRows.length > 0
+          ? [buildRankedBarsPanel({
+              id: 'program-bars',
+              kind: 'ranked_bars_panel',
+              title: 'Top programs',
+              subtitle: 'Programs ranked by observed instruction count.',
+              data_key: 'top_programs.programs',
+              category_key: 'program_name',
+              value_key: 'instruction_count',
+              rank_key: 'rank',
+              value_format: 'integer',
+              emphasis: 'primary',
+            }), buildTablePanel({
+              id: 'program-table-panel',
+              kind: 'table_panel',
+              title: 'Program evidence',
+              subtitle: 'Exact program IDs and observed counts.',
+              table_id: 'top_programs',
+            })]
+          : []),
+      ],
+      ...(programRows.length > 0
+        ? { follow_up_actions: [{ label: 'Show ranked program rows', intent: 'show_raw' as const, target: 'top_programs.programs' }] }
+        : {}),
+    }),
   }
 }
 
@@ -406,8 +494,11 @@ export function registerSolanaAnalyticsTool(server: McpServer) {
           age_ms: Date.now() - cached.cachedAt,
         }
 
-        return formatResult(
+        const presentation = decorateSolanaAnalyticsPresentation(
           formatSolanaAnalyticsResponse(response, response_format as ResponseFormat),
+        )
+        return formatResult(
+          presentation.response,
           response_format === 'summary'
             ? `Solana summary: ${formatNumber(response.throughput?.tps ?? 0)} TPS, ${formatNumber(response.throughput?.total_transactions ?? 0)} txs, ${formatNumber(response.activity?.unique_wallets ?? 0)} wallets`
             : cached.summary,
@@ -436,6 +527,13 @@ export function registerSolanaAnalyticsTool(server: McpServer) {
               range_kind: resolvedWindow.range_kind,
               notes: ['Served from the short-lived Solana analytics cache.'],
             }),
+            ui: presentation.ui,
+            llm: {
+              compact: true,
+              primary_path: response.top_programs?.programs?.length ? 'top_programs.programs' : 'presentation_summary',
+              answer_sequence: ['presentation_summary', 'network', 'throughput', 'fees', 'activity', 'top_programs.programs'],
+              parser_notes: ['Fee totals are exact decimal strings; ranked program rows appear only when include_programs is requested.'],
+            },
             metadata: {
               dataset: cached.dataset,
               from_block: cached.fromBlock,
@@ -454,7 +552,7 @@ export function registerSolanaAnalyticsTool(server: McpServer) {
 
         const feePayers = new Set<number>()
         let totalTxs = 0
-        let totalFees = 0
+        let totalFees = 0n
         let errorCount = 0
         let totalComputeUnits = 0
         let computeUnitsSampleTxs = 0
@@ -500,9 +598,11 @@ export function registerSolanaAnalyticsTool(server: McpServer) {
                   for (let index = 0; index < txs.length; index += 1) {
                     const tx = txs[index]
                     if (typeof tx.feePayer === 'string') feePayers.add(hashString53(tx.feePayer))
-                    const fee = parseInt(String(tx.fee || '0'), 10) || 0
+                    const feeText = String(tx.fee ?? '0')
+                    const fee = /^\d+$/.test(feeText) ? BigInt(feeText) : 0n
                     totalFees += fee
-                    feeSamples.push(fee)
+                    const feeNumber = Number(fee)
+                    if (Number.isSafeInteger(feeNumber)) feeSamples.push(feeNumber)
                     if (tx.err) errorCount++
                     if (include_compute_units && tx.computeUnitsConsumed !== undefined) {
                       const computeUnits = Number(tx.computeUnitsConsumed) || 0
@@ -532,7 +632,10 @@ export function registerSolanaAnalyticsTool(server: McpServer) {
           : 0.4
         const avgTxsPerSlot = slotsAnalyzed > 0 ? totalTxs / slotsAnalyzed : 0
         const tps = avgSlotTime > 0 ? avgTxsPerSlot / avgSlotTime : 0
-        const avgFee = totalTxs > 0 ? totalFees / totalTxs : 0
+        const avgFee = totalTxs > 0 ? Number(totalFees) / totalTxs : 0
+        const avgFeeExact = totalTxs > 0
+          ? divideExactDecimals({ coefficient: totalFees, scale: 0 }, { coefficient: BigInt(totalTxs), scale: 0 }, 9).value ?? '0'
+          : '0'
         const successRate = totalTxs > 0 ? ((totalTxs - errorCount) / totalTxs) * 100 : 0
         const avgComputeUnits = computeUnitsSampleTxs > 0 ? totalComputeUnits / computeUnitsSampleTxs : 0
         const slotsPerHour = timeSpanSeconds > 0 ? (slotsAnalyzed / timeSpanSeconds) * 3600 : 0
@@ -556,10 +659,10 @@ export function registerSolanaAnalyticsTool(server: McpServer) {
             avg_txs_per_slot: parseFloat(avgTxsPerSlot.toFixed(1)),
           },
           fees: {
-            total_fees_lamports: totalFees,
-            total_fees_sol: parseFloat((totalFees / 1e9).toFixed(6)),
-            total_fees_formatted: formatNumber(totalFees / 1e9) + ' SOL',
-            avg_fee_lamports: Math.round(avgFee),
+            total_fees_lamports: totalFees.toString(),
+            total_fees_sol: formatIntegerUnitsExact(totalFees, 9),
+            total_fees_formatted: formatIntegerUnitsExact(totalFees, 9) + ' SOL',
+            avg_fee_lamports: avgFeeExact,
             avg_fee_formatted: formatNumber(avgFee) + ' lamports',
             fee_percentiles_lamports: buildPercentileSummary(feeSamples),
           },
@@ -746,8 +849,9 @@ export function registerSolanaAnalyticsTool(server: McpServer) {
         freshAnalytics = await loadFreshAnalytics()
       }
 
+      const presentation = decorateSolanaAnalyticsPresentation(freshAnalytics.formattedResponse)
       return formatResult(
-        freshAnalytics.formattedResponse,
+        presentation.response,
         response_format === 'summary' ? freshAnalytics.shortSummary : freshAnalytics.summary,
         {
           toolName: 'portal_solana_get_analytics',
@@ -797,6 +901,13 @@ export function registerSolanaAnalyticsTool(server: McpServer) {
               include_compute_units ? 'Compute-unit sampling was enabled.' : 'Compute-unit sampling stayed lightweight.',
             ],
           }),
+          ui: presentation.ui,
+          llm: {
+            compact: true,
+            primary_path: freshAnalytics.response.top_programs?.programs?.length ? 'top_programs.programs' : 'presentation_summary',
+            answer_sequence: ['presentation_summary', 'network', 'throughput', 'fees', 'activity', 'top_programs.programs'],
+            parser_notes: ['Fee totals are exact decimal strings; ranked program rows appear only when include_programs is requested.'],
+          },
           metadata: {
             dataset,
             from_block: freshAnalytics.effectiveFrom,

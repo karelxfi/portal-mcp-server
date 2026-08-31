@@ -245,6 +245,9 @@ export function registerSubstrateQueryCallsTool(server: McpServer) {
 
       const formattedData = applyResponseFormat(page.pageItems, effectiveResponseFormat, 'substrate_calls')
       const notices = [SUBSTRATE_INDEXING_NOTICE, ...getTimestampWindowNotices(resolvedBlocks), ...getValidationNotices(validation)]
+      if (/"(?:refTime|proofSize)"/.test(JSON.stringify(formattedData))) {
+        notices.push('Substrate Weight v2 refTime values are picoseconds and proofSize values are bytes.')
+      }
       if (nextCursor) notices.push('Older results are available via _pagination.next_cursor.')
       const freshness = buildQueryFreshness({
         finality: finalized_only ? 'finalized' : 'latest',

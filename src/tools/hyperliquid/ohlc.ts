@@ -172,8 +172,7 @@ export function registerHyperliquidOhlcTool(server: McpServer) {
       duration: z
         .string()
         .optional()
-        .default('1h')
-        .describe('How much recent trading history to cover. Accepts compact durations like "1h" or natural phrases like "past 30 minutes".'),
+        .describe('How much recent trading history to cover when exact timestamps are omitted. Defaults to "1h". Accepts compact durations like "1h" or natural phrases like "past 30 minutes".'),
       from_timestamp: z
         .union([z.number(), z.string()])
         .optional()
@@ -202,7 +201,7 @@ export function registerHyperliquidOhlcTool(server: McpServer) {
 
       coin = paginationCursor?.request.coin ?? coin
       interval = paginationCursor?.request.interval ?? interval
-      duration = paginationCursor?.request.duration ?? duration
+      duration = paginationCursor?.request.duration ?? duration ?? '1h'
       from_timestamp = paginationCursor?.request.from_timestamp ?? from_timestamp
       to_timestamp = paginationCursor?.request.to_timestamp ?? to_timestamp
       user = paginationCursor?.request.user ?? user
@@ -399,7 +398,7 @@ export function registerHyperliquidOhlcTool(server: McpServer) {
           )
         }
         initialScanCoversSeriesStart =
-          resolvedWindow.from_lookup?.resolution === 'exact' &&
+          resolvedWindow.from_lookup?.resolution === 'verified_boundary' &&
           resolvedWindow.from_lookup.timestamp <= requestedWindowStartTimestamp
 
         await accumulateRange(fromBlock, endBlock, {
@@ -536,11 +535,14 @@ export function registerHyperliquidOhlcTool(server: McpServer) {
             })
           : undefined
 
+      const effectiveDuration = exactTimestampWindowRequested ? `${durationSeconds}s` : duration
+
       const summary = {
         coin,
         interval: resolvedInterval,
         interval_requested: interval,
-        duration,
+        duration: effectiveDuration,
+        duration_seconds: durationSeconds,
         total_buckets: ohlc.length,
         filled_buckets: filledBuckets,
         empty_buckets: ohlc.length - filledBuckets,
@@ -559,17 +561,13 @@ export function registerHyperliquidOhlcTool(server: McpServer) {
         requested_window_start_timestamp: requestedWindowStartTimestamp,
         requested_window_start_timestamp_human: formatTimestamp(requestedWindowStartTimestamp),
         requested_window_end_exclusive: requestedWindowEndExclusive,
-        requested_window_end_exclusive_human: formatTimestamp(
-          Math.max(requestedWindowStartTimestamp, requestedWindowEndExclusive - 1),
-        ),
+        requested_window_end_exclusive_human: formatTimestamp(requestedWindowEndExclusive),
         window_start_timestamp: seriesStartTimestamp,
         window_start_timestamp_human: formatTimestamp(seriesStartTimestamp),
         window_end_exclusive: seriesEndExclusive,
-        window_end_exclusive_human: formatTimestamp(Math.max(seriesStartTimestamp, seriesEndExclusive - 1)),
+        window_end_exclusive_human: formatTimestamp(seriesEndExclusive),
         indexed_evidence_end_exclusive: indexedEvidenceEndExclusive,
-        indexed_evidence_end_exclusive_human: formatTimestamp(
-          Math.max(requestedWindowStartTimestamp, indexedEvidenceEndExclusive - 1),
-        ),
+        indexed_evidence_end_exclusive_human: formatTimestamp(indexedEvidenceEndExclusive),
         final_bucket_complete: finalBucketComplete,
         all_buckets_complete: allBucketsComplete,
         result_complete: resultComplete,
@@ -703,7 +701,8 @@ export function registerHyperliquidOhlcTool(server: McpServer) {
           freshness,
           execution: buildExecutionMetadata({
             interval: resolvedInterval,
-            duration,
+            duration: effectiveDuration,
+            duration_seconds: durationSeconds,
             from_block: scannedFromBlock,
             to_block: endBlock,
             range_kind: resolvedWindow.range_kind,

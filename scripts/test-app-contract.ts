@@ -35,8 +35,11 @@ async function main() {
   )
   assert(
     appResult.structuredContent?._app?.name === 'SQD Blockchain Activity Explorer' &&
-      appResult.structuredContent?._app?.host_render_confirmed === false,
-    'App-enabled results must expose the canonical product name without claiming a host render',
+      appResult.structuredContent?._app?.server_delivery_state === 'ready' &&
+      appResult.structuredContent?._app?.host_render_state === 'not_observable_from_tool_result' &&
+      appResult.structuredContent?._app?.required_host_extension === 'io.modelcontextprotocol/ui' &&
+      appResult.structuredContent?._app?.host_render_confirmed === undefined,
+    'App-enabled results must expose the canonical product name and delivery state without inventing a host render verdict',
   )
   assert(shorterDuration('in last 38 mins') === '19m', 'natural-language chart windows should narrow deterministically')
   assert(

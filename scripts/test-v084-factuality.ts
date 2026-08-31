@@ -4,11 +4,13 @@ import {
   normalizeBitcoinInputResult,
   normalizeBitcoinOutputResult,
   normalizeHyperliquidFillResult,
+  normalizeSolanaTransactionResult,
   normalizeSolanaInstructionResult,
   normalizeSubstrateCallResult,
 } from '../dist/helpers/normalized-results.js'
 import { assertUniqueNormalizedIds } from '../dist/helpers/format.js'
 import { buildLlmHints } from '../dist/helpers/llm-hints.js'
+import { calculatePercentile } from '../dist/helpers/statistics.js'
 import {
   addExactDecimals,
   compareExactDecimals,
@@ -181,6 +183,38 @@ function assertExactAssetQuantities() {
     formatExactDecimal(addExactDecimals(scientific!, scientific!)) === '0.000000018' &&
       formatExactDecimal(multiplyExactDecimals(scientific!, parseExactDecimal('2')!)) === '0.000000018',
     'exact decimal arithmetic must preserve tiny non-zero results',
+  )
+
+  const solana = normalizeSolanaTransactionResult({ fee: 5000, computeUnitsConsumed: 108877 })
+  assert(
+    solana.fee === '5000' && solana.fee_lamports === '5000' && solana.fee_unit === 'lamports',
+    'Solana transaction fees must be exact strings with an explicit lamport unit',
+  )
+  const bitcoinInput = normalizeBitcoinInputResult({ txid: 'btc-input', inputIndex: 0, prevoutValue: 0.00012066 })
+  const bitcoinOutput = normalizeBitcoinOutputResult({ txid: 'btc-output', outputIndex: 0, value: 0.00049994 })
+  assert(
+    bitcoinInput.prevoutValue === '0.00012066' && bitcoinInput.prevout_value_unit === 'BTC' &&
+      bitcoinOutput.value === '0.00049994' && bitcoinOutput.value_unit === 'BTC',
+    'Bitcoin input and output amounts must be exact strings with an explicit BTC unit',
+  )
+  const hyperliquid = normalizeHyperliquidFillResult({
+    block_number: 1,
+    fillIndex: 0,
+    coin: 'BTC',
+    feeToken: 'USDC',
+    px: 78641,
+    sz: 0.00042,
+    fee: 0.000001,
+  })
+  assert(
+      hyperliquid.px === '78641' && hyperliquid.price_unit === 'USD per base asset' &&
+      hyperliquid.sz === '0.00042' && hyperliquid.size_unit === 'BTC' &&
+      hyperliquid.fee === '0.000001' && hyperliquid.fee_unit === 'USDC',
+    'Hyperliquid prices, sizes, and fees must be exact strings with explicit units',
+  )
+  assert(
+    calculatePercentile([84_000, 84_704], 95) === 84_668.8,
+    'integer percentile interpolation must not expose a binary floating-point tail',
   )
 }
 
@@ -369,6 +403,26 @@ async function assertLiveAggregateAndOhlcParity() {
       fillNotices.some((notice: string) => notice.includes('installed-client compatibility')),
       'adapted fill pages must explain the compatibility clamp',
     )
+    assert(
+      (compatibleFillPage.data?.fills ?? []).every((fill: any) =>
+        typeof fill.px === 'string' && fill.price_unit === 'USD per base asset' &&
+        typeof fill.sz === 'string' && typeof fill.size_unit === 'string'),
+      'live Hyperliquid fill evidence must expose exact decimal strings and units',
+    )
+
+    const recentActivity = await callToolWithRetry(connected.client, 'portal_get_recent_activity', {
+      network: 'base',
+      timeframe: '10',
+      limit: 3,
+    }, { retries: 1 })
+    assert(!recentActivity.isError, `recent activity App payload must succeed: ${recentActivity.text.slice(0, 240)}`)
+    assert(
+      recentActivity.data?._ui?.design_intent === 'activity_investigator' &&
+        recentActivity.data?._app?.server_delivery_state === 'ready' &&
+        recentActivity.data?._app?.host_render_state === 'not_observable_from_tool_result' &&
+        recentActivity.data?._app?.required_host_extension === 'io.modelcontextprotocol/ui',
+      'recent activity must deliver the same portable MCP App contract as every documented App-enabled experience',
+    )
 
     const solanaHead = await callToolWithRetry(connected.client, 'portal_get_head', { network: 'solana-mainnet' }, { retries: 2 })
     assert(!solanaHead.isError && typeof solanaHead.data?.number === 'number', 'Solana head fixture must resolve')
@@ -381,6 +435,28 @@ async function assertLiveAggregateAndOhlcParity() {
     assert(!solanaFixture.isError, `Solana wallet fixture must resolve: ${solanaFixture.text.slice(0, 240)}`)
     const solanaAddress = String(solanaFixture.data?.items?.[0]?.feePayer ?? solanaFixture.data?.items?.[0]?.sender ?? '')
     assert(solanaAddress.length > 20, 'Solana wallet fixture must expose a fee payer')
+
+    const solanaBalanceContext = await callToolWithRetry(connected.client, 'portal_solana_query_transactions', {
+      network: 'solana-mainnet',
+      from_block: solanaHead.data.number - 2,
+      to_block: solanaHead.data.number,
+      include_balances: true,
+      include_token_balances: true,
+      limit: 2,
+    }, { retries: 2 })
+    assert(!solanaBalanceContext.isError, `Solana balance context must resolve: ${solanaBalanceContext.text.slice(0, 240)}`)
+    assert(
+      (solanaBalanceContext.data?.items ?? []).every((transaction: any) =>
+        Array.isArray(transaction.balances) && Array.isArray(transaction.token_balances)),
+      'requested Solana SOL and token balance context must be attached to every returned transaction',
+    )
+    assert(
+      (solanaBalanceContext.data?.items ?? []).flatMap((transaction: any) => transaction.balances).every((balance: any) =>
+        balance.unit === 'lamports' &&
+        (balance.pre_lamports === undefined || typeof balance.pre_lamports === 'string') &&
+        (balance.post_lamports === undefined || typeof balance.post_lamports === 'string')),
+      'Solana balance rows must label lamports and preserve exact integer strings',
+    )
 
     const hyperliquidFixture = await callToolWithRetry(connected.client, 'portal_hyperliquid_get_analytics', {
       network: 'hyperliquid-fills',
@@ -542,6 +618,26 @@ async function assertLiveAggregateAndOhlcParity() {
     assert(!fixedHyperliquid.isError, `fixed Hyperliquid OHLC replay must succeed: ${fixedHyperliquid.text.slice(0, 300)}`)
     const fixedData = fixedHyperliquid.data as any
     const fixedCandles = fixedData.ohlc as Array<{ bucket_complete: boolean; fill_count: number }>
+    const exactWindowSeconds = fixedData.summary.requested_window_end_exclusive - fixedData.summary.requested_window_start_timestamp
+    assert(
+      fixedData.summary.duration === `${exactWindowSeconds}s` &&
+        fixedData.summary.duration_seconds === exactWindowSeconds &&
+        fixedData._execution.duration === `${exactWindowSeconds}s` &&
+        fixedData._execution.duration_seconds === exactWindowSeconds,
+      'exact Hyperliquid windows must report their analyzed duration instead of an unrelated one-hour default',
+    )
+    assert(
+      Math.floor(Date.parse(fixedData.summary.requested_window_end_exclusive_human) / 1000) ===
+        fixedData.summary.requested_window_end_exclusive &&
+        Math.floor(Date.parse(fixedData.summary.window_end_exclusive_human) / 1000) ===
+          fixedData.summary.window_end_exclusive,
+      'exclusive-end human timestamps must describe the exact exclusive epoch',
+    )
+    assert(
+      fixedData._evidence?.request?.arguments?.duration === undefined &&
+        fixedData._evidence?.replay?.mode === 'exact',
+      'exact Hyperliquid evidence must omit the duration default and remain replayable by absolute bounds',
+    )
     assert(
       fixedCandles.every((candle) => typeof candle.bucket_complete === 'boolean'),
       'every Hyperliquid candle must declare whether it is closed',

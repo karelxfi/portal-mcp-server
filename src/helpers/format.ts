@@ -247,7 +247,7 @@ function buildExecutableContinuationAction(pagination: RecordLike | undefined, t
   if (cursorTool !== toolName) return undefined
 
   return {
-    label: 'Load older results',
+    label: pagination?.continuation_scope === 'adjacent_window' ? 'Load previous window' : 'Load more results',
     intent: 'continue',
     target: '_pagination.next_cursor',
     executable: true,
@@ -804,6 +804,8 @@ function buildNextSteps(payload: RecordLike): RecordLike | undefined {
   const toolContract = isRecord(payload._tool_contract) ? payload._tool_contract : undefined
   const toolName = typeof toolContract?.name === 'string' ? toolContract.name : undefined
   const hasContinuation = typeof pagination?.next_cursor === 'string'
+  const adjacentWindow = pagination?.continuation_scope === 'adjacent_window'
+  const continuationLabel = adjacentWindow ? 'Load previous window' : 'Load more results'
   const executableContinuation = buildExecutableContinuationAction(pagination, toolName)
   const actions = asArray<RecordLike>(ui?.follow_up_actions)
     .map((action) => withContinuationExecutableMetadata(normalizeFollowUpAction(action), executableContinuation))
@@ -811,7 +813,7 @@ function buildNextSteps(payload: RecordLike): RecordLike | undefined {
 
   if (hasContinuation && !hasExplicitContinueAction) {
     actions.unshift({
-      label: 'Load older results',
+      label: continuationLabel,
       intent: 'continue',
       target: '_pagination.next_cursor',
       executable: executableContinuation?.executable === true,
@@ -831,9 +833,11 @@ function buildNextSteps(payload: RecordLike): RecordLike | undefined {
       ? {
           continuation: {
             available: true,
-            label: 'Load older results',
+            label: continuationLabel,
             how_to_continue: 'Call the same tool again with the next cursor from _pagination.next_cursor.',
-            note: 'This response is a preview page, so older matching results are still available.',
+            note: adjacentWindow
+              ? 'The requested window is complete; the cursor opens the immediately preceding window.'
+              : 'This response is a preview page, so more matching results remain in the same requested window.',
           },
         }
       : {}),
@@ -919,6 +923,9 @@ export function inferPrimaryEvidencePath(
     'activity.items',
     'interactions.top_callers',
     'events.top_event_types',
+    'top_events',
+    'top_calls',
+    'top_programs.programs',
     'fund_flow.largest_movements',
     'token_transfers.items',
     'transactions.items',
@@ -932,6 +939,7 @@ export function inferPrimaryEvidencePath(
     'recent_outputs',
     'recent_inputs',
     'summary_rows',
+    'presentation_summary',
     'overview',
     'summary',
     'interactions',
@@ -1358,11 +1366,10 @@ export function formatResult(
       payloadRecord._app = {
         name: 'SQD Blockchain Activity Explorer',
         version: npmVersion,
-        capability: 'mcp_app',
         resource_uri: ACTIVITY_EXPLORER_RESOURCE_URI,
-        result_state: 'ready_for_host_render',
-        host_render_confirmed: false,
-        guidance: 'Only the MCP host can confirm that this App payload rendered.',
+        server_delivery_state: 'ready',
+        host_render_state: 'not_observable_from_tool_result',
+        required_host_extension: 'io.modelcontextprotocol/ui',
       }
     }
     if (options?.pipes !== undefined) {

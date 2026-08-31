@@ -45,7 +45,7 @@ async function callExactTimestampLookup(client: Client, timestamp: string | numb
     timestamp,
   })
 
-  if (!lookup.isError && extractJson(lookup.text).resolution !== 'exact') {
+  if (!lookup.isError && extractJson(lookup.text).resolution !== 'verified_boundary') {
     await new Promise((resolve) => setTimeout(resolve, 500))
     lookup = await callTool(client, 'portal_debug_resolve_time_to_block', {
       network: 'polkadot',
@@ -162,7 +162,7 @@ async function main() {
     const olderLookup = await callExactTimestampLookup(client, POLKADOT_OLD_TIMESTAMP_ISO)
     assert(!olderLookup.isError, 'older Substrate timestamp lookup should succeed')
     const olderLookupData = extractJson(olderLookup.text)
-    assert(olderLookupData.resolution === 'exact', 'older Substrate timestamp lookup should be exact')
+    assert(olderLookupData.resolution === 'verified_boundary', 'older Substrate timestamp lookup should be a verified boundary')
     assert(olderLookupData.block_number === 10000000, 'older Substrate timestamp lookup should resolve the nearest verified block')
     assert(olderLookupData.block_timestamp === POLKADOT_OLD_TIMESTAMP_SECONDS, 'older Substrate timestamp lookup should match the indexed block timestamp')
     console.log('PASS  portal_debug_resolve_time_to_block -> older ISO timestamp resolves exactly')
@@ -170,7 +170,7 @@ async function main() {
     const millisLookup = await callExactTimestampLookup(client, POLKADOT_RECENT_TIMESTAMP_MS)
     assert(!millisLookup.isError, 'millisecond Substrate timestamp lookup should succeed')
     const millisLookupData = extractJson(millisLookup.text)
-    assert(millisLookupData.resolution === 'exact', 'millisecond Substrate timestamp lookup should stay exact after normalization')
+    assert(millisLookupData.resolution === 'verified_boundary', 'millisecond Substrate timestamp lookup should stay verified after normalization')
     assert(millisLookupData.timestamp === 1775790360, 'millisecond timestamp input should normalize to seconds')
     console.log('PASS  portal_debug_resolve_time_to_block -> millisecond input is normalized correctly')
 

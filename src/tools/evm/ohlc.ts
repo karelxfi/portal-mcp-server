@@ -1517,7 +1517,7 @@ export function registerEvmOhlcTool(server: McpServer) {
         const bucketSpanSeconds = expectedBuckets * intervalSeconds
         seriesStartTimestamp = seriesEndExclusive - bucketSpanSeconds
         initialScanCoversSeriesStart =
-          resolvedWindow.from_lookup?.resolution === 'exact' &&
+          resolvedWindow.from_lookup?.resolution === 'verified_boundary' &&
           resolvedWindow.from_lookup.timestamp <= seriesStartTimestamp
       }
 

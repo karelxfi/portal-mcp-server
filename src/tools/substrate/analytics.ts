@@ -87,6 +87,28 @@ function formatSubstrateAnalyticsResponse(response: Record<string, any>, respons
 }
 
 function decoratePresentation(response: Record<string, any>, dataset: string, windowLabel: string) {
+  const topEvents = Array.isArray(response.top_events)
+    ? response.top_events
+    : response.top_event
+      ? [response.top_event]
+      : []
+  const topCalls = Array.isArray(response.top_calls)
+    ? response.top_calls
+    : response.top_call
+      ? [response.top_call]
+      : []
+  const overview = response.overview ?? {}
+  response = {
+    ...response,
+    presentation_summary: {
+      total_events: response.activity?.total_events ?? overview.total_events,
+      total_calls: response.activity?.total_calls ?? overview.total_calls,
+      total_extrinsics: response.extrinsics?.total_extrinsics ?? overview.total_extrinsics,
+      call_success_rate: response.activity?.call_success_rate,
+    },
+    ...(topEvents.length > 0 ? { top_events: topEvents } : {}),
+    ...(topCalls.length > 0 ? { top_calls: topCalls } : {}),
+  }
   const tables = []
 
   if (Array.isArray(response.top_events)) {
@@ -142,10 +164,10 @@ function decoratePresentation(response: Record<string, any>, dataset: string, wi
         subtitle: windowLabel,
       },
       metric_cards: [
-        buildMetricCard({ id: 'events', label: 'Events', value_path: 'activity.total_events', format: 'integer', emphasis: 'primary' }),
-        buildMetricCard({ id: 'calls', label: 'Calls', value_path: 'activity.total_calls', format: 'integer' }),
-        buildMetricCard({ id: 'extrinsics', label: 'Extrinsics', value_path: 'extrinsics.total_extrinsics', format: 'integer' }),
-        buildMetricCard({ id: 'call-success', label: 'Call success', value_path: 'activity.call_success_rate', format: 'percent', unit: '%' }),
+        buildMetricCard({ id: 'events', label: 'Events', value_path: 'presentation_summary.total_events', format: 'integer', emphasis: 'primary' }),
+        buildMetricCard({ id: 'calls', label: 'Calls', value_path: 'presentation_summary.total_calls', format: 'integer' }),
+        buildMetricCard({ id: 'extrinsics', label: 'Extrinsics', value_path: 'presentation_summary.total_extrinsics', format: 'integer' }),
+        buildMetricCard({ id: 'call-success', label: 'Call success', value_path: 'presentation_summary.call_success_rate', format: 'percent', unit: '%' }),
       ],
       panels: [
         ...(Array.isArray(response.top_events)
@@ -396,53 +418,8 @@ export function registerSubstrateAnalyticsTool(server: McpServer) {
       const formatted = formatSubstrateAnalyticsResponse(response, response_format as ResponseFormat)
       const windowLabel = response.overview.window
       const summary = `Analyzed ${response.activity.total_events.toLocaleString()} events and ${response.activity.total_calls.toLocaleString()} calls on ${dataset} across ${windowLabel}.`
-
-      if (response_format === 'full') {
-        const decorated = decoratePresentation(formatted, dataset, windowLabel)
-        return formatResult(decorated.response, summary, {
-          toolName: 'portal_substrate_get_analytics',
-          notices,
-          freshness: buildQueryFreshness({
-            finality: 'latest',
-            headBlockNumber: head.number,
-            windowToBlock: endBlock,
-            resolvedWindow,
-          }),
-          coverage: buildAnalysisCoverage({
-            windowFromBlock: requestedFromBlock,
-            windowToBlock: endBlock,
-            analyzedFromBlock: effectiveFrom,
-            analyzedToBlock: endBlock,
-          }),
-          execution: buildExecutionMetadata({
-            mode,
-            response_format,
-            from_block: effectiveFrom,
-            to_block: endBlock,
-            range_kind: resolvedWindow.range_kind,
-            notes: [
-              'Substrate analytics combines one event scan and one call/extrinsic scan across the selected window.',
-            ],
-          }),
-          ui: decorated.ui,
-          llm: {
-            answer_sequence: ['overview', 'activity.total_events', 'activity.total_calls', 'extrinsics.total_extrinsics', 'top_events', 'top_calls'],
-            parser_notes: [
-              'overview gives the actual analyzed window; check sampled to see whether the requested range exceeded the scan budget.',
-              'top_events and top_calls are already ranked descending by count, so rank 1 is the most frequent item in the selected window.',
-            ],
-          },
-          metadata: {
-            network: dataset,
-            dataset,
-            from_block: effectiveFrom,
-            to_block: endBlock,
-            query_start_time: queryStartTime,
-          },
-        })
-      }
-
-      return formatResult(formatted, summary, {
+      const decorated = decoratePresentation(formatted, dataset, windowLabel)
+      return formatResult(decorated.response, summary, {
         toolName: 'portal_substrate_get_analytics',
         notices,
         freshness: buildQueryFreshness({
@@ -467,6 +444,18 @@ export function registerSubstrateAnalyticsTool(server: McpServer) {
             'Substrate analytics combines one event scan and one call/extrinsic scan across the selected window.',
           ],
         }),
+        ui: decorated.ui,
+        llm: {
+          compact: true,
+          primary_path: Array.isArray((decorated.response as Record<string, unknown>).top_events)
+            ? 'top_events'
+            : 'presentation_summary',
+          answer_sequence: ['presentation_summary', 'overview', 'activity', 'extrinsics', 'top_events', 'top_calls'],
+          parser_notes: [
+            'overview gives the actual analyzed window; check sampled to see whether the requested range exceeded the scan budget.',
+            'top_events and top_calls are ranked descending by count, so rank 1 is the most frequent item in the selected window.',
+          ],
+        },
         metadata: {
           network: dataset,
           dataset,

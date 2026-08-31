@@ -1458,7 +1458,7 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
         const seriesStartTimestamp = Math.floor(requestedWindowStartTimestamp / intervalSeconds) * intervalSeconds
         const seriesEndExclusive = Math.ceil(requestedWindowEndExclusive / intervalSeconds) * intervalSeconds
         const expectedBuckets = Math.max(1, Math.ceil((seriesEndExclusive - seriesStartTimestamp) / intervalSeconds))
-        const sourceWindowComplete = resolvedWindow.from_lookup?.resolution === 'exact'
+        const sourceWindowComplete = resolvedWindow.from_lookup?.resolution === 'verified_boundary'
         const buckets = new Map<number, { fills: number; volume: ExactDecimal; traders: Set<string> }>()
         const fillFields: Record<string, boolean> = { time: true }
         if (metric === 'volume') {

@@ -19,7 +19,12 @@ import {
 import { buildAnalysisCoverage, buildQueryFreshness } from '../../helpers/result-metadata.js'
 import type { ResponseFormat } from '../../helpers/response-modes.js'
 import { buildPercentileSummary } from '../../helpers/statistics.js'
-import { resolveTimeframeOrBlocks, type TimestampInput } from '../../helpers/timeframe.js'
+import {
+  resolveTimeframeOrBlocks,
+  type BlockAtTimestampResult,
+  type EstimatedTimeframeResolution,
+  type TimestampInput,
+} from '../../helpers/timeframe.js'
 import { buildExecutionMetadata, buildToolDescription } from '../../helpers/tool-ux.js'
 import { buildMetricCard, buildPortalUi, buildRankedBarsPanel, buildTablePanel } from '../../helpers/ui-metadata.js'
 import { visitHyperliquidFillBlocks } from './fill-stream.js'
@@ -57,6 +62,9 @@ type HyperliquidAnalyticsCursorRequest = {
   range_kind: 'timeframe' | 'block_range' | 'timestamp_range'
   from_timestamp?: TimestampInput
   to_timestamp?: TimestampInput
+  from_lookup?: BlockAtTimestampResult
+  to_lookup?: BlockAtTimestampResult
+  estimated_timeframe?: EstimatedTimeframeResolution
 }
 
 type HyperliquidAnalyticsCursor = {
@@ -448,7 +456,14 @@ export function registerHyperliquidAnalyticsTool(server: McpServer) {
             to_timestamp: to_timestamp as TimestampInput | undefined,
           })
       const resolvedWindow = paginationCursor
-        ? { range_kind: paginationCursor.request.range_kind }
+        ? {
+            range_kind: paginationCursor.request.range_kind,
+            ...(paginationCursor.request.from_lookup ? { from_lookup: paginationCursor.request.from_lookup } : {}),
+            ...(paginationCursor.request.to_lookup ? { to_lookup: paginationCursor.request.to_lookup } : {}),
+            ...(paginationCursor.request.estimated_timeframe
+              ? { estimated_timeframe: paginationCursor.request.estimated_timeframe }
+              : {}),
+          }
         : freshResolvedWindow!
       const fromBlock = paginationCursor?.request.window_from_block ?? freshResolvedWindow!.from_block
 
@@ -736,6 +751,11 @@ export function registerHyperliquidAnalyticsTool(server: McpServer) {
                 range_kind: resolvedWindow.range_kind,
                 ...(from_timestamp !== undefined ? { from_timestamp: from_timestamp as TimestampInput } : {}),
                 ...(to_timestamp !== undefined ? { to_timestamp: to_timestamp as TimestampInput } : {}),
+                ...(resolvedWindow.from_lookup ? { from_lookup: resolvedWindow.from_lookup } : {}),
+                ...(resolvedWindow.to_lookup ? { to_lookup: resolvedWindow.to_lookup } : {}),
+                ...(resolvedWindow.estimated_timeframe
+                  ? { estimated_timeframe: resolvedWindow.estimated_timeframe }
+                  : {}),
               },
               offsets: {
                 volume_by_coin: volumePage.nextOffset,

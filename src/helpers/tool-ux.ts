@@ -59,6 +59,7 @@ export type ToolExecutionMetadataInput = {
   metric?: string
   interval?: string
   duration?: string
+  duration_seconds?: number
   group_by?: string
   compare_previous?: boolean
   decode?: boolean
@@ -1144,6 +1145,7 @@ export function buildExecutionMetadata(input: ToolExecutionMetadataInput): Recor
   if (input.metric) metadata.metric = input.metric
   if (input.interval) metadata.interval = input.interval
   if (input.duration) metadata.duration = input.duration
+  if (input.duration_seconds !== undefined) metadata.duration_seconds = input.duration_seconds
   if (input.group_by) metadata.group_by = input.group_by
   if (input.compare_previous !== undefined) metadata.compare_previous = input.compare_previous
   if (input.decode !== undefined) metadata.decode = input.decode

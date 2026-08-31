@@ -79,7 +79,8 @@ export interface BlockAtTimestampResult extends ParsedTimestampInput {
   block_timestamp_human?: string
   boundary?: 'from' | 'to' | 'nearest'
   dataset: string
-  resolution: 'exact' | 'estimated'
+  resolution: 'verified_boundary' | 'estimated'
+  timestamp_delta_seconds?: number
   timestamp_human: string
   head_block_number?: number
   head_timestamp?: number
@@ -767,7 +768,8 @@ export async function resolveBlockAtTimestamp(
       block_timestamp_human: formatTimestamp(headTimestamp),
       boundary,
       dataset,
-      resolution: 'exact',
+      resolution: 'verified_boundary',
+      timestamp_delta_seconds: headTimestamp - parsed.timestamp,
       timestamp_human: formatTimestamp(parsed.timestamp),
       head_block_number: headBlock,
       head_timestamp: headTimestamp,
@@ -800,7 +802,8 @@ export async function resolveBlockAtTimestamp(
       block_timestamp_human: formatTimestamp(verified.blockTimestamp),
       boundary,
       dataset,
-      resolution: 'exact',
+      resolution: 'verified_boundary',
+      timestamp_delta_seconds: verified.blockTimestamp - parsed.timestamp,
       timestamp_human: formatTimestamp(parsed.timestamp),
       head_block_number: headBlock,
       head_timestamp: headTimestamp,
@@ -897,7 +900,7 @@ export async function resolveTimeframeOrBlocks(params: {
         headTimestamp,
         verificationRetries: 1,
       })
-      if (lookup.resolution !== 'exact') {
+      if (lookup.resolution !== 'verified_boundary') {
         throw new Error(`Could not verify the ${timeframe} boundary for ${dataset}`)
       }
       markTimestampEndpointUp(dataset)
@@ -906,6 +909,22 @@ export async function resolveTimeframeOrBlocks(params: {
         to_block: latestBlock,
         range_kind: 'timeframe',
         from_lookup: { ...lookup, normalized_input: `${timeframe} before indexed head` },
+        to_lookup: {
+          timestamp: headTimestamp,
+          source: 'unix_seconds',
+          normalized_input: 'indexed head',
+          block_number: latestBlock,
+          block_timestamp: headTimestamp,
+          block_timestamp_human: formatTimestamp(headTimestamp),
+          boundary: 'to',
+          dataset,
+          resolution: 'verified_boundary',
+          timestamp_delta_seconds: 0,
+          timestamp_human: formatTimestamp(headTimestamp),
+          head_block_number: latestBlock,
+          head_timestamp: headTimestamp,
+          head_timestamp_human: formatTimestamp(headTimestamp),
+        },
       }
     } catch {
       // Cache the failure so subsequent calls skip straight to estimation

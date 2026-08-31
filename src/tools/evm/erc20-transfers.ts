@@ -38,6 +38,7 @@ import {
 } from '../../helpers/result-metadata.js'
 import { type TimestampInput, getTimestampWindowNotices, resolveTimeframeOrBlocks } from '../../helpers/timeframe.js'
 import { buildExecutionMetadata, buildToolDescription } from '../../helpers/tool-ux.js'
+import { buildMetricCard, buildPortalUi, buildTimelinePanel } from '../../helpers/ui-metadata.js'
 import { normalizeAddresses, normalizeEvmAddress } from '../../helpers/validation.js'
 import type { BlockHead } from '../../types/index.js'
 
@@ -76,6 +77,40 @@ export function registerGetErc20TransfersTool(server: McpServer) {
     block_number?: number
     log_index?: number
     transaction_hash?: string
+  }
+
+  const buildTransferPresentation = (items: Erc20TransferItem[], nextCursor?: string) => {
+    return {
+      response: { page_summary: { visible_transfers: items.length }, items },
+      ui: buildPortalUi({
+        version: 'portal_ui_v1',
+        layout: 'split',
+        density: 'compact',
+        design_intent: 'activity_investigator',
+        headline: { title: 'Token transfers', subtitle: 'Exact onchain asset movements with full identifiers and units.' },
+        metric_cards: [
+          buildMetricCard({ id: 'visible-transfers', label: 'Visible transfers', value_path: 'page_summary.visible_transfers', format: 'integer', emphasis: 'primary' }),
+        ],
+        panels: [
+          buildTimelinePanel({
+            id: 'transfer-timeline',
+            kind: 'timeline_panel',
+            title: 'Transfer timeline',
+            subtitle: 'Chronological token movements for this page.',
+            data_key: 'items',
+            timestamp_key: 'timestamp_human',
+            title_key: 'value_formatted',
+            subtitle_keys: ['token_symbol', 'sender', 'recipient'],
+            badge_key: 'record_type',
+            emphasis: 'primary',
+          }),
+        ],
+        follow_up_actions: [
+          ...(nextCursor ? [{ label: 'Load older transfers', intent: 'continue' as const, target: '_pagination.next_cursor' }] : []),
+          { label: 'Show raw rows', intent: 'show_raw', target: 'items' },
+        ],
+      }),
+    }
   }
 
   const getBlockNumber = (item: Erc20TransferItem) =>
@@ -512,8 +547,10 @@ export function registerGetErc20TransfersTool(server: McpServer) {
         hasMore: page.hasMore,
       })
 
+      const presentation = buildTransferPresentation(enrichedTransfers as Erc20TransferItem[], nextCursor)
+
       return formatResult(
-        enrichedTransfers,
+        presentation.response,
         scanResult
           ? `Retrieved ${page.pageItems.length} ERC20 transfers by scanning forward from the start of the window`
           : `Retrieved ${page.pageItems.length} ERC20 transfers${page.hasMore ? ` from the most recent matching blocks (preview page limited to ${limit})` : ''}`,
@@ -546,6 +583,14 @@ export function registerGetErc20TransfersTool(server: McpServer) {
               ].filter((note): note is string => Boolean(note)),
             }),
             ...(scanResult ? buildBoundedSearchExecution(scanResult) : {}),
+          },
+          ui: presentation.ui,
+          llm: {
+            compact: true,
+            answer_sequence: ['page_summary', 'items', '_pagination.next_cursor'],
+            parser_notes: [
+              'items contains the exact chronological transfer page; value_formatted carries the decoded token amount and symbol when metadata is available.',
+            ],
           },
           metadata: {
             network: dataset,

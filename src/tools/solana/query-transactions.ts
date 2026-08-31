@@ -62,6 +62,48 @@ export function registerQuerySolanaTransactionsTool(server: McpServer) {
     tx_hash?: string
   }
 
+  const exactIntegerText = (value: unknown): string | undefined => {
+    if (typeof value === 'string' && /^-?\d+$/.test(value)) return value
+    if (typeof value === 'number' && Number.isSafeInteger(value)) return String(value)
+    return undefined
+  }
+
+  const normalizeBalance = (balance: Record<string, unknown>) => {
+    const pre = exactIntegerText(balance.pre)
+    const post = exactIntegerText(balance.post)
+    let change: string | undefined
+    if (pre !== undefined && post !== undefined) change = (BigInt(post) - BigInt(pre)).toString()
+    return {
+      ...balance,
+      ...(pre !== undefined ? { pre: pre, pre_lamports: pre } : {}),
+      ...(post !== undefined ? { post: post, post_lamports: post } : {}),
+      ...(change !== undefined ? { change_lamports: change } : {}),
+      unit: 'lamports',
+    }
+  }
+
+  const normalizeTokenBalance = (balance: Record<string, unknown>) => {
+    const preAmount = exactIntegerText(balance.preAmount)
+    const postAmount = exactIntegerText(balance.postAmount)
+    const decimals = typeof balance.postDecimals === 'number'
+      ? balance.postDecimals
+      : typeof balance.preDecimals === 'number'
+        ? balance.preDecimals
+        : undefined
+    let change: string | undefined
+    if (preAmount !== undefined && postAmount !== undefined) {
+      change = (BigInt(postAmount) - BigInt(preAmount)).toString()
+    }
+    return {
+      ...balance,
+      ...(preAmount !== undefined ? { preAmount, pre_amount_raw: preAmount } : {}),
+      ...(postAmount !== undefined ? { postAmount, post_amount_raw: postAmount } : {}),
+      ...(change !== undefined ? { change_amount_raw: change } : {}),
+      ...(decimals !== undefined ? { decimals } : {}),
+      unit: 'raw token units',
+    }
+  }
+
   const getBlockNumber = (item: SolanaTransactionItem) => typeof item.block_number === 'number' ? item.block_number : undefined
   const getTransactionIndex = (item: SolanaTransactionItem) => {
     if (typeof item.transactionIndex === 'number') return item.transactionIndex
@@ -303,17 +345,37 @@ export function registerQuerySolanaTransactionsTool(server: McpServer) {
           timestamp?: number
           header?: { number?: number; timestamp?: number }
           transactions?: Array<Record<string, unknown>>
+          balances?: Array<Record<string, unknown>>
+          tokenBalances?: Array<Record<string, unknown>>
         }
         const blockNumber = typedBlock.number ?? typedBlock.header?.number
         const timestamp = typedBlock.timestamp ?? typedBlock.header?.timestamp
 
-        return (typedBlock.transactions || []).map((tx) =>
-          normalizeSolanaTransactionResult({
+        return (typedBlock.transactions || []).map((tx) => {
+          const transactionIndex = typeof tx.transactionIndex === 'number'
+            ? tx.transactionIndex
+            : typeof tx.transactionIndex === 'string'
+              ? Number(tx.transactionIndex)
+              : undefined
+          const balances = include_balances && Number.isFinite(transactionIndex)
+            ? (typedBlock.balances || [])
+                .filter((balance) => Number(balance.transactionIndex) === transactionIndex)
+                .map(normalizeBalance)
+            : undefined
+          const tokenBalances = include_token_balances && Number.isFinite(transactionIndex)
+            ? (typedBlock.tokenBalances || [])
+                .filter((balance) => Number(balance.transactionIndex) === transactionIndex)
+                .map(normalizeTokenBalance)
+            : undefined
+
+          return normalizeSolanaTransactionResult({
             ...tx,
             ...(blockNumber !== undefined ? { block_number: blockNumber, slot_number: blockNumber } : {}),
             ...(timestamp !== undefined ? { timestamp } : {}),
-          }) as SolanaTransactionItem,
-        )
+            ...(balances ? { balances } : {}),
+            ...(tokenBalances ? { token_balances: tokenBalances } : {}),
+          }) as SolanaTransactionItem
+        })
       }))
       const page = paginateAscendingItems(
         allTxs,
