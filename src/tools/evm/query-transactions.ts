@@ -445,6 +445,25 @@ function aggregateTransactions(
     .map((row, index) => ({ rank: index + 1, ...row }))
 }
 
+export async function fetchAdaptiveTransactionRange<T>(
+  fromBlock: number,
+  toBlock: number,
+  fetchRange: (rangeFrom: number, rangeTo: number) => Promise<T[]>,
+): Promise<T[]> {
+  try {
+    return await fetchRange(fromBlock, toBlock)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    if (/response too large/i.test(message) && fromBlock < toBlock) {
+      const midpoint = fromBlock + Math.floor((toBlock - fromBlock) / 2)
+      const left = await fetchAdaptiveTransactionRange(fromBlock, midpoint, fetchRange)
+      const right = await fetchAdaptiveTransactionRange(midpoint + 1, toBlock, fetchRange)
+      return [...left, ...right]
+    }
+    throw error
+  }
+}
+
 async function fetchTransactionsByScanOrder({
   url,
   query,
@@ -486,25 +505,13 @@ async function fetchTransactionsByScanOrder({
     maxScanBlocks,
     shouldContinue: () => collected.length < effectiveCandidateLimit,
     fetchChunk: async (chunk) => {
-      const fetchAdaptiveRange = async (rangeFrom: number, rangeTo: number): Promise<unknown[]> => {
-        try {
-          return await portalFetchStreamRange(url, {
+      const records = await fetchAdaptiveTransactionRange(chunk.fromBlock, chunk.toBlock, (rangeFrom, rangeTo) =>
+        portalFetchStreamRange(url, {
             ...query,
             fromBlock: rangeFrom,
             toBlock: rangeTo,
-          })
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error)
-          if (/response too large/i.test(message) && rangeFrom < rangeTo) {
-            const midpoint = rangeFrom + Math.floor((rangeTo - rangeFrom) / 2)
-            const left = await fetchAdaptiveRange(rangeFrom, midpoint)
-            const right = await fetchAdaptiveRange(midpoint + 1, rangeTo)
-            return [...left, ...right]
-          }
-          throw error
-        }
-      }
-      const records = await fetchAdaptiveRange(chunk.fromBlock, chunk.toBlock)
+          }),
+      )
       const txs = sortTransactions(flattenTransactionsWithBlockContext(records) as EvmTransactionItem[])
         .filter((tx) => matchesClientTransactionFilters(tx, clientFilters))
       const orderedChunk = scanOrder === 'latest' ? txs.reverse() : txs

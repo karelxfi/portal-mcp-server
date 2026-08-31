@@ -26,6 +26,7 @@ import { runWithPortalRequestSignal } from '../src/helpers/request-context.js'
 import { registerPortalTool } from '../src/helpers/mcp-registration.js'
 import { toolCallsTotal, toolErrorsTotal, toolOutcomesTotal } from '../src/metrics.js'
 import { createPortalServer } from '../src/server.js'
+import { fetchAdaptiveTransactionRange } from '../src/tools/evm/query-transactions.js'
 import { isBoundedUpstreamToolError, type ToolCallResult } from './test-helpers.ts'
 
 function assert(condition: unknown, message: string): asserts condition {
@@ -119,6 +120,49 @@ async function main() {
   assert(maxActiveScans === 3, `bounded reverse scan should use concurrency 3, observed ${maxActiveScans}`)
   assert(scanResult.scannedBlocks === 50 && scanResult.exhaustedWindow, 'bounded reverse scan should cover its window')
   console.log('PASS  bounded reverse scans preserve coverage while fetching ordered batches concurrently')
+
+  const splitCalls: string[] = []
+  const splitRows = await fetchAdaptiveTransactionRange(1, 4, async (fromBlock, toBlock) => {
+    splitCalls.push(`${fromBlock}-${toBlock}`)
+    if ((fromBlock === 1 && toBlock === 4) || (fromBlock === 1 && toBlock === 2)) {
+      throw new Error('Response too large (>50MB). Add filters or reduce block range.')
+    }
+    return Array.from({ length: toBlock - fromBlock + 1 }, (_, index) => fromBlock + index)
+  })
+  assert(
+    JSON.stringify(splitCalls) === JSON.stringify(['1-4', '1-2', '1-1', '2-2', '3-4']),
+    `adaptive split should retry only bounded subranges, observed ${splitCalls.join(', ')}`,
+  )
+  assert(
+    JSON.stringify(splitRows) === JSON.stringify([1, 2, 3, 4]),
+    'adaptive split should preserve exact left-to-right membership without duplicates',
+  )
+
+  const terminalOversize = new Error('Response too large (>50MB). Add filters or reduce block range.')
+  await expectFastFailure(
+    'single-block transaction oversize fails closed',
+    () => fetchAdaptiveTransactionRange(7, 7, async () => Promise.reject(terminalOversize)),
+    (error) => assert(error === terminalOversize, 'single-block oversize should rethrow the original bounded failure'),
+  )
+
+  const splitCancellation = new AbortController()
+  await expectFastFailure(
+    'adaptive transaction split propagates cancellation',
+    () =>
+      fetchAdaptiveTransactionRange(1, 2, async (fromBlock, toBlock) => {
+        if (fromBlock === 1 && toBlock === 2) {
+          throw new Error('Response too large (>50MB). Add filters or reduce block range.')
+        }
+        if (fromBlock === 1) {
+          splitCancellation.abort()
+          return [1]
+        }
+        if (splitCancellation.signal.aborted) throw new RequestCancelledError()
+        return [2]
+      }),
+    (error) => assert(error instanceof RequestCancelledError, 'adaptive split should preserve cancellation identity'),
+  )
+  console.log('PASS  adaptive transaction splitting is exact and fails closed')
 
   const admission = new AdmissionController(2, 1, 100)
   const releaseFirst = await admission.acquire()
