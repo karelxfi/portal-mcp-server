@@ -413,6 +413,8 @@ button.sqd-chart-hit[aria-pressed='true'] { background: rgb(129 140 248 / 0.08);
   .sqd-metric-value { font-size: 18px; }
   .sqd-card-head { padding-inline: 13px; }
   .sqd-card-body { padding-inline: 13px; }
+  .sqd-table-tools { align-items: stretch; flex-direction: column; gap: 6px; }
+  .sqd-table-tools .sqd-brand-subtitle { align-self: flex-end; max-width: 100%; }
   .sqd-input { font-size: 16px; width: 100%; }
   .sqd-table-pagination { justify-content: space-between; }
   .sqd-event { grid-template-columns: 8px minmax(0, 1fr) auto; }

@@ -125,6 +125,11 @@ async function validate(page: Page, fixture: string, viewport: (typeof viewports
       .first()
       .evaluate((node) => getComputedStyle(node).fontSize)
     assert(inputSize === '16px', `${fixture} mobile inputs should keep the SQD 16px floor`)
+    const rowCount = page.locator('.sqd-table-tools .sqd-brand-subtitle').first()
+    if ((await rowCount.count()) > 0) {
+      const clippedBy = await rowCount.evaluate((node) => node.scrollWidth - node.clientWidth)
+      assert(clippedBy <= 1, `${fixture} mobile exact-row count is clipped by ${clippedBy}px`)
+    }
   }
   assert((await page.locator('.sqd-mark').count()) === 1, `${fixture} should show one SQD mark`)
   assert((await page.locator('h1').count()) === 1, `${fixture} should expose one result heading`)
