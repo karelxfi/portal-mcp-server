@@ -36,7 +36,7 @@ type OhlcDuration = '1h' | '6h' | '12h' | '24h' | '7d' | '30d'
 type OhlcInterval = '1m' | '5m' | '15m' | '30m' | '1h' | '4h' | '6h' | '1d'
 type OhlcIntervalInput = OhlcInterval | 'auto'
 
-type HyperliquidFill = Record<string, unknown> & {
+export type HyperliquidFill = Record<string, unknown> & {
   time?: number | string
   fillIndex?: number | string
   px?: number | string
@@ -45,22 +45,23 @@ type HyperliquidFill = Record<string, unknown> & {
 
 type CandleAccumulator = {
   open: ExactDecimal | null
-  open_order: FillOrder | null
+  open_order: HyperliquidOhlcFillOrder | null
   high: ExactDecimal | null
   low: ExactDecimal | null
   close: ExactDecimal | null
-  close_order: FillOrder | null
+  close_order: HyperliquidOhlcFillOrder | null
   volume: ExactDecimal
   base_volume: ExactDecimal
   fill_count: number
   notional_sum: ExactDecimal
 }
 
-type FillOrder = {
+export type HyperliquidOhlcFillOrder = {
   time_milliseconds: number
   fill_index: number
   block_number: number
   position_in_block: number
+  stable_identity: string
 }
 
 type HyperliquidOhlcCursor = {
@@ -112,7 +113,13 @@ function toSeconds(timestamp: number | string | undefined): number {
   return milliseconds > 0 ? Math.floor(milliseconds / 1000) : 0
 }
 
-function sortFillsForOhlc(fills: HyperliquidFill[]): HyperliquidFill[] {
+function getStableFillIdentity(fill: HyperliquidFill): string {
+  return ['hash', 'tid', 'oid', 'user', 'coin', 'dir', 'side', 'px', 'sz', 'fee', 'feeToken']
+    .map((key) => `${key}:${String(fill[key] ?? '')}`)
+    .join('|')
+}
+
+export function sortHyperliquidFillsForOhlc(fills: HyperliquidFill[]): HyperliquidFill[] {
   return fills.slice().sort((left, right) => {
     const leftTime = toMilliseconds(left.time)
     const rightTime = toMilliseconds(right.time)
@@ -122,16 +129,20 @@ function sortFillsForOhlc(fills: HyperliquidFill[]): HyperliquidFill[] {
     const rightIndex = getFillIndex(right)
     if (leftIndex !== rightIndex) return leftIndex - rightIndex
 
-    return 0
+    return getStableFillIdentity(left).localeCompare(getStableFillIdentity(right))
   })
 }
 
-function compareFillOrder(left: FillOrder, right: FillOrder): number {
+export function compareHyperliquidOhlcFillOrder(
+  left: HyperliquidOhlcFillOrder,
+  right: HyperliquidOhlcFillOrder,
+): number {
   return (
     left.time_milliseconds - right.time_milliseconds ||
     left.fill_index - right.fill_index ||
     left.block_number - right.block_number ||
-    left.position_in_block - right.position_in_block
+    left.position_in_block - right.position_in_block ||
+    left.stable_identity.localeCompare(right.stable_identity)
   )
 }
 
@@ -282,15 +293,16 @@ export function registerHyperliquidOhlcTool(server: McpServer) {
           concurrency: 4,
           onBlock: (block) => {
             const blockNumber = typeof block.header?.number === 'number' ? block.header.number : undefined
-            const fills = sortFillsForOhlc((block.fills || []) as HyperliquidFill[])
+            const fills = sortHyperliquidFillsForOhlc((block.fills || []) as HyperliquidFill[])
             for (let index = 0; index < fills.length; index += 1) {
               const fill = fills[index]
               const timestamp = toSeconds(fill.time)
-              const order: FillOrder = {
+              const order: HyperliquidOhlcFillOrder = {
                 time_milliseconds: toMilliseconds(fill.time),
                 fill_index: getFillIndex(fill),
                 block_number: blockNumber ?? 0,
                 position_in_block: index,
+                stable_identity: getStableFillIdentity(fill),
               }
               const price = parseExactDecimal(fill.px)
               const size = parseExactDecimal(fill.sz)
@@ -319,13 +331,13 @@ export function registerHyperliquidOhlcTool(server: McpServer) {
               const bucket = getOrCreateBucket(buckets, bucketTimestamp)
               const notional = multiplyExactDecimals(price, size)
 
-              if (bucket.open_order === null || compareFillOrder(order, bucket.open_order) < 0) {
+              if (bucket.open_order === null || compareHyperliquidOhlcFillOrder(order, bucket.open_order) < 0) {
                 bucket.open = price
                 bucket.open_order = order
               }
               bucket.high = bucket.high === null || compareExactDecimals(price, bucket.high) > 0 ? price : bucket.high
               bucket.low = bucket.low === null || compareExactDecimals(price, bucket.low) < 0 ? price : bucket.low
-              if (bucket.close_order === null || compareFillOrder(order, bucket.close_order) > 0) {
+              if (bucket.close_order === null || compareHyperliquidOhlcFillOrder(order, bucket.close_order) > 0) {
                 bucket.close = price
                 bucket.close_order = order
               }

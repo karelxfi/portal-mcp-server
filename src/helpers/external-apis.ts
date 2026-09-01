@@ -11,7 +11,13 @@
 import { tokenListCacheEventsTotal, tokenListRequestsTotal } from '../metrics.js'
 import { createCache } from './cache-manager.js'
 import { ActionableError, RequestCancelledError } from './errors.js'
-import { createRequestAbortContext, isAbortLike } from './request-context.js'
+import {
+  createRequestAbortContext,
+  isAbortLike,
+  runAsSharedPortalWork,
+  waitForSharedPortalWork,
+  type SharedPortalWork,
+} from './request-context.js'
 
 const CACHE_TTL = 5 * 60 * 1000 // 5 minutes
 const EXTERNAL_API_TIMEOUT_MS = 5_000
@@ -22,6 +28,7 @@ const TOKEN_LIST_FETCH_ATTEMPTS = 2
 const cache = createCache<unknown>(CACHE_TTL, 500)
 const tokenListCache = createCache<TokenListCacheRecord>(CACHE_TTL, 50)
 const staleTokenLists = new Map<string, TokenListCacheRecord>()
+const pendingTokenLists = new Map<string, SharedPortalWork<TokenListCacheRecord>>()
 
 /**
  * Simple cache wrapper for external API calls
@@ -181,12 +188,29 @@ export async function getCoinGeckoTokenListWithStatus(chain: string): Promise<Co
 
   tokenListCacheEventsTotal.inc({ source, chain: normalizedChain, event: 'miss' })
 
-  try {
+  const existingPending = pendingTokenLists.get(cacheKey)
+  const work = existingPending ?? runAsSharedPortalWork(async () => {
     const data = await fetchCoinGeckoTokenList(normalizedChain, url)
-    const record = { tokens: data.tokens, fetchedAt: Date.now() }
-    tokenListCache.set(cacheKey, record)
-    staleTokenLists.set(cacheKey, record)
+    const loaded = { tokens: data.tokens, fetchedAt: Date.now() }
+    tokenListCache.set(cacheKey, loaded)
+    staleTokenLists.set(cacheKey, loaded)
     tokenListCacheEventsTotal.inc({ source, chain: normalizedChain, event: 'store' })
+    return loaded
+  })
+  if (!existingPending) {
+    pendingTokenLists.set(cacheKey, work)
+    work.promise.then(
+      () => {
+        if (pendingTokenLists.get(cacheKey) === work) pendingTokenLists.delete(cacheKey)
+      },
+      () => {
+        if (pendingTokenLists.get(cacheKey) === work) pendingTokenLists.delete(cacheKey)
+      },
+    )
+  }
+
+  try {
+    const record = await waitForSharedPortalWork(work)
     return buildTokenListResult(normalizedChain, record, 'fresh')
   } catch (error) {
     if (error instanceof RequestCancelledError) throw error

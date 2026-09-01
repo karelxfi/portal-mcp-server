@@ -21,6 +21,10 @@ import {
 import { formatTokenValue, weiToEth } from '../dist/helpers/format.js'
 import { formatTokenUnitsExact } from '../dist/tools/evm/ohlc.js'
 import {
+  compareHyperliquidOhlcFillOrder,
+  sortHyperliquidFillsForOhlc,
+} from '../dist/tools/hyperliquid/ohlc.js'
+import {
   applyWalletSummaryResponseFormat,
   bitcoinValueToSats,
   buildWalletCompleteness,
@@ -215,6 +219,33 @@ function assertExactAssetQuantities() {
   assert(
     calculatePercentile([84_000, 84_704], 95) === 84_668.8,
     'integer percentile interpolation must not expose a binary floating-point tail',
+  )
+}
+
+function assertDeterministicHyperliquidOhlcOrdering() {
+  const tiedRows = [
+    { hash: '0xbbb', user: '0x2', coin: 'BTC', px: '102', sz: '1' },
+    { hash: '0xaaa', user: '0x1', coin: 'BTC', px: '101', sz: '1' },
+  ]
+  const forward = sortHyperliquidFillsForOhlc(tiedRows)
+  const reversed = sortHyperliquidFillsForOhlc(tiedRows.slice().reverse())
+  assert(
+    forward.map((fill) => fill.px).join(',') === reversed.map((fill) => fill.px).join(','),
+    'Hyperliquid OHLC ordering must not inherit upstream row order when timestamps and fill indexes are missing',
+  )
+
+  const sharedTuple = {
+    time_milliseconds: 0,
+    fill_index: 0,
+    block_number: 0,
+    position_in_block: 0,
+  }
+  assert(
+    compareHyperliquidOhlcFillOrder(
+      { ...sharedTuple, stable_identity: 'fill:a' },
+      { ...sharedTuple, stable_identity: 'fill:b' },
+    ) < 0,
+    'Hyperliquid OHLC ordering must break a fully colliding callback tuple deterministically',
   )
 }
 
@@ -807,6 +838,7 @@ async function main() {
   assertIdentityRegressions()
   assertGeneratedIdentityProperties()
   assertExactAssetQuantities()
+  assertDeterministicHyperliquidOhlcOrdering()
   assertWalletCompletenessContract()
   assertModelPreviewKeepsIdentifiersExact()
   assertChecksumValidation()
