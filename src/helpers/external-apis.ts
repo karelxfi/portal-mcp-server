@@ -5,6 +5,7 @@
 // Integrations with external data sources to enrich blockchain data:
 // - DeFi Llama: Protocol TVL, yields, fees, volumes
 // - CoinGecko: Token metadata, prices, logos
+// - DEX Screener: DEX pool address and token-pair metadata
 //
 
 import { tokenListCacheEventsTotal, tokenListRequestsTotal } from '../metrics.js'
@@ -194,6 +195,110 @@ export async function findTokensBySymbol(chain: string, symbol: string): Promise
   const tokens = await getCoinGeckoTokenList(chain)
   const normalizedSymbol = symbol.toUpperCase()
   return tokens.filter((t) => t.symbol.toUpperCase() === normalizedSymbol)
+}
+
+// ============================================================================
+// DEX Screener Pool Metadata
+// ============================================================================
+
+const DEXSCREENER_API = 'https://api.dexscreener.com'
+
+export type DexScreenerToken = {
+  address: string
+  name: string
+  symbol: string
+}
+
+export type DexScreenerPair = {
+  chainId: string
+  dexId: string
+  pairAddress: string
+  labels: string[]
+  baseToken: DexScreenerToken
+  quoteToken: DexScreenerToken
+  liquidityUsd?: number
+}
+
+type DexScreenerPairResponse = {
+  pairs?: unknown[] | null
+}
+
+function normalizeDexScreenerPair(value: unknown): DexScreenerPair | undefined {
+  if (!value || typeof value !== 'object') return undefined
+  const pair = value as Record<string, unknown>
+  const baseToken = pair.baseToken as Record<string, unknown> | undefined
+  const quoteToken = pair.quoteToken as Record<string, unknown> | undefined
+  const liquidity = pair.liquidity as Record<string, unknown> | undefined
+
+  if (
+    typeof pair.chainId !== 'string' ||
+    typeof pair.dexId !== 'string' ||
+    typeof pair.pairAddress !== 'string' ||
+    typeof baseToken?.address !== 'string' ||
+    typeof baseToken?.name !== 'string' ||
+    typeof baseToken?.symbol !== 'string' ||
+    typeof quoteToken?.address !== 'string' ||
+    typeof quoteToken?.name !== 'string' ||
+    typeof quoteToken?.symbol !== 'string'
+  ) {
+    return undefined
+  }
+
+  return {
+    chainId: pair.chainId,
+    dexId: pair.dexId,
+    pairAddress: pair.pairAddress,
+    labels: Array.isArray(pair.labels)
+      ? pair.labels.filter((label): label is string => typeof label === 'string')
+      : [],
+    baseToken: {
+      address: baseToken.address,
+      name: baseToken.name,
+      symbol: baseToken.symbol,
+    },
+    quoteToken: {
+      address: quoteToken.address,
+      name: quoteToken.name,
+      symbol: quoteToken.symbol,
+    },
+    ...(typeof liquidity?.usd === 'number' && Number.isFinite(liquidity.usd)
+      ? { liquidityUsd: liquidity.usd }
+      : {}),
+  }
+}
+
+export async function getDexScreenerPair(
+  chain: string,
+  pairAddress: string,
+): Promise<DexScreenerPair | undefined> {
+  const normalizedChain = chain.trim().toLowerCase()
+  const normalizedPairAddress = pairAddress.trim().toLowerCase()
+  return withCache(`dexscreener:pair:${normalizedChain}:${normalizedPairAddress}`, CACHE_TTL, async () => {
+    const response = await fetchExternalJson<DexScreenerPairResponse>(
+      `${DEXSCREENER_API}/latest/dex/pairs/${encodeURIComponent(normalizedChain)}/${encodeURIComponent(normalizedPairAddress)}`,
+      'DEX Screener API',
+    )
+    return (response.pairs ?? [])
+      .map(normalizeDexScreenerPair)
+      .find((pair): pair is DexScreenerPair => Boolean(pair))
+  })
+}
+
+export async function getDexScreenerTokenPairs(
+  chain: string,
+  tokenAddress: string,
+): Promise<DexScreenerPair[]> {
+  const normalizedChain = chain.trim().toLowerCase()
+  const normalizedTokenAddress = tokenAddress.trim().toLowerCase()
+  return withCache(`dexscreener:token-pairs:${normalizedChain}:${normalizedTokenAddress}`, CACHE_TTL, async () => {
+    const response = await fetchExternalJson<unknown[]>(
+      `${DEXSCREENER_API}/token-pairs/v1/${encodeURIComponent(normalizedChain)}/${encodeURIComponent(normalizedTokenAddress)}`,
+      'DEX Screener API',
+    )
+    return (Array.isArray(response) ? response : [])
+      .map(normalizeDexScreenerPair)
+      .filter((pair): pair is DexScreenerPair => Boolean(pair))
+  })
 }
 
 // ============================================================================

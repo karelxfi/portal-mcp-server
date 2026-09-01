@@ -633,7 +633,16 @@ export const TOOL_SPECS: ToolSpec[] = [
 
       const poolData = poolResult.data
       assert(poolData.matches?.[0]?.identifier === context.baseUniswapV4PoolId, 'Expected pool id match')
-      assert(poolData.matches?.[0]?.validation_status === 'format_only', 'Expected explicit pool validation status')
+      assert(
+        ['format_only', 'external_indexer_match'].includes(poolData.matches?.[0]?.validation_status),
+        'Expected explicit pool validation status',
+      )
+      if (poolData.matches?.[0]?.validation_status === 'external_indexer_match') {
+        assert(
+          poolData.matches[0].base_token?.address && poolData.matches[0].quote_token?.address,
+          'Externally matched pools must include both token addresses',
+        )
+      }
     },
   },
   {

@@ -82,8 +82,9 @@
     "portal_evm_get_contract_activity": {
       "median_chars": 4776,
       "p95_chars": 4776,
-      "max_median_chars": 5527,
-      "max_p95_chars": 5527
+      "max_median_chars": 6000,
+      "max_p95_chars": 6000,
+      "rationale": "Live event mixes change the ranked activity rows; keep the complete response below a fixed 6k product budget."
     },
     "portal_evm_get_analytics": {
       "median_chars": 16428,

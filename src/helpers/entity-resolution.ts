@@ -1,12 +1,15 @@
 import { resolveDataset } from '../cache/datasets.js'
 import { tokenListUnsupportedNetworksTotal } from '../metrics.js'
 import { detectChainType } from './chain.js'
-import { ActionableError } from './errors.js'
+import { ActionableError, RequestCancelledError } from './errors.js'
 import {
   type CoinGeckoToken,
   type CoinGeckoTokenListResult,
+  type DexScreenerPair,
   type DefiLlamaProtocol,
   getCoinGeckoTokenListWithStatus,
+  getDexScreenerPair,
+  getDexScreenerTokenPairs,
   getDefiLlamaProtocols,
 } from './external-apis.js'
 import { isValidEvmAddress, normalizeEvmAddress } from './validation.js'
@@ -17,6 +20,7 @@ export type EntityResolverSource =
   | 'built_in_contract_alias'
   | 'input_address'
   | 'defillama_protocols'
+  | 'dexscreener_pair_metadata'
   | 'user_input_format'
   | 'user_input_normalized'
   | 'built_in_coin_alias'
@@ -61,8 +65,13 @@ export type ResolvedPoolEntity = {
   network: string
   identifier: string
   identifier_type: 'evm_address' | 'evm_bytes32_pool_id'
-  validation_status: 'format_only'
-  source: 'user_input_format'
+  validation_status: 'format_only' | 'external_indexer_match'
+  source: 'user_input_format' | 'dexscreener_pair_metadata'
+  dex_id?: string
+  labels?: string[]
+  base_token?: { address: string; name: string; symbol: string }
+  quote_token?: { address: string; name: string; symbol: string }
+  liquidity_usd?: number
 }
 
 export type ResolvedHyperliquidCoinEntity = {
@@ -213,6 +222,10 @@ export function getTokenListChainForDataset(dataset: string): string | undefined
   if (normalized.startsWith('avalanche-')) return 'avalanche'
   if (normalized.startsWith('binance-') || normalized.startsWith('bsc-')) return 'bsc'
   return undefined
+}
+
+export function getDexScreenerChainForDataset(dataset: string): string | undefined {
+  return getTokenListChainForDataset(dataset)
 }
 
 export async function getTokenListForDatasetWithStatus(
@@ -557,13 +570,67 @@ export async function resolveProtocolQuery({
   }
 }
 
+function normalizeDexToken(token: DexScreenerPair['baseToken']) {
+  return {
+    address: normalizeEvmAddress(token.address),
+    name: token.name,
+    symbol: token.symbol,
+  }
+}
+
+function asResolvedPool(dataset: string, pair: DexScreenerPair): ResolvedPoolEntity {
+  const identifier = pair.pairAddress.toLowerCase()
+  return {
+    kind: 'pool',
+    network: dataset,
+    identifier,
+    identifier_type: identifier.length === 66 ? 'evm_bytes32_pool_id' : 'evm_address',
+    validation_status: 'external_indexer_match',
+    source: 'dexscreener_pair_metadata',
+    dex_id: pair.dexId,
+    ...(pair.labels.length > 0 ? { labels: pair.labels } : {}),
+    base_token: normalizeDexToken(pair.baseToken),
+    quote_token: normalizeDexToken(pair.quoteToken),
+    ...(pair.liquidityUsd !== undefined ? { liquidity_usd: pair.liquidityUsd } : {}),
+  }
+}
+
+function parsePoolQuery(query: string): { symbols: string[]; dexHint?: string; versionHint?: string } {
+  const normalized = query.trim().toLowerCase()
+  const dexHint = normalized.includes('uniswap')
+    ? 'uniswap'
+    : normalized.includes('aerodrome')
+      ? 'aerodrome'
+      : normalized.includes('pancake')
+        ? 'pancakeswap'
+        : normalized.includes('sushi')
+          ? 'sushiswap'
+          : undefined
+  const versionHint = normalized.match(/\bv([234])\b/)?.[0]
+  const ignored = new Set([
+    'POOL', 'PAIR', 'UNISWAP', 'AERODROME', 'PANCAKE', 'PANCAKESWAP', 'SUSHI', 'SUSHISWAP',
+    'SWAP', 'DEX', 'V2', 'V3', 'V4',
+  ])
+  const symbols = Array.from(
+    new Set((query.toUpperCase().match(/[A-Z][A-Z0-9._-]{1,14}/g) ?? []).filter((value) => !ignored.has(value))),
+  ).slice(0, 2)
+  return { symbols, dexHint, versionHint }
+}
+
 export async function resolvePoolQuery({
   network,
   query,
+  limit = 10,
 }: {
   network: string
   query: string
-}): Promise<{ dataset: string; query: string; matches: ResolvedPoolEntity[]; source: 'user_input_format' }> {
+  limit?: number
+}): Promise<{
+  dataset: string
+  query: string
+  matches: ResolvedPoolEntity[]
+  source: 'user_input_format' | 'dexscreener_pair_metadata'
+}> {
   const dataset = await resolveDataset(network)
   if (detectChainType(dataset) !== 'evm') {
     throw new ActionableError(`Pool identifier resolution is only supported for EVM datasets. Got ${dataset}.`, [
@@ -574,32 +641,107 @@ export async function resolvePoolQuery({
 
   const trimmed = query.trim()
   const lower = trimmed.toLowerCase()
-  const match =
-    /^0x[0-9a-f]{40}$/.test(lower)
-      ? {
-          kind: 'pool' as const,
-          network: dataset,
-          identifier: lower,
-          identifier_type: 'evm_address' as const,
-          validation_status: 'format_only' as const,
-          source: 'user_input_format' as const,
-        }
-      : /^0x[0-9a-f]{64}$/.test(lower)
-        ? {
-            kind: 'pool' as const,
-            network: dataset,
-            identifier: lower,
-            identifier_type: 'evm_bytes32_pool_id' as const,
-            validation_status: 'format_only' as const,
-            source: 'user_input_format' as const,
+  const identifierType = /^0x[0-9a-f]{40}$/.test(lower)
+    ? 'evm_address' as const
+    : /^0x[0-9a-f]{64}$/.test(lower)
+      ? 'evm_bytes32_pool_id' as const
+      : undefined
+  const dexChain = getDexScreenerChainForDataset(dataset)
+
+  if (identifierType) {
+    if (dexChain) {
+      try {
+        const pair = await getDexScreenerPair(dexChain, lower)
+        if (pair) {
+          return {
+            dataset,
+            query: trimmed,
+            matches: [asResolvedPool(dataset, pair)],
+            source: 'dexscreener_pair_metadata',
           }
-        : undefined
+        }
+      } catch (error) {
+        if (error instanceof RequestCancelledError) throw error
+      }
+    }
+
+    return {
+      dataset,
+      query: trimmed,
+      matches: [{
+        kind: 'pool',
+        network: dataset,
+        identifier: lower,
+        identifier_type: identifierType,
+        validation_status: 'format_only',
+        source: 'user_input_format',
+      }],
+      source: 'user_input_format',
+    }
+  }
+
+  if (!dexChain) {
+    return { dataset, query: trimmed, matches: [], source: 'user_input_format' }
+  }
+
+  const parsed = parsePoolQuery(trimmed)
+  if (parsed.symbols.length < 2) {
+    return { dataset, query: trimmed, matches: [], source: 'user_input_format' }
+  }
+
+  const symbolResolution = await resolveTokenSymbolsForQuery({
+    dataset,
+    symbols: parsed.symbols,
+    maxMatchesPerSymbol: 5,
+  })
+  const firstAddresses = symbolResolution.resolutions[0]?.selected_addresses ?? []
+  const firstAddressSet = new Set(firstAddresses.map((address) => address.toLowerCase()))
+  const secondAddresses = new Set(
+    (symbolResolution.resolutions[1]?.selected_addresses ?? []).map((address) => address.toLowerCase()),
+  )
+  if (firstAddresses.length === 0 || secondAddresses.size === 0) {
+    return { dataset, query: trimmed, matches: [], source: 'user_input_format' }
+  }
+
+  const candidates: DexScreenerPair[] = []
+  for (const address of firstAddresses.slice(0, 3)) {
+    try {
+      candidates.push(...await getDexScreenerTokenPairs(dexChain, address))
+    } catch (error) {
+      if (error instanceof RequestCancelledError) throw error
+    }
+  }
+
+  const normalizedLimit = Math.min(Math.max(Math.floor(limit), 1), 50)
+  const seen = new Set<string>()
+  const matches = candidates
+    .filter((pair) => pair.chainId.toLowerCase() === dexChain)
+    .filter((pair) => {
+      const base = pair.baseToken.address.toLowerCase()
+      const quote = pair.quoteToken.address.toLowerCase()
+      return (
+        (firstAddressSet.has(base) && secondAddresses.has(quote)) ||
+        (firstAddressSet.has(quote) && secondAddresses.has(base))
+      )
+    })
+    .filter((pair) => /^0x(?:[0-9a-fA-F]{40}|[0-9a-fA-F]{64})$/.test(pair.pairAddress))
+    .filter((pair) => !parsed.dexHint || pair.dexId.toLowerCase().includes(parsed.dexHint))
+    .filter((pair) => !parsed.versionHint || pair.labels.some((label) => label.toLowerCase() === parsed.versionHint))
+    .sort((left, right) => (right.liquidityUsd ?? 0) - (left.liquidityUsd ?? 0))
+    .filter((pair) => {
+      const key = pair.pairAddress.toLowerCase()
+      if (seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
+    .slice(0, normalizedLimit)
+    .map((pair) => asResolvedPool(dataset, pair))
 
   return {
     dataset,
     query: trimmed,
-    matches: match ? [match] : [],
-    source: 'user_input_format',
+    matches,
+    source: matches.length > 0 ? 'dexscreener_pair_metadata' : 'user_input_format',
   }
 }
 

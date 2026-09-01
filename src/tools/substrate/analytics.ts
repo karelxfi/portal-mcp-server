@@ -15,7 +15,6 @@ import { resolveTimeframeOrBlocks, type TimestampInput } from '../../helpers/tim
 import { buildExecutionMetadata, buildToolDescription } from '../../helpers/tool-ux.js'
 import { buildMetricCard, buildPortalUi, buildRankedBarsPanel, buildTablePanel } from '../../helpers/ui-metadata.js'
 
-import { buildSubstrateBlockFields, buildSubstrateCallFields, buildSubstrateEventFields, buildSubstrateExtrinsicFields } from '../../helpers/fields.js'
 import type { ResponseFormat } from '../../helpers/response-modes.js'
 import { SUBSTRATE_INDEXING_NOTICE, buildSubstrateWindowLabel } from './shared.js'
 
@@ -305,8 +304,8 @@ export function registerSubstrateAnalyticsTool(server: McpServer) {
         toBlock: endBlock,
         includeAllBlocks: true,
         fields: {
-          block: buildSubstrateBlockFields(),
-          event: buildSubstrateEventFields(),
+          block: { number: true },
+          event: { name: true },
         },
         events: [{}],
       }
@@ -316,9 +315,9 @@ export function registerSubstrateAnalyticsTool(server: McpServer) {
         toBlock: endBlock,
         includeAllBlocks: true,
         fields: {
-          block: buildSubstrateBlockFields(),
-          call: buildSubstrateCallFields(),
-          extrinsic: buildSubstrateExtrinsicFields(),
+          block: { number: true },
+          call: { name: true, success: true },
+          extrinsic: { index: true, success: true, fee: true },
         },
         calls: [{ extrinsic: true }],
       }
@@ -441,7 +440,7 @@ export function registerSubstrateAnalyticsTool(server: McpServer) {
           to_block: endBlock,
           range_kind: resolvedWindow.range_kind,
           notes: [
-            'Substrate analytics combines one event scan and one call/extrinsic scan across the selected window.',
+            'Substrate analytics combines one minimal-field event scan and one minimal-field call/extrinsic scan across the selected window.',
           ],
         }),
         ui: decorated.ui,

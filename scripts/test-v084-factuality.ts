@@ -598,6 +598,21 @@ async function assertLiveAggregateAndOhlcParity() {
       String(ohlcData.summary.total_quote_volume) === sumDecimalStrings(candles.map((candle) => String(candle.quote_volume))),
       'OHLC quote volume must equal returned candles exactly',
     )
+    assert(
+      ohlcData.summary.pair_label === 'WETH/USDC' && ohlcData.summary.price_unit === 'USDC/WETH',
+      'Base WETH/USDC candles must resolve human token labels and quote units',
+    )
+    assert(
+      ohlcData.summary.price_scale === 'adjusted' &&
+        Number(ohlcData.summary.latest_close) > 100 &&
+        Number(ohlcData.summary.latest_close) < 100_000,
+      'Base WETH/USDC candles must apply token decimals instead of returning a raw scientific ratio',
+    )
+    assert(
+      Math.floor(Date.parse(ohlcData.summary.window_end_exclusive_human) / 1000) ===
+        ohlcData.summary.window_end_exclusive,
+      'EVM OHLC exclusive-end human timestamp must describe the exact exclusive epoch',
+    )
     assertNoUnsafeIntegers(ohlcData)
 
     const recentHyperliquid = await callToolWithRetry(connected.client, 'portal_hyperliquid_get_ohlc', {

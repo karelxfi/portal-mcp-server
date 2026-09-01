@@ -16,9 +16,11 @@ import {
 import {
   type TokenListLookupMetadata,
   buildTokenListLookupNotices,
+  getDexScreenerChainForDataset,
   resolveTokenByAddressFromListWithStatus,
 } from '../../helpers/entity-resolution.js'
 import { RequestCancelledError, createUnsupportedChainError } from '../../helpers/errors.js'
+import { type DexScreenerPair, getDexScreenerPair } from '../../helpers/external-apis.js'
 import { portalFetchRecentRecords, portalFetchStreamRangeVisit } from '../../helpers/fetch.js'
 import { buildEvmLogFields } from '../../helpers/fields.js'
 import { formatResult, formatTimestamp } from '../../helpers/format.js'
@@ -1337,8 +1339,48 @@ export function registerEvmOhlcTool(server: McpServer) {
         }
       }
 
-      const effectiveToken0Address = token0_address ? normalizeEvmAddress(token0_address) : normalizedCurrency0Address
-      const effectiveToken1Address = token1_address ? normalizeEvmAddress(token1_address) : normalizedCurrency1Address
+      let poolPairMetadata: DexScreenerPair | undefined
+      let poolPairMetadataResolutionStatus: 'not_requested' | 'resolved' | 'not_found' | 'timeout' | 'failed' =
+        'not_requested'
+      if (
+        !isUniswapV4SwapSource(source as EvmOhlcSource) &&
+        normalizedPoolAddress &&
+        (!token0_address || !token1_address || token0_decimals === undefined || token1_decimals === undefined)
+      ) {
+        const dexChain = getDexScreenerChainForDataset(dataset)
+        if (dexChain) {
+          try {
+            const metadataLookup = await runOptionalWorkWithinBudget(
+              EVM_OHLC_METADATA_BUDGET_MS[mode as OhlcMode],
+              () => getDexScreenerPair(dexChain, normalizedPoolAddress!),
+            )
+            poolPairMetadata = metadataLookup.value
+            poolPairMetadataResolutionStatus = metadataLookup.timedOut
+              ? 'timeout'
+              : poolPairMetadata
+                ? 'resolved'
+                : 'not_found'
+          } catch (error) {
+            if (error instanceof RequestCancelledError) throw error
+            const message = error instanceof Error ? error.message : String(error)
+            poolPairMetadataResolutionStatus = isTimeoutLikeMessage(message) ? 'timeout' : 'failed'
+          }
+        }
+      }
+
+      const poolPairTokens = poolPairMetadata
+        ? [poolPairMetadata.baseToken, poolPairMetadata.quoteToken]
+            .filter((token) => /^0x[0-9a-fA-F]{40}$/.test(token.address))
+            .sort((left, right) => compareHexAddresses(normalizeEvmAddress(left.address), normalizeEvmAddress(right.address)))
+        : []
+      const poolToken0 = poolPairTokens[0]
+      const poolToken1 = poolPairTokens[1]
+      const effectiveToken0Address = token0_address
+        ? normalizeEvmAddress(token0_address)
+        : normalizedCurrency0Address ?? (poolToken0 ? normalizeEvmAddress(poolToken0.address) : undefined)
+      const effectiveToken1Address = token1_address
+        ? normalizeEvmAddress(token1_address)
+        : normalizedCurrency1Address ?? (poolToken1 ? normalizeEvmAddress(poolToken1.address) : undefined)
       let tokenListMetadataFailed = false
       const tokenListMetadataLookups: TokenListLookupMetadata[] = []
       const [token0ListMetadata, token1ListMetadata] = await Promise.all([
@@ -1371,8 +1413,8 @@ export function registerEvmOhlcTool(server: McpServer) {
       ])
       const resolvedToken0Decimals = token0_decimals ?? token0ListMetadata?.decimals
       const resolvedToken1Decimals = token1_decimals ?? token1ListMetadata?.decimals
-      const resolvedToken0Symbol = token0_symbol ?? token0ListMetadata?.symbol
-      const resolvedToken1Symbol = token1_symbol ?? token1ListMetadata?.symbol
+      const resolvedToken0Symbol = token0_symbol ?? token0ListMetadata?.symbol ?? poolToken0?.symbol
+      const resolvedToken1Symbol = token1_symbol ?? token1ListMetadata?.symbol ?? poolToken1?.symbol
       const token0Label = resolveTokenLabel('token0', resolvedToken0Symbol, effectiveToken0Address)
       const token1Label = resolveTokenLabel('token1', resolvedToken1Symbol, effectiveToken1Address)
       const volumePanel = !isReserveSyncSource(source as EvmOhlcSource)
@@ -1745,6 +1787,15 @@ export function registerEvmOhlcTool(server: McpServer) {
       if (tokenListMetadataFailed) {
         notices.push('Token-list metadata lookup failed; any missing token symbols or decimals were left unresolved.')
       }
+      if (poolPairMetadataResolutionStatus === 'resolved') {
+        notices.push(
+          'Resolved pool token addresses through DEX Screener pair metadata. Candle and volume rows still come from SQD Portal.',
+        )
+      } else if (poolPairMetadataResolutionStatus === 'timeout' || poolPairMetadataResolutionStatus === 'failed') {
+        notices.push(
+          'Skipped optional pool metadata enrichment after the external lookup failed. Candles still come from SQD Portal, but labels may stay generic.',
+        )
+      }
       for (const lookup of tokenListMetadataLookups) {
         notices.push(...buildTokenListLookupNotices(lookup))
       }
@@ -1875,6 +1926,7 @@ export function registerEvmOhlcTool(server: McpServer) {
         ...(normalizedPoolAddress ? { contract_address: normalizedPoolAddress } : {}),
         ...(normalizedPoolManagerAddress ? { pool_manager_address: normalizedPoolManagerAddress } : {}),
         ...(normalizedPoolId ? { pool_id: normalizedPoolId } : {}),
+        ...(poolPairMetadata ? { pool_metadata_source: 'dexscreener_pair_metadata' } : {}),
         ...(normalizedCurrency0Address ? { currency0_address: normalizedCurrency0Address } : {}),
         ...(normalizedCurrency1Address ? { currency1_address: normalizedCurrency1Address } : {}),
         ...(fee !== undefined ? { fee } : {}),
@@ -1925,7 +1977,7 @@ export function registerEvmOhlcTool(server: McpServer) {
         window_start_timestamp: seriesStartTimestamp,
         window_start_timestamp_human: formatTimestamp(seriesStartTimestamp),
         window_end_exclusive: indexedEvidenceEndExclusive,
-        window_end_exclusive_human: formatTimestamp(Math.max(seriesStartTimestamp, indexedEvidenceEndExclusive - 1)),
+        window_end_exclusive_human: formatTimestamp(indexedEvidenceEndExclusive),
         final_bucket_complete: ohlc.at(-1)?.bucket_complete ?? false,
         ...(firstFilled ? { series_open: firstFilled.open } : {}),
         ...(lastFilled ? { series_close: lastFilled.close } : {}),
@@ -2010,7 +2062,10 @@ export function registerEvmOhlcTool(server: McpServer) {
           ...(fee !== undefined ? { fee } : {}),
           ...(tick_spacing !== undefined ? { tick_spacing } : {}),
           ...(normalizedHooksAddress !== ZERO_ADDRESS ? { hooks_address: normalizedHooksAddress } : {}),
-          metadata_resolution_status: v4MetadataResolutionStatus,
+          metadata_resolution_status: isUniswapV4SwapSource(source as EvmOhlcSource)
+            ? v4MetadataResolutionStatus
+            : poolPairMetadataResolutionStatus,
+          ...(poolPairMetadata ? { metadata_source: 'dexscreener_pair_metadata' } : {}),
           metadata_resolved_from_initialize: Boolean(resolvedV4Metadata),
           ...(resolvedV4Metadata?.initialized_block !== undefined
             ? { initialized_block: resolvedV4Metadata.initialized_block }
@@ -2242,6 +2297,9 @@ export function registerEvmOhlcTool(server: McpServer) {
             notes: [
               `Execution depth: ${backfillInterrupted ? 'partial_window' : mode === 'fast' ? 'bounded_preview' : 'complete_window'}.`,
               `Price source: ${source}.`,
+              ...(poolPairMetadata
+                ? ['Pool token addresses came from DEX Screener pair metadata; candle rows came from SQD Portal.']
+                : []),
               ...(normalizedPoolId ? [`Pool id: ${normalizedPoolId}.`] : []),
               `Source family: ${sourceFamily}; price method: ${priceMethod}.`,
               ...(volumePanel

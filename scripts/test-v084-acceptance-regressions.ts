@@ -116,6 +116,59 @@ async function main() {
     assertAppDelivery(tokenTransfers.data, 'Base token transfers')
     assertEvidence(tokenTransfers.data, 'Base token transfers', { allowEmpty: true })
 
+    const filteredLogs = await callToolWithRetry(
+      connected.client,
+      'portal_evm_query_logs',
+      {
+        network: 'base',
+        timeframe: '1h',
+        addresses: ['0x833589fcd6edb6e08f4c7c32d4f71b54bda02913'],
+        event: 'transfer',
+        limit: 3,
+        field_preset: 'minimal',
+      },
+      { retries: 1, totalBudgetMs: 60_000 },
+    )
+    assert(!filteredLogs.isError, `Base one-hour filtered logs failed: ${filteredLogs.text.slice(0, 240)}`)
+    assert((filteredLogs.data?.items ?? []).length === 3, 'Base filtered logs must honor limit=3')
+    assert(Buffer.byteLength(filteredLogs.text, 'utf8') < 50 * 1024, 'Base filtered logs must fit a 50KB MCP result')
+    assert(filteredLogs.data?._coverage?.result_complete === false, 'a limited log preview must stay marked partial')
+
+    const solanaInstructions = await callToolWithRetry(
+      connected.client,
+      'portal_solana_query_instructions',
+      {
+        network: 'solana-mainnet',
+        timeframe: '1h',
+        program_id: 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA',
+        limit: 3,
+      },
+      { retries: 1, totalBudgetMs: 60_000 },
+    )
+    assert(!solanaInstructions.isError, `Solana one-hour instructions failed: ${solanaInstructions.text.slice(0, 240)}`)
+    assert((solanaInstructions.data?.items ?? []).length === 3, 'Solana instructions must honor limit=3')
+    assert(Buffer.byteLength(solanaInstructions.text, 'utf8') < 50 * 1024, 'Solana instructions must fit a 50KB MCP result')
+    assert(
+      solanaInstructions.data?._coverage?.result_complete === false,
+      'a limited Solana instruction preview must stay marked partial',
+    )
+
+    const resolvedPool = await callToolWithRetry(
+      connected.client,
+      'portal_resolve_entity',
+      { network: 'base', kind: 'pool', query: 'WETH/USDC uniswap', limit: 10 },
+      { retries: 1, totalBudgetMs: 30_000 },
+    )
+    assert(!resolvedPool.isError, `Base pool-name discovery failed: ${resolvedPool.text.slice(0, 240)}`)
+    assert((resolvedPool.data?.matches ?? []).length > 0, 'pool-name discovery must return Base WETH/USDC candidates')
+    assert(
+      resolvedPool.data.matches.every((match: any) =>
+        match.validation_status === 'external_indexer_match' && match.base_token?.address && match.quote_token?.address,
+      ),
+      'pool-name matches must include externally matched token-pair metadata',
+    )
+    assert(resolvedPool.data?.suggested_arguments?.pool_address, 'pool discovery must provide an OHLC-ready pool address')
+
     const solanaAnalytics = await callToolWithRetry(
       connected.client,
       'portal_solana_get_analytics',
@@ -154,8 +207,8 @@ async function main() {
       'portal_substrate_get_analytics',
       {
         network: 'polkadot',
-        from_block: POLKADOT_SAMPLE_FROM_BLOCK,
-        to_block: POLKADOT_SAMPLE_TO_BLOCK,
+        timeframe: '1h',
+        mode: 'fast',
         response_format: 'compact',
         section_limit: 3,
       },
@@ -164,6 +217,11 @@ async function main() {
     assert(!substrateAnalytics.isError, `Substrate analytics failed: ${substrateAnalytics.text.slice(0, 240)}`)
     assertAppDelivery(substrateAnalytics.data, 'Substrate analytics')
     assertEvidence(substrateAnalytics.data, 'Substrate analytics')
+    assert(substrateAnalytics.data?.overview?.sampled === false, 'one-hour Polkadot analytics must analyze the complete window')
+    assert(
+      substrateAnalytics.data?._coverage?.requested_blocks === substrateAnalytics.data?._coverage?.analyzed_blocks,
+      'Polkadot analytics requested and analyzed block counts must match',
+    )
 
     const substrateEvents = await callToolWithRetry(
       connected.client,
