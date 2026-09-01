@@ -15,6 +15,7 @@ import { createRequestAbortContext, isAbortLike } from './request-context.js'
 
 const CACHE_TTL = 5 * 60 * 1000 // 5 minutes
 const EXTERNAL_API_TIMEOUT_MS = 5_000
+const TOKEN_LIST_FETCH_ATTEMPTS = 2
 
 // Managed cache with automatic cleanup to prevent memory leaks
 // Max 500 entries for external API data (token lists can be large)
@@ -129,6 +130,34 @@ function buildTokenListResult(chain: string, record: TokenListCacheRecord, cache
   }
 }
 
+function isRetryableTokenListError(error: unknown): boolean {
+  if (error instanceof RequestCancelledError) return false
+  if (error instanceof ActionableError) return error.retryable
+  if (!(error instanceof Error)) return false
+  return /fetch failed|network|socket|\b429\b|\b5\d\d\b/i.test(error.message)
+}
+
+async function fetchCoinGeckoTokenList(chain: string, url: string): Promise<CoinGeckoTokenList> {
+  let lastError: unknown
+
+  for (let attempt = 1; attempt <= TOKEN_LIST_FETCH_ATTEMPTS; attempt += 1) {
+    tokenListRequestsTotal.inc({ source: 'coingecko_token_list', chain, status: 'attempt' })
+    try {
+      const data = await fetchExternalJson<CoinGeckoTokenList>(url, 'CoinGecko API')
+      tokenListRequestsTotal.inc({ source: 'coingecko_token_list', chain, status: 'success' })
+      return data
+    } catch (error) {
+      tokenListRequestsTotal.inc({ source: 'coingecko_token_list', chain, status: 'error' })
+      if (error instanceof RequestCancelledError) throw error
+      lastError = error
+      if (attempt >= TOKEN_LIST_FETCH_ATTEMPTS || !isRetryableTokenListError(error)) throw error
+      tokenListCacheEventsTotal.inc({ source: 'coingecko_token_list', chain, event: 'retry' })
+    }
+  }
+
+  throw lastError
+}
+
 /**
  * Get token list for a chain from CoinGecko
  */
@@ -153,16 +182,13 @@ export async function getCoinGeckoTokenListWithStatus(chain: string): Promise<Co
   tokenListCacheEventsTotal.inc({ source, chain: normalizedChain, event: 'miss' })
 
   try {
-    tokenListRequestsTotal.inc({ source, chain: normalizedChain, status: 'attempt' })
-    const data = await fetchExternalJson<CoinGeckoTokenList>(url, 'CoinGecko API')
+    const data = await fetchCoinGeckoTokenList(normalizedChain, url)
     const record = { tokens: data.tokens, fetchedAt: Date.now() }
     tokenListCache.set(cacheKey, record)
     staleTokenLists.set(cacheKey, record)
-    tokenListRequestsTotal.inc({ source, chain: normalizedChain, status: 'success' })
     tokenListCacheEventsTotal.inc({ source, chain: normalizedChain, event: 'store' })
     return buildTokenListResult(normalizedChain, record, 'fresh')
   } catch (error) {
-    tokenListRequestsTotal.inc({ source, chain: normalizedChain, status: 'error' })
     if (error instanceof RequestCancelledError) throw error
     const stale = staleTokenLists.get(cacheKey)
     if (stale) {
