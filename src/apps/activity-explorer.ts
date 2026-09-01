@@ -1,3 +1,5 @@
+import { AsyncLocalStorage } from 'node:async_hooks'
+
 import { CLIENT_CAPABILITIES_META_KEY, type McpServer } from '@modelcontextprotocol/server'
 
 import { ACTIVITY_EXPLORER_HTML } from '../generated/activity-explorer.generated.js'
@@ -39,8 +41,49 @@ export const ACTIVITY_EXPLORER_TOOLS = new Set([
 
 export type UiCapabilityStatus = 'declared' | 'unsupported' | 'undeclared'
 
+/**
+ * SQD Explorer is a beta surface, so hosts never render it unless someone opts
+ * in: a deployment through MCP_APP_ENABLED, or a single connection through the
+ * ?app= query parameter. The resource stays registered either way, so a host
+ * that wants the beta can still read it, but no tool result asks a host to open
+ * it on its own.
+ */
+const appSurfaceStorage = new AsyncLocalStorage<boolean>()
+
+function parseAppFlag(value: string | undefined | null): boolean | undefined {
+  const normalized = value?.trim().toLowerCase()
+  if (normalized === 'true' || normalized === '1') return true
+  if (normalized === 'false' || normalized === '0') return false
+  return undefined
+}
+
+export function isActivityExplorerEnabledByDeployment(): boolean {
+  return parseAppFlag(process.env.MCP_APP_ENABLED) ?? false
+}
+
+/** An explicit ?app= on the connection wins over the deployment default, in both directions. */
+export function resolveActivityExplorerSurface(request: { url?: string } | undefined): boolean {
+  if (!request?.url) return isActivityExplorerEnabledByDeployment()
+  let requested: boolean | undefined
+  try {
+    requested = parseAppFlag(new URL(request.url).searchParams.get('app'))
+  } catch {
+    requested = undefined
+  }
+  return requested ?? isActivityExplorerEnabledByDeployment()
+}
+
+export function runWithActivityExplorerSurface<T>(enabled: boolean, callback: () => T): T {
+  return appSurfaceStorage.run(enabled, callback)
+}
+
+export function isActivityExplorerEnabled(): boolean {
+  return appSurfaceStorage.getStore() ?? isActivityExplorerEnabledByDeployment()
+}
+
 export function getActivityExplorerToolMeta(toolName: string): Record<string, unknown> | undefined {
   if (!ACTIVITY_EXPLORER_TOOLS.has(toolName)) return undefined
+  if (!isActivityExplorerEnabled()) return undefined
   return {
     ui: {
       resourceUri: ACTIVITY_EXPLORER_RESOURCE_URI,
@@ -118,11 +161,11 @@ export function registerActivityExplorerResource(server: McpServer, runtime: Run
       index === 0 ? 'sqd-blockchain-activity-explorer' : `sqd-blockchain-activity-explorer-compat-${index}`,
       resourceUri,
       {
-        title: 'SQD Blockchain Activity Explorer',
+        title: 'SQD Explorer',
         description:
           index === 0
             ? 'Interactive evidence views for blockchain activity, wallets, contracts, token flows, markets, and network analytics.'
-            : 'Retained SQD Blockchain Activity Explorer URI for installed-client compatibility.',
+            : 'Retained SQD Explorer URI for installed-client compatibility.',
         mimeType: MCP_APP_MIME_TYPE,
         cacheHint: { ttlMs: 86_400_000, cacheScope: 'public' },
         _meta: { ui: resourceUiMeta },

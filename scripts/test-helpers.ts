@@ -1,7 +1,7 @@
 #!/usr/bin/env tsx
 
 import { type Client, Client as McpClient } from '@modelcontextprotocol/client'
-import { StdioClientTransport } from '@modelcontextprotocol/client/stdio'
+import { getDefaultEnvironment, StdioClientTransport } from '@modelcontextprotocol/client/stdio'
 
 export type ConnectedTestClient = {
   client: Client
@@ -334,11 +334,15 @@ export function assertErrorQuality(text: string, label: string) {
   )
 }
 
-export async function connectTestClient(name: string, options?: { cwd?: string }): Promise<ConnectedTestClient> {
+export async function connectTestClient(
+  name: string,
+  options?: { cwd?: string; env?: Record<string, string> },
+): Promise<ConnectedTestClient> {
   const transport = new StdioClientTransport({
     command: 'node',
     args: ['dist/index.js'],
     ...(options?.cwd ? { cwd: options.cwd } : {}),
+    ...(options?.env ? { env: { ...getDefaultEnvironment(), ...options.env } } : {}),
   })
 
   const client = new McpClient({ name, version: '1.0.0' })

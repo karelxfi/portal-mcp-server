@@ -6,7 +6,7 @@ const POLKADOT_SAMPLE_FROM_BLOCK = 30_736_840
 const POLKADOT_SAMPLE_TO_BLOCK = 30_736_842
 
 function assertAppDelivery(data: any, label: string) {
-  assert(data?._app?.name === 'SQD Blockchain Activity Explorer', `${label} must identify the SQD App`)
+  assert(data?._app?.name === 'SQD Explorer', `${label} must identify the SQD App`)
   assert(data?._app?.server_delivery_state === 'ready', `${label} must report a ready App resource`)
   assert(
     data?._app?.host_render_state === 'not_observable_from_tool_result',
@@ -42,7 +42,7 @@ function assertNoDanglingWalletTables(data: any) {
 }
 
 async function main() {
-  const connected = await connectTestClient('v084-acceptance-regressions')
+  const connected = await connectTestClient('v084-acceptance-regressions', { env: { MCP_APP_ENABLED: 'true' } })
   try {
     const invalidNetwork = await callToolWithRetry(
       connected.client,

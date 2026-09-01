@@ -331,7 +331,7 @@ function assertNoUnsafeIntegers(value: unknown, path = '$'): void {
 }
 
 async function assertLiveAggregateAndOhlcParity() {
-  const connected = await connectTestClient('v084-factuality')
+  const connected = await connectTestClient('v084-factuality', { env: { MCP_APP_ENABLED: 'true' } })
   try {
     const invalidBitcoinFilter = await callToolWithRetry(connected.client, 'portal_get_recent_activity', {
       network: 'bitcoin',

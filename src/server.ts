@@ -2,8 +2,11 @@ import { CLIENT_INFO_META_KEY, McpServer, type ServerContext } from '@modelconte
 
 import {
   classifyUiCapability,
+  isActivityExplorerEnabled,
+  isActivityExplorerEnabledByDeployment,
   recordActivityExplorerResult,
   registerActivityExplorerResource,
+  runWithActivityExplorerSurface,
 } from './apps/activity-explorer.js'
 import { RequestCancelledError } from './helpers/errors.js'
 import { attachEvidenceReceipt } from './helpers/evidence-receipt.js'
@@ -26,17 +29,37 @@ import { registerInvestigationPromptsAndResources } from './investigations.js'
 // Server Factory
 // ============================================================================
 
-export const PORTAL_SERVER_INSTRUCTIONS =
-  'SQD provides read-only blockchain data from SQD Portal. Start with portal_list_networks to resolve a network, then use portal_get_network_info to check availability and freshness. Check _coverage and _pagination before claiming completeness, and reuse _pagination.next_cursor when present. Its MCP App is named SQD Blockchain Activity Explorer. To demonstrate the App, run a successful App-enabled tool and only say it rendered when the host confirms a render. Use portal_get_recent_activity for the activity view, portal_hyperliquid_get_ohlc for the market chart, portal_evm_get_analytics for the analytics dashboard, and portal_get_wallet_summary for the wallet view. Chain-specific MCP query tools cover Ethereum-compatible networks, Solana, Bitcoin, Polkadot and other Substrate networks, and Hyperliquid. Tron is available for network discovery, head, freshness, and timestamp-to-block lookups; use the bundled SQD Portal skill for native Tron Stream API queries. Prefer timeframe for recent windows and from_block/to_block for exact evidence. No authentication is required.'
+const PORTAL_BASE_INSTRUCTIONS =
+  'SQD provides read-only blockchain data from SQD Portal. Start with portal_list_networks to resolve a network, then use portal_get_network_info to check availability and freshness. Check _coverage and _pagination before claiming completeness, and reuse _pagination.next_cursor when present.'
+
+/* Only an opted-in deployment may point the model at the beta App. */
+const PORTAL_APP_INSTRUCTIONS =
+  ' Its MCP App is named SQD Explorer. To demonstrate the App, run a successful App-enabled tool and only say it rendered when the host confirms a render. Use portal_get_recent_activity for the activity view, portal_hyperliquid_get_ohlc for the market chart, portal_evm_get_analytics for the analytics dashboard, and portal_get_wallet_summary for the wallet view.'
+
+const PORTAL_NETWORK_INSTRUCTIONS =
+  ' Chain-specific MCP query tools cover Ethereum-compatible networks, Solana, Bitcoin, Polkadot and other Substrate networks, and Hyperliquid. Tron is available for network discovery, head, freshness, and timestamp-to-block lookups; use the bundled SQD Portal skill for native Tron Stream API queries. Prefer timeframe for recent windows and from_block/to_block for exact evidence. No authentication is required.'
+
+export function getPortalServerInstructions(): string {
+  return (
+    PORTAL_BASE_INSTRUCTIONS +
+    (isActivityExplorerEnabled() ? PORTAL_APP_INSTRUCTIONS : '') +
+    PORTAL_NETWORK_INSTRUCTIONS
+  )
+}
 
 export function createPortalServer(runtimeContext: RuntimeRequestContext = { transport: 'stdio' }): McpServer {
+  const appEnabled = runtimeContext.appEnabled ?? isActivityExplorerEnabledByDeployment()
+  return runWithActivityExplorerSurface(appEnabled, () => buildPortalServer(runtimeContext, appEnabled))
+}
+
+function buildPortalServer(runtimeContext: RuntimeRequestContext, appEnabled: boolean): McpServer {
   const server = new McpServer(
     {
       name: 'sqd-portal-mcp-server',
       version: npmVersion,
     },
     {
-      instructions: PORTAL_SERVER_INSTRUCTIONS,
+      instructions: getPortalServerInstructions(),
     },
   )
 
@@ -79,7 +102,11 @@ export function createPortalServer(runtimeContext: RuntimeRequestContext = { tra
         releaseAdmission = lease.release
         admitted = true
         toolCallsActive.inc({ tool: toolName, transport: runtimeContext.transport })
-        const handlerResult = await runWithPortalRequestSignal(requestSignal, () => handler(...handlerArgs))
+        /* Handlers run outside the factory's scope, so the connection's app
+           choice is re-entered here for the result formatters. */
+        const handlerResult = await runWithActivityExplorerSurface(appEnabled, () =>
+          runWithPortalRequestSignal(requestSignal, () => handler(...handlerArgs)),
+        )
         const result = attachEvidenceReceipt(toolName, toolArgs, handlerResult)
         const status = classifyToolOutcome({ result })
         toolCallsTotal.inc({

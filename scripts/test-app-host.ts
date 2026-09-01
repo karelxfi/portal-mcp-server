@@ -58,7 +58,7 @@ main().catch((error) => {
 
 async function main() {
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
-  const server = createPortalServer({ transport: 'stdio' })
+  const server = createPortalServer({ transport: 'stdio', appEnabled: true })
   const client = new Client({ name: 'sqd-app-host-acceptance', version: '1.0.0' })
   await server.connect(serverTransport)
   await client.connect(clientTransport)
@@ -86,6 +86,8 @@ async function main() {
     const structured = toolResult.structuredContent as Record<string, any> | undefined
     assert(toolResult.isError !== true, 'the live recent activity result must succeed before host rendering')
     assert(structured?._ui?.design_intent === 'activity_investigator', 'the live result must contain its App UI contract')
+    const expectedHeading = String(structured?.answer ?? '')
+    assert(expectedHeading.length > 0, 'the live result must include a factual answer for the App heading')
 
     await writeFile(hostSource, hostEntry)
     await build({
@@ -104,7 +106,7 @@ async function main() {
     page.on('console', (message) => {
       if (message.type() === 'error') errors.push(message.text())
     })
-    await page.setContent(`<!doctype html><html><body style="margin:0;background:#08090a"><iframe id="sqd-app-frame" title="SQD Blockchain Activity Explorer" sandbox="allow-scripts" style="width:100%;height:880px;border:0"></iframe></body></html>`)
+    await page.setContent(`<!doctype html><html><body style="margin:0;background:#08090a"><iframe id="sqd-app-frame" title="SQD Explorer" sandbox="allow-scripts" style="width:100%;height:880px;border:0"></iframe></body></html>`)
     await page.evaluate(
       ({ resourceHtml, toolInputValue, toolResultValue }) => {
         Object.assign(window, {
@@ -120,9 +122,14 @@ async function main() {
 
     const frame = page.frameLocator('#sqd-app-frame')
     await frame.locator('.sqd-shell').waitFor({ state: 'visible', timeout: 10_000 })
-    assert(await frame.getByRole('heading', { name: 'Recent blockchain activity' }).isVisible(), 'the App heading must render visibly')
+    const resultHeading = frame.locator('h1#sqd-result-title')
+    assert(await resultHeading.isVisible(), 'the App heading must render visibly')
+    assert(
+      (await resultHeading.textContent()) === expectedHeading,
+      'the App heading must preserve the live result claim exactly',
+    )
     assert((await frame.locator('.sqd-timeline .sqd-event').count()) > 0, 'the App must render live recent activity rows')
-    assert(await frame.getByText('Read-only blockchain data from SQD Portal').isVisible(), 'the rendered App must retain SQD provenance')
+    assert(await frame.getByText('Read-only evidence from SQD Portal').isVisible(), 'the rendered App must retain SQD provenance')
 
     const showRaw = frame.getByRole('button', { name: 'Show raw rows' })
     assert(await showRaw.isVisible(), 'the rendered App must expose its result interaction')
