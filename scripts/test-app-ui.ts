@@ -353,6 +353,13 @@ async function main() {
   let browser: Browser | undefined
   try {
     browser = await chromium.launch({ headless: true })
+    /* Warm the browser first so Chromium start-up is not charged to whichever
+       fixture happens to run first. Every fixture then meets the same budget. */
+    const warmup = await browser.newContext({ viewport: { width: 1280, height: 900 } })
+    const warmupPage = await warmup.newPage()
+    await warmupPage.goto(`${baseUrl}?fixture=empty`, { waitUntil: 'load' })
+    await warmupPage.evaluate(() => document.fonts.ready)
+    await warmup.close()
     for (const fixture of fixtures) {
       for (const viewport of viewports) {
         const context = await browser.newContext({
