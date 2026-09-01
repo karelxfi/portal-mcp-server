@@ -183,7 +183,6 @@ export function registerListDatasetsTool(server: McpServer) {
         },
         execution: buildExecutionMetadata({
           limit,
-          notes: ['Network catalog filters and ordering are preserved by continuation cursor.'],
         }),
       })
     },

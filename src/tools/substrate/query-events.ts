@@ -16,6 +16,7 @@ import { buildChronologicalPageOrdering, buildQueryCoverage, buildQueryFreshness
 import { applyResponseFormat, resolveDefaultResponseFormat, type ResponseFormat } from '../../helpers/response-modes.js'
 import { getTimestampWindowNotices, type TimestampInput, resolveTimeframeOrBlocks } from '../../helpers/timeframe.js'
 import { buildExecutionMetadata, buildToolDescription } from '../../helpers/tool-ux.js'
+import { buildMetricCard, buildPortalUi, buildTimelinePanel } from '../../helpers/ui-metadata.js'
 import { getValidationNotices, validateSubstrateQuerySize } from '../../helpers/validation.js'
 
 import {
@@ -59,6 +60,46 @@ function sortEvents(items: SubstrateEventItem[]) {
 
     return String(left.primary_id ?? '').localeCompare(String(right.primary_id ?? ''))
   })
+}
+
+function buildSubstrateEventPresentation(data: unknown, visibleCount: number, nextCursor?: string) {
+  const items = Array.isArray(data) ? data as SubstrateEventItem[] : undefined
+  const response = items
+    ? { page_summary: { visible_events: visibleCount }, items }
+    : { ...(data && typeof data === 'object' && !Array.isArray(data) ? data as Record<string, unknown> : {}), page_summary: { visible_events: visibleCount } }
+
+  return {
+    response,
+    ui: buildPortalUi({
+      version: 'portal_ui_v1',
+      layout: 'split',
+      density: 'compact',
+      design_intent: 'activity_investigator',
+      headline: { title: 'Substrate events', subtitle: 'Indexed events with freshness.' },
+      metric_cards: [
+        buildMetricCard({ id: 'visible-events', label: 'Visible events', value_path: 'page_summary.visible_events', format: 'integer', emphasis: 'primary' }),
+      ],
+      panels: items
+        ? [
+            buildTimelinePanel({
+              id: 'substrate-event-timeline',
+              kind: 'timeline_panel',
+              title: 'Event timeline',
+              data_key: 'items',
+              timestamp_key: 'timestamp_human',
+              title_key: 'name',
+              subtitle_keys: ['block_number', 'primary_id'],
+              badge_key: 'record_type',
+              emphasis: 'primary',
+            }),
+          ]
+        : [],
+      follow_up_actions: [
+        ...(nextCursor ? [{ label: 'Load older events', intent: 'continue' as const, target: '_pagination.next_cursor' }] : []),
+        ...(items ? [{ label: 'Show raw rows', intent: 'show_raw' as const, target: 'items' }] : []),
+      ],
+    }),
+  }
 }
 
 export function registerSubstrateQueryEventsTool(server: McpServer) {
@@ -241,6 +282,9 @@ export function registerSubstrateQueryEventsTool(server: McpServer) {
 
       const formattedData = applyResponseFormat(page.pageItems, effectiveResponseFormat, 'substrate_events')
       const notices = [SUBSTRATE_INDEXING_NOTICE, ...getTimestampWindowNotices(resolvedBlocks), ...getValidationNotices(validation)]
+      if (/"(?:refTime|proofSize)"/.test(JSON.stringify(formattedData))) {
+        notices.push('Substrate Weight v2 refTime values are picoseconds and proofSize values are bytes.')
+      }
       if (nextCursor) notices.push('Older results are available via _pagination.next_cursor.')
       const freshness = buildQueryFreshness({
         finality: finalized_only ? 'finalized' : 'latest',
@@ -268,8 +312,9 @@ export function registerSubstrateQueryEventsTool(server: McpServer) {
       const message = effectiveResponseFormat === 'summary'
         ? `Substrate event summary for ${page.pageItems.length} rows across ${windowLabel}${page.hasMore ? ' (latest preview page)' : ''}`
         : `Retrieved ${page.pageItems.length} Substrate events${page.hasMore ? ` from the most recent matching blocks (preview page limited to ${limit})` : ''}`
+      const presentation = buildSubstrateEventPresentation(formattedData, page.pageItems.length, nextCursor)
 
-      return formatResult(formattedData, message, {
+      return formatResult(presentation.response, message, {
         toolName: 'portal_substrate_query_events',
         notices,
         pagination: buildPaginationInfo(limit, page.pageItems.length, nextCursor),
@@ -297,6 +342,14 @@ export function registerSubstrateQueryEventsTool(server: McpServer) {
               : 'Event rows only.',
           ],
         }),
+        ui: presentation.ui,
+        llm: {
+          compact: true,
+          answer_sequence: ['page_summary', ...(Array.isArray(formattedData) ? ['items'] : ['summary']), '_pagination.next_cursor'],
+          parser_notes: [
+            'items is a chronological event page when row output is requested; always inspect the Substrate indexing notice before describing recency.',
+          ],
+        },
         metadata: {
           network: dataset,
           dataset,

@@ -5,21 +5,30 @@
 // Integrations with external data sources to enrich blockchain data:
 // - DeFi Llama: Protocol TVL, yields, fees, volumes
 // - CoinGecko: Token metadata, prices, logos
+// - DEX Screener: DEX pool address and token-pair metadata
 //
 
 import { tokenListCacheEventsTotal, tokenListRequestsTotal } from '../metrics.js'
 import { createCache } from './cache-manager.js'
 import { ActionableError, RequestCancelledError } from './errors.js'
-import { createRequestAbortContext, isAbortLike } from './request-context.js'
+import {
+  createRequestAbortContext,
+  isAbortLike,
+  runAsSharedPortalWork,
+  waitForSharedPortalWork,
+  type SharedPortalWork,
+} from './request-context.js'
 
 const CACHE_TTL = 5 * 60 * 1000 // 5 minutes
 const EXTERNAL_API_TIMEOUT_MS = 5_000
+const TOKEN_LIST_FETCH_ATTEMPTS = 2
 
 // Managed cache with automatic cleanup to prevent memory leaks
 // Max 500 entries for external API data (token lists can be large)
 const cache = createCache<unknown>(CACHE_TTL, 500)
 const tokenListCache = createCache<TokenListCacheRecord>(CACHE_TTL, 50)
 const staleTokenLists = new Map<string, TokenListCacheRecord>()
+const pendingTokenLists = new Map<string, SharedPortalWork<TokenListCacheRecord>>()
 
 /**
  * Simple cache wrapper for external API calls
@@ -128,6 +137,34 @@ function buildTokenListResult(chain: string, record: TokenListCacheRecord, cache
   }
 }
 
+function isRetryableTokenListError(error: unknown): boolean {
+  if (error instanceof RequestCancelledError) return false
+  if (error instanceof ActionableError) return error.retryable
+  if (!(error instanceof Error)) return false
+  return /fetch failed|network|socket|\b429\b|\b5\d\d\b/i.test(error.message)
+}
+
+async function fetchCoinGeckoTokenList(chain: string, url: string): Promise<CoinGeckoTokenList> {
+  let lastError: unknown
+
+  for (let attempt = 1; attempt <= TOKEN_LIST_FETCH_ATTEMPTS; attempt += 1) {
+    tokenListRequestsTotal.inc({ source: 'coingecko_token_list', chain, status: 'attempt' })
+    try {
+      const data = await fetchExternalJson<CoinGeckoTokenList>(url, 'CoinGecko API')
+      tokenListRequestsTotal.inc({ source: 'coingecko_token_list', chain, status: 'success' })
+      return data
+    } catch (error) {
+      tokenListRequestsTotal.inc({ source: 'coingecko_token_list', chain, status: 'error' })
+      if (error instanceof RequestCancelledError) throw error
+      lastError = error
+      if (attempt >= TOKEN_LIST_FETCH_ATTEMPTS || !isRetryableTokenListError(error)) throw error
+      tokenListCacheEventsTotal.inc({ source: 'coingecko_token_list', chain, event: 'retry' })
+    }
+  }
+
+  throw lastError
+}
+
 /**
  * Get token list for a chain from CoinGecko
  */
@@ -151,17 +188,31 @@ export async function getCoinGeckoTokenListWithStatus(chain: string): Promise<Co
 
   tokenListCacheEventsTotal.inc({ source, chain: normalizedChain, event: 'miss' })
 
-  try {
-    tokenListRequestsTotal.inc({ source, chain: normalizedChain, status: 'attempt' })
-    const data = await fetchExternalJson<CoinGeckoTokenList>(url, 'CoinGecko API')
-    const record = { tokens: data.tokens, fetchedAt: Date.now() }
-    tokenListCache.set(cacheKey, record)
-    staleTokenLists.set(cacheKey, record)
-    tokenListRequestsTotal.inc({ source, chain: normalizedChain, status: 'success' })
+  const existingPending = pendingTokenLists.get(cacheKey)
+  const work = existingPending ?? runAsSharedPortalWork(async () => {
+    const data = await fetchCoinGeckoTokenList(normalizedChain, url)
+    const loaded = { tokens: data.tokens, fetchedAt: Date.now() }
+    tokenListCache.set(cacheKey, loaded)
+    staleTokenLists.set(cacheKey, loaded)
     tokenListCacheEventsTotal.inc({ source, chain: normalizedChain, event: 'store' })
+    return loaded
+  })
+  if (!existingPending) {
+    pendingTokenLists.set(cacheKey, work)
+    work.promise.then(
+      () => {
+        if (pendingTokenLists.get(cacheKey) === work) pendingTokenLists.delete(cacheKey)
+      },
+      () => {
+        if (pendingTokenLists.get(cacheKey) === work) pendingTokenLists.delete(cacheKey)
+      },
+    )
+  }
+
+  try {
+    const record = await waitForSharedPortalWork(work)
     return buildTokenListResult(normalizedChain, record, 'fresh')
   } catch (error) {
-    tokenListRequestsTotal.inc({ source, chain: normalizedChain, status: 'error' })
     if (error instanceof RequestCancelledError) throw error
     const stale = staleTokenLists.get(cacheKey)
     if (stale) {
@@ -194,6 +245,110 @@ export async function findTokensBySymbol(chain: string, symbol: string): Promise
   const tokens = await getCoinGeckoTokenList(chain)
   const normalizedSymbol = symbol.toUpperCase()
   return tokens.filter((t) => t.symbol.toUpperCase() === normalizedSymbol)
+}
+
+// ============================================================================
+// DEX Screener Pool Metadata
+// ============================================================================
+
+const DEXSCREENER_API = 'https://api.dexscreener.com'
+
+export type DexScreenerToken = {
+  address: string
+  name: string
+  symbol: string
+}
+
+export type DexScreenerPair = {
+  chainId: string
+  dexId: string
+  pairAddress: string
+  labels: string[]
+  baseToken: DexScreenerToken
+  quoteToken: DexScreenerToken
+  liquidityUsd?: number
+}
+
+type DexScreenerPairResponse = {
+  pairs?: unknown[] | null
+}
+
+function normalizeDexScreenerPair(value: unknown): DexScreenerPair | undefined {
+  if (!value || typeof value !== 'object') return undefined
+  const pair = value as Record<string, unknown>
+  const baseToken = pair.baseToken as Record<string, unknown> | undefined
+  const quoteToken = pair.quoteToken as Record<string, unknown> | undefined
+  const liquidity = pair.liquidity as Record<string, unknown> | undefined
+
+  if (
+    typeof pair.chainId !== 'string' ||
+    typeof pair.dexId !== 'string' ||
+    typeof pair.pairAddress !== 'string' ||
+    typeof baseToken?.address !== 'string' ||
+    typeof baseToken?.name !== 'string' ||
+    typeof baseToken?.symbol !== 'string' ||
+    typeof quoteToken?.address !== 'string' ||
+    typeof quoteToken?.name !== 'string' ||
+    typeof quoteToken?.symbol !== 'string'
+  ) {
+    return undefined
+  }
+
+  return {
+    chainId: pair.chainId,
+    dexId: pair.dexId,
+    pairAddress: pair.pairAddress,
+    labels: Array.isArray(pair.labels)
+      ? pair.labels.filter((label): label is string => typeof label === 'string')
+      : [],
+    baseToken: {
+      address: baseToken.address,
+      name: baseToken.name,
+      symbol: baseToken.symbol,
+    },
+    quoteToken: {
+      address: quoteToken.address,
+      name: quoteToken.name,
+      symbol: quoteToken.symbol,
+    },
+    ...(typeof liquidity?.usd === 'number' && Number.isFinite(liquidity.usd)
+      ? { liquidityUsd: liquidity.usd }
+      : {}),
+  }
+}
+
+export async function getDexScreenerPair(
+  chain: string,
+  pairAddress: string,
+): Promise<DexScreenerPair | undefined> {
+  const normalizedChain = chain.trim().toLowerCase()
+  const normalizedPairAddress = pairAddress.trim().toLowerCase()
+  return withCache(`dexscreener:pair:${normalizedChain}:${normalizedPairAddress}`, CACHE_TTL, async () => {
+    const response = await fetchExternalJson<DexScreenerPairResponse>(
+      `${DEXSCREENER_API}/latest/dex/pairs/${encodeURIComponent(normalizedChain)}/${encodeURIComponent(normalizedPairAddress)}`,
+      'DEX Screener API',
+    )
+    return (response.pairs ?? [])
+      .map(normalizeDexScreenerPair)
+      .find((pair): pair is DexScreenerPair => Boolean(pair))
+  })
+}
+
+export async function getDexScreenerTokenPairs(
+  chain: string,
+  tokenAddress: string,
+): Promise<DexScreenerPair[]> {
+  const normalizedChain = chain.trim().toLowerCase()
+  const normalizedTokenAddress = tokenAddress.trim().toLowerCase()
+  return withCache(`dexscreener:token-pairs:${normalizedChain}:${normalizedTokenAddress}`, CACHE_TTL, async () => {
+    const response = await fetchExternalJson<unknown[]>(
+      `${DEXSCREENER_API}/token-pairs/v1/${encodeURIComponent(normalizedChain)}/${encodeURIComponent(normalizedTokenAddress)}`,
+      'DEX Screener API',
+    )
+    return (Array.isArray(response) ? response : [])
+      .map(normalizeDexScreenerPair)
+      .filter((pair): pair is DexScreenerPair => Boolean(pair))
+  })
 }
 
 // ============================================================================

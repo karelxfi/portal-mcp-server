@@ -31,6 +31,7 @@ function validateMetadata() {
   const cursor = readJson('plugins/portal/.cursor-plugin/plugin.json')
   const targets = readJson('distribution/targets.json')
   const submissions = readJson('distribution/submission-packets.json')
+  const dockerWorkflow = readFileSync('.github/workflows/docker-build.yml', 'utf8')
 
   const errors = []
   const assert = (condition, message) => {
@@ -63,6 +64,16 @@ function validateMetadata() {
   assert(gemini.name === 'sqd', 'Gemini extension identifier must remain sqd')
   assert(gemini.mcpServers?.SQD?.httpUrl === SERVER_URL, 'Gemini must use the hosted MCP URL')
   assert(glama.maintainers?.includes('karelxfi'), 'Glama ownership metadata must include karelxfi')
+  assert(
+    !dockerWorkflow.includes('type=raw,value=${{ steps.package.outputs.version }}'),
+    'default-branch Docker builds must not overwrite an immutable semantic-version image tag',
+  )
+  assert(
+    dockerWorkflow.includes('type=raw,value=latest,enable={{is_default_branch}}') &&
+      dockerWorkflow.includes('type=semver,pattern={{version}}') &&
+      dockerWorkflow.includes('type=sha'),
+    'Docker builds must keep latest for main, semantic versions for release tags, and immutable SHA tags',
+  )
 
   assert(targets.repository === REPOSITORY, 'distribution repository must use the canonical GitHub URL')
   assert(targets.serverUrl === SERVER_URL, 'distribution server URL must use the hosted MCP URL')

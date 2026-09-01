@@ -111,7 +111,14 @@ const PORTAL_TOOL_OUTPUT_SCHEMA = z
     _app: z
       .record(z.string(), z.unknown())
       .optional()
-      .describe('SQD Blockchain Activity Explorer identity and honest host-render state.'),
+      .describe('SQD Explorer identity and honest host-render state.'),
+    _server: z
+      .object({
+        name: z.string(),
+        version: z.string(),
+      })
+      .optional()
+      .describe('Observable SQD server identity and exact release version.'),
     pipes_handoff: z.unknown().optional().describe('Optional SQD Pipes guidance for custom data needs.'),
     _notice: z.string().optional().describe('Important limitation or truncation notice.'),
     _notices: z.array(z.string()).optional().describe('Important limitations or truncation notices.'),
@@ -155,7 +162,7 @@ export function registerPortalTool<InputShape extends ZodRawShape>(
     {
       title: getPortalToolTitle(name),
       description: activityExplorerMeta
-        ? `${description}\n\nMCP APP: A successful result can open in the SQD Blockchain Activity Explorer with exact charts, tables, timelines, coverage, freshness, and safe follow-ups. A tool result is ready for the App but is not proof that the host rendered it.`
+        ? `${description}\n\nMCP APP: A successful result can open in the SQD Explorer with exact charts, tables, timelines, coverage, freshness, and safe follow-ups. A tool result is ready for the App but is not proof that the host rendered it.`
         : description,
       inputSchema: z.object(inputShape),
       outputSchema: PORTAL_TOOL_OUTPUT_SCHEMA,

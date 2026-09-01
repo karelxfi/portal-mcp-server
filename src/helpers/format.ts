@@ -9,8 +9,13 @@ import type { PipesRecipe } from './pipes-recipe.js'
 import { getToolContract } from './tool-ux.js'
 import type { UiFollowUpAction } from './ui-metadata.js'
 import { ActionableError } from './errors.js'
-import { ACTIVITY_EXPLORER_RESOURCE_URI } from '../apps/activity-explorer.js'
+import {
+  ACTIVITY_EXPLORER_RESOURCE_URI,
+  ACTIVITY_EXPLORER_TOOLS,
+  isActivityExplorerEnabled,
+} from '../apps/activity-explorer.js'
 import { npmVersion } from '../version.js'
+import { formatIntegerUnitsExact } from './exact-decimal.js'
 
 const MAX_RESPONSE_BYTES = 50_000
 
@@ -246,7 +251,7 @@ function buildExecutableContinuationAction(pagination: RecordLike | undefined, t
   if (cursorTool !== toolName) return undefined
 
   return {
-    label: 'Load older results',
+    label: pagination?.continuation_scope === 'adjacent_window' ? 'Load previous window' : 'Load more results',
     intent: 'continue',
     target: '_pagination.next_cursor',
     executable: true,
@@ -409,29 +414,26 @@ export function hexToDecimal(hex: string): string {
  * Convert wei (hex or bigint) to ETH with specified decimals.
  */
 export function weiToEth(wei: string | bigint, decimals: number = 18): string {
-  const weiValue = typeof wei === 'string' ? hexToBigInt(wei) : wei
-  const divisor = 10n ** BigInt(decimals)
-  const ethValue = Number(weiValue) / Number(divisor)
-
-  if (ethValue === 0) return '0'
-  if (ethValue < 0.000001) return ethValue.toExponential(4)
-  if (ethValue < 0.01) return ethValue.toFixed(6)
-  if (ethValue < 1) return ethValue.toFixed(4)
-  if (ethValue < 1000) return ethValue.toFixed(2)
-  return ethValue.toLocaleString('en-US', { maximumFractionDigits: 2 })
+  const weiValue =
+    typeof wei === 'bigint'
+      ? wei
+      : /^-?\d+$/.test(wei.trim())
+        ? BigInt(wei.trim())
+        : hexToBigInt(wei)
+  return formatIntegerUnitsExact(weiValue, decimals)
 }
 
 /**
  * Convert wei to Gwei for gas prices.
  */
 export function weiToGwei(wei: string | bigint): string {
-  const weiValue = typeof wei === 'string' ? hexToBigInt(wei) : wei
-  const gwei = Number(weiValue) / 1e9
-
-  if (gwei === 0) return '0'
-  if (gwei < 0.01) return gwei.toFixed(4)
-  if (gwei < 100) return gwei.toFixed(2)
-  return gwei.toFixed(1)
+  const weiValue =
+    typeof wei === 'bigint'
+      ? wei
+      : /^-?\d+$/.test(wei.trim())
+        ? BigInt(wei.trim())
+        : hexToBigInt(wei)
+  return formatIntegerUnitsExact(weiValue, 9)
 }
 
 export function formatTokenAmount(value: string, decimals: number = 18, symbol?: string): string {
@@ -450,19 +452,7 @@ export function formatTokenValue(
 } {
   const decimal = hexToDecimal(hexValue)
   const bigIntValue = BigInt(decimal)
-  const divisor = BigInt(10) ** BigInt(decimals)
-  const integerPart = bigIntValue / divisor
-  const fractionalPart = bigIntValue % divisor
-  const fractionalStr = fractionalPart.toString().padStart(decimals, '0')
-  const trimmedFractional = fractionalStr.replace(/0+$/, '')
-
-  let formatted: string
-  if (trimmedFractional.length > 0) {
-    const displayDecimals = Math.min(trimmedFractional.length, 6)
-    formatted = `${integerPart}.${trimmedFractional.slice(0, displayDecimals)}`
-  } else {
-    formatted = integerPart.toString()
-  }
+  let formatted = formatIntegerUnitsExact(bigIntValue, decimals)
 
   if (symbol) formatted += ` ${symbol}`
 
@@ -674,7 +664,9 @@ export function formatUSD(n: number): string {
   if (abs >= 1e9) return sign + '$' + (abs / 1e9).toFixed(2) + 'B'
   if (abs >= 1e6) return sign + '$' + (abs / 1e6).toFixed(2) + 'M'
   if (abs >= 1e3) return sign + '$' + (abs / 1e3).toFixed(1) + 'K'
-  return sign + '$' + abs.toFixed(2)
+  if (abs >= 0.01) return sign + '$' + abs.toFixed(2)
+  if (abs >= 0.00000001) return sign + '$' + abs.toFixed(8).replace(/0+$/, '')
+  return sign + '$' + abs.toExponential(4)
 }
 
 export function formatPct(n: number): string {
@@ -816,6 +808,8 @@ function buildNextSteps(payload: RecordLike): RecordLike | undefined {
   const toolContract = isRecord(payload._tool_contract) ? payload._tool_contract : undefined
   const toolName = typeof toolContract?.name === 'string' ? toolContract.name : undefined
   const hasContinuation = typeof pagination?.next_cursor === 'string'
+  const adjacentWindow = pagination?.continuation_scope === 'adjacent_window'
+  const continuationLabel = adjacentWindow ? 'Load previous window' : 'Load more results'
   const executableContinuation = buildExecutableContinuationAction(pagination, toolName)
   const actions = asArray<RecordLike>(ui?.follow_up_actions)
     .map((action) => withContinuationExecutableMetadata(normalizeFollowUpAction(action), executableContinuation))
@@ -823,7 +817,7 @@ function buildNextSteps(payload: RecordLike): RecordLike | undefined {
 
   if (hasContinuation && !hasExplicitContinueAction) {
     actions.unshift({
-      label: 'Load older results',
+      label: continuationLabel,
       intent: 'continue',
       target: '_pagination.next_cursor',
       executable: executableContinuation?.executable === true,
@@ -843,9 +837,11 @@ function buildNextSteps(payload: RecordLike): RecordLike | undefined {
       ? {
           continuation: {
             available: true,
-            label: 'Load older results',
+            label: continuationLabel,
             how_to_continue: 'Call the same tool again with the next cursor from _pagination.next_cursor.',
-            note: 'This response is a preview page, so older matching results are still available.',
+            note: adjacentWindow
+              ? 'The requested window is complete; the cursor opens the immediately preceding window.'
+              : 'This response is a preview page, so more matching results remain in the same requested window.',
           },
         }
       : {}),
@@ -931,6 +927,9 @@ export function inferPrimaryEvidencePath(
     'activity.items',
     'interactions.top_callers',
     'events.top_event_types',
+    'top_events',
+    'top_calls',
+    'top_programs.programs',
     'fund_flow.largest_movements',
     'token_transfers.items',
     'transactions.items',
@@ -944,6 +943,7 @@ export function inferPrimaryEvidencePath(
     'recent_outputs',
     'recent_inputs',
     'summary_rows',
+    'presentation_summary',
     'overview',
     'summary',
     'interactions',
@@ -1353,6 +1353,10 @@ export function formatResult(
     if (toolContract) {
       payloadRecord._tool_contract = toolContract
     }
+    payloadRecord._server = {
+      name: 'SQD',
+      version: npmVersion,
+    }
     payloadRecord._pagination = options?.pagination ?? buildDefaultPagination()
     payloadRecord._ordering = options?.ordering ?? buildDefaultOrdering()
     payloadRecord._freshness = options?.freshness ?? buildDefaultFreshness()
@@ -1363,14 +1367,19 @@ export function formatResult(
     payloadRecord._execution = execution
     if (options?.ui !== undefined) {
       payloadRecord._ui = options.ui
+    }
+    if (
+      options?.toolName &&
+      ACTIVITY_EXPLORER_TOOLS.has(options.toolName) &&
+      isActivityExplorerEnabled()
+    ) {
       payloadRecord._app = {
-        name: 'SQD Blockchain Activity Explorer',
+        name: 'SQD Explorer',
         version: npmVersion,
-        capability: 'mcp_app',
         resource_uri: ACTIVITY_EXPLORER_RESOURCE_URI,
-        result_state: 'ready_for_host_render',
-        host_render_confirmed: false,
-        guidance: 'Only the MCP host can confirm that this App payload rendered.',
+        server_delivery_state: 'ready',
+        host_render_state: 'not_observable_from_tool_result',
+        required_host_extension: 'io.modelcontextprotocol/ui',
       }
     }
     if (options?.pipes !== undefined) {

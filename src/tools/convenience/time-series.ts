@@ -14,6 +14,14 @@ import {
 } from '../../helpers/chart-metadata.js'
 import { detectChainType } from '../../helpers/chain.js'
 import { ActionableError, createUnsupportedChainError, createUnsupportedMetricError } from '../../helpers/errors.js'
+import {
+  EXACT_DECIMAL_ZERO,
+  addExactDecimals,
+  formatExactDecimal,
+  multiplyExactDecimals,
+  parseExactDecimal,
+  type ExactDecimal,
+} from '../../helpers/exact-decimal.js'
 import { portalFetchStream, portalFetchStreamRangeVisit } from '../../helpers/fetch.js'
 import { formatResult } from '../../helpers/format.js'
 import { formatBTC, formatDuration, formatTimestamp, formatUSD } from '../../helpers/format.js'
@@ -23,6 +31,7 @@ import {
   describeTimeWindowInput,
   estimateBlockTime,
   getHeadTimestamp,
+  getTimestampWindowNotices,
   parseTimeframeToSeconds,
   parseTimestampInput,
   resolveTimeframeOrBlocks,
@@ -33,7 +42,6 @@ import { buildChartPanel, buildMetricCard, buildPortalUi, buildTablePanel } from
 import { computeSolanaTimeSeries } from '../solana/time-series-shared.js'
 import { computeWindowSeries } from './compare-periods.js'
 import { visitHyperliquidFillBlocks } from '../hyperliquid/fill-stream.js'
-import { hashString53 } from '../../helpers/hash.js'
 
 // ============================================================================
 // Tool: Get Time Series Data
@@ -358,7 +366,10 @@ function buildTimeSeriesAnswer(params: {
   unit?: string
 }): string {
   const values = params.timeSeries
-    .map((row) => (typeof row.value === 'number' && Number.isFinite(row.value) ? row.value : undefined))
+    .map((row) => {
+      const value = typeof row.value === 'number' ? row.value : typeof row.value === 'string' ? Number(row.value) : Number.NaN
+      return Number.isFinite(value) ? value : undefined
+    })
     .filter((value): value is number => value !== undefined)
   const bucketCount = Math.max(params.timeSeries.length, values.length, 1)
   const total = values.reduce((sum, value) => sum + value, 0)
@@ -658,7 +669,10 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
         compare_previous,
         group_by,
       })
-      const longWindowNotice = buildLongWindowNotice(duration)
+      const longWindowNotice =
+        from_timestamp === undefined && to_timestamp === undefined
+          ? buildLongWindowNotice(duration)
+          : undefined
       if (longWindowNotice) {
         notices.push(longWindowNotice)
       }
@@ -1409,26 +1423,20 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
 
       if (isHyperliquid && ['volume', 'fill_count', 'unique_traders'].includes(metric)) {
         const intervalSeconds = parseTimeframeToSeconds(interval)
-        const durationSeconds = parseTimeframeToSeconds(duration)
-        const latestHead =
-          from_timestamp !== undefined || to_timestamp !== undefined
-            ? undefined
-            : await getBlockHead(dataset)
-        const resolvedWindow = from_timestamp !== undefined || to_timestamp !== undefined
-          ? await resolveTimeframeOrBlocks({
-              dataset,
-              from_timestamp,
-              to_timestamp,
-            })
-          : {
-              from_block: Math.max(
-                0,
-                latestHead!.number -
-                  Math.ceil((durationSeconds / estimateBlockTime(dataset, 'hyperliquidFills')) * 1.25),
-              ),
-              to_block: latestHead!.number,
-              range_kind: 'timeframe' as const,
-            }
+        const exactTimestampWindowRequested = from_timestamp !== undefined || to_timestamp !== undefined
+        if (exactTimestampWindowRequested && (from_timestamp === undefined || to_timestamp === undefined)) {
+          throw new ActionableError('Provide both from_timestamp and to_timestamp for an exact Hyperliquid time-series window.', [
+            'Set from_timestamp to the inclusive window start.',
+            'Set to_timestamp to the inclusive window end.',
+            'Or omit both and use duration for a recent indexed-head window.',
+          ])
+        }
+        const resolvedWindow = await resolveTimeframeOrBlocks({
+          dataset,
+          ...(exactTimestampWindowRequested
+            ? { from_timestamp: from_timestamp as TimestampInput, to_timestamp: to_timestamp as TimestampInput }
+            : { timeframe: duration }),
+        })
         const fromBlock = resolvedWindow.from_block
         const { validatedToBlock: toBlock, head } = await validateBlockRange(
           dataset,
@@ -1436,10 +1444,22 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
           resolvedWindow.to_block ?? Number.MAX_SAFE_INTEGER,
           false,
         )
-        const expectedBuckets = Math.ceil(durationSeconds / intervalSeconds)
-        const buckets = new Map<number, { fills: number; volume: number; traders: Set<number> }>()
-        let latestTimestamp = 0
-        let firstObservedTimestamp: number | undefined
+        const indexedHeadTimestamp =
+          resolvedWindow.from_lookup?.head_timestamp ??
+          resolvedWindow.to_lookup?.head_timestamp ??
+          await getHeadTimestamp(dataset, head.number, 2)
+        const requestedWindowStartTimestamp = exactTimestampWindowRequested
+          ? resolvedWindow.from_lookup!.timestamp
+          : resolvedWindow.from_lookup?.timestamp ?? Math.max(0, indexedHeadTimestamp + 1 - parseTimeframeToSeconds(duration))
+        const requestedWindowEndExclusive = exactTimestampWindowRequested
+          ? resolvedWindow.to_lookup!.timestamp + 1
+          : indexedHeadTimestamp + 1
+        const indexedEvidenceEndExclusive = Math.min(requestedWindowEndExclusive, indexedHeadTimestamp + 1)
+        const seriesStartTimestamp = Math.floor(requestedWindowStartTimestamp / intervalSeconds) * intervalSeconds
+        const seriesEndExclusive = Math.ceil(requestedWindowEndExclusive / intervalSeconds) * intervalSeconds
+        const expectedBuckets = Math.max(1, Math.ceil((seriesEndExclusive - seriesStartTimestamp) / intervalSeconds))
+        const sourceWindowComplete = resolvedWindow.from_lookup?.resolution === 'verified_boundary'
+        const buckets = new Map<number, { fills: number; volume: ExactDecimal; traders: Set<string> }>()
         const fillFields: Record<string, boolean> = { time: true }
         if (metric === 'volume') {
           fillFields.px = true
@@ -1452,7 +1472,7 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
         const getBucket = (bucketTimestamp: number) => {
           let bucket = buckets.get(bucketTimestamp)
           if (!bucket) {
-            bucket = { fills: 0, volume: 0, traders: new Set<number>() }
+            bucket = { fills: 0, volume: EXACT_DECIMAL_ZERO, traders: new Set<string>() }
             buckets.set(bucketTimestamp, bucket)
           }
           return bucket
@@ -1471,31 +1491,35 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
           onBlock: (block) => {
             for (const fill of block.fills || []) {
               const ts = Number(fill.time || 0) > 1e12 ? Math.floor(Number(fill.time) / 1000) : Math.floor(Number(fill.time || 0))
-              if (!ts) continue
-              latestTimestamp = Math.max(latestTimestamp, ts)
-              if (firstObservedTimestamp === undefined || ts < firstObservedTimestamp) firstObservedTimestamp = ts
+              if (!ts || ts < requestedWindowStartTimestamp || ts >= requestedWindowEndExclusive) continue
               const bucketTimestamp = Math.floor(ts / intervalSeconds) * intervalSeconds
               const bucket = getBucket(bucketTimestamp)
               bucket.fills += 1
               if (metric === 'volume') {
-                bucket.volume += Number(fill.px || 0) * Number(fill.sz || 0)
+                const price = parseExactDecimal(fill.px)
+                const size = parseExactDecimal(fill.sz)
+                if (price && size && price.coefficient > 0n && size.coefficient > 0n) {
+                  bucket.volume = addExactDecimals(bucket.volume, multiplyExactDecimals(price, size))
+                }
               }
               if (metric === 'unique_traders' && typeof fill.user === 'string') {
-                bucket.traders.add(hashString53(fill.user))
+                bucket.traders.add(fill.user.toLowerCase())
               }
             }
           },
         })
 
-        const seriesEndExclusive = Math.floor(latestTimestamp / intervalSeconds) * intervalSeconds + intervalSeconds
-        const bucketSpanSeconds = expectedBuckets * intervalSeconds
-        const seriesStartTimestamp = seriesEndExclusive - bucketSpanSeconds
         const timeSeries = Array.from({ length: expectedBuckets }, (_, bucketIndex) => {
           const bucketTimestamp = seriesStartTimestamp + bucketIndex * intervalSeconds
           const bucket = buckets.get(bucketTimestamp)
+          const bucketEnd = bucketTimestamp + intervalSeconds
+          const bucketComplete =
+            bucketTimestamp >= requestedWindowStartTimestamp &&
+            bucketEnd <= requestedWindowEndExclusive &&
+            bucketEnd <= indexedEvidenceEndExclusive
           const value =
             metric === 'volume'
-              ? bucket?.volume ?? 0
+              ? formatExactDecimal(bucket?.volume ?? EXACT_DECIMAL_ZERO)
               : metric === 'unique_traders'
                 ? bucket?.traders.size ?? 0
                 : bucket?.fills ?? 0
@@ -1503,11 +1527,33 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
             bucket_index: bucketIndex,
             timestamp: bucketTimestamp,
             timestamp_human: formatTimestamp(bucketTimestamp),
-            blocks_in_bucket: bucket && (bucket.fills > 0 || bucket.traders.size > 0 || bucket.volume > 0) ? 1 : 0,
-            value: Number(value.toFixed ? value.toFixed(2) : value),
+            bucket_start_inclusive: Math.max(bucketTimestamp, requestedWindowStartTimestamp),
+            bucket_end_exclusive: Math.max(
+              Math.max(bucketTimestamp, requestedWindowStartTimestamp),
+              Math.min(bucketEnd, requestedWindowEndExclusive, indexedEvidenceEndExclusive),
+            ),
+            bucket_complete: bucketComplete,
+            bucket_state: bucketComplete ? 'closed' : 'open_or_partial',
+            has_fills: Boolean(bucket && bucket.fills > 0),
+            value,
           }
         })
-        const filledBuckets = timeSeries.filter((bucket) => bucket.blocks_in_bucket > 0).length
+        const filledBuckets = timeSeries.filter((bucket) => bucket.has_fills).length
+        const finalBucketComplete = timeSeries.at(-1)?.bucket_complete ?? false
+        const allBucketsComplete = timeSeries.every((bucket) => bucket.bucket_complete)
+        const resultComplete = sourceWindowComplete && allBucketsComplete
+        const metricDefinition = {
+          metric,
+          unit: getMetricUnit(metric) ?? (metric === 'unique_traders' ? 'traders' : 'count'),
+          aggregation:
+            metric === 'volume'
+              ? 'sum_price_times_size_per_bucket'
+              : metric === 'unique_traders'
+                ? 'distinct_trader_addresses_per_bucket'
+                : 'fill_rows_per_bucket',
+          presence_field: 'has_fills',
+          presence_semantics: 'true when at least one valid fill row falls inside the bucket and requested time window',
+        }
         const resultMessage = withWindowNotice(
           buildTimeSeriesAnswer({
             dataset,
@@ -1524,13 +1570,25 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
         return formatResult({
           summary: {
             metric,
+            metric_definition: metricDefinition,
             interval,
             duration,
             total_buckets: timeSeries.length,
             filled_buckets: filledBuckets,
+            empty_buckets: timeSeries.length - filledBuckets,
             from_block: fromBlock,
             to_block: toBlock,
+            requested_window_start_timestamp: requestedWindowStartTimestamp,
+            requested_window_start_timestamp_human: formatTimestamp(requestedWindowStartTimestamp),
+            requested_window_end_exclusive: requestedWindowEndExclusive,
+            requested_window_end_exclusive_human: formatTimestamp(requestedWindowEndExclusive - 1),
+            indexed_evidence_end_exclusive: indexedEvidenceEndExclusive,
+            indexed_evidence_end_exclusive_human: formatTimestamp(indexedEvidenceEndExclusive - 1),
+            final_bucket_complete: finalBucketComplete,
+            all_buckets_complete: allBucketsComplete,
+            result_complete: resultComplete,
           },
+          metric_definition: metricDefinition,
           chart: buildTimeSeriesChart({
             interval,
             totalPoints: timeSeries.length,
@@ -1549,22 +1607,22 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
               valueFormat: getMetricValueFormat(metric),
               unit: getMetricUnit(metric),
               timestampField: 'timestamp',
-              blocksInBucketField: 'blocks_in_bucket',
-              blocksInBucketLabel: 'Buckets with fills',
               defaultSort: { key: 'bucket_index', direction: 'asc' },
             }),
           ],
           gap_diagnostics: buildBucketGapDiagnostics({
             buckets: timeSeries,
             intervalSeconds,
-            isFilled: (bucket) => bucket.blocks_in_bucket > 0,
-            anchor: 'latest_fill',
-            windowComplete: firstObservedTimestamp !== undefined ? firstObservedTimestamp <= seriesStartTimestamp : true,
+            isFilled: (bucket) => bucket.has_fills,
+            anchor: exactTimestampWindowRequested ? 'requested_timestamp_window' : 'indexed_head',
+            windowComplete: sourceWindowComplete,
           }),
           time_series: timeSeries,
         }, resultMessage, {
           toolName: 'portal_get_time_series',
-          ...(notices.length > 0 ? { notices } : {}),
+          ...(notices.length + getTimestampWindowNotices(resolvedWindow).length > 0
+            ? { notices: [...notices, ...getTimestampWindowNotices(resolvedWindow)] }
+            : {}),
           freshness: buildQueryFreshness({
             finality: 'latest',
             headBlockNumber: head.number,
@@ -1575,7 +1633,15 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
             expectedBuckets,
             returnedBuckets: timeSeries.length,
             filledBuckets,
-            anchor: 'latest_fill',
+            anchor: exactTimestampWindowRequested ? 'requested_timestamp_window' : 'indexed_head',
+            windowComplete: sourceWindowComplete,
+            resultComplete,
+            requestedFromTimestamp: requestedWindowStartTimestamp,
+            requestedToTimestamp: requestedWindowEndExclusive - 1,
+            analyzedFromTimestamp: requestedWindowStartTimestamp,
+            analyzedToTimestamp: indexedEvidenceEndExclusive - 1,
+            indexedEvidenceEndTimestamp: indexedEvidenceEndExclusive - 1,
+            finalBucketComplete,
           }),
           execution: buildExecutionMetadata({
             mode,

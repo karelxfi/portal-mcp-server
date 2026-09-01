@@ -9,8 +9,10 @@ import {
   ACTIVITY_EXPLORER_RESOURCE_URI,
   ACTIVITY_EXPLORER_TOOLS,
   MCP_APP_MIME_TYPE,
+  RETAINED_ACTIVITY_EXPLORER_RESOURCE_URIS,
   classifyUiCapability,
   recordActivityExplorerResult,
+  resolveActivityExplorerSurface,
 } from '../src/apps/activity-explorer.js'
 import { ACTIVITY_EXPLORER_BYTES, ACTIVITY_EXPLORER_HASH } from '../src/generated/activity-explorer.version.js'
 import { evidenceArguments, planFollowup, shorterDuration } from '../src/app-ui/followup-state.js'
@@ -19,30 +21,68 @@ import { APP_FIXTURES } from '../src/app-ui/fixtures.js'
 import { buildCandlestickChart, buildTimeSeriesChart } from '../src/helpers/chart-metadata.js'
 import { formatResult } from '../src/helpers/format.js'
 import { register } from '../src/metrics.js'
-import { createPortalServer } from '../src/server.js'
+import { createPortalServer, getPortalServerInstructions } from '../src/server.js'
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message)
 }
 
+function buildAppResult() {
+  return formatResult({ items: [{ primary_id: 'fixture-row' }] }, 'Fixture result', {
+    toolName: 'portal_get_recent_activity',
+    ui: { version: 'portal_ui_v1' },
+  })
+}
+
 async function main() {
   const packageVersion = String(JSON.parse(await readFile('package.json', 'utf8')).version || '')
-  const appResult = formatResult(
-    { items: [{ primary_id: 'fixture-row' }] },
-    'Fixture result',
-    { toolName: 'portal_get_recent_activity', ui: { version: 'portal_ui_v1' } },
+  delete process.env.MCP_APP_ENABLED
+  const defaultResult = buildAppResult()
+  assert(
+    defaultResult.structuredContent?._server?.name === 'SQD' &&
+      defaultResult.structuredContent?._server?.version === packageVersion,
+    'every App-capable result must preserve the observable SQD server identity and exact package version',
   )
   assert(
-    appResult.structuredContent?._app?.name === 'SQD Blockchain Activity Explorer' &&
-      appResult.structuredContent?._app?.host_render_confirmed === false,
-    'App-enabled results must expose the canonical product name without claiming a host render',
+    defaultResult.structuredContent?._app === undefined,
+    'the beta app must not announce itself to hosts unless the deployment opts in',
   )
+  assert(
+    defaultResult.structuredContent?._ui !== undefined,
+    'opting out of the beta app must not change the presentation metadata in the payload',
+  )
+  process.env.MCP_APP_ENABLED = 'true'
+  const appResult = buildAppResult()
+  assert(
+    appResult.structuredContent?._app?.name === 'SQD Explorer' &&
+      appResult.structuredContent?._app?.server_delivery_state === 'ready' &&
+      appResult.structuredContent?._app?.host_render_state === 'not_observable_from_tool_result' &&
+      appResult.structuredContent?._app?.required_host_extension === 'io.modelcontextprotocol/ui' &&
+      appResult.structuredContent?._app?.host_render_confirmed === undefined,
+    'App-enabled results must expose the canonical product name and delivery state without inventing a host render verdict',
+  )
+  const inferredAppResult = formatResult(
+    [{ primary_id: 'fixture-transaction', hash: `0x${'1'.repeat(64)}` }],
+    'Fixture transaction',
+    { toolName: 'portal_evm_query_transactions' },
+  )
+  assert(
+    inferredAppResult.structuredContent?._ui === undefined &&
+      inferredAppResult.structuredContent?._app?.name === 'SQD Explorer',
+    'every advertised App tool must return the App identity even when the renderer uses its exact-row fallback',
+  )
+  for (const toolName of ACTIVITY_EXPLORER_TOOLS) {
+    const toolResult = formatResult([{ primary_id: `${toolName}-fixture` }], 'Fixture result', { toolName })
+    assert(
+      toolResult.structuredContent?._app?.name === 'SQD Explorer',
+      `${toolName} must return the App identity whenever it advertises the App`,
+    )
+  }
+  delete process.env.MCP_APP_ENABLED
   assert(shorterDuration('in last 38 mins') === '19m', 'natural-language chart windows should narrow deterministically')
   assert(
-    evidenceArguments(
-      { _evidence: { request: { arguments: { duration: '1h', coin: 'BTC' } } } },
-      { coin: 'BTC' },
-    ).duration === '1h',
+    evidenceArguments({ _evidence: { request: { arguments: { duration: '1h', coin: 'BTC' } } } }, { coin: 'BTC' })
+      .duration === '1h',
     'follow-ups should recover schema defaults from the factual evidence receipt',
   )
   assert(
@@ -62,27 +102,56 @@ async function main() {
   })
   assert(
     JSON.stringify(continuationPlan.callArgs) === JSON.stringify({ cursor: 'next' }) &&
-      JSON.stringify(continuationPlan.persistedArgs) === JSON.stringify({ network: 'hyperliquid-fills', coin: 'BTC', duration: '1h' }),
+      JSON.stringify(continuationPlan.persistedArgs) ===
+        JSON.stringify({ network: 'hyperliquid-fills', coin: 'BTC', duration: '1h' }),
     'continuation should call by cursor while preserving the investigation arguments for later follow-ups',
   )
   const timeSeriesContract = buildTimeSeriesChart({ interval: '1m', totalPoints: 12 })
   const candleContract = buildCandlestickChart({ interval: '1m', totalCandles: 12 })
-  for (const [name, chart] of [['time series', timeSeriesContract], ['candlestick', candleContract]] as const) {
+  for (const [name, chart] of [
+    ['time series', timeSeriesContract],
+    ['candlestick', candleContract],
+  ] as const) {
     assert(chart.interactions?.hover?.enabled === true, `${name} charts should declare exact point inspection`)
     assert(chart.interactions?.zoom?.enabled === true, `${name} charts should declare implemented x-axis range focus`)
     assert(chart.interactions?.toolbar?.enabled === true, `${name} charts should expose the implemented range controls`)
-    assert(chart.interactions?.toolbar?.actions.includes('reset_zoom') === true, `${name} charts should expose reset range`)
+    assert(
+      chart.interactions?.toolbar?.actions.includes('reset_zoom') === true,
+      `${name} charts should expose reset range`,
+    )
   }
   const shortChart = buildTimeSeriesChart({ interval: '1m', totalPoints: 4 })
-  assert(shortChart.interactions?.zoom?.enabled === false, 'short charts should not advertise unnecessary range controls')
+  assert(
+    shortChart.interactions?.zoom?.enabled === false,
+    'short charts should not advertise unnecessary range controls',
+  )
 
   const jsonExport = buildEvidenceExport(APP_FIXTURES.hyperliquid, 'json')
   const csvExport = buildEvidenceExport(APP_FIXTURES.hyperliquid, 'csv')
   const hyperliquidRows = (APP_FIXTURES.hyperliquid.ohlc as unknown[]).length
-  assert(jsonExport.filename.endsWith('.json') && jsonExport.rowCount === hyperliquidRows, 'JSON evidence export should include all candles')
-  assert(csvExport.filename.endsWith('.csv') && csvExport.rowCount === hyperliquidRows, 'CSV evidence export should include all candles')
+  assert(
+    jsonExport.filename.endsWith('.json') && jsonExport.rowCount === hyperliquidRows,
+    'JSON evidence export should include all candles',
+  )
+  assert(
+    csvExport.filename.endsWith('.csv') && csvExport.rowCount === hyperliquidRows,
+    'CSV evidence export should include all candles',
+  )
   assert(csvExport.content.includes('sqd_evidence_sha256'), 'CSV evidence export should preserve receipt identity')
-  assert(csvExport.content.split('\r\n').length === hyperliquidRows + 2, 'CSV export should contain one header and every exact row')
+  assert(
+    csvExport.content.split('\r\n').length === hyperliquidRows + 2,
+    'CSV export should contain one header and every exact row',
+  )
+  const activityJson = buildEvidenceExport(APP_FIXTURES.activity, 'json')
+  const activityCsv = buildEvidenceExport(APP_FIXTURES.activity, 'csv')
+  const exactActivityHash = String((APP_FIXTURES.activity.items as Array<Record<string, unknown>>)[0]?.tx_hash)
+  for (const exported of [activityJson, activityCsv]) {
+    assert(
+      exported.content.includes(exactActivityHash),
+      'evidence exports should keep transaction hashes byte-for-byte exact',
+    )
+    assert(exported.content.includes('0.000000009 USDC'), 'evidence exports should keep tiny non-zero amounts exact')
+  }
   assert(
     ACTIVITY_EXPLORER_HASH !== 'unbuilt' && /^[a-f0-9]{12}$/.test(ACTIVITY_EXPLORER_HASH),
     'app resource needs a content hash',
@@ -95,10 +164,91 @@ async function main() {
     ACTIVITY_EXPLORER_BYTES > 20_000 && ACTIVITY_EXPLORER_BYTES < 700_000,
     'embedded app must stay inside its release byte budget',
   )
-  for (const tool of ['portal_list_networks', 'portal_get_network_info', 'portal_get_head', 'portal_debug_resolve_time_to_block']) {
+  for (const tool of [
+    'portal_list_networks',
+    'portal_get_network_info',
+    'portal_get_head',
+    'portal_debug_resolve_time_to_block',
+  ]) {
     assert(!ACTIVITY_EXPLORER_TOOLS.has(tool), `${tool} is metadata evidence and must not advertise a data explorer`)
   }
 
+  const [defaultClientTransport, defaultServerTransport] = InMemoryTransport.createLinkedPair()
+  const defaultServer = createPortalServer({ transport: 'stdio' })
+  const defaultClient = new Client({ name: 'sqd-app-contract-default', version: '1.0.0' })
+  await defaultServer.connect(defaultServerTransport)
+  await defaultClient.connect(defaultClientTransport)
+  try {
+    const listedTools = await defaultClient.listTools()
+    assert(listedTools.tools.length === 28, 'opting out of the beta app must not change the 28-tool catalog')
+    for (const tool of listedTools.tools) {
+      const meta = tool._meta as Record<string, any> | undefined
+      assert(
+        meta?.ui?.resourceUri === undefined &&
+          meta?.['ui/resourceUri'] === undefined &&
+          meta?.['openai/outputTemplate'] === undefined,
+        `${tool.name} must not ask a host to render the beta app by default`,
+      )
+      assert(
+        !tool.description?.includes('MCP APP:'),
+        `${tool.name} must not promise an app surface the host was never offered`,
+      )
+    }
+    assert(
+      !getPortalServerInstructions().includes('MCP App'),
+      'default server instructions must not point the model at a beta app the host was never offered',
+    )
+    const resources = await defaultClient.listResources()
+    assert(
+      resources.resources.some((entry) => entry.uri === ACTIVITY_EXPLORER_RESOURCE_URI),
+      'the beta app resource should stay readable for hosts that opt in',
+    )
+  } finally {
+    await defaultClient.close()
+    await defaultServer.close()
+  }
+
+  delete process.env.MCP_APP_ENABLED
+  assert(
+    resolveActivityExplorerSurface({ url: 'https://portal.sqd.dev/mcp?app=1' }) === true &&
+      resolveActivityExplorerSurface({ url: 'https://portal.sqd.dev/mcp?app=true' }) === true,
+    'a connection should be able to opt into the beta app without enabling it for the deployment',
+  )
+  assert(
+    resolveActivityExplorerSurface({ url: 'https://portal.sqd.dev/mcp' }) === false &&
+      resolveActivityExplorerSurface(undefined) === false,
+    'a connection without the opt-in should stay on the data-only default',
+  )
+  process.env.MCP_APP_ENABLED = 'true'
+  assert(
+    resolveActivityExplorerSurface({ url: 'https://portal.sqd.dev/mcp?app=0' }) === false &&
+      resolveActivityExplorerSurface({ url: 'https://portal.sqd.dev/mcp' }) === true,
+    'an explicit connection choice should override the deployment default in both directions',
+  )
+  delete process.env.MCP_APP_ENABLED
+
+  const [optInClientTransport, optInServerTransport] = InMemoryTransport.createLinkedPair()
+  const optInServer = createPortalServer({ transport: 'http', appEnabled: true })
+  const optInClient = new Client({ name: 'sqd-app-contract-opt-in', version: '1.0.0' })
+  await optInServer.connect(optInServerTransport)
+  await optInClient.connect(optInClientTransport)
+  try {
+    const optedIn = (await optInClient.listTools()).tools.find((tool) => tool.name === 'portal_hyperliquid_get_ohlc')
+    const meta = optedIn?._meta as Record<string, any> | undefined
+    assert(
+      meta?.['ui/resourceUri'] === ACTIVITY_EXPLORER_RESOURCE_URI,
+      'a connection that opted in should receive the app metadata even when the deployment default is off',
+    )
+    assert(
+      (optInClient.getInstructions() ?? '').includes('SQD Explorer'),
+      'an opted-in connection should be told the app exists',
+    )
+  } finally {
+    await optInClient.close()
+    await optInServer.close()
+  }
+
+  process.env.MCP_APP_ENABLED = 'true'
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
   const server = createPortalServer({ transport: 'stdio' })
   const client = new Client({ name: 'sqd-app-contract', version: '1.0.0' })
@@ -107,6 +257,14 @@ async function main() {
   try {
     const listedTools = await client.listTools()
     assert(listedTools.tools.length === 28, 'the MCP App must not change the 28-tool catalog')
+    const advertisedAppTools = listedTools.tools
+      .filter((tool) => Boolean((tool._meta as Record<string, any> | undefined)?.['ui/resourceUri']))
+      .map((tool) => tool.name)
+      .sort()
+    assert(
+      JSON.stringify(advertisedAppTools) === JSON.stringify([...ACTIVITY_EXPLORER_TOOLS].sort()),
+      'the advertised App tool set must exactly match the formatter App tool set',
+    )
     for (const tool of listedTools.tools) {
       const meta = tool._meta as Record<string, any> | undefined
       if (ACTIVITY_EXPLORER_TOOLS.has(tool.name)) {
@@ -127,6 +285,24 @@ async function main() {
       }
       assert(tool.annotations?.readOnlyHint === true, `${tool.name} must remain read-only`)
     }
+    const fillsTool = listedTools.tools.find((tool) => tool.name === 'portal_hyperliquid_query_fills')
+    const walletTool = listedTools.tools.find((tool) => tool.name === 'portal_get_wallet_summary')
+    const serverSchema = (walletTool?.outputSchema as Record<string, any> | undefined)?.properties?._server
+    assert(
+      serverSchema?.properties?.name?.type === 'string' &&
+        serverSchema?.properties?.version?.type === 'string' &&
+        serverSchema?.required?.includes('name') &&
+        serverSchema?.required?.includes('version'),
+      'the public output schema must keep the exact required _server name and version fields',
+    )
+    assert(
+      fillsTool?.inputSchema?.properties?.limit?.maximum === 200,
+      'fills should accept the retained installed-client limit and adapt it to a safe page',
+    )
+    assert(
+      walletTool?.inputSchema?.properties?.limit_per_type?.maximum === 10,
+      'wallet summary should accept the retained installed-client category limit and adapt it to a safe page',
+    )
 
     const resources = await client.listResources()
     const resource = resources.resources.find((entry) => entry.uri === ACTIVITY_EXPLORER_RESOURCE_URI)
@@ -139,18 +315,22 @@ async function main() {
       'resource bytes must match the generated artifact',
     )
     assert(
-      content.text.includes('Blockchain Activity Explorer')
-        && content.text.includes(`version:${JSON.stringify(packageVersion)}`)
-        && content.text.includes('viewBox="0 0 306 306"')
-        && content.text.includes('#08090a')
-        && content.text.includes('#818cf8')
-        && content.text.includes('Inter SQD')
-        && content.text.includes('JetBrains Mono SQD'),
+      content.text.includes('SQD Explorer') &&
+        content.text.includes(`version:${JSON.stringify(packageVersion)}`) &&
+        content.text.includes('viewBox="0 0 306 306"') &&
+        content.text.includes('#08090a') &&
+        content.text.includes('#818cf8') &&
+        content.text.includes('Inter SQD') &&
+        content.text.includes('JetBrains Mono SQD'),
       'the app should contain the official SQD mark, dark product tokens, and embedded typefaces',
     )
     assert(
       !content.text.includes('<script src=') && !content.text.includes('<link rel='),
       'the app must be self-contained',
+    )
+    assert(
+      content.text.includes('https://www.tradingview.com/'),
+      'the bundled market chart must retain the required TradingView product-creator link',
     )
     const publicCopySources = await Promise.all([
       readFile('src/app-ui/view.ts', 'utf8'),
@@ -162,6 +342,11 @@ async function main() {
       'public app copy must not contain em dashes',
     )
     const appBridgeSource = publicCopySources[1]
+    assert(
+      publicCopySources[0].includes("'Charts by TradingView'") &&
+        publicCopySources[0].includes("attribution.href = 'https://www.tradingview.com/'"),
+      'the market chart must keep the required TradingView attribution visible',
+    )
     assert(
       appBridgeSource.includes("from '@modelcontextprotocol/ext-apps'") &&
         appBridgeSource.includes('new App(') &&
@@ -179,6 +364,26 @@ async function main() {
     assert(
       content._meta?.['openai/widgetDomain'] === 'https://portal.sqd.dev',
       'ChatGPT compatibility metadata should use the canonical SQD domain',
+    )
+    for (const retainedUri of RETAINED_ACTIVITY_EXPLORER_RESOURCE_URIS) {
+      assert(
+        resources.resources.some((entry) => entry.uri === retainedUri),
+        `resources/list should retain installed-client App URI ${retainedUri}`,
+      )
+      const retained = await client.readResource({ uri: retainedUri })
+      const retainedContent = retained.contents[0] as Record<string, any> | undefined
+      assert(
+        retainedContent?.uri === retainedUri &&
+          retainedContent.mimeType === MCP_APP_MIME_TYPE &&
+          typeof retainedContent.text === 'string' &&
+          Buffer.byteLength(retainedContent.text) === ACTIVITY_EXPLORER_BYTES,
+        `retained App URI ${retainedUri} should resolve to the current factual App artifact`,
+      )
+    }
+
+    assert(
+      getPortalServerInstructions().includes('SQD Explorer'),
+      'an opted-in deployment should tell the model the app exists',
     )
 
     const declared = classifyUiCapability(
@@ -230,8 +435,11 @@ async function main() {
   } finally {
     await client.close()
     await server.close()
+    delete process.env.MCP_APP_ENABLED
   }
 
+  console.log('PASS  the beta app stays opt-in and silent in a default deployment')
+  console.log('PASS  a single connection can opt in or out without changing the deployment')
   console.log('PASS  28 tool contracts remain intact with selective app metadata')
   console.log('PASS  versioned self-contained resource exposes exact standard and ChatGPT metadata')
   console.log('PASS  capability states and app runtime metrics are bounded and deterministic')

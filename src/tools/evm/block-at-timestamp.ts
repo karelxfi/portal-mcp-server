@@ -49,7 +49,7 @@ export function registerBlockAtTimestampTool(server: McpServer) {
 
       return formatResult(
         result,
-        `Resolved ${result.timestamp_human} to block ${result.block_number} (${result.resolution}).`,
+        `Resolved to ${dataset} block ${result.block_number} (${result.resolution}).`,
         {
           toolName: 'portal_debug_resolve_time_to_block',
           notices,
@@ -65,7 +65,7 @@ export function registerBlockAtTimestampTool(server: McpServer) {
               notes: [
                 result.resolution === 'estimated'
                   ? 'Resolved near the indexed head using the latest known block timestamp.'
-                  : 'Resolved directly against indexed timestamp data.',
+                  : 'Verified indexed boundary; timestamp_delta_seconds is the offset from the requested time.',
               ],
             }),
             timestamp: result.timestamp,

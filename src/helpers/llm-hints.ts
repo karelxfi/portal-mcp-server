@@ -37,6 +37,7 @@ export interface LlmOverrides {
   primary_kind?: string
   answer_sequence?: string[]
   parser_notes?: string[]
+  compact?: boolean
 }
 
 interface LlmMetricCardHint {
@@ -177,13 +178,18 @@ function getByPath(value: unknown, path?: string): unknown {
 function formatScalar(value: unknown, format?: TableValueFormat, unit?: string): string | undefined {
   if (value === undefined || value === null) return undefined
 
-  if (format === 'address') {
-    const text = String(value)
-    return text.length > 18 ? `${text.slice(0, 8)}...${text.slice(-6)}` : text
+  if (format === 'address' || format === 'identifier') {
+    return String(value)
   }
 
   if (format === 'timestamp_human') {
     return String(value)
+  }
+
+  // Strings are labels, identifiers, or exact decimal representations. Never
+  // run them through Number(), even when a numeric display format is declared.
+  if (typeof value === 'string' && format !== 'timestamp') {
+    return unit ? `${value} ${unit}` : value
   }
 
   const numeric = typeof value === 'number' ? value : Number(value)
@@ -751,6 +757,28 @@ export function buildLlmHints(payload: RecordLike, overrides?: LlmOverrides): Po
   const nextSteps = isRecord(payload.next_steps) ? payload.next_steps : undefined
   const followUpActions = asArray<UiFollowUpAction>(nextSteps?.actions ?? ui?.follow_up_actions)
   const llmFollowUpActions = compactHints ? followUpActions.slice(0, 2) : followUpActions.slice(0, 6)
+
+  if (overrides?.compact) {
+    const primarySection = annotatedSections.find((section) => section.path === primaryPath) ?? {
+      path: primaryPath,
+      kind: primaryKind,
+      priority: 'primary' as const,
+    }
+    const compactParserNotes = overrides.parser_notes?.slice(0, 1)
+    return {
+      version: 'portal_llm_v1',
+      primary_path: primaryPath,
+      primary_kind: overrides.primary_kind ?? primaryKind,
+      answer_sequence: answerSequence.slice(0, 4),
+      sections: [primarySection],
+      recommended_views: [],
+      ...(normalizedFields ? { normalized_fields: normalizedFields } : {}),
+      ...((isRecord(payload._pagination) && typeof payload._pagination.next_cursor === 'string')
+        ? { follow_up: { continue_cursor_path: '_pagination.next_cursor' } }
+        : {}),
+      ...(compactParserNotes ? { parser_notes: compactParserNotes } : {}),
+    }
+  }
 
   return {
     version: 'portal_llm_v1',

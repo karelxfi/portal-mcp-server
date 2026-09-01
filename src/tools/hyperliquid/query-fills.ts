@@ -10,7 +10,13 @@ import { normalizeHyperliquidFillResult } from '../../helpers/normalized-results
 import { buildPaginationInfo, decodeRecentPageCursor, encodeRecentPageCursor, paginateAscendingItems } from '../../helpers/pagination.js'
 import { buildChronologicalPageOrdering, buildQueryCoverage, buildQueryFreshness } from '../../helpers/result-metadata.js'
 import { applyResponseFormat, resolveDefaultResponseFormat, type ResponseFormat } from '../../helpers/response-modes.js'
-import { getTimestampWindowNotices, type TimestampInput, resolveTimeframeOrBlocks } from '../../helpers/timeframe.js'
+import {
+  getTimestampWindowNotices,
+  type BlockAtTimestampResult,
+  type EstimatedTimeframeResolution,
+  type TimestampInput,
+  resolveTimeframeOrBlocks,
+} from '../../helpers/timeframe.js'
 import { buildExecutionMetadata, buildToolDescription } from '../../helpers/tool-ux.js'
 import { buildMetricCard, buildPortalUi, buildTablePanel, buildTimelinePanel } from '../../helpers/ui-metadata.js'
 import { fetchRecentHyperliquidFillBlocks } from './fill-stream.js'
@@ -34,6 +40,9 @@ type HyperliquidFillsRequest = {
   include_pnl: boolean
   include_builder_info: boolean
   response_format: ResponseFormat
+  from_lookup?: BlockAtTimestampResult
+  to_lookup?: BlockAtTimestampResult
+  estimated_timeframe?: EstimatedTimeframeResolution
 }
 
 type HyperliquidFillItem = Record<string, unknown> & {
@@ -41,6 +50,9 @@ type HyperliquidFillItem = Record<string, unknown> & {
   fillIndex?: number
   hash?: string
 }
+
+const SAFE_FILL_PAGE_SIZE = 25
+const RETAINED_FILL_LIMIT_MAX = 200
 
 function getBlockNumber(item: HyperliquidFillItem): number | undefined {
   return typeof item.block_number === 'number' ? item.block_number : undefined
@@ -185,7 +197,14 @@ export function registerQueryHyperliquidFillsTool(server: McpServer) {
       builder: z.array(z.string()).optional().describe('Builder addresses (0x-prefixed, lowercase)'),
       fee_token: z.array(z.string()).optional().describe('Fee token symbols'),
       cloid: z.array(z.string()).optional().describe('Client order IDs (0x-prefixed hex)'),
-      limit: z.number().int().min(1).max(25).optional().default(20).describe('Max fills to return (default: 20, max: 25)'),
+      limit: z
+        .number()
+        .int()
+        .min(1)
+        .max(RETAINED_FILL_LIMIT_MAX)
+        .optional()
+        .default(20)
+        .describe('Requested fills per page (default: 20). Values up to the retained compatibility maximum of 200 are accepted, while each response is safely capped at 25 rows and remains cursorable.'),
       include_pnl: z.boolean().optional().default(true).describe('Include closedPnl and startPosition fields'),
       include_builder_info: z.boolean().optional().default(false).describe('Include builder and builderFee fields'),
       response_format: z.enum(['full', 'compact', 'summary']).optional().describe("Response format: defaults to 'compact' for chat-friendly output. Use 'summary' for aggregate stats or 'full' when you truly need every fill field."),
@@ -233,6 +252,8 @@ export function registerQueryHyperliquidFillsTool(server: McpServer) {
         include_builder_info = paginationCursor.request.include_builder_info
         response_format = paginationCursor.request.response_format
       }
+      const requestedLimit = limit
+      const pageLimit = Math.min(requestedLimit, SAFE_FILL_PAGE_SIZE)
       const effectiveResponseFormat = resolveDefaultResponseFormat(response_format)
 
       // Resolve timeframe or use explicit blocks
@@ -246,6 +267,11 @@ export function registerQueryHyperliquidFillsTool(server: McpServer) {
                 : paginationCursor.request.timeframe
                   ? 'timeframe'
                   : 'block_range',
+            ...(paginationCursor.request.from_lookup ? { from_lookup: paginationCursor.request.from_lookup } : {}),
+            ...(paginationCursor.request.to_lookup ? { to_lookup: paginationCursor.request.to_lookup } : {}),
+            ...(paginationCursor.request.estimated_timeframe
+              ? { estimated_timeframe: paginationCursor.request.estimated_timeframe }
+              : {}),
           }
         : await resolveTimeframeOrBlocks({
             dataset,
@@ -307,7 +333,7 @@ export function registerQueryHyperliquidFillsTool(server: McpServer) {
 
       const hasFilters = !!(user || coin || dir || builder || fee_token || cloid)
       const cursorSkip = paginationCursor?.skip_inclusive_block ?? 0
-      const fetchLimit = limit + cursorSkip + 1
+      const fetchLimit = pageLimit + cursorSkip + 1
       const recentFetch = await fetchRecentHyperliquidFillBlocks({
         dataset,
         fromBlock: resolvedFromBlock,
@@ -338,7 +364,7 @@ export function registerQueryHyperliquidFillsTool(server: McpServer) {
       )
       const page = paginateAscendingItems(
         allFills,
-        limit,
+        pageLimit,
         getBlockNumber,
         paginationCursor
           ? {
@@ -355,7 +381,7 @@ export function registerQueryHyperliquidFillsTool(server: McpServer) {
               ...(timeframe ? { timeframe } : {}),
               ...(from_timestamp !== undefined ? { from_timestamp } : {}),
               ...(to_timestamp !== undefined ? { to_timestamp } : {}),
-              limit,
+              limit: pageLimit,
               finalized_only,
               ...(user ? { user } : {}),
               ...(coin ? { coin } : {}),
@@ -366,6 +392,11 @@ export function registerQueryHyperliquidFillsTool(server: McpServer) {
               include_pnl,
               include_builder_info,
               response_format: effectiveResponseFormat,
+              ...(resolvedBlocks.from_lookup ? { from_lookup: resolvedBlocks.from_lookup } : {}),
+              ...(resolvedBlocks.to_lookup ? { to_lookup: resolvedBlocks.to_lookup } : {}),
+              ...(resolvedBlocks.estimated_timeframe
+                ? { estimated_timeframe: resolvedBlocks.estimated_timeframe }
+                : {}),
             },
             window_from_block: resolvedFromBlock,
             window_to_block: endBlock,
@@ -376,6 +407,11 @@ export function registerQueryHyperliquidFillsTool(server: McpServer) {
 
       const formattedData = applyResponseFormat(page.pageItems, effectiveResponseFormat, 'hyperliquid_fills')
       const notices = getTimestampWindowNotices(resolvedBlocks)
+      if (requestedLimit > pageLimit) {
+        notices.push(
+          `Accepted the retained limit ${requestedLimit} for installed-client compatibility and returned a safe ${pageLimit}-row page. Continue with _pagination.next_cursor for older fills.`,
+        )
+      }
       if (nextCursor) notices.push('Older results are available via _pagination.next_cursor.')
       const freshness = buildQueryFreshness({
         finality: finalized_only ? 'finalized' : 'latest',
@@ -412,11 +448,11 @@ export function registerQueryHyperliquidFillsTool(server: McpServer) {
 
       return formatResult(
         responsePayload,
-        `Retrieved ${page.pageItems.length} Hyperliquid fills${page.hasMore ? ` from the most recent matching range (preview page limited to ${limit})` : ''}`,
+        `Retrieved ${page.pageItems.length} Hyperliquid fills${page.hasMore ? ` from the most recent matching range (preview page limited to ${pageLimit})` : ''}`,
         {
           toolName: 'portal_hyperliquid_query_fills',
           notices,
-          pagination: buildPaginationInfo(limit, page.pageItems.length, nextCursor),
+          pagination: buildPaginationInfo(pageLimit, page.pageItems.length, nextCursor),
           ordering: buildChronologicalPageOrdering({
             sortedBy: 'block_number',
             tieBreakers: ['time', 'coin', 'user'],
@@ -426,7 +462,8 @@ export function registerQueryHyperliquidFillsTool(server: McpServer) {
           execution: buildExecutionMetadata({
             response_format: effectiveResponseFormat,
             finalized_only,
-            limit,
+            limit: pageLimit,
+            ...(requestedLimit !== pageLimit ? { requested_limit: requestedLimit } : {}),
             from_block: resolvedFromBlock,
             to_block: endBlock,
             page_to_block: pageToBlock,

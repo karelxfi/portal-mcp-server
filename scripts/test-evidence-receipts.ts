@@ -76,6 +76,34 @@ function main() {
     relativeReceipt.replay.mode === 'semantic',
     'relative windows should not claim that a later replay reproduces the same snapshot',
   )
+  const exactTimestampReceipt = buildEvidenceReceipt(
+    'portal_hyperliquid_get_ohlc',
+    {
+      network: 'hyperliquid-fills',
+      coin: 'BTC',
+      interval: '1m',
+      duration: '1h',
+      from_timestamp: '2026-08-31T11:10:00.000Z',
+      to_timestamp: '2026-08-31T11:14:59.999Z',
+    },
+    completePayload,
+  )
+  assert(exactTimestampReceipt.replay.mode === 'exact', 'absolute timestamp bounds should be exact replay evidence')
+  assert(
+    exactTimestampReceipt.request.arguments.duration === undefined &&
+      exactTimestampReceipt.request.arguments.from_timestamp === '2026-08-31T11:10:00.000Z' &&
+      exactTimestampReceipt.request.requested_window?.to_timestamp === '2026-08-31T11:14:59.999Z',
+    'exact timestamp receipts must omit an unrelated duration default and retain both requested bounds',
+  )
+  const cursorReceipt = buildEvidenceReceipt(
+    'portal_hyperliquid_query_fills',
+    { cursor: 'opaque-cursor', timeframe: '100', limit: 20, network: 'hyperliquid-fills' },
+    completePayload,
+  )
+  assert(
+    stableEvidenceJson(cursorReceipt.request.arguments) === '{"cursor":"opaque-cursor"}',
+    'cursor receipts must not mix cursor-authoritative replay with unrelated current defaults',
+  )
 
   const reorderedRows = buildEvidenceReceipt('portal_evm_query_transactions', args, {
     ...completePayload,

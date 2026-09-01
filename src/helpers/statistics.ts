@@ -12,8 +12,21 @@ export function calculatePercentile(values: number[], percentile: number): numbe
     return lower
   }
 
+  if (Number.isInteger(clamped) && Number.isSafeInteger(lower) && Number.isSafeInteger(upper)) {
+    const denominator = 100n
+    const positionNumerator = BigInt(clamped) * BigInt(sorted.length - 1)
+    const remainder = positionNumerator % denominator
+    const exactNumerator = BigInt(lower) * denominator + BigInt(upper - lower) * remainder
+    const sign = exactNumerator < 0n ? '-' : ''
+    const absolute = exactNumerator < 0n ? -exactNumerator : exactNumerator
+    const whole = absolute / denominator
+    const fraction = (absolute % denominator).toString().padStart(2, '0').replace(/0+$/, '')
+    return Number(fraction ? `${sign}${whole}.${fraction}` : `${sign}${whole}`)
+  }
+
   const weight = index - lowerIndex
-  return lower + (upper - lower) * weight
+  const interpolated = lower + (upper - lower) * weight
+  return Number.parseFloat(interpolated.toPrecision(12))
 }
 
 export function buildPercentileSummary(values: number[], percentiles: number[] = [50, 95]): Record<string, number> | undefined {

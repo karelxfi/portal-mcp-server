@@ -1,3 +1,5 @@
+import { AsyncLocalStorage } from 'node:async_hooks'
+
 import { CLIENT_CAPABILITIES_META_KEY, type McpServer } from '@modelcontextprotocol/server'
 
 import { ACTIVITY_EXPLORER_HTML } from '../generated/activity-explorer.generated.js'
@@ -5,6 +7,9 @@ import { ACTIVITY_EXPLORER_BYTES, ACTIVITY_EXPLORER_HASH } from '../generated/ac
 import { appRenderPayloadBytes, appResourceReadsTotal, appResourceSizeBytes, appToolResultsTotal } from '../metrics.js'
 import type { RuntimeRequestContext } from '../observability.js'
 import { npmVersion } from '../version.js'
+import { RETAINED_ACTIVITY_EXPLORER_RESOURCE_URIS } from './activity-explorer-compat.js'
+
+export { RETAINED_ACTIVITY_EXPLORER_RESOURCE_URIS } from './activity-explorer-compat.js'
 
 export const MCP_APP_MIME_TYPE = 'text/html;profile=mcp-app'
 export const MCP_APP_EXTENSION_ID = 'io.modelcontextprotocol/ui'
@@ -36,8 +41,49 @@ export const ACTIVITY_EXPLORER_TOOLS = new Set([
 
 export type UiCapabilityStatus = 'declared' | 'unsupported' | 'undeclared'
 
+/**
+ * SQD Explorer is a beta surface, so hosts never render it unless someone opts
+ * in: a deployment through MCP_APP_ENABLED, or a single connection through the
+ * ?app= query parameter. The resource stays registered either way, so a host
+ * that wants the beta can still read it, but no tool result asks a host to open
+ * it on its own.
+ */
+const appSurfaceStorage = new AsyncLocalStorage<boolean>()
+
+function parseAppFlag(value: string | undefined | null): boolean | undefined {
+  const normalized = value?.trim().toLowerCase()
+  if (normalized === 'true' || normalized === '1') return true
+  if (normalized === 'false' || normalized === '0') return false
+  return undefined
+}
+
+export function isActivityExplorerEnabledByDeployment(): boolean {
+  return parseAppFlag(process.env.MCP_APP_ENABLED) ?? false
+}
+
+/** An explicit ?app= on the connection wins over the deployment default, in both directions. */
+export function resolveActivityExplorerSurface(request: { url?: string } | undefined): boolean {
+  if (!request?.url) return isActivityExplorerEnabledByDeployment()
+  let requested: boolean | undefined
+  try {
+    requested = parseAppFlag(new URL(request.url).searchParams.get('app'))
+  } catch {
+    requested = undefined
+  }
+  return requested ?? isActivityExplorerEnabledByDeployment()
+}
+
+export function runWithActivityExplorerSurface<T>(enabled: boolean, callback: () => T): T {
+  return appSurfaceStorage.run(enabled, callback)
+}
+
+export function isActivityExplorerEnabled(): boolean {
+  return appSurfaceStorage.getStore() ?? isActivityExplorerEnabledByDeployment()
+}
+
 export function getActivityExplorerToolMeta(toolName: string): Record<string, unknown> | undefined {
   if (!ACTIVITY_EXPLORER_TOOLS.has(toolName)) return undefined
+  if (!isActivityExplorerEnabled()) return undefined
   return {
     ui: {
       resourceUri: ACTIVITY_EXPLORER_RESOURCE_URI,
@@ -106,36 +152,44 @@ const resourceUiMeta = {
 
 export function registerActivityExplorerResource(server: McpServer, runtime: RuntimeRequestContext) {
   appResourceSizeBytes.set({ resource_hash: ACTIVITY_EXPLORER_HASH }, ACTIVITY_EXPLORER_BYTES)
-  server.registerResource(
-    'sqd-blockchain-activity-explorer',
-    ACTIVITY_EXPLORER_RESOURCE_URI,
-    {
-      title: 'SQD Blockchain Activity Explorer',
-      description:
-        'Interactive evidence views for blockchain activity, wallets, contracts, token flows, markets, and network analytics.',
-      mimeType: MCP_APP_MIME_TYPE,
-      cacheHint: { ttlMs: 86_400_000, cacheScope: 'public' },
-      _meta: { ui: resourceUiMeta },
-    } as Parameters<McpServer['registerResource']>[2],
-    async (uri) => {
-      appResourceReadsTotal.inc({ transport: runtime.transport, server_version: npmVersion })
-      return {
-        contents: [
-          {
-            uri: uri.href,
-            mimeType: MCP_APP_MIME_TYPE,
-            text: ACTIVITY_EXPLORER_HTML,
-            _meta: {
-              ui: resourceUiMeta,
-              'openai/widgetDescription':
-                'Explore the exact blockchain evidence returned by SQD with charts, metrics, tables, timelines, coverage, freshness, and continuation controls.',
-              'openai/widgetPrefersBorder': true,
-              'openai/widgetCSP': { connect_domains: [], resource_domains: [] },
-              'openai/widgetDomain': 'https://portal.sqd.dev',
-            },
-          },
-        ],
-      } as Awaited<ReturnType<Parameters<McpServer['registerResource']>[3]>>
-    },
+  const resourceUris = Array.from(
+    new Set([ACTIVITY_EXPLORER_RESOURCE_URI, ...RETAINED_ACTIVITY_EXPLORER_RESOURCE_URIS]),
   )
+
+  resourceUris.forEach((resourceUri, index) => {
+    server.registerResource(
+      index === 0 ? 'sqd-blockchain-activity-explorer' : `sqd-blockchain-activity-explorer-compat-${index}`,
+      resourceUri,
+      {
+        title: 'SQD Explorer',
+        description:
+          index === 0
+            ? 'Interactive evidence views for blockchain activity, wallets, contracts, token flows, markets, and network analytics.'
+            : 'Retained SQD Explorer URI for installed-client compatibility.',
+        mimeType: MCP_APP_MIME_TYPE,
+        cacheHint: { ttlMs: 86_400_000, cacheScope: 'public' },
+        _meta: { ui: resourceUiMeta },
+      } as Parameters<McpServer['registerResource']>[2],
+      async (uri) => {
+        appResourceReadsTotal.inc({ transport: runtime.transport, server_version: npmVersion })
+        return {
+          contents: [
+            {
+              uri: uri.href,
+              mimeType: MCP_APP_MIME_TYPE,
+              text: ACTIVITY_EXPLORER_HTML,
+              _meta: {
+                ui: resourceUiMeta,
+                'openai/widgetDescription':
+                  'Explore the exact blockchain evidence returned by SQD with charts, metrics, tables, timelines, coverage, freshness, and continuation controls.',
+                'openai/widgetPrefersBorder': true,
+                'openai/widgetCSP': { connect_domains: [], resource_domains: [] },
+                'openai/widgetDomain': 'https://portal.sqd.dev',
+              },
+            },
+          ],
+        } as Awaited<ReturnType<Parameters<McpServer['registerResource']>[3]>>
+      },
+    )
+  })
 }

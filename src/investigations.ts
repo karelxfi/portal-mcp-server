@@ -75,7 +75,7 @@ export const INVESTIGATIONS: InvestigationDefinition[] = [
       'Explain what happened to a wallet, when it happened, which assets and counterparties were involved, and which exact rows prove each finding.',
     required_evidence: [
       'Wallet summary with the requested network and exact window',
-      'Fund flows, largest movements, and ranked counterparties',
+      'Fund flows, largest movements within each asset, and separately ranked activity and movement counterparties',
       'Exact transactions or transfers for every material finding',
       'Coverage, freshness, pagination, ordering, and the evidence receipt',
     ],

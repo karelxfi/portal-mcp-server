@@ -2,6 +2,7 @@
 
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 
+import { EXACT_DECIMAL_ZERO, addExactDecimals, formatExactDecimal, parseExactDecimal } from '../src/helpers/exact-decimal.ts'
 import { assert, callToolWithRetry, closeTestClient, connectTestClient } from './test-helpers.ts'
 
 const BASE_USDC = '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913'
@@ -110,16 +111,24 @@ async function main() {
     )
     assert(!marketResult.isError, 'market investigation should succeed')
     assertEvidence(marketResult.data, 'portal_hyperliquid_get_ohlc', 'market investigation')
-    assert(marketResult.data?.ohlc?.length === 5, 'five-minute market journey should return five one-minute buckets')
+    const expectedMarketBuckets =
+      (marketResult.data.summary.window_end_exclusive - marketResult.data.summary.window_start_timestamp) / 60
+    assert(
+      marketResult.data?.ohlc?.length === expectedMarketBuckets,
+      'five-minute market journey should return every wall-clock bucket touched by the exact indexed window',
+    )
     assert(
       marketResult.data.ohlc.reduce((sum: number, row: any) => sum + row.fill_count, 0) ===
         marketResult.data.summary.total_fills,
       'candle fill counts should reconcile to the exact summary total',
     )
+    const exactMarketVolume = marketResult.data.ohlc.reduce((sum: any, row: any) => {
+      const value = parseExactDecimal(row.volume)
+      return value ? addExactDecimals(sum, value) : sum
+    }, EXACT_DECIMAL_ZERO)
     assert(
-      marketResult.data.ohlc.reduce((sum: number, row: any) => sum + row.volume, 0).toFixed(2) ===
-        Number(marketResult.data.summary.total_volume).toFixed(2),
-      'candle volume should reconcile to the exact summary total',
+      formatExactDecimal(exactMarketVolume) === marketResult.data.summary.total_volume,
+      'candle volume should reconcile exactly to the summary total',
     )
     assert(marketResult.data._evidence.replay.mode === 'semantic', 'a moving recent window must not claim exact replay')
     evidence.push({ journey: 'market', coin: 'BTC', receipt: marketResult.data._evidence })

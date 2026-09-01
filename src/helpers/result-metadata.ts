@@ -4,14 +4,17 @@ import type { BlockAtTimestampResult, EstimatedTimeframeResolution, ResolvedBloc
 type TimestampBoundarySummary = Pick<
   BlockAtTimestampResult,
   | 'timestamp'
-  | 'timestamp_human'
-  | 'normalized_input'
   | 'resolution'
   | 'block_number'
+> & Partial<Pick<
+  BlockAtTimestampResult,
+  | 'timestamp_human'
+  | 'normalized_input'
   | 'block_timestamp'
   | 'block_timestamp_human'
+  | 'timestamp_delta_seconds'
   | 'boundary'
->
+>>
 
 export interface QueryFreshness {
   kind: 'query_window'
@@ -42,7 +45,7 @@ export interface QueryCoverage {
 
 export interface BlockLookupFreshness {
   kind: 'timestamp_lookup'
-  resolution: 'exact' | 'estimated'
+  resolution: 'verified_boundary' | 'estimated'
   requested_timestamp: number
   requested_timestamp_human: string
   normalized_input: string
@@ -59,12 +62,18 @@ export interface BlockLookupFreshness {
 export interface BucketCoverage {
   kind: 'bucket_window'
   window_complete: boolean
-  result_complete: true
+  result_complete: boolean
   expected_buckets: number
   returned_buckets: number
   filled_buckets: number
   empty_buckets: number
   anchor: string
+  requested_from_timestamp?: number
+  requested_to_timestamp?: number
+  analyzed_from_timestamp?: number
+  analyzed_to_timestamp?: number
+  indexed_evidence_end_timestamp?: number
+  final_bucket_complete?: boolean
 }
 
 export interface AnalysisCoverage {
@@ -133,6 +142,26 @@ export interface RankedOrdering {
   rank_field?: string
 }
 
+function summarizeTimestampBoundary(result: BlockAtTimestampResult): TimestampBoundarySummary {
+  return {
+    timestamp: result.timestamp,
+    resolution: result.resolution,
+    block_number: result.block_number,
+    ...(result.block_timestamp !== undefined ? { block_timestamp: result.block_timestamp } : {}),
+    ...(result.boundary ? { boundary: result.boundary } : {}),
+    ...(result.timestamp_delta_seconds !== undefined
+      ? { timestamp_delta_seconds: result.timestamp_delta_seconds }
+      : {}),
+    ...(result.resolution === 'estimated'
+      ? {
+          timestamp_human: result.timestamp_human,
+          normalized_input: result.normalized_input,
+          ...(result.block_timestamp_human ? { block_timestamp_human: result.block_timestamp_human } : {}),
+        }
+      : {}),
+  }
+}
+
 export function buildQueryFreshness(params: {
   finality: 'latest' | 'finalized'
   headBlockNumber: number
@@ -148,37 +177,11 @@ export function buildQueryFreshness(params: {
   const timestampBounds: QueryFreshness['timestamp_bounds'] = {}
 
   if (resolvedWindow.from_lookup) {
-    timestampBounds.from = {
-      timestamp: resolvedWindow.from_lookup.timestamp,
-      timestamp_human: resolvedWindow.from_lookup.timestamp_human,
-      normalized_input: resolvedWindow.from_lookup.normalized_input,
-      resolution: resolvedWindow.from_lookup.resolution,
-      block_number: resolvedWindow.from_lookup.block_number,
-      ...(resolvedWindow.from_lookup.block_timestamp !== undefined
-        ? { block_timestamp: resolvedWindow.from_lookup.block_timestamp }
-        : {}),
-      ...(resolvedWindow.from_lookup.block_timestamp_human
-        ? { block_timestamp_human: resolvedWindow.from_lookup.block_timestamp_human }
-        : {}),
-      ...(resolvedWindow.from_lookup.boundary ? { boundary: resolvedWindow.from_lookup.boundary } : {}),
-    }
+    timestampBounds.from = summarizeTimestampBoundary(resolvedWindow.from_lookup)
   }
 
   if (resolvedWindow.to_lookup) {
-    timestampBounds.to = {
-      timestamp: resolvedWindow.to_lookup.timestamp,
-      timestamp_human: resolvedWindow.to_lookup.timestamp_human,
-      normalized_input: resolvedWindow.to_lookup.normalized_input,
-      resolution: resolvedWindow.to_lookup.resolution,
-      block_number: resolvedWindow.to_lookup.block_number,
-      ...(resolvedWindow.to_lookup.block_timestamp !== undefined
-        ? { block_timestamp: resolvedWindow.to_lookup.block_timestamp }
-        : {}),
-      ...(resolvedWindow.to_lookup.block_timestamp_human
-        ? { block_timestamp_human: resolvedWindow.to_lookup.block_timestamp_human }
-        : {}),
-      ...(resolvedWindow.to_lookup.boundary ? { boundary: resolvedWindow.to_lookup.boundary } : {}),
-    }
+    timestampBounds.to = summarizeTimestampBoundary(resolvedWindow.to_lookup)
   }
 
   return {
@@ -240,6 +243,9 @@ export function buildBlockLookupFreshness(result: BlockAtTimestampResult): Block
     ...(result.estimated_block_time_seconds !== undefined
       ? { estimated_block_time_seconds: result.estimated_block_time_seconds }
       : {}),
+    ...(result.timestamp_delta_seconds !== undefined
+      ? { timestamp_delta_seconds: result.timestamp_delta_seconds }
+      : {}),
   }
 }
 
@@ -249,16 +255,35 @@ export function buildBucketCoverage(params: {
   filledBuckets: number
   anchor: string
   windowComplete?: boolean
+  resultComplete?: boolean
+  requestedFromTimestamp?: number
+  requestedToTimestamp?: number
+  analyzedFromTimestamp?: number
+  analyzedToTimestamp?: number
+  indexedEvidenceEndTimestamp?: number
+  finalBucketComplete?: boolean
 }): BucketCoverage {
   return {
     kind: 'bucket_window',
     window_complete: params.windowComplete ?? true,
-    result_complete: true,
+    result_complete: params.resultComplete ?? true,
     expected_buckets: params.expectedBuckets,
     returned_buckets: params.returnedBuckets,
     filled_buckets: params.filledBuckets,
     empty_buckets: Math.max(0, params.returnedBuckets - params.filledBuckets),
     anchor: params.anchor,
+    ...(params.requestedFromTimestamp !== undefined
+      ? { requested_from_timestamp: params.requestedFromTimestamp }
+      : {}),
+    ...(params.requestedToTimestamp !== undefined ? { requested_to_timestamp: params.requestedToTimestamp } : {}),
+    ...(params.analyzedFromTimestamp !== undefined
+      ? { analyzed_from_timestamp: params.analyzedFromTimestamp }
+      : {}),
+    ...(params.analyzedToTimestamp !== undefined ? { analyzed_to_timestamp: params.analyzedToTimestamp } : {}),
+    ...(params.indexedEvidenceEndTimestamp !== undefined
+      ? { indexed_evidence_end_timestamp: params.indexedEvidenceEndTimestamp }
+      : {}),
+    ...(params.finalBucketComplete !== undefined ? { final_bucket_complete: params.finalBucketComplete } : {}),
   }
 }
 

@@ -633,7 +633,16 @@ export const TOOL_SPECS: ToolSpec[] = [
 
       const poolData = poolResult.data
       assert(poolData.matches?.[0]?.identifier === context.baseUniswapV4PoolId, 'Expected pool id match')
-      assert(poolData.matches?.[0]?.validation_status === 'format_only', 'Expected explicit pool validation status')
+      assert(
+        ['format_only', 'external_indexer_match'].includes(poolData.matches?.[0]?.validation_status),
+        'Expected explicit pool validation status',
+      )
+      if (poolData.matches?.[0]?.validation_status === 'external_indexer_match') {
+        assert(
+          poolData.matches[0].base_token?.address && poolData.matches[0].quote_token?.address,
+          'Externally matched pools must include both token addresses',
+        )
+      }
     },
   },
   {
@@ -836,15 +845,24 @@ export const TOOL_SPECS: ToolSpec[] = [
         const hyperliquidData = hyperliquidResult.data
         const hyperliquidRows = getItems(hyperliquidData)
         assert(
-          hyperliquidRows.length === 8,
-          'portal_get_time_series hyperliquid should return 8 buckets for 38m at 5m granularity',
+          hyperliquidRows.length === hyperliquidData._coverage?.expected_buckets,
+          'portal_get_time_series hyperliquid should return every aligned bucket reported by coverage',
         )
         assert(
-          hyperliquidRows.some((row: any) => Number(row.value ?? 0) > 0 || Number(row.blocks_in_bucket ?? 0) > 0),
+          hyperliquidRows.some((row: any) => Number(row.value ?? 0) > 0 || row.has_fills === true),
           'portal_get_time_series hyperliquid should not emit all-empty buckets for an active recent window',
         )
-        assert(hyperliquidData._coverage?.expected_buckets === 8, 'Expected Hyperliquid coverage to report 8 buckets')
-        assert(hyperliquidData._coverage?.returned_buckets === 8, 'Expected Hyperliquid coverage to return all buckets')
+        assert(
+          hyperliquidData._coverage?.returned_buckets === hyperliquidData._coverage?.expected_buckets,
+          'Expected Hyperliquid coverage to return every aligned bucket',
+        )
+        assert(
+          hyperliquidRows.every((row: any) =>
+            typeof row.bucket_complete === 'boolean' &&
+            ['closed', 'open_or_partial'].includes(row.bucket_state),
+          ),
+          'Expected every Hyperliquid time-series bucket to disclose its completion state',
+        )
         assert(hyperliquidData.summary?.metric === 'volume', 'Expected Hyperliquid metric summary')
         expectWindowMetadata(hyperliquidData, 'portal_get_time_series hyperliquid')
         expectPresentation(hyperliquidData, 'portal_get_time_series hyperliquid', {
@@ -1524,18 +1542,45 @@ export const TOOL_SPECS: ToolSpec[] = [
       const data = extractJson(text)
       const candles = Array.isArray(data.ohlc) ? data.ohlc : getItems(data)
       assert(candles.length > 0, 'Expected Hyperliquid candles')
-      assert(candles.length === 8, 'Expected 8 Hyperliquid candles for 38m at 5m granularity')
+      assert(
+        candles.length === data._coverage?.expected_buckets &&
+        candles.length === data._coverage?.returned_buckets,
+        'Expected every aligned Hyperliquid candle reported by coverage',
+      )
       assert(
         candles.some((candle: any) => Number(candle.close ?? 0) > 0 || Number(candle.fill_count ?? 0) > 0),
         'Expected Hyperliquid candles to include non-empty buckets',
+      )
+      assert(
+        candles.every((candle: any) =>
+          typeof candle.bucket_complete === 'boolean' &&
+          ['closed', 'open_or_partial'].includes(candle.bucket_state),
+        ),
+        'Expected every Hyperliquid candle to disclose its completion state',
+      )
+      assert(
+        candles[0]?.bucket_start_inclusive === data.summary?.requested_window_start_timestamp,
+        'Expected first Hyperliquid candle to preserve the exact requested start boundary',
+      )
+      assert(
+        candles.at(-1)?.bucket_end_exclusive === data.summary?.indexed_evidence_end_exclusive,
+        'Expected final Hyperliquid candle to stop at the exact indexed evidence boundary',
       )
       expectWindowMetadata(data, 'portal_hyperliquid_get_ohlc')
       expectGapDiagnostics(data, 'portal_hyperliquid_get_ohlc')
       expectOrdering(data, 'portal_hyperliquid_get_ohlc')
       expectPresentation(data, 'portal_hyperliquid_get_ohlc', { chartDataKey: 'ohlc', tableId: 'ohlc' })
-      assert(data._coverage?.result_complete === true, 'OHLC should return every bucket in the requested window')
+      assert(
+        data._coverage?.result_complete === data.summary?.result_complete,
+        'OHLC summary and coverage must agree on whole-result completeness',
+      )
+      assert(
+        data._coverage?.result_complete ===
+          (data._coverage?.window_complete === true && data.summary?.all_buckets_complete === true),
+        'OHLC must be complete only when source coverage and every requested candle are complete',
+      )
       assert(data._pagination?.continuation_scope === 'adjacent_window', 'OHLC cursor should be labeled as an older adjacent window')
-      if (data._coverage?.window_complete === true) {
+      if (data._coverage?.result_complete === true) {
         assert(data.investigation?.status !== 'partial_page', 'A complete OHLC window should not be labeled as a partial page')
       }
     },

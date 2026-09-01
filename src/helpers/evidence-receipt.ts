@@ -116,11 +116,47 @@ function copyFields(source: JsonRecord, keys: string[]): JsonRecord | undefined 
   return Object.keys(result).length > 0 ? result : undefined
 }
 
+function normalizeEvidenceArguments(toolArgs: JsonRecord): JsonRecord {
+  const normalized = canonicalizeEvidenceValue(toolArgs) as JsonRecord
+  if (typeof normalized.cursor === 'string' && normalized.cursor.length > 0) {
+    return { cursor: normalized.cursor }
+  }
+
+  const hasTimestampWindow = normalized.from_timestamp !== undefined || normalized.to_timestamp !== undefined
+  if (hasTimestampWindow) {
+    delete normalized.timeframe
+    delete normalized.duration
+    delete normalized.from_block
+    delete normalized.to_block
+  } else if (normalized.from_block !== undefined || normalized.to_block !== undefined) {
+    delete normalized.timeframe
+    delete normalized.duration
+  }
+
+  return normalized
+}
+
+function cursorRequest(cursor: unknown): JsonRecord | undefined {
+  if (typeof cursor !== 'string') return undefined
+  const [payload] = cursor.split('.')
+  if (!payload) return undefined
+  try {
+    const decoded = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')) as unknown
+    return isRecord(decoded) && isRecord(decoded.request) ? decoded.request : undefined
+  } catch {
+    return undefined
+  }
+}
+
 function requestedWindow(args: JsonRecord): JsonRecord | undefined {
-  return copyFields(args, [
+  const source = cursorRequest(args.cursor) ?? args
+  return copyFields(source, [
     'timeframe',
+    'duration',
     'from_block',
     'to_block',
+    'from_timestamp',
+    'to_timestamp',
     'from_time',
     'to_time',
     'start_time',
@@ -162,7 +198,17 @@ function analyzedWindow(payload: JsonRecord): JsonRecord | undefined {
 function replayMode(args: JsonRecord): EvidenceReceipt['replay']['mode'] {
   if (typeof args.cursor === 'string' && args.cursor.length > 0) return 'exact'
   if (args.from_block !== undefined && args.to_block !== undefined) return 'exact'
+  if (isAbsoluteTimestamp(args.from_timestamp) && isAbsoluteTimestamp(args.to_timestamp)) return 'exact'
   return 'semantic'
+}
+
+function isAbsoluteTimestamp(value: unknown): boolean {
+  if (typeof value === 'number') return Number.isFinite(value)
+  if (typeof value !== 'string') return false
+  const trimmed = value.trim()
+  if (/^\d{10,13}$/.test(trimmed)) return true
+  if (/\b(now|ago|past|last|previous|current|today|yesterday)\b/i.test(trimmed)) return false
+  return Number.isFinite(Date.parse(trimmed))
 }
 
 function primaryEvidence(payload: JsonRecord): { path?: string; count: number } {
@@ -172,6 +218,14 @@ function primaryEvidence(payload: JsonRecord): { path?: string; count: number } 
       .split('.')
       .reduce<unknown>((current, key) => (isRecord(current) ? current[key] : undefined), payload)
     if (Array.isArray(value)) return { path, count: value.length }
+  }
+
+  const summaryPath = inferPrimaryEvidencePath(payload)
+  if (summaryPath === 'presentation_summary') {
+    const value = summaryPath
+      .split('.')
+      .reduce<unknown>((current, key) => (isRecord(current) ? current[key] : undefined), payload)
+    if (isRecord(value)) return { path: summaryPath, count: 1 }
   }
 
   const meta = isRecord(payload._meta) ? payload._meta : undefined
@@ -202,7 +256,7 @@ function completeness(payload: JsonRecord): {
 }
 
 export function buildEvidenceReceipt(toolName: string, toolArgs: JsonRecord, payload: JsonRecord): EvidenceReceipt {
-  const normalizedArgs = canonicalizeEvidenceValue(toolArgs) as JsonRecord
+  const normalizedArgs = normalizeEvidenceArguments(toolArgs)
   const meta = isRecord(payload._meta) ? payload._meta : {}
   const dataset = typeof normalizedArgs.dataset === 'string'
     ? normalizedArgs.dataset
@@ -217,7 +271,7 @@ export function buildEvidenceReceipt(toolName: string, toolArgs: JsonRecord, pay
   const evidence = primaryEvidence(payload)
   const completion = completeness(payload)
   const exactPayload = exactEvidencePayload(payload)
-  const requested = requestedWindow(normalizedArgs)
+  const requested = requestedWindow(toolArgs)
   const analyzed = analyzedWindow(payload)
 
   return {

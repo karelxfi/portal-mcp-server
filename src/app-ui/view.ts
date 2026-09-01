@@ -1,3 +1,14 @@
+import {
+  CandlestickSeries,
+  ColorType,
+  createChart,
+  CrosshairMode,
+  HistogramSeries,
+  LineStyle,
+  type IChartApi,
+  type UTCTimestamp,
+} from 'lightweight-charts'
+
 import { ACTIVITY_EXPLORER_CSS } from './styles.js'
 
 export type ExplorerState = {
@@ -31,14 +42,59 @@ type Column = {
 type Panel = Record<string, unknown>
 
 const ROOT_STYLE_ID = 'sqd-activity-explorer-style'
-const TABLE_PAGE_SIZE = 20
+const TABLE_PAGE_SIZE = 10
 const MAX_TIMELINE_ROWS = 40
 const MAX_RANKED_ROWS = 16
 const MAX_STAT_ROWS = 30
-const CHART_WIDTH = 900
-const CHART_HEIGHT = 320
-const CHART_PAD = { left: 18, right: 76, top: 18, bottom: 32 }
 const CHART_COLORS = ['var(--chart-1)', 'var(--chart-2)', 'var(--chart-3)', 'var(--chart-4)', 'var(--chart-5)']
+
+/* Canvas charts need literal colors; these mirror the styles.ts tokens. */
+const TERMINAL_COLORS = {
+  up: '#0891b2',
+  down: '#d97706',
+  upSoft: 'rgba(8, 145, 178, 0.55)',
+  downSoft: 'rgba(217, 119, 6, 0.55)',
+  accent: '#818cf8',
+  accentLine: 'rgba(129, 140, 248, 0.45)',
+  /* Axis ticks read in the muted whisper ink #9898a1 (chart-palette axis_label),
+     matching the SVG chart labels so the canvas and SVG grammars agree. */
+  ink: '#9898a1',
+  grid: 'rgba(255, 255, 255, 0.055)',
+  axis: 'rgba(255, 255, 255, 0.14)',
+  crosshair: 'rgba(255, 255, 255, 0.24)',
+  crosshairLabel: '#1a1a1e',
+}
+const TERMINAL_MONO = "'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace"
+
+/* Candle terminals hold live lightweight-charts instances; every re-render
+   must release the previous ones so canvases and observers do not pile up. */
+const panelChartDisposers = new WeakMap<HTMLElement, () => void>()
+let activeChartDisposers: Array<() => void> = []
+
+export function disposeActiveCharts() {
+  for (const dispose of activeChartDisposers.splice(0)) dispose()
+}
+
+function registerChartDisposer(panelRoot: HTMLElement, chart: IChartApi, extra: () => void) {
+  let disposed = false
+  const dispose = () => {
+    if (disposed) return
+    disposed = true
+    extra()
+    chart.remove()
+  }
+  panelChartDisposers.set(panelRoot, dispose)
+  activeChartDisposers.push(dispose)
+}
+
+/* The SVG coordinate space shrinks on narrow hosts so type stays near its CSS
+   size instead of scaling away with the viewBox. */
+function chartGeometry() {
+  const narrow = typeof matchMedia === 'function' && matchMedia('(max-width: 520px)').matches
+  return narrow
+    ? { width: 460, height: 380, pad: { left: 10, right: 58, top: 14, bottom: 30 }, axisTitles: false }
+    : { width: 900, height: 320, pad: { left: 26, right: 76, top: 14, bottom: 32 }, axisTitles: true }
+}
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value))
@@ -65,7 +121,13 @@ function text(value: unknown): string {
 }
 
 function compact(value: number): string {
-  return Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 2 }).format(value)
+  return Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 2 }).format(value).replace(/K/g, 'k')
+}
+
+function pillCompact(value: number): string {
+  return Intl.NumberFormat('en-US', { notation: 'compact', maximumSignificantDigits: 3 })
+    .format(value)
+    .replace(/K/g, 'k')
 }
 
 function numeric(value: unknown): number | undefined {
@@ -77,7 +139,7 @@ function numeric(value: unknown): number | undefined {
 function formatValue(value: unknown, format?: string, unit?: string): string {
   if (value === null || value === undefined || value === '') return 'Not available'
   if (typeof value === 'string' && format !== 'timestamp') {
-    return value
+    return unit && !value.toLowerCase().includes(unit.toLowerCase()) ? `${value} ${unit}` : value
   }
   const numberValue = typeof value === 'number' ? value : Number(value)
   if (!Number.isFinite(numberValue)) return text(value)
@@ -97,8 +159,11 @@ function formatValue(value: unknown, format?: string, unit?: string): string {
         style: 'currency',
         currency: 'USD',
         notation: Math.abs(numberValue) >= 1_000_000 ? 'compact' : 'standard',
+        minimumFractionDigits: 0,
         maximumFractionDigits: 2,
-      }).format(numberValue)
+      })
+        .format(numberValue)
+        .replace(/K/g, 'k')
       break
     case 'gwei':
       formatted = `${Intl.NumberFormat('en-US', { maximumFractionDigits: 3 }).format(numberValue)} gwei`
@@ -118,7 +183,10 @@ function formatValue(value: unknown, format?: string, unit?: string): string {
       formatted = new Date(numberValue * (numberValue > 1e12 ? 1 : 1000)).toLocaleString()
       break
     default:
-      formatted = Intl.NumberFormat('en-US', { maximumFractionDigits: 4 }).format(numberValue)
+      formatted =
+        numberValue !== 0 && Math.abs(numberValue) < 1
+          ? Number(numberValue.toPrecision(6)).toString()
+          : Intl.NumberFormat('en-US', { maximumFractionDigits: 4 }).format(numberValue)
   }
   return unit && !formatted.toLowerCase().includes(unit.toLowerCase()) ? `${formatted} ${unit}` : formatted
 }
@@ -128,6 +196,20 @@ function humanize(value: string): string {
     .replace(/^_+/, '')
     .replace(/[_-]+/g, ' ')
     .replace(/\b\w/g, (letter) => letter.toUpperCase())
+}
+
+function isHexIdentifier(value: string): boolean {
+  return /^0x[0-9a-fA-F]{8,}$/.test(value)
+}
+
+function shortIdentifier(value: string): string {
+  return isHexIdentifier(value) && value.length > 14 ? `${value.slice(0, 6)}…${value.slice(-4)}` : value
+}
+
+function shortTimeLabel(value: string): string {
+  const clock = /\b(\d{2}:\d{2})(?::\d{2})?\b/.exec(value)
+  if (clock) return clock[1]
+  return value.slice(0, 22)
 }
 
 function element<K extends keyof HTMLElementTagNameMap>(
@@ -163,7 +245,7 @@ function appHeader(actions: ExplorerActions, state: ExplorerState): HTMLElement 
   brand.append(logoMark())
   const copy = element('div', 'sqd-brand-copy')
   copy.append(element('div', 'sqd-brand-name', 'SQD'))
-  copy.append(element('div', 'sqd-brand-subtitle', 'Blockchain Activity Explorer'))
+  copy.append(element('div', 'sqd-brand-subtitle', 'Explorer'))
   brand.append(copy)
   topbar.append(brand)
 
@@ -191,77 +273,18 @@ function appHeader(actions: ExplorerActions, state: ExplorerState): HTMLElement 
   return topbar
 }
 
-function workspaceMode(payload: Record<string, unknown>): { label: string; className: string; capabilities: string[] } {
+function workspaceMode(payload: Record<string, unknown>): { label: string } {
   const contract = isRecord(payload._tool_contract) ? payload._tool_contract : {}
   const name = text(contract.name)
-  if (name.includes('wallet')) return { label: 'Wallet investigation', className: 'wallet', capabilities: ['Flows', 'Counterparties', 'Exact records'] }
+  if (name.includes('wallet')) return { label: 'Wallet investigation' }
   if (name.includes('contract') || name.includes('_logs') || name.includes('token_transfers')) {
-    return { label: 'Contract investigation', className: 'contract', capabilities: ['Activity', 'Actors', 'Exact events'] }
+    return { label: 'Contract investigation' }
   }
-  if (name.includes('ohlc') || name.includes('hyperliquid') || name.includes('analytics')) {
-    return { label: 'Market workspace', className: 'market', capabilities: ['Price and volume', 'Exact fills', 'Period comparison'] }
-  }
-  if (name.includes('network') || name === 'portal_get_head') {
-    return { label: 'Network workspace', className: 'network', capabilities: ['Coverage', 'Freshness', 'Indexed head'] }
-  }
-  if (name.includes('transaction') || name.includes('recent_activity')) {
-    return { label: 'Transaction investigation', className: 'transaction', capabilities: ['Timeline', 'Exact rows', 'Safe pivots'] }
-  }
-  return { label: 'Blockchain investigation', className: 'blockchain', capabilities: ['Charts', 'Exact rows', 'Evidence receipt'] }
-}
-
-function workspaceStrip(payload: Record<string, unknown>): HTMLElement {
-  const mode = workspaceMode(payload)
-  const strip = element('section', `sqd-workspace-strip sqd-workspace-strip--${mode.className}`)
-  strip.setAttribute('aria-label', 'Investigation workspace mode')
-  strip.append(element('strong', 'sqd-workspace-name', mode.label))
-  const capabilities = element('div', 'sqd-workspace-capabilities')
-  mode.capabilities.forEach((capability) => capabilities.append(element('span', undefined, capability)))
-  strip.append(capabilities)
-  return strip
-}
-
-function evidenceReceipt(payload: Record<string, unknown>, actions: ExplorerActions): HTMLElement | null {
-  const evidence = isRecord(payload._evidence) ? payload._evidence : undefined
-  if (!evidence) return null
-  const request = isRecord(evidence.request) ? evidence.request : {}
-  const result = isRecord(evidence.result) ? evidence.result : {}
-  const source = isRecord(evidence.source) ? evidence.source : {}
-  const analyzed = isRecord(request.analyzed_window) ? request.analyzed_window : {}
-  const completeness = text(result.completeness || 'unknown')
-  const section = element('section', 'sqd-receipt')
-  section.setAttribute('aria-labelledby', 'sqd-receipt-title')
-  const copy = element('div', 'sqd-receipt-copy')
-  const eyebrow = element('div', 'sqd-eyebrow')
-  eyebrow.append(element('span', `sqd-dot${completeness === 'partial' ? ' sqd-dot--warning' : completeness === 'unknown' ? ' sqd-dot--warning' : ''}`))
-  eyebrow.append(document.createTextNode(`${humanize(completeness)} evidence`))
-  copy.append(eyebrow)
-  const title = element('h2', 'sqd-receipt-title', 'Reproducible evidence receipt')
-  title.id = 'sqd-receipt-title'
-  copy.append(title)
-  const digest = text(result.exact_data_sha256)
-  const rowCount = numeric(result.row_count) ?? 0
-  const details = [
-    text(source.network ?? source.dataset),
-    `${rowCount} exact row${rowCount === 1 ? '' : 's'}`,
-    digest ? `SHA-256 ${digest.slice(0, 12)}` : '',
-    analyzed.window_from_block !== undefined && analyzed.window_to_block !== undefined
-      ? `Blocks ${text(analyzed.window_from_block)} to ${text(analyzed.window_to_block)}`
-      : '',
-  ].filter(Boolean)
-  copy.append(element('p', 'sqd-receipt-meta', details.join(' · ')))
-  section.append(copy)
-  if (actions.exportEvidence) {
-    const actionBar = element('div', 'sqd-actions')
-    for (const format of ['json', 'csv'] as const) {
-      const button = element('button', 'sqd-button', `Download ${format.toUpperCase()}`)
-      button.type = 'button'
-      button.addEventListener('click', () => actions.exportEvidence?.(format))
-      actionBar.append(button)
-    }
-    section.append(actionBar)
-  }
-  return section
+  if (name.includes('ohlc') || name.includes('hyperliquid')) return { label: 'Market terminal' }
+  if (name.includes('analytics')) return { label: 'Analytics' }
+  if (name.includes('network') || name === 'portal_get_head') return { label: 'Network status' }
+  if (name.includes('transaction') || name.includes('recent_activity')) return { label: 'Activity investigation' }
+  return { label: 'Investigation' }
 }
 
 function resultState(payload: Record<string, unknown>): { label: string; tone: string; partial: boolean } {
@@ -280,47 +303,134 @@ function resultState(payload: Record<string, unknown>): { label: string; tone: s
     : { label: 'Evidence ready', tone: '', partial }
 }
 
-function badges(payload: Record<string, unknown>, partial: boolean): HTMLElement {
-  const row = element('div', 'sqd-badges')
-  const meta = isRecord(payload._meta) ? payload._meta : {}
-  const provenance = isRecord(payload._provenance) ? payload._provenance : {}
-  const freshness = isRecord(payload._freshness) ? payload._freshness : {}
-  const coverage = isRecord(payload._coverage) ? payload._coverage : {}
-  const pagination = isRecord(payload._pagination) ? payload._pagination : {}
-  const candidates: [string, unknown, string?][] = [
-    ['Network', meta.network ?? meta.dataset ?? payload.network],
-    ['Window', coverage.requested_window ?? coverage.window ?? meta.timeframe],
-    ['Rows', meta.row_count ?? meta.result_count ?? (asArray(payload.items).length || undefined)],
-    ['Finality', freshness.finality ?? freshness.kind],
-    ['Source', provenance.source],
-  ]
-  for (const [label, value, tone] of candidates) {
-    if (value === undefined || value === null || value === '' || isRecord(value) || Array.isArray(value)) continue
-    row.append(element('span', `sqd-badge${tone ? ` sqd-badge--${tone}` : ''}`, `${label}: ${text(value)}`))
-  }
-  if (pagination.has_more === true && pagination.continuation_scope === 'adjacent_window')
-    row.append(element('span', 'sqd-badge', 'Older adjacent window available'))
-  if (partial) row.append(element('span', 'sqd-badge sqd-badge--warning', 'Check coverage before using totals'))
-  return row
+function primaryMetric(payload: Record<string, unknown>): Record<string, unknown> | undefined {
+  const ui = isRecord(payload._ui) ? payload._ui : {}
+  return asArray(ui.metric_cards)
+    .filter(isRecord)
+    .find((spec) => spec.emphasis === 'primary')
 }
 
-function hero(payload: Record<string, unknown>): HTMLElement {
+function masthead(payload: Record<string, unknown>): HTMLElement {
   const ui = isRecord(payload._ui) ? payload._ui : {}
   const headline = isRecord(ui.headline) ? ui.headline : {}
   const display = isRecord(payload.display) ? payload.display : {}
+  const meta = isRecord(payload._meta) ? payload._meta : {}
+  const summary = isRecord(payload.summary) ? payload.summary : {}
   const state = resultState(payload)
+  const mode = workspaceMode(payload)
   const section = element('section', 'sqd-hero')
   section.setAttribute('aria-labelledby', 'sqd-result-title')
+
   const eyebrow = element('div', 'sqd-eyebrow')
-  eyebrow.append(element('span', `sqd-dot${state.tone ? ` sqd-dot--${state.tone}` : ''}`))
-  eyebrow.append(document.createTextNode(state.label))
+  if (state.tone) eyebrow.append(element('span', `sqd-dot sqd-dot--${state.tone}`))
+  const overlineParts = [mode.label, text(meta.network ?? meta.dataset ?? payload.network), text(summary.coin)]
+    .filter(Boolean)
+    .join(' · ')
+  eyebrow.append(document.createTextNode(overlineParts))
   section.append(eyebrow)
-  const title = element('h1', 'sqd-title', text(headline.title ?? display.title ?? 'Blockchain activity'))
+
+  const error = isRecord(payload.error) ? payload.error : undefined
+  const claim = text(
+    payload.answer ?? headline.title ?? display.title ?? error?.summary ?? payload._summary ?? 'Blockchain activity',
+  )
+  const title = element('h1', 'sqd-title', claim)
   title.id = 'sqd-result-title'
   section.append(title)
-  const subtitleText = text(headline.subtitle ?? display.subtitle ?? payload.answer ?? payload._summary)
-  if (subtitleText) section.append(element('p', 'sqd-subtitle', subtitleText))
-  section.append(badges(payload, state.partial))
+
+  const subtitleText = text(headline.subtitle ?? display.subtitle)
+  if (subtitleText && subtitleText !== claim) section.append(element('p', 'sqd-subtitle', subtitleText))
+
+  const heroSpec = primaryMetric(payload)
+  if (heroSpec) {
+    const value = getByPath(payload, text(heroSpec.value_path))
+    if (value !== undefined && value !== null && value !== '') {
+      const figure = element('div', 'sqd-hero-figure')
+      figure.append(element('div', 'sqd-hero-value', formatValue(value, text(heroSpec.format), text(heroSpec.unit))))
+      figure.append(element('div', 'sqd-hero-label', text(heroSpec.label ?? 'Headline value')))
+      section.append(figure)
+    }
+  }
+
+  section.append(contextLine(payload, state))
+  return section
+}
+
+function contextLine(
+  payload: Record<string, unknown>,
+  state: { label: string; tone: string; partial: boolean },
+): HTMLElement {
+  const meta = isRecord(payload._meta) ? payload._meta : {}
+  const freshness = isRecord(payload._freshness) ? payload._freshness : {}
+  const coverage = isRecord(payload._coverage) ? payload._coverage : {}
+  const pagination = isRecord(payload._pagination) ? payload._pagination : {}
+  const row = element('div', 'sqd-context')
+  const push = (value: string, tone?: string) => {
+    if (!value) return
+    row.append(element('span', tone ? `sqd-context--${tone}` : undefined, value))
+  }
+  const window = text(coverage.requested_window ?? coverage.window ?? meta.timeframe)
+  if (window) push(`window ${window}`)
+  const rowCount = meta.row_count ?? meta.result_count ?? (asArray(payload.items).length || undefined)
+  if (rowCount !== undefined && rowCount !== null && !isRecord(rowCount)) {
+    push(`${text(rowCount)} row${text(rowCount) === '1' ? '' : 's'}`)
+  }
+  const blocks = text(meta.queried_blocks)
+  if (blocks) push(`blocks ${blocks}`)
+  const finality = text(freshness.finality ?? freshness.kind)
+  if (finality) push(finality)
+  const head = text(freshness.indexed_head_block)
+  if (head) push(`head ${head}`)
+  if (state.partial && state.tone === 'warning') push('partial: check coverage before using totals', 'warning')
+  if (state.tone === 'danger') push('needs attention', 'danger')
+  if (pagination.has_more === true && pagination.continuation_scope === 'adjacent_window') {
+    push('older adjacent window available')
+  }
+  return row
+}
+
+function evidenceReceipt(payload: Record<string, unknown>, actions: ExplorerActions): HTMLElement | null {
+  const evidence = isRecord(payload._evidence) ? payload._evidence : undefined
+  if (!evidence) return null
+  const result = isRecord(evidence.result) ? evidence.result : {}
+  const source = isRecord(evidence.source) ? evidence.source : {}
+  const request = isRecord(evidence.request) ? evidence.request : {}
+  const analyzed = isRecord(request.analyzed_window) ? request.analyzed_window : {}
+  const completeness = text(result.completeness || 'unknown')
+  const rowCount = numeric(result.row_count) ?? 0
+  const digest = text(result.exact_data_sha256)
+
+  const section = element('section', 'sqd-receipt')
+  section.setAttribute('aria-label', 'Evidence receipt')
+  const copy = element('div', 'sqd-receipt-copy')
+  copy.append(
+    element('span', 'sqd-receipt-title', `${rowCount} exact row${rowCount === 1 ? '' : 's'} · ${completeness}`),
+  )
+  const metaParts = [
+    text(source.network ?? source.dataset),
+    digest ? `SHA-256 ${digest.slice(0, 12)}` : '',
+    analyzed.window_from_block !== undefined && analyzed.window_to_block !== undefined
+      ? `blocks ${text(analyzed.window_from_block)} to ${text(analyzed.window_to_block)}`
+      : '',
+  ].filter(Boolean)
+  copy.append(element('span', 'sqd-receipt-meta', metaParts.join(' · ')))
+  section.append(copy)
+
+  const actionBar = element('div', 'sqd-actions')
+  if (actions.exportEvidence) {
+    for (const format of ['json', 'csv'] as const) {
+      const button = element('button', 'sqd-button', `Download ${format.toUpperCase()}`)
+      button.type = 'button'
+      button.addEventListener('click', () => actions.exportEvidence?.(format))
+      actionBar.append(button)
+    }
+  }
+  const full = element('button', 'sqd-button', 'Full receipt')
+  full.type = 'button'
+  full.addEventListener('click', () =>
+    showDetails('Evidence receipt', evidence, 'Request arguments, exact-data digest, and replay path for this result.'),
+  )
+  actionBar.append(full)
+  section.append(actionBar)
   return section
 }
 
@@ -352,7 +462,8 @@ function metricCards(payload: Record<string, unknown>): HTMLElement | null {
       }
     }
   }
-  const cards = specs.length ? specs : fallbacks
+  const heroSpec = specs.length ? primaryMetric(payload) : undefined
+  const cards = (specs.length ? specs : fallbacks).filter((spec) => spec !== heroSpec)
   if (!cards.length) return null
   const grid = element('section', 'sqd-metrics')
   grid.setAttribute('aria-label', 'Key metrics')
@@ -438,6 +549,67 @@ function intervalSeconds(value: unknown): number | undefined {
   return Number(match[1]) * multiplier
 }
 
+/* Axis scales follow the Chart Standards band() rule: floors and ceilings land
+   on the 1/2/5 ladder. Zero is compulsory when the mark's size carries the
+   value (bars, stacked segments, areas) and optional when position carries it,
+   so lines get a banded axis with a labelled floor and no area fill. */
+const STEP_LADDER = [1, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10]
+
+function bandScale(
+  min: number,
+  max: number,
+  zeroBased: boolean,
+): { domainMin: number; domainMax: number; ticks: number[] } {
+  let low = zeroBased ? Math.min(0, min) : min
+  let high = zeroBased ? Math.max(0, max) : max
+  if (high === low) {
+    const nudge = Math.max(Math.abs(high) * 0.001, 1e-9)
+    low -= nudge
+    high += nudge
+  }
+  const span = high - low
+  const pad = span * 0.08
+  const paddedLow = zeroBased && low === 0 ? 0 : low - pad
+  const paddedHigh = zeroBased && high === 0 ? 0 : high + pad
+  const paddedSpan = paddedHigh - paddedLow
+  const power = 10 ** Math.floor(Math.log10(paddedSpan / 4))
+  let best: { step: number; domainMin: number; domainMax: number; score: number } | undefined
+  for (const unit of STEP_LADDER) {
+    const step = unit * power
+    const domainMin = Math.floor(paddedLow / step) * step
+    const domainMax = Math.ceil(paddedHigh / step) * step
+    const intervals = Math.round((domainMax - domainMin) / step)
+    if (intervals < 3 || intervals > 7) continue
+    const score = span / (domainMax - domainMin) - Math.abs(intervals - 5) * 0.01
+    if (!best || score > best.score) best = { step, domainMin, domainMax, score }
+  }
+  if (!best) {
+    const step = 10 * power
+    best = {
+      step,
+      domainMin: Math.floor(paddedLow / step) * step,
+      domainMax: Math.ceil(paddedHigh / step) * step,
+      score: 0,
+    }
+  }
+  const ticks: number[] = []
+  for (let value = best.domainMin; value <= best.domainMax + best.step / 2; value += best.step) {
+    ticks.push(Math.abs(value) < best.step / 1e6 ? 0 : value)
+  }
+  return { domainMin: best.domainMin, domainMax: best.domainMax, ticks }
+}
+
+function tickText(value: number, format?: string, isTop = false): string {
+  const magnitude = Math.abs(value)
+  let base: string
+  if (value === 0) base = '0'
+  else if (magnitude >= 1000) base = compact(value)
+  else if (magnitude < 1) base = Number(value.toPrecision(3)).toString()
+  else base = Number(value.toPrecision(4)).toString()
+  if (format === 'currency_usd' && isTop) return `$${base}`
+  return base
+}
+
 type ChartPoint = {
   row: Record<string, unknown>
   values: Array<number | null>
@@ -466,11 +638,14 @@ function evidenceIdentity(row: Record<string, unknown>): string {
   return JSON.stringify(Object.keys(identity).length ? identity : row)
 }
 
-function selectEvidenceRow(row: Record<string, unknown>, selectedHit: SVGElement) {
+type EvidencePager = HTMLElement & { __sqdShowEvidence?: (identity: string) => void }
+
+function selectEvidenceRow(row: Record<string, unknown>, selectedHit: Element) {
   const identity = evidenceIdentity(row)
-  document.querySelectorAll<SVGElement>('.sqd-chart-hit[aria-pressed]').forEach((hit) => {
+  document.querySelectorAll<Element>('.sqd-chart-hit[aria-pressed]').forEach((hit) => {
     hit.setAttribute('aria-pressed', String(hit === selectedHit))
   })
+  document.querySelectorAll<EvidencePager>('.sqd-table-wrap').forEach((wrap) => wrap.__sqdShowEvidence?.(identity))
   let selectedTableRow: HTMLTableRowElement | undefined
   document.querySelectorAll<HTMLTableRowElement>('tr[data-evidence-key]').forEach((tableRow) => {
     const selected = tableRow.dataset.evidenceKey === identity
@@ -492,7 +667,10 @@ function bindPointSelection(hit: SVGElement, row: Record<string, unknown>) {
   })
 }
 
-function normalizeSeries(rows: Record<string, unknown>[], chart: Record<string, unknown>): {
+function normalizeSeries(
+  rows: Record<string, unknown>[],
+  chart: Record<string, unknown>,
+): {
   points: ChartPoint[]
   series: ChartSeries[]
 } {
@@ -506,7 +684,7 @@ function normalizeSeries(rows: Record<string, unknown>[], chart: Record<string, 
         const value = numeric(getByPath(row, yField))
         return { row, values: [value ?? null] }
       }),
-      series: [{ key: yField, label: text(chart.y_axis_label || humanize(yField)), color: CHART_COLORS[0] }],
+      series: [{ key: yField, label: text(chart.y_axis_label || humanize(yField)), color: 'var(--accent)' }],
     }
   }
 
@@ -532,7 +710,11 @@ function normalizeSeries(rows: Record<string, unknown>[], chart: Record<string, 
           }),
         }
       }),
-      series: keys.map((key, index) => ({ key, label: humanize(key), color: CHART_COLORS[index % CHART_COLORS.length] })),
+      series: keys.map((key, index) => ({
+        key,
+        label: humanize(key),
+        color: CHART_COLORS[index % CHART_COLORS.length],
+      })),
     }
   }
 
@@ -559,6 +741,319 @@ function normalizeSeries(rows: Record<string, unknown>[], chart: Record<string, 
   }
 }
 
+/* Market terminals render through lightweight-charts: the canvas carries the
+   candles, crosshair, and right price scale, while a transparent hit-button
+   overlay keeps every candle keyboard-reachable, screen-readable, and linked
+   to its exact evidence row. */
+function buildCandleTerminal(
+  panelRoot: HTMLElement,
+  chart: Record<string, unknown>,
+  rows: Record<string, unknown>[],
+  chartTitle: string,
+): HTMLElement | null {
+  const candleFields = isRecord(chart.candle_fields) ? chart.candle_fields : {}
+  const openField = text(candleFields.open || 'open')
+  const highField = text(candleFields.high || 'high')
+  const lowField = text(candleFields.low || 'low')
+  const closeField = text(candleFields.close || 'close')
+  const volumeField = text(chart.volume_field || 'volume')
+  const priceFormat = text(chart.value_format || 'decimal')
+  const priceUnit = text(chart.price_unit)
+  const volumeUnit = text(chart.volume_unit)
+  const volumeFormat = volumeUnit.toUpperCase() === 'USD' ? 'currency_usd' : 'decimal'
+  const tooltipDescriptor = isRecord(chart.tooltip) ? chart.tooltip : {}
+  const tooltipFields = asArray(tooltipDescriptor.fields).filter(isRecord)
+  const titleField = text(tooltipDescriptor.title_field)
+
+  const parsed = rows.flatMap((row) => {
+    const open = numeric(getByPath(row, openField))
+    const high = numeric(getByPath(row, highField))
+    const low = numeric(getByPath(row, lowField))
+    const close = numeric(getByPath(row, closeField))
+    if (open === undefined || high === undefined || low === undefined || close === undefined) return []
+    return [{ row, open, high, low, close, volume: numeric(getByPath(row, volumeField)) }]
+  })
+  if (!parsed.length) return null
+
+  const rawTimes = parsed.map((point) => numeric(point.row.timestamp))
+  const monotonic = rawTimes.every(
+    (value, index) => value !== undefined && (index === 0 || value > (rawTimes[index - 1] as number)),
+  )
+  const times = parsed.map((_point, index) => (monotonic ? (rawTimes[index] as number) : index * 60) as UTCTimestamp)
+  const fullLabels = parsed.map((point, index) =>
+    text(getByPath(point.row, titleField) ?? point.row.timestamp_human ?? point.row.timestamp ?? `Candle ${index + 1}`),
+  )
+  const timeToLabel = new Map<number, string>()
+  times.forEach((time, index) =>
+    timeToLabel.set(time as number, shortTimeLabel(fullLabels[index]) || fullLabels[index]),
+  )
+  const isOpenCandle = (point: (typeof parsed)[number]) =>
+    point.row.is_closed === false || point.row.open_candle === true
+  const hasVolume = chart.volume_panel !== false && parsed.some((point) => point.volume !== undefined)
+  const volumeMax = hasVolume ? Math.max(...parsed.map((point) => point.volume ?? 0)) : 0
+  const finalClose = parsed[parsed.length - 1].close
+  const prices = parsed.flatMap((point) => [point.low, point.high])
+  const priceSpan = Math.max(Math.max(...prices) - Math.min(...prices), Math.abs(finalClose) * 0.001, 1e-9)
+  const minMove = 10 ** Math.min(0, Math.max(-8, Math.floor(Math.log10(priceSpan)) - 3))
+  const exactValues = parsed.map((point) => {
+    const fallback = [
+      `O ${formatValue(point.open, priceFormat, priceUnit)}`,
+      `H ${formatValue(point.high, priceFormat, priceUnit)}`,
+      `L ${formatValue(point.low, priceFormat, priceUnit)}`,
+      `C ${formatValue(point.close, priceFormat, priceUnit)}`,
+      ...(point.volume !== undefined ? [`Volume ${formatValue(point.volume, volumeFormat, volumeUnit)}`] : []),
+    ]
+    const values = tooltipFields.length
+      ? tooltipFields.map((field) => {
+          const key = text(field.path ?? field.key)
+          return `${text(field.label ?? humanize(key))} ${formatValue(getByPath(point.row, key), text(field.format), text(field.unit))}`
+        })
+      : fallback
+    if (isOpenCandle(point)) values.push('Open candle, still forming')
+    return values
+  })
+
+  const terminal = element('div', 'sqd-candle-terminal')
+  const readout = element('div', 'sqd-candle-readout')
+  readout.setAttribute('aria-hidden', 'true')
+  const chartBox = element('div', 'sqd-candle-chart')
+  chartBox.setAttribute('role', 'group')
+  chartBox.setAttribute(
+    'aria-label',
+    `${chartTitle}. ${parsed.length} candles. Last close ${formatValue(finalClose, priceFormat, priceUnit)}.`,
+  )
+  const mount = element('div', 'sqd-candle-canvas')
+  mount.setAttribute('aria-hidden', 'true')
+  const hits = element('div', 'sqd-chart-hits')
+  const tooltip = element('div', 'sqd-chart-tooltip')
+  tooltip.setAttribute('role', 'status')
+  tooltip.setAttribute('aria-live', 'polite')
+  tooltip.hidden = true
+  const pill = element('div', 'sqd-candle-pill')
+  pill.hidden = true
+  pill.textContent =
+    (priceFormat === 'currency_usd' ? '$' : '') +
+    (Math.abs(finalClose) >= 1000 ? pillCompact(finalClose) : tickText(finalClose, priceFormat))
+  chartBox.append(mount, hits, pill, tooltip)
+  let volumeCaption: HTMLElement | undefined
+  if (hasVolume) {
+    volumeCaption = element(
+      'div',
+      'sqd-chart-volume-caption',
+      volumeUnit ? `VOLUME, ${volumeUnit.toUpperCase()}` : 'VOLUME',
+    )
+    volumeCaption.hidden = true
+    chartBox.append(volumeCaption)
+  }
+  const attribution = element('a', 'sqd-chart-attribution', 'Charts by TradingView') as HTMLAnchorElement
+  attribution.href = 'https://www.tradingview.com/'
+  attribution.target = '_blank'
+  attribution.rel = 'noopener noreferrer'
+  terminal.append(readout, chartBox, attribution)
+
+  const chartApi = createChart(mount, {
+    autoSize: true,
+    layout: {
+      background: { type: ColorType.Solid, color: 'transparent' },
+      textColor: TERMINAL_COLORS.ink,
+      fontFamily: TERMINAL_MONO,
+      fontSize: 11,
+      attributionLogo: false,
+    },
+    grid: {
+      vertLines: { color: TERMINAL_COLORS.grid },
+      horzLines: { color: TERMINAL_COLORS.grid },
+    },
+    rightPriceScale: {
+      borderColor: TERMINAL_COLORS.axis,
+      scaleMargins: { top: 0.06, bottom: hasVolume ? 0.3 : 0.08 },
+    },
+    timeScale: {
+      borderColor: TERMINAL_COLORS.axis,
+      timeVisible: true,
+      secondsVisible: false,
+      fixLeftEdge: true,
+      fixRightEdge: true,
+      tickMarkFormatter: (time: number) =>
+        timeToLabel.get(time) ?? (monotonic ? new Date(time * 1000).toISOString().slice(11, 16) : ''),
+    },
+    crosshair: {
+      mode: CrosshairMode.Magnet,
+      vertLine: {
+        color: TERMINAL_COLORS.crosshair,
+        width: 1,
+        style: LineStyle.LargeDashed,
+        labelBackgroundColor: TERMINAL_COLORS.crosshairLabel,
+      },
+      horzLine: {
+        color: TERMINAL_COLORS.crosshair,
+        width: 1,
+        style: LineStyle.LargeDashed,
+        labelBackgroundColor: TERMINAL_COLORS.crosshairLabel,
+      },
+    },
+    handleScroll: false,
+    handleScale: false,
+  })
+  const candleSeries = chartApi.addSeries(CandlestickSeries, {
+    upColor: TERMINAL_COLORS.up,
+    downColor: TERMINAL_COLORS.down,
+    borderVisible: true,
+    borderUpColor: TERMINAL_COLORS.up,
+    borderDownColor: TERMINAL_COLORS.down,
+    wickUpColor: TERMINAL_COLORS.up,
+    wickDownColor: TERMINAL_COLORS.down,
+    priceLineVisible: false,
+    lastValueVisible: false,
+    priceFormat: { type: 'custom', formatter: (value: number) => tickText(value, priceFormat), minMove },
+  })
+  candleSeries.setData(
+    parsed.map((point, index) => {
+      const direction = point.close >= point.open ? TERMINAL_COLORS.up : TERMINAL_COLORS.down
+      return {
+        time: times[index],
+        open: point.open,
+        high: point.high,
+        low: point.low,
+        close: point.close,
+        ...(isOpenCandle(point) ? { color: 'rgba(0, 0, 0, 0)', borderColor: direction, wickColor: direction } : {}),
+      }
+    }),
+  )
+  candleSeries.createPriceLine({
+    price: finalClose,
+    color: TERMINAL_COLORS.accentLine,
+    lineWidth: 1,
+    lineStyle: LineStyle.Dashed,
+    axisLabelVisible: false,
+  })
+  let volumeSeries: ReturnType<typeof chartApi.addSeries> | undefined
+  if (hasVolume) {
+    volumeSeries = chartApi.addSeries(HistogramSeries, {
+      priceScaleId: 'sqd-volume',
+      priceFormat: { type: 'custom', formatter: (value: number) => tickText(value, volumeFormat), minMove: 1 },
+      priceLineVisible: false,
+      lastValueVisible: false,
+      base: 0,
+    })
+    chartApi.priceScale('sqd-volume').applyOptions({ scaleMargins: { top: 0.78, bottom: 0 } })
+    volumeSeries.setData(
+      parsed.flatMap((point, index) =>
+        point.volume === undefined
+          ? []
+          : [
+              {
+                time: times[index],
+                value: point.volume,
+                color: point.close >= point.open ? TERMINAL_COLORS.upSoft : TERMINAL_COLORS.downSoft,
+              },
+            ],
+      ),
+    )
+  }
+
+  const readoutPair = (label: string, value: string, direction?: 'up' | 'down') => {
+    const pair = element('span', 'sqd-candle-readout-pair')
+    const valueNode = element('span', 'sqd-candle-readout-value', value)
+    if (direction) valueNode.dataset.direction = direction
+    pair.append(element('span', 'sqd-candle-readout-key', label), valueNode)
+    return pair
+  }
+  const renderReadout = (index: number) => {
+    const point = parsed[index]
+    const direction = point.close >= point.open ? 'up' : 'down'
+    readout.replaceChildren(
+      element('span', 'sqd-candle-readout-time', fullLabels[index]),
+      readoutPair('O', formatValue(point.open, priceFormat)),
+      readoutPair('H', formatValue(point.high, priceFormat)),
+      readoutPair('L', formatValue(point.low, priceFormat)),
+      readoutPair('C', formatValue(point.close, priceFormat), direction),
+      ...(point.volume !== undefined ? [readoutPair('VOL', formatValue(point.volume, volumeFormat))] : []),
+      ...(isOpenCandle(point) ? [element('span', 'sqd-candle-readout-flag', 'Open candle, still forming')] : []),
+    )
+  }
+  renderReadout(parsed.length - 1)
+
+  const buttons: HTMLButtonElement[] = []
+  parsed.forEach((point, index) => {
+    const button = element('button', 'sqd-chart-hit') as HTMLButtonElement
+    button.type = 'button'
+    button.setAttribute('data-candle-index', String(index))
+    button.setAttribute('data-open', String(point.open))
+    button.setAttribute('data-high', String(point.high))
+    button.setAttribute('data-low', String(point.low))
+    button.setAttribute('data-close', String(point.close))
+    if (point.volume !== undefined) button.setAttribute('data-volume', String(point.volume))
+    button.setAttribute('aria-label', `${fullLabels[index]}. ${exactValues[index].join('. ')}.`)
+    button.setAttribute('aria-pressed', 'false')
+    button.style.left = `${(index / parsed.length) * 100}%`
+    button.style.width = `${100 / parsed.length}%`
+    const hover = () => {
+      renderReadout(index)
+      tooltip.textContent = `${fullLabels[index]}: ${exactValues[index].join(', ')}`
+      const boxRect = chartBox.getBoundingClientRect()
+      const buttonRect = button.getBoundingClientRect()
+      const percent = boxRect.width
+        ? ((buttonRect.left - boxRect.left + buttonRect.width / 2) / boxRect.width) * 100
+        : 50
+      tooltip.style.left = `${Math.min(88, Math.max(12, percent))}%`
+      tooltip.hidden = false
+      chartApi.setCrosshairPosition(point.close, times[index], candleSeries)
+    }
+    const unhover = () => {
+      tooltip.hidden = true
+      chartApi.clearCrosshairPosition()
+      renderReadout(parsed.length - 1)
+    }
+    button.addEventListener('pointerenter', hover)
+    button.addEventListener('pointerleave', unhover)
+    button.addEventListener('focus', hover)
+    button.addEventListener('blur', unhover)
+    button.addEventListener('click', () => selectEvidenceRow(point.row, button))
+    hits.append(button)
+    buttons.push(button)
+  })
+
+  const sync = () => {
+    const timeScale = chartApi.timeScale()
+    const coordinates = times.map((time) => timeScale.timeToCoordinate(time))
+    if (coordinates.some((coordinate) => coordinate === null)) return
+    const xs = coordinates as number[]
+    const slot =
+      xs.length > 1 ? Math.max(8, (xs[xs.length - 1] - xs[0]) / (xs.length - 1)) : Math.max(24, mount.clientWidth / 2)
+    buttons.forEach((button, index) => {
+      button.style.left = `${xs[index] - slot / 2}px`
+      button.style.width = `${slot}px`
+    })
+    const pillY = candleSeries.priceToCoordinate(finalClose)
+    if (pillY !== null) {
+      pill.style.top = `${pillY}px`
+      pill.hidden = false
+    }
+    if (volumeSeries && volumeCaption) {
+      const bandTop = volumeSeries.priceToCoordinate(volumeMax)
+      if (bandTop !== null) {
+        volumeCaption.style.top = `${bandTop - 17}px`
+        volumeCaption.hidden = false
+      }
+    }
+  }
+  const scheduleSync = () =>
+    requestAnimationFrame(() => {
+      chartApi.timeScale().fitContent()
+      requestAnimationFrame(sync)
+    })
+  chartApi.timeScale().subscribeVisibleLogicalRangeChange(() => requestAnimationFrame(sync))
+  const observer = typeof ResizeObserver === 'function' ? new ResizeObserver(scheduleSync) : undefined
+  observer?.observe(chartBox)
+  scheduleSync()
+  if (typeof document !== 'undefined' && document.fonts?.ready) {
+    document.fonts.ready.then(scheduleSync).catch(() => {})
+  }
+  registerChartDisposer(panelRoot, chartApi, () => observer?.disconnect())
+  return terminal
+}
+
 function chartPanel(payload: Record<string, unknown>, panel: Panel): HTMLElement {
   const descriptor = getByPath(payload, text(panel.chart_key))
   const chart = isRecord(descriptor) ? descriptor : {}
@@ -568,6 +1063,10 @@ function chartPanel(payload: Record<string, unknown>, panel: Panel): HTMLElement
     panel.emphasis === 'primary' ? 'sqd-card--primary' : '',
   )
   const wrap = element('div', 'sqd-chart-wrap')
+  const geometry = chartGeometry()
+  const CHART_WIDTH = geometry.width
+  const CHART_HEIGHT = geometry.height
+  const CHART_PAD = geometry.pad
   const allRows = sortRowsByX(numberRows(payload, chart), chart)
   const requestedStart = Number(panel.__range_start)
   const requestedEnd = Number(panel.__range_end)
@@ -576,6 +1075,7 @@ function chartPanel(payload: Record<string, unknown>, panel: Panel): HTMLElement
     ? Math.max(rangeStart, Math.min(requestedEnd, allRows.length - 1))
     : Math.max(0, allRows.length - 1)
   const rows = allRows.slice(rangeStart, rangeEnd + 1)
+  let rangeControls: HTMLElement | undefined
   if (!rows.length) {
     wrap.append(element('div', 'sqd-chart-empty', 'No chart points were returned for this window.'))
     body.append(wrap)
@@ -605,28 +1105,87 @@ function chartPanel(payload: Record<string, unknown>, panel: Panel): HTMLElement
     focus.addEventListener('click', () => {
       const nextStart = Math.min(Number(start.value), Number(end.value))
       const nextEnd = Math.max(Number(start.value), Number(end.value))
+      panelChartDisposers.get(root)?.()
       root.replaceWith(chartPanel(payload, { ...panel, __range_start: nextStart, __range_end: nextEnd }))
     })
     const reset = element('button', 'sqd-button', 'Reset range')
     reset.type = 'button'
     reset.disabled = rangeStart === 0 && rangeEnd === allRows.length - 1
-    reset.addEventListener('click', () => root.replaceWith(chartPanel(payload, { ...panel, __range_start: 0, __range_end: allRows.length - 1 })))
+    reset.addEventListener('click', () => {
+      panelChartDisposers.get(root)?.()
+      root.replaceWith(chartPanel(payload, { ...panel, __range_start: 0, __range_end: allRows.length - 1 }))
+    })
     rangeTools.append(rangeCopy, start, end, focus, reset)
-    body.append(rangeTools)
+    rangeControls = rangeTools
+  }
+  if (chart.kind === 'candlestick') {
+    const terminal = buildCandleTerminal(
+      root,
+      chart,
+      rows,
+      text(panel.title ?? chart.title ?? 'Blockchain activity chart'),
+    )
+    if (!terminal) {
+      wrap.append(element('div', 'sqd-chart-empty', 'The result did not include numeric candle values.'))
+      body.append(wrap)
+      return root
+    }
+    wrap.append(terminal)
+    body.append(wrap)
+    if (rangeControls) body.append(rangeControls)
+    const declaredCandles = Number(chart.total_points ?? chart.total_candles)
+    const candleNotice = Number.isFinite(declaredCandles)
+      ? displayLimitNotice('chart points', rows.length, rows.length, declaredCandles)
+      : null
+    if (candleNotice) body.append(candleNotice)
+    return root
   }
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
   svg.setAttribute('class', 'sqd-chart')
   svg.setAttribute('viewBox', `0 0 ${CHART_WIDTH} ${CHART_HEIGHT}`)
+  svg.style.aspectRatio = `${CHART_WIDTH} / ${CHART_HEIGHT}`
   svg.setAttribute('role', 'group')
   const chartTitle = text(panel.title ?? chart.title ?? 'Blockchain activity chart')
   const plotW = CHART_WIDTH - CHART_PAD.left - CHART_PAD.right
-  const plotH = CHART_HEIGHT - CHART_PAD.top - CHART_PAD.bottom
+  const plotRight = CHART_WIDTH - CHART_PAD.right
+  const tickX = plotRight + 8
   const add = (tag: string, attrs: Record<string, string>): SVGElement => {
     const node = document.createElementNS('http://www.w3.org/2000/svg', tag)
     for (const [key, value] of Object.entries(attrs)) node.setAttribute(key, value)
     svg.append(node)
     return node
   }
+  const addAxisTitle = (label: string, midY: number) => {
+    if (!label || !geometry.axisTitles) return
+    const group = document.createElementNS('http://www.w3.org/2000/svg', 'g')
+    group.setAttribute('transform', `translate(11, ${midY}) rotate(-90)`)
+    const node = document.createElementNS('http://www.w3.org/2000/svg', 'text')
+    node.setAttribute('class', 'sqd-chart-axis-title')
+    node.setAttribute('text-anchor', 'middle')
+    node.textContent = label
+    group.append(node)
+    svg.append(group)
+  }
+  const addXLabels = (labels: string[], y: number) => {
+    if (!labels.length) return
+    const first = add('text', { x: String(CHART_PAD.left), y: String(y), class: 'sqd-chart-label' })
+    first.textContent = labels[0]
+    if (labels.length > 2 && labels[1]) {
+      const middle = add('text', {
+        x: String(CHART_PAD.left + plotW / 2),
+        y: String(y),
+        'text-anchor': 'middle',
+        class: 'sqd-chart-label',
+      })
+      middle.textContent = labels[1]
+    }
+    if (labels.length > 1 && labels.at(-1) && labels.at(-1) !== labels[0]) {
+      const last = add('text', { x: String(plotRight), y: String(y), 'text-anchor': 'end', class: 'sqd-chart-label' })
+      last.textContent = labels.at(-1)!
+    }
+  }
+  const rowTimeLabel = (row: Record<string, unknown> | undefined) =>
+    row ? shortTimeLabel(text(row.timestamp_human ?? row.timestamp ?? row.bucket_index ?? '')) : ''
 
   const tooltip = element('div', 'sqd-chart-tooltip')
   tooltip.setAttribute('role', 'status')
@@ -653,172 +1212,7 @@ function chartPanel(payload: Record<string, unknown>, panel: Panel): HTMLElement
     crosshair.style.display = 'none'
   }
 
-  if (chart.kind === 'candlestick') {
-    const candleFields = isRecord(chart.candle_fields) ? chart.candle_fields : {}
-    const openField = text(candleFields.open || 'open')
-    const highField = text(candleFields.high || 'high')
-    const lowField = text(candleFields.low || 'low')
-    const closeField = text(candleFields.close || 'close')
-    const volumeField = text(chart.volume_field || 'volume')
-    const priceFormat = text(chart.value_format || 'decimal')
-    const priceUnit = text(chart.price_unit)
-    const volumeUnit = text(chart.volume_unit)
-    const volumeFormat = volumeUnit.toUpperCase() === 'USD' ? 'currency_usd' : 'decimal'
-    const tooltipDescriptor = isRecord(chart.tooltip) ? chart.tooltip : {}
-    const tooltipFields = asArray(tooltipDescriptor.fields).filter(isRecord)
-    const prices = rows
-      .flatMap((row) => [numeric(getByPath(row, lowField)), numeric(getByPath(row, highField))])
-      .filter((value): value is number => value !== undefined)
-    if (!prices.length) {
-      wrap.append(element('div', 'sqd-chart-empty', 'The result did not include numeric candle values.'))
-      body.append(wrap)
-      return root
-    }
-    const hasVolume = chart.volume_panel !== false && rows.some((row) => numeric(getByPath(row, volumeField)) !== undefined)
-    const volumeHeight = hasVolume ? 52 : 0
-    const volumeGap = hasVolume ? 18 : 0
-    const priceHeight = plotH - volumeHeight - volumeGap
-    const min = Math.min(...prices)
-    const max = Math.max(...prices)
-    const rawRange = max - min
-    const padding = rawRange > 0
-      ? rawRange * 0.08
-      : Math.max(Math.abs(max) * 0.0001, 0.01)
-    const domainMin = min - padding
-    const domainMax = max + padding
-    const range = domainMax - domainMin
-    const y = (value: number) => CHART_PAD.top + (1 - (value - domainMin) / range) * priceHeight
-    const x = (index: number) =>
-      CHART_PAD.left + (rows.length === 1 ? plotW / 2 : (index / (rows.length - 1)) * plotW)
-    for (let i = 0; i <= 4; i += 1) {
-      const gy = CHART_PAD.top + (priceHeight * i) / 4
-      add('line', {
-        x1: String(CHART_PAD.left),
-        x2: String(CHART_WIDTH - CHART_PAD.right),
-        y1: String(gy),
-        y2: String(gy),
-        class: 'sqd-chart-grid',
-      })
-      const label = add('text', {
-        x: String(CHART_WIDTH - CHART_PAD.right + 8),
-        y: String(gy + 3),
-        class: 'sqd-chart-label',
-      })
-      label.textContent = formatValue(domainMax - (range * i) / 4, priceFormat, priceUnit)
-    }
-    const candleWidth = Math.max(3, Math.min(13, (plotW / Math.max(rows.length, 1)) * 0.58))
-    const volumeMax = Math.max(
-      ...rows.map((row) => numeric(getByPath(row, volumeField))).filter((value): value is number => value !== undefined),
-      1,
-    )
-    rows.forEach((row, index) => {
-      const open = numeric(getByPath(row, openField))
-      const high = numeric(getByPath(row, highField))
-      const low = numeric(getByPath(row, lowField))
-      const close = numeric(getByPath(row, closeField))
-      if (open === undefined || high === undefined || low === undefined || close === undefined) return
-      const cx = x(index)
-      const top = Math.min(y(open), y(close))
-      const height = Math.max(1.5, Math.abs(y(close) - y(open)))
-      add('line', {
-        x1: String(cx),
-        x2: String(cx),
-        y1: String(y(high)),
-        y2: String(y(low)),
-        class: 'sqd-chart-wick',
-        'data-candle-index': String(index),
-      })
-      const candle = add('rect', {
-        x: String(cx - candleWidth / 2),
-        y: String(top),
-        width: String(candleWidth),
-        height: String(height),
-        rx: '1',
-        class: close >= open ? 'sqd-chart-up' : 'sqd-chart-down',
-        'data-candle-index': String(index),
-        'data-open': String(open),
-        'data-high': String(high),
-        'data-low': String(low),
-        'data-close': String(close),
-      })
-      candle.setAttribute('aria-hidden', 'true')
-      const volume = numeric(getByPath(row, volumeField))
-      if (hasVolume && volume !== undefined) {
-        const volumeY = CHART_PAD.top + priceHeight + volumeGap
-        const height = (volume / volumeMax) * volumeHeight
-        add('rect', {
-          x: String(cx - candleWidth / 2),
-          y: String(volumeY + volumeHeight - height),
-          width: String(candleWidth),
-          height: String(Math.max(1, height)),
-          class: close >= open ? 'sqd-chart-volume sqd-chart-volume--up' : 'sqd-chart-volume sqd-chart-volume--down',
-          'data-volume': String(volume),
-        })
-      }
-      const titleField = text(tooltipDescriptor.title_field)
-      const timeLabel = text(getByPath(row, titleField) ?? row.timestamp_human ?? row.timestamp ?? `Candle ${index + 1}`)
-      const fallbackValues = [
-        `O ${formatValue(open, priceFormat, priceUnit)}`,
-        `H ${formatValue(high, priceFormat, priceUnit)}`,
-        `L ${formatValue(low, priceFormat, priceUnit)}`,
-        `C ${formatValue(close, priceFormat, priceUnit)}`,
-        ...(volume !== undefined ? [`Volume ${formatValue(volume, volumeFormat, volumeUnit)}`] : []),
-      ]
-      const exactValues = tooltipFields.length
-        ? tooltipFields.map((field) => {
-            const key = text(field.path ?? field.key)
-            return `${text(field.label ?? humanize(key))} ${formatValue(getByPath(row, key), text(field.format), text(field.unit))}`
-          })
-        : fallbackValues
-      const hit = add('rect', {
-        x: String(Math.max(CHART_PAD.left, cx - plotW / Math.max(rows.length, 1) / 2)),
-        y: String(CHART_PAD.top),
-        width: String(Math.max(6, plotW / Math.max(rows.length, 1))),
-        height: String(priceHeight + volumeGap + volumeHeight),
-        class: 'sqd-chart-hit',
-        tabindex: '0',
-        'aria-label': `${timeLabel}. ${exactValues.join('. ')}.`,
-      })
-      hit.addEventListener('pointerenter', () => showTooltip(cx, timeLabel, exactValues))
-      hit.addEventListener('focus', () => hit.dispatchEvent(new Event('pointerenter')))
-      hit.addEventListener('pointerleave', hideTooltip)
-      hit.addEventListener('blur', hideTooltip)
-      bindPointSelection(hit, row)
-    })
-    const finalClose = numeric(getByPath(rows.at(-1), closeField))
-    if (finalClose !== undefined) {
-      const finalY = y(finalClose)
-      add('line', {
-        x1: String(CHART_PAD.left),
-        x2: String(CHART_WIDTH - CHART_PAD.right),
-        y1: String(finalY),
-        y2: String(finalY),
-        class: 'sqd-chart-last-line',
-      })
-      const pillWidth = 70
-      add('rect', {
-        x: String(CHART_WIDTH - CHART_PAD.right + 3),
-        y: String(finalY - 10),
-        width: String(pillWidth),
-        height: '20',
-        rx: '3',
-        class: 'sqd-chart-last-pill',
-      })
-      const finalLabel = add('text', {
-        x: String(CHART_WIDTH - CHART_PAD.right + 8),
-        y: String(finalY + 4),
-        class: 'sqd-chart-last-value',
-      })
-      finalLabel.textContent =
-        priceFormat === 'currency_usd'
-          ? `$${compact(finalClose)}`
-          : `${compact(finalClose)}${priceUnit ? ` ${priceUnit}` : ''}`
-    }
-    svg.setAttribute(
-      'aria-label',
-      `${chartTitle}. ${rows.length} candles. Last close ${formatValue(finalClose, priceFormat, priceUnit)}.`,
-    )
-  } else {
+  {
     const normalized = normalizeSeries(rows, chart)
     const values = normalized.points.flatMap((point) => point.values).filter((value): value is number => value !== null)
     if (!values.length || !normalized.series.length) {
@@ -826,25 +1220,22 @@ function chartPanel(payload: Record<string, unknown>, panel: Panel): HTMLElement
       body.append(wrap)
       return root
     }
+    const plotH = CHART_HEIGHT - CHART_PAD.top - CHART_PAD.bottom
+    const plotBottom = CHART_PAD.top + plotH
     const stacked = chart.recommended_visual === 'stacked_area' && normalized.series.length > 1
     const stackTotals = normalized.points.map((point) =>
       point.values.reduce<number>((sum, value) => sum + Math.max(0, value ?? 0), 0),
     )
     const isBar = chart.recommended_visual === 'bar'
-    const min = isBar ? Math.min(0, ...values) : stacked ? 0 : Math.min(...values)
-    const max = isBar ? Math.max(0, ...values) : stacked ? Math.max(...stackTotals) : Math.max(...values)
-    const rawRange = max - min
-    const padding = rawRange > 0
-      ? rawRange * 0.08
-      : Math.max(Math.abs(max) * 0.02, 1)
-    const allZero = min === 0 && max === 0
-    const domainMin = allZero ? 0 : min === 0 ? 0 : min - padding
-    const domainMax = allZero ? 1 : max === 0 ? 0 : max + padding
+    const rawMin = isBar ? Math.min(0, ...values) : stacked ? 0 : Math.min(...values)
+    const rawMax = isBar ? Math.max(0, ...values) : stacked ? Math.max(...stackTotals) : Math.max(...values)
+    const scale = bandScale(rawMin, rawMax, isBar || stacked)
+    const { domainMin, domainMax } = scale
     const range = domainMax - domainMin
     const y = (value: number) => CHART_PAD.top + (1 - (value - domainMin) / range) * plotH
     const xField = text(chart.x_field || 'timestamp')
     const optionalXValues = normalized.points.map((point) => numeric(getByPath(point.row, xField)))
-    const xValues = optionalXValues.every((value) => value !== undefined) ? optionalXValues as number[] : undefined
+    const xValues = optionalXValues.every((value) => value !== undefined) ? (optionalXValues as number[]) : undefined
     const numericX = Boolean(xValues && Math.max(...xValues) > Math.min(...xValues))
     const minX = numericX && xValues ? Math.min(...xValues) : 0
     const maxX = numericX && xValues ? Math.max(...xValues) : Math.max(normalized.points.length - 1, 1)
@@ -858,21 +1249,49 @@ function chartPanel(payload: Record<string, unknown>, panel: Panel): HTMLElement
       if (!expectedStep || !numericX) return false
       return Boolean(xValues && xValues[currentIndex] - xValues[previousIndex] > expectedStep * 1.5)
     }
-    for (let i = 0; i <= 4; i += 1) {
-      const gy = CHART_PAD.top + (plotH * i) / 4
+    const lastPointValue = normalized.points.at(-1)?.values[0] ?? null
+    const showPill = !isBar && !stacked && normalized.series.length === 1 && lastPointValue !== null
+    const finalValue = showPill ? lastPointValue : undefined
+    const pillY = finalValue === undefined ? undefined : y(finalValue)
+    for (const tick of scale.ticks) {
+      const gy = y(tick)
       add('line', {
         x1: String(CHART_PAD.left),
-        x2: String(CHART_WIDTH - CHART_PAD.right),
+        x2: String(plotRight),
         y1: String(gy),
         y2: String(gy),
         class: 'sqd-chart-grid',
       })
-      const label = add('text', {
-        x: String(CHART_WIDTH - CHART_PAD.right + 8),
-        y: String(gy + 3),
-        class: 'sqd-chart-label',
+      if (pillY !== undefined && Math.abs(gy - pillY) < 17) continue
+      const label = add('text', { x: String(tickX), y: String(gy + 4), class: 'sqd-chart-label' })
+      label.textContent = tickText(tick, text(chart.value_format), tick === scale.ticks.at(-1))
+    }
+    for (let quarter = 1; quarter <= 3; quarter += 1) {
+      const gx = CHART_PAD.left + (plotW * quarter) / 4
+      add('line', {
+        x1: String(gx),
+        x2: String(gx),
+        y1: String(CHART_PAD.top),
+        y2: String(plotBottom),
+        class: 'sqd-chart-grid',
       })
-      label.textContent = compact(domainMax - (range * i) / 4)
+    }
+    add('line', {
+      x1: String(CHART_PAD.left),
+      x2: String(plotRight),
+      y1: String(plotBottom),
+      y2: String(plotBottom),
+      class: 'sqd-chart-axis',
+    })
+    const hasNegative = values.some((value) => value < 0)
+    if (isBar && hasNegative && domainMin < 0 && domainMax > 0) {
+      add('line', {
+        x1: String(CHART_PAD.left),
+        x2: String(plotRight),
+        y1: String(y(0)),
+        y2: String(y(0)),
+        class: 'sqd-chart-zero',
+      })
     }
 
     const seriesNodes = new Map<number, SVGElement[]>()
@@ -882,7 +1301,9 @@ function chartPanel(payload: Record<string, unknown>, panel: Panel): HTMLElement
       normalized.series.flatMap((series, seriesIndex) => {
         if (!visibleSeries.has(seriesIndex)) return []
         const value = point.values[seriesIndex]
-        return [`${series.label} ${value === null ? 'not available' : formatValue(value, text(chart.value_format), text(chart.unit))}`]
+        return [
+          `${series.label} ${value === null ? 'not available' : formatValue(value, text(chart.value_format), text(chart.unit))}`,
+        ]
       })
     const updatePointLabels = () => {
       pointHits.forEach(({ node, point, timeLabel }) => {
@@ -899,6 +1320,7 @@ function chartPanel(payload: Record<string, unknown>, panel: Panel): HTMLElement
     }
 
     if (isBar) {
+      const singleSigned = normalized.series.length === 1 && hasNegative
       const groupWidth = plotW / Math.max(normalized.points.length, 1)
       const barWidth = Math.max(2, Math.min(22, (groupWidth * 0.72) / normalized.series.length))
       normalized.points.forEach((point, pointIndex) => {
@@ -907,14 +1329,15 @@ function chartPanel(payload: Record<string, unknown>, panel: Panel): HTMLElement
           const offset = (seriesIndex - (normalized.series.length - 1) / 2) * barWidth
           const baseline = y(0)
           const valueY = y(value)
+          const polarity = singleSigned ? (value >= 0 ? ' sqd-chart-bar--up' : ' sqd-chart-bar--down') : ''
           const bar = add('rect', {
             x: String(x(pointIndex) + offset - barWidth / 2),
             y: String(Math.min(valueY, baseline)),
             width: String(Math.max(1, barWidth - 1)),
             height: String(Math.max(1, Math.abs(baseline - valueY))),
-            rx: '2',
-            class: 'sqd-chart-bar',
-            fill: normalized.series[seriesIndex].color,
+            rx: '1.5',
+            class: `sqd-chart-bar${polarity}`,
+            ...(singleSigned ? {} : { fill: normalized.series[seriesIndex].color }),
             'data-value': String(value),
           })
           trackSeriesNode(seriesIndex, bar)
@@ -923,7 +1346,9 @@ function chartPanel(payload: Record<string, unknown>, panel: Panel): HTMLElement
     } else if (stacked) {
       const bottoms = new Array(normalized.points.length).fill(0) as number[]
       normalized.series.forEach((series, seriesIndex) => {
-        const topValues = normalized.points.map((point, index) => bottoms[index] + Math.max(0, point.values[seriesIndex] ?? 0))
+        const topValues = normalized.points.map(
+          (point, index) => bottoms[index] + Math.max(0, point.values[seriesIndex] ?? 0),
+        )
         const top = topValues.map((value, index) => `${x(index)},${y(value)}`).join(' ')
         const bottom = bottoms
           .map((value, index) => `${x(index)},${y(value)}`)
@@ -933,7 +1358,9 @@ function chartPanel(payload: Record<string, unknown>, panel: Panel): HTMLElement
           points: `${top} ${bottom}`,
           class: 'sqd-chart-series-area',
           fill: series.color,
-          'data-series-total': String(normalized.points.reduce((sum, point) => sum + (point.values[seriesIndex] ?? 0), 0)),
+          'data-series-total': String(
+            normalized.points.reduce((sum, point) => sum + (point.values[seriesIndex] ?? 0), 0),
+          ),
         })
         trackSeriesNode(seriesIndex, area)
         topValues.forEach((value, index) => {
@@ -955,8 +1382,8 @@ function chartPanel(payload: Record<string, unknown>, panel: Panel): HTMLElement
         if (segment.length) segments.push(segment)
         if (!segments.length) return
         segments.forEach((points) => {
-          if (normalized.series.length === 1 && points.length > 1) {
-            const baseline = y(0 < domainMin || 0 > domainMax ? domainMin : 0)
+          if (normalized.series.length === 1 && points.length > 1 && domainMin === 0) {
+            const baseline = y(0)
             const area = add('polygon', {
               points: `${points[0].x},${baseline} ${points.map((point) => `${point.x},${point.y}`).join(' ')} ${points.at(-1)!.x},${baseline}`,
               class: 'sqd-chart-area',
@@ -1002,7 +1429,9 @@ function chartPanel(payload: Record<string, unknown>, panel: Panel): HTMLElement
     }
 
     normalized.points.forEach((point, index) => {
-      const timeLabel = text(point.row.timestamp_human ?? point.row.timestamp ?? point.row.bucket_index ?? `Point ${index + 1}`)
+      const timeLabel = text(
+        point.row.timestamp_human ?? point.row.timestamp ?? point.row.bucket_index ?? `Point ${index + 1}`,
+      )
       const cx = x(index)
       const hit = add('rect', {
         x: String(Math.max(CHART_PAD.left, cx - plotW / Math.max(normalized.points.length, 1) / 2)),
@@ -1024,56 +1453,59 @@ function chartPanel(payload: Record<string, unknown>, panel: Panel): HTMLElement
     })
     updatePointLabels()
 
-    const firstSeriesValues = normalized.points.map((point) => point.values[0]).filter((value): value is number => value !== null)
-    const finalValue = firstSeriesValues.at(-1)
-    if (finalValue !== undefined) {
-      const finalY = y(finalValue)
+    if (finalValue !== undefined && pillY !== undefined) {
       const finalLine = add('line', {
         x1: String(CHART_PAD.left),
-        x2: String(CHART_WIDTH - CHART_PAD.right),
-        y1: String(finalY),
-        y2: String(finalY),
+        x2: String(plotRight),
+        y1: String(pillY),
+        y2: String(pillY),
         class: 'sqd-chart-last-line',
       })
       trackSeriesNode(0, finalLine)
+      const finalText =
+        Math.abs(finalValue) >= 1000 ? pillCompact(finalValue) : tickText(finalValue, text(chart.value_format))
+      const pillWidth = Math.max(34, finalText.length * 7 + 14)
       const finalPill = add('rect', {
-        x: String(CHART_WIDTH - CHART_PAD.right + 3),
-        y: String(finalY - 10),
-        width: '70',
-        height: '20',
-        rx: '3',
+        x: String(plotRight + 4),
+        y: String(pillY - 11),
+        width: String(pillWidth),
+        height: '22',
+        rx: '5',
         class: 'sqd-chart-last-pill',
       })
       trackSeriesNode(0, finalPill)
       const finalLabel = add('text', {
-        x: String(CHART_WIDTH - CHART_PAD.right + 8),
-        y: String(finalY + 4),
+        x: String(plotRight + 4 + pillWidth / 2),
+        y: String(pillY + 4),
+        'text-anchor': 'middle',
         class: 'sqd-chart-last-value',
         'data-final-value': String(finalValue),
       })
       trackSeriesNode(0, finalLabel)
-      finalLabel.textContent = compact(finalValue)
+      finalLabel.textContent = finalText
     }
+    addAxisTitle(
+      text(chart.y_axis_label ?? (normalized.series.length === 1 ? normalized.series[0].label : chart.unit)),
+      CHART_PAD.top + plotH / 2,
+    )
+    addXLabels(
+      [
+        rowTimeLabel(normalized.points[0]?.row),
+        rowTimeLabel(normalized.points[Math.floor((normalized.points.length - 1) / 2)]?.row),
+        rowTimeLabel(normalized.points.at(-1)?.row),
+      ],
+      CHART_HEIGHT - 8,
+    )
     svg.setAttribute(
       'aria-label',
       `${chartTitle}. ${normalized.points.length} data points across ${normalized.series.length} series.`,
     )
   }
 
-  const firstLabel = text(rows[0]?.timestamp_human ?? rows[0]?.timestamp ?? rows[0]?.bucket_index ?? 'Start')
-  const lastLabel = text(rows.at(-1)?.timestamp_human ?? rows.at(-1)?.timestamp ?? rows.at(-1)?.bucket_index ?? 'End')
-  const leftLabel = add('text', { x: String(CHART_PAD.left), y: String(CHART_HEIGHT - 8), class: 'sqd-chart-label' })
-  leftLabel.textContent = firstLabel.slice(0, 22)
-  const rightLabel = add('text', {
-    x: String(CHART_WIDTH - CHART_PAD.right),
-    y: String(CHART_HEIGHT - 8),
-    'text-anchor': 'end',
-    class: 'sqd-chart-label',
-  })
-  rightLabel.textContent = lastLabel.slice(0, 22)
   wrap.append(svg)
   wrap.append(tooltip)
   body.append(wrap)
+  if (rangeControls) body.append(rangeControls)
   const declaredPoints = Number(chart.total_points ?? chart.total_candles)
   const pointNotice = Number.isFinite(declaredPoints)
     ? displayLimitNotice('chart points', rows.length, rows.length, declaredPoints)
@@ -1121,9 +1553,9 @@ function inferredColumns(rows: Record<string, unknown>[]): Column[] {
     const bi = priority.indexOf(b)
     return (ai < 0 ? 999 : ai) - (bi < 0 ? 999 : bi)
   })
-  return keys.slice(0, 9).map((key) => ({
+  const columns: Column[] = keys.slice(0, 9).map((key) => ({
     key,
-    label: humanize(key),
+    label: key === 'timestamp_human' ? 'Time' : humanize(key),
     align: typeof rows[0]?.[key] === 'number' ? 'right' : 'left',
     format: /address|hash|sender|recipient|^from$|^to$/.test(key)
       ? 'address'
@@ -1133,9 +1565,25 @@ function inferredColumns(rows: Record<string, unknown>[]): Column[] {
           ? 'decimal'
           : undefined,
   }))
+  const nestedNumericField = Object.keys(rows[0] ?? {}).find((key) => {
+    const value = rows[0]?.[key]
+    return isRecord(value) && Object.values(value).some((entry) => typeof entry === 'number')
+  })
+  if (nestedNumericField && isRecord(rows[0]?.[nestedNumericField])) {
+    for (const sub of Object.keys(rows[0][nestedNumericField] as Record<string, unknown>).slice(0, 4)) {
+      columns.push({
+        key: `${nestedNumericField}.${sub}`,
+        path: `${nestedNumericField}.${sub}`,
+        label: humanize(sub),
+        align: 'right',
+        format: 'decimal',
+      })
+    }
+  }
+  return columns.slice(0, 9)
 }
 
-function showDetails(title: string, value: unknown) {
+function showDetails(title: string, value: unknown, note?: string) {
   let dialog = document.querySelector<HTMLDialogElement>('.sqd-dialog')
   if (!dialog) {
     dialog = element('dialog', 'sqd-dialog') as HTMLDialogElement
@@ -1165,6 +1613,7 @@ function showDetails(title: string, value: unknown) {
   head.append(actions)
   dialog.append(head)
   const body = element('div', 'sqd-dialog-body')
+  if (note) body.append(element('p', 'sqd-dialog-meta', note))
   const pre = element('pre')
   pre.tabIndex = 0
   pre.setAttribute('aria-label', 'Exact row JSON')
@@ -1183,6 +1632,7 @@ function tablePanel(payload: Record<string, unknown>, panel: Panel): HTMLElement
   const { root, body } = card(
     text(panel.title ?? descriptor.title ?? 'Evidence'),
     text(panel.subtitle ?? descriptor.subtitle),
+    panel.emphasis === 'primary' ? 'sqd-card--primary' : '',
   )
   if (!rows.length || !effectiveColumns.length) {
     body.append(element('div', 'sqd-chart-empty', 'No evidence rows were returned for this section.'))
@@ -1219,7 +1669,10 @@ function tablePanel(payload: Record<string, unknown>, panel: Panel): HTMLElement
       sortDirection = sortKey === column.key && sortDirection === 'asc' ? 'desc' : 'asc'
       sortKey = column.key
       headerByKey.forEach((header, key) =>
-        header.setAttribute('aria-sort', key === sortKey ? (sortDirection === 'asc' ? 'ascending' : 'descending') : 'none'),
+        header.setAttribute(
+          'aria-sort',
+          key === sortKey ? (sortDirection === 'asc' ? 'ascending' : 'descending') : 'none',
+        ),
       )
       pageIndex = 0
       renderBody()
@@ -1244,7 +1697,7 @@ function tablePanel(payload: Record<string, unknown>, panel: Panel): HTMLElement
   pagination.append(previous, pageStatus, next)
   body.append(pagination)
 
-  function renderBody() {
+  function computeMatches(): Record<string, unknown>[] {
     const matches = rows.filter((row) => !filter || JSON.stringify(row).toLowerCase().includes(filter))
     if (sortKey)
       matches.sort(
@@ -1255,6 +1708,21 @@ function tablePanel(payload: Record<string, unknown>, panel: Panel): HTMLElement
             { numeric: true },
           ) * (sortDirection === 'asc' ? 1 : -1),
       )
+    return matches
+  }
+
+  ;(wrap as EvidencePager).__sqdShowEvidence = (identity: string) => {
+    const position = computeMatches().findIndex((row) => evidenceIdentity(row) === identity)
+    if (position < 0) return
+    const targetPage = Math.floor(position / TABLE_PAGE_SIZE)
+    if (targetPage !== pageIndex) {
+      pageIndex = targetPage
+      renderBody()
+    }
+  }
+
+  function renderBody() {
+    const matches = computeMatches()
     const totalPages = Math.max(1, Math.ceil(matches.length / TABLE_PAGE_SIZE))
     pageIndex = Math.min(pageIndex, totalPages - 1)
     const pageStart = pageIndex * TABLE_PAGE_SIZE
@@ -1275,6 +1743,12 @@ function tablePanel(payload: Record<string, unknown>, panel: Panel): HTMLElement
         const rawValue = getByPath(row, column.path ?? column.key)
         const formatted = formatValue(rawValue, column.format, column.unit)
         if (isIdentifierColumn(column, rawValue)) td.classList.add('sqd-hash')
+        if (column.format === 'signed' || /^(direction|change|net)/.test(column.key)) {
+          const signedValue = numeric(rawValue)
+          if (signedValue !== undefined && signedValue !== 0) {
+            td.dataset.signed = signedValue > 0 ? 'positive' : 'negative'
+          }
+        }
         if (columnIndex === 0) {
           const button = element('button', 'sqd-row-button', formatted)
           button.type = 'button'
@@ -1306,7 +1780,12 @@ function tablePanel(payload: Record<string, unknown>, panel: Panel): HTMLElement
   renderBody()
   const declaredRows = Number(descriptor.row_count)
   const totalRows = Number.isFinite(declaredRows) ? Math.max(rows.length, declaredRows) : rows.length
-  const limitNotice = displayLimitNotice('evidence rows', Math.min(rows.length, TABLE_PAGE_SIZE), rows.length, totalRows)
+  const limitNotice = displayLimitNotice(
+    'evidence rows',
+    Math.min(rows.length, TABLE_PAGE_SIZE),
+    rows.length,
+    totalRows,
+  )
   if (limitNotice) body.append(limitNotice)
   return root
 }
@@ -1316,18 +1795,41 @@ function timelinePanel(payload: Record<string, unknown>, panel: Panel): HTMLElem
   const rows = sourceRows.slice(0, MAX_TIMELINE_ROWS)
   const { root, body } = card(text(panel.title ?? 'Activity timeline'), text(panel.subtitle))
   const timeline = element('div', 'sqd-timeline')
+  const valueKey = text(panel.value_key)
+  const directionKey = text(panel.direction_key)
   for (const row of rows) {
     const event = element('article', 'sqd-event')
-    event.append(element('span', 'sqd-event-dot'))
+    event.append(element('time', 'sqd-event-time', text(getByPath(row, text(panel.timestamp_key)))))
+    const direction = directionKey ? text(getByPath(row, directionKey)).toLowerCase() : ''
+    const dotTone = direction === 'in' ? ' sqd-event-dot--in' : direction === 'out' ? ' sqd-event-dot--out' : ''
+    event.append(element('span', `sqd-event-dot${dotTone}`))
     const copy = element('div')
     copy.append(element('div', 'sqd-event-title', text(getByPath(row, text(panel.title_key)) ?? 'Activity')))
-    const subtitle = asArray(panel.subtitle_keys)
+    const subtitleParts = asArray(panel.subtitle_keys)
       .map((key) => text(getByPath(row, text(key))))
       .filter(Boolean)
-      .join(' · ')
-    if (subtitle) copy.append(element('div', 'sqd-event-subtitle', subtitle))
+    const joiner = directionKey && subtitleParts.length === 2 ? ' → ' : ' · '
+    if (subtitleParts.length) {
+      const subtitleNode = element('div', 'sqd-event-subtitle', subtitleParts.map(shortIdentifier).join(joiner))
+      subtitleNode.title = subtitleParts.join(joiner)
+      copy.append(subtitleNode)
+    }
     event.append(copy)
-    event.append(element('time', 'sqd-event-time', text(getByPath(row, text(panel.timestamp_key)))))
+    if (valueKey) {
+      const rawValue = getByPath(row, valueKey)
+      const amount = numeric(rawValue)
+      if (amount !== undefined) {
+        const tone = direction === 'in' ? 'in' : direction === 'out' ? 'out' : 'flat'
+        const sign = direction === 'in' ? '+' : direction === 'out' ? '-' : ''
+        event.append(
+          element(
+            'span',
+            `sqd-event-value sqd-event-value--${tone}`,
+            `${sign}${formatValue(amount, text(panel.value_format), text(panel.unit))}`,
+          ),
+        )
+      }
+    }
     timeline.append(event)
   }
   body.append(rows.length ? timeline : element('div', 'sqd-chart-empty', 'No activity rows were returned.'))
@@ -1352,7 +1854,14 @@ function rankedPanel(payload: Record<string, unknown>, panel: Panel): HTMLElemen
   for (const row of rows) {
     const value = numeric(getByPath(row, text(panel.value_key))) ?? 0
     const item = element('div', 'sqd-ranked-row')
-    item.append(element('div', 'sqd-ranked-label', text(getByPath(row, text(panel.category_key)) ?? 'Unknown')))
+    const rawLabel = text(getByPath(row, text(panel.category_key)) ?? 'Unknown')
+    const label = element(
+      'div',
+      `sqd-ranked-label${isHexIdentifier(rawLabel) ? ' sqd-ranked-label--id' : ''}`,
+      shortIdentifier(rawLabel),
+    )
+    label.title = rawLabel
+    item.append(label)
     const track = element('div', 'sqd-ranked-track')
     const fill = element('div', 'sqd-ranked-fill')
     fill.style.width = `${Math.max(2, (value / max) * 100)}%`
@@ -1480,17 +1989,28 @@ function panels(payload: Record<string, unknown>): HTMLElement | null {
       if (inferred) grid.append(inferred)
     }
   }
+  if (grid.childElementCount === 1) grid.classList.add('sqd-grid--single')
   return grid.childElementCount ? grid : null
 }
 
 function notices(payload: Record<string, unknown>): HTMLElement | null {
   const values = [payload._notice, ...asArray(payload._notices)].map(text).filter(Boolean)
   const error = isRecord(payload.error) ? payload.error : undefined
-  if (error?.summary) values.unshift(text(error.summary))
-  if (!values.length) return null
+  const entries: Array<{ copy: string; tone: string }> = values.map((copy) => ({ copy, tone: '' }))
+  if (error) {
+    const suggestions = asArray(error.suggestions).map(text).filter(Boolean)
+    const retryable = error.retryable === true ? 'This request is safe to retry.' : ''
+    const guidance = [retryable, ...suggestions].filter(Boolean).join(' · ')
+    if (guidance) entries.unshift({ copy: guidance, tone: 'danger' })
+  }
+  if (!entries.length) return null
   const wrap = element('section', 'sqd-notices')
   wrap.setAttribute('aria-label', 'Important result notices')
-  values.slice(0, 6).forEach((value) => wrap.append(element('div', 'sqd-notice', value)))
+  entries
+    .slice(0, 6)
+    .forEach((entry) =>
+      wrap.append(element('div', `sqd-notice${entry.tone ? ` sqd-notice--${entry.tone}` : ''}`, entry.copy)),
+    )
   return wrap
 }
 
@@ -1506,7 +2026,7 @@ function followups(payload: Record<string, unknown>, actions: ExplorerActions): 
       ['continue', 'compare_previous', 'drilldown', 'show_raw', 'zoom_in'].includes(text(action.intent)),
   )
   if (!executable.length) return null
-  const bar = element('div', 'sqd-actions')
+  const bar = element('div', 'sqd-actions sqd-followups')
   for (const [index, action] of executable.entries()) {
     const button = element(
       'button',
@@ -1563,6 +2083,7 @@ function emptyState(error = ''): HTMLElement {
 }
 
 export function renderExplorer(root: HTMLElement, state: ExplorerState, actions: ExplorerActions) {
+  disposeActiveCharts()
   injectStyle()
   root.className = 'sqd-app'
   root.replaceChildren()
@@ -1571,23 +2092,32 @@ export function renderExplorer(root: HTMLElement, state: ExplorerState, actions:
   if (state.loading && !state.payload) shell.append(loadingState())
   else if (!state.payload) shell.append(emptyState(state.error))
   else {
-    shell.append(workspaceStrip(state.payload))
-    shell.append(hero(state.payload))
-    const receipt = evidenceReceipt(state.payload, actions)
-    if (receipt) shell.append(receipt)
-    const metrics = metricCards(state.payload)
-    if (metrics) shell.append(metrics)
-    const resultNotices = notices(state.payload)
+    const payload = state.payload
+    shell.append(masthead(payload))
+    const resultNotices = notices(payload)
     if (resultNotices) shell.append(resultNotices)
-    const views = panels(state.payload)
+    const metrics = metricCards(payload)
+    /* The compact readout strip sits directly under the answer for every
+       mode, so a market terminal opens with its price summary and an
+       analytics result opens with its headline comparisons, both above the
+       dominant chart or table rather than stranded beneath the evidence. */
+    if (metrics) shell.append(metrics)
+    const views = panels(payload)
     if (views) shell.append(views)
-    const next = followups(state.payload, actions)
+    const next = followups(payload, actions)
     if (next) shell.append(next)
-    shell.append(raw(state.payload))
+    const receipt = evidenceReceipt(payload, actions)
+    if (receipt) shell.append(receipt)
+    shell.append(raw(payload))
   }
   const footer = element('footer', 'sqd-footer')
-  footer.append(element('span', undefined, 'Read-only blockchain data from SQD Portal'))
-  footer.append(element('span', undefined, 'Coverage and freshness stay visible in every result'))
+  footer.append(element('span', undefined, 'Read-only evidence from SQD Portal'))
+  const attribution = element('a', undefined, 'Charts by TradingView') as HTMLAnchorElement
+  attribution.href = 'https://www.tradingview.com/'
+  attribution.target = '_blank'
+  attribution.rel = 'noopener noreferrer'
+  footer.append(attribution)
+  footer.append(element('span', undefined, 'portal.sqd.dev'))
   shell.append(footer)
   root.append(shell)
 }

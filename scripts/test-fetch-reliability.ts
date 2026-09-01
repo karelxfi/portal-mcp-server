@@ -11,7 +11,7 @@ import { createQueryCache } from '../src/cache/query-cache.js'
 import { AdmissionController } from '../src/helpers/admission.js'
 import { scanBoundedBlockRange } from '../src/helpers/bounded-search.js'
 import { ActionableError, RequestCancelledError, parsePortalError } from '../src/helpers/errors.js'
-import { fetchExternalJson } from '../src/helpers/external-apis.js'
+import { fetchExternalJson, getCoinGeckoTokenListWithStatus } from '../src/helpers/external-apis.js'
 import {
   computeRetryAttemptTimeoutMs,
   computeRetryDelayMs,
@@ -100,6 +100,91 @@ async function main() {
     'Portal 529 overloads should expose bounded rate-limit retry guidance',
   )
   console.log('PASS  Portal 529 overloads expose structured retry guidance')
+
+  const originalFetch = globalThis.fetch
+  try {
+    let retryCalls = 0
+    globalThis.fetch = (async () => {
+      retryCalls += 1
+      if (retryCalls === 1) {
+        throw new ActionableError('CoinGecko API timed out after 5000ms', [], undefined, {
+          code: 'upstream_timeout',
+          origin: 'upstream',
+          retryable: true,
+        })
+      }
+      return new Response(
+        JSON.stringify({
+          name: 'Base test tokens',
+          tokens: [
+            {
+              chainId: 8453,
+              address: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913',
+              name: 'USD Coin',
+              symbol: 'USDC',
+              decimals: 6,
+            },
+          ],
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      )
+    }) as typeof fetch
+    const recoveredTokenList = await getCoinGeckoTokenListWithStatus('base')
+    assert(retryCalls === 2, `token-list cold start should retry once, observed ${retryCalls} calls`)
+    assert(recoveredTokenList.tokens[0]?.symbol === 'USDC', 'token-list retry should return the recovered payload')
+
+    let sharedRetryCalls = 0
+    globalThis.fetch = (async () => {
+      sharedRetryCalls += 1
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      if (sharedRetryCalls === 1) {
+        throw new ActionableError('CoinGecko API timed out after 5000ms', [], undefined, {
+          code: 'upstream_timeout',
+          origin: 'upstream',
+          retryable: true,
+        })
+      }
+      return new Response(
+        JSON.stringify({
+          name: 'Polygon test tokens',
+          tokens: [
+            {
+              chainId: 137,
+              address: '0x0000000000000000000000000000000000001010',
+              name: 'POL',
+              symbol: 'POL',
+              decimals: 18,
+            },
+          ],
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      )
+    }) as typeof fetch
+    const sharedTokenLists = await Promise.all(
+      Array.from({ length: 8 }, () => getCoinGeckoTokenListWithStatus('polygon')),
+    )
+    assert(sharedRetryCalls === 2, `eight token-list callers should share one retry sequence, observed ${sharedRetryCalls} calls`)
+    assert(
+      sharedTokenLists.every((result) => result.tokens[0]?.symbol === 'POL'),
+      'all token-list waiters should receive the same recovered payload',
+    )
+
+    let cancelledCalls = 0
+    globalThis.fetch = (async () => {
+      cancelledCalls += 1
+      throw new RequestCancelledError()
+    }) as typeof fetch
+    try {
+      await getCoinGeckoTokenListWithStatus('arbitrum')
+      throw new Error('cancelled token-list fetch unexpectedly succeeded')
+    } catch (error) {
+      assert(error instanceof RequestCancelledError, 'token-list cancellation should remain a cancellation')
+    }
+    assert(cancelledCalls === 1, `token-list cancellation must not retry, observed ${cancelledCalls} calls`)
+    console.log('PASS  token-list cold starts share one retry sequence while cancellation stays immediate')
+  } finally {
+    globalThis.fetch = originalFetch
+  }
 
   let activeScans = 0
   let maxActiveScans = 0

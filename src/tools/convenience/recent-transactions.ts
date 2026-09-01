@@ -21,6 +21,7 @@ import { buildPaginationInfo, decodeCursor, encodeCursor, paginateAscendingItems
 import { buildChronologicalPageOrdering, buildQueryCoverage, buildQueryFreshness } from '../../helpers/result-metadata.js'
 import { describeTimeWindowInput, getTimestampWindowNotices, resolveTimeframeOrBlocks, type ResolvedBlockWindow, type TimestampInput } from '../../helpers/timeframe.js'
 import { buildExecutionMetadata, buildToolDescription } from '../../helpers/tool-ux.js'
+import { buildPortalUi, buildTimelinePanel } from '../../helpers/ui-metadata.js'
 import { getQueryExamples, getValidationNotices, normalizeAddresses, validateQuerySize } from '../../helpers/validation.js'
 import { fetchRecentHyperliquidFillBlocks } from '../hyperliquid/fill-stream.js'
 
@@ -131,6 +132,48 @@ function describeRecentWindow(rangeLabel: string) {
 
 function buildRecentMessage(prefix: string, rangeLabel: string, hasMore: boolean, limit: number) {
   return `${prefix}${hasMore ? ` (preview page capped at ${limit})` : ''} from ${describeRecentWindow(rangeLabel)}`
+}
+
+function buildRecentActivityUi(params: {
+  dataset: string
+  rangeLabel: string
+  nextCursor?: string
+}) {
+  return buildPortalUi({
+    version: 'portal_ui_v1',
+    layout: 'split',
+    density: 'compact',
+    design_intent: 'activity_investigator',
+    headline: {
+      title: 'Recent blockchain activity',
+      subtitle: `${params.dataset} from ${describeRecentWindow(params.rangeLabel)}`,
+    },
+    metric_cards: [
+      { id: 'visible-activity', label: 'Visible activity', value_path: '_meta.returned', format: 'integer', emphasis: 'primary' },
+      { id: 'latest-visible-block', label: 'Latest visible block', value_path: '_coverage.returned_to_block', format: 'integer' },
+      { id: 'result-complete', label: 'Result complete', value_path: '_coverage.result_complete' },
+    ],
+    panels: [
+      buildTimelinePanel({
+        id: 'recent-activity-timeline',
+        kind: 'timeline_panel',
+        title: 'Activity timeline',
+        subtitle: 'Chronological records with exact identifiers and counterparties.',
+        data_key: 'items',
+        timestamp_key: 'timestamp_human',
+        title_key: 'primary_id',
+        subtitle_keys: ['record_type', 'sender', 'recipient'],
+        badge_key: 'chain_kind',
+        emphasis: 'primary',
+      }),
+    ],
+    follow_up_actions: [
+      ...(params.nextCursor
+        ? [{ label: 'Load older activity', intent: 'continue' as const, target: '_pagination.next_cursor' }]
+        : []),
+      { label: 'Show raw rows', intent: 'show_raw', target: 'items' },
+    ],
+  })
 }
 
 function createRecentTransactionsCursor(
@@ -485,6 +528,8 @@ export function registerGetRecentTransactionsTool(server: McpServer) {
             normalized_output: true,
             notes: ['Returns normalized activity records so agents can switch networks with less tool-specific logic.'],
           }),
+          ui: buildRecentActivityUi({ dataset, rangeLabel, nextCursor }),
+          llm: { compact: true },
           metadata: {
             network: dataset,
             dataset,
@@ -615,6 +660,8 @@ async function queryBitcoinRecent(params: {
         range_kind: resolvedBlocks.range_kind,
         normalized_output: true,
       }),
+      ui: buildRecentActivityUi({ dataset, rangeLabel, nextCursor }),
+      llm: { compact: true },
       metadata: {
         network: dataset,
         dataset,
@@ -749,6 +796,8 @@ async function querySolanaRecent(params: {
         range_kind: resolvedBlocks.range_kind,
         normalized_output: true,
       }),
+      ui: buildRecentActivityUi({ dataset, rangeLabel, nextCursor }),
+      llm: { compact: true },
       metadata: {
         network: dataset,
         dataset,
@@ -894,6 +943,8 @@ async function queryHyperliquidRecent(params: {
           `Adaptive recent fill scan fetched ${recentFetch.returnedFills.toLocaleString()} fill(s) across ${recentFetch.chunksFetched} chunk(s) to build this page.`,
         ],
       }),
+      ui: buildRecentActivityUi({ dataset, rangeLabel, nextCursor }),
+      llm: { compact: true },
       metadata: {
         network: dataset,
         dataset,

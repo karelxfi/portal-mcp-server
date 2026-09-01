@@ -11,6 +11,15 @@ import {
   buildSubstrateEventFields,
 } from '../src/helpers/fields.ts'
 import {
+  EXACT_DECIMAL_ZERO,
+  addExactDecimals,
+  compareExactDecimals,
+  divideExactDecimals,
+  formatExactDecimal,
+  multiplyExactDecimals,
+  parseExactDecimal,
+} from '../src/helpers/exact-decimal.ts'
+import {
   assert,
   assertChatSurface,
   callToolWithRetry,
@@ -31,7 +40,8 @@ type JsonRecord = Record<string, any>
 
 async function fetchNdjson(dataset: string, body: JsonRecord): Promise<JsonRecord[]> {
   let lastError: Error | undefined
-  for (let attempt = 1; attempt <= 3; attempt += 1) {
+  const maxAttempts = 4
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     try {
       const response = await fetch(`${PORTAL}/datasets/${dataset}/stream`, {
         method: 'POST',
@@ -40,7 +50,21 @@ async function fetchNdjson(dataset: string, body: JsonRecord): Promise<JsonRecor
       })
       const text = await response.text()
       if (!response.ok) {
-        throw new Error(`Portal HTTP ${response.status}: ${text.slice(0, 300)}`)
+        const error = new Error(`Portal HTTP ${response.status}: ${text.slice(0, 300)}`)
+        const retryable = response.status === 429 || response.status === 529 || response.status >= 500
+        if (!retryable) {
+          Object.assign(error, { retryable: false })
+          throw error
+        }
+        if (attempt === maxAttempts) throw error
+
+        lastError = error
+        const retryAfterSeconds = Number(response.headers.get('retry-after') ?? '')
+        const retryDelayMs = Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0
+          ? retryAfterSeconds * 1_000
+          : attempt * 1_500
+        await new Promise((resolve) => setTimeout(resolve, retryDelayMs))
+        continue
       }
       return text
         .split('\n')
@@ -49,7 +73,8 @@ async function fetchNdjson(dataset: string, body: JsonRecord): Promise<JsonRecor
         .map((line) => JSON.parse(line) as JsonRecord)
     } catch (error) {
       lastError = error instanceof Error ? error : new Error(String(error))
-      if (attempt < 3) await new Promise((resolve) => setTimeout(resolve, attempt * 500))
+      if ((error as { retryable?: boolean }).retryable === false) throw lastError
+      if (attempt < maxAttempts) await new Promise((resolve) => setTimeout(resolve, attempt * 1_500))
     }
   }
   throw lastError ?? new Error(`Portal request failed for ${dataset}`)
@@ -462,8 +487,8 @@ async function main() {
       .map((fill) => ({ ...fill, time_seconds: Math.floor(Number(fill.time) / (Number(fill.time) > 1e12 ? 1000 : 1)) }))
       .filter(
         (fill) =>
-          fill.time_seconds >= summary.window_start_timestamp &&
-          fill.time_seconds < summary.window_end_exclusive &&
+          fill.time_seconds >= summary.requested_window_start_timestamp &&
+          fill.time_seconds < summary.requested_window_end_exclusive &&
           Number(fill.px) > 0 &&
           Number(fill.sz) > 0,
       )
@@ -472,20 +497,27 @@ async function main() {
       const fills = directFills.filter(
         (fill) => fill.time_seconds >= candle.timestamp && fill.time_seconds < candle.timestamp + 60,
       )
-      const prices = fills.map((fill) => Number(fill.px))
-      const sizes = fills.map((fill) => Number(fill.sz))
-      const notional = fills.reduce((sum, fill) => sum + Number(fill.px) * Number(fill.sz), 0)
-      const baseVolume = sizes.reduce((sum, size) => sum + size, 0)
+      const prices = fills.map((fill) => parseExactDecimal(fill.px)!).filter(Boolean)
+      const sizes = fills.map((fill) => parseExactDecimal(fill.sz)!).filter(Boolean)
+      const notional = fills.reduce((sum, fill) => {
+        const price = parseExactDecimal(fill.px)
+        const size = parseExactDecimal(fill.sz)
+        return price && size ? addExactDecimals(sum, multiplyExactDecimals(price, size)) : sum
+      }, EXACT_DECIMAL_ZERO)
+      const baseVolume = sizes.reduce((sum, size) => addExactDecimals(sum, size), EXACT_DECIMAL_ZERO)
+      const high = prices.reduce((best, price) => compareExactDecimals(price, best) > 0 ? price : best, prices[0])
+      const low = prices.reduce((best, price) => compareExactDecimals(price, best) < 0 ? price : best, prices[0])
+      const vwap = divideExactDecimals(notional, baseVolume, 18)
       return {
         timestamp: candle.timestamp,
-        open: prices.length ? Number(prices[0].toFixed(6)) : null,
-        high: prices.length ? Number(Math.max(...prices).toFixed(6)) : null,
-        low: prices.length ? Number(Math.min(...prices).toFixed(6)) : null,
-        close: prices.length ? Number(prices.at(-1)!.toFixed(6)) : null,
-        volume: Number(notional.toFixed(2)),
-        base_volume: Number(baseVolume.toFixed(6)),
+        open: prices.length ? formatExactDecimal(prices[0]) : null,
+        high: prices.length ? formatExactDecimal(high) : null,
+        low: prices.length ? formatExactDecimal(low) : null,
+        close: prices.length ? formatExactDecimal(prices.at(-1)!) : null,
+        volume: formatExactDecimal(notional),
+        base_volume: formatExactDecimal(baseVolume),
         fill_count: fills.length,
-        vwap: baseVolume > 0 ? Number((notional / baseVolume).toFixed(6)) : null,
+        vwap: vwap.value,
       }
     })
     for (const expected of expectedCandles) {

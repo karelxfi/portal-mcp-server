@@ -64,7 +64,7 @@ export function registerResolveEntityTool(server: McpServer) {
       } else if (effectiveKind === 'contract') {
         result = await resolveContractQuery({ network: network!, query, limit })
       } else if (effectiveKind === 'pool') {
-        result = await resolvePoolQuery({ network: network!, query })
+        result = await resolvePoolQuery({ network: network!, query, limit })
       } else if (effectiveKind === 'protocol') {
         result = await resolveProtocolQuery({ query, limit })
       } else {
@@ -84,6 +84,20 @@ export function registerResolveEntityTool(server: McpServer) {
         effectiveKind === 'pool'
           ? matches.flatMap((match) => ('identifier' in match ? [match.identifier] : []))
           : []
+      const firstPoolMatch =
+        effectiveKind === 'pool' && matches[0] && 'identifier' in matches[0]
+          ? matches[0]
+          : undefined
+      const poolTokens = firstPoolMatch?.base_token && firstPoolMatch?.quote_token
+        ? [firstPoolMatch.base_token, firstPoolMatch.quote_token].sort((left, right) =>
+            left.address.toLowerCase().localeCompare(right.address.toLowerCase()),
+          )
+        : []
+      const inferredPoolSource = firstPoolMatch?.dex_id === 'uniswap' && firstPoolMatch.labels?.some((label) => label.toLowerCase() === 'v3')
+        ? 'uniswap_v3_swap'
+        : firstPoolMatch?.dex_id === 'uniswap' && firstPoolMatch.labels?.some((label) => label.toLowerCase() === 'v2')
+          ? 'uniswap_v2_swap'
+          : undefined
       const hyperliquidCoins =
         effectiveKind === 'hyperliquid_coin'
           ? matches.flatMap((match) => ('coin' in match ? [match.coin] : []))
@@ -111,7 +125,18 @@ export function registerResolveEntityTool(server: McpServer) {
                 ? {
                     pool_address: poolIdentifiers.find((value) => value.length === 42),
                     pool_id: poolIdentifiers.find((value) => value.length === 66),
-                    note: 'Pool identifiers are format-normalized only; use the matching pool_address or pool_id field on pool-aware tools.',
+                    ...(poolTokens[0] ? {
+                      token0_address: poolTokens[0].address,
+                      token0_symbol: poolTokens[0].symbol,
+                    } : {}),
+                    ...(poolTokens[1] ? {
+                      token1_address: poolTokens[1].address,
+                      token1_symbol: poolTokens[1].symbol,
+                    } : {}),
+                    ...(inferredPoolSource ? { source: inferredPoolSource } : {}),
+                    note: firstPoolMatch?.validation_status === 'external_indexer_match'
+                      ? 'Use these pool and token arguments on portal_evm_get_ohlc. Token decimals are resolved from open token-list metadata.'
+                      : 'This identifier passed format validation only. Use the matching pool_address or pool_id field on pool-aware tools.',
                   }
                 : effectiveKind === 'hyperliquid_coin'
                   ? {
@@ -131,7 +156,7 @@ export function registerResolveEntityTool(server: McpServer) {
             : effectiveKind === 'contract'
               ? 'No built-in contract alias match found. Pass the exact contract address for deterministic EVM queries.'
               : effectiveKind === 'pool'
-                ? 'No pool identifier match found. Pass a 20-byte EVM pool address or 32-byte pool id.'
+                ? 'No pool match found. Use a pair such as "WETH/USDC uniswap", or pass a 20-byte EVM pool address or 32-byte pool id.'
                 : effectiveKind === 'hyperliquid_coin'
                   ? 'No Hyperliquid coin candidate could be normalized from the query.'
                   : 'No protocol match found from DeFi Llama protocol metadata.',
@@ -144,7 +169,13 @@ export function registerResolveEntityTool(server: McpServer) {
         )
       }
       if (effectiveKind === 'pool' && matches.length > 0) {
-        notices.push('Pool resolution validates identifier shape only; it does not prove the pool exists on-chain.')
+        if (firstPoolMatch?.validation_status === 'external_indexer_match') {
+          notices.push(
+            'Pool address and token-pair metadata were matched through DEX Screener. Query tools still read blockchain rows from SQD Portal.',
+          )
+        } else {
+          notices.push('Pool resolution validated identifier shape only; it did not prove the pool exists on-chain.')
+        }
       }
       if (effectiveKind === 'hyperliquid_coin' && matches.length > 0) {
         notices.push('Hyperliquid coin resolution normalizes ticker/name input but does not validate current market listing.')
@@ -176,6 +207,9 @@ export function registerResolveEntityTool(server: McpServer) {
                 : undefined,
               effectiveKind === 'protocol'
                 ? 'Protocol matches come from DeFi Llama metadata and are not Portal chain records.'
+                : undefined,
+              effectiveKind === 'pool' && firstPoolMatch?.validation_status === 'external_indexer_match'
+                ? 'Pool address and pair metadata come from DEX Screener; blockchain query rows still come from SQD Portal.'
                 : undefined,
               effectiveKind === 'hyperliquid_coin'
                 ? 'Hyperliquid coin names are normalized for Portal filters; listing validation is left to the query tool.'

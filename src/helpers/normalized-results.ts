@@ -1,6 +1,12 @@
+import { formatExactDecimal, parseExactDecimal } from './exact-decimal.js'
 import { formatTimestamp, normalizeUnixTimestamp } from './format.js'
 
 type RecordLike = Record<string, unknown>
+
+function exactDecimalText(value: unknown): string | undefined {
+  const parsed = parseExactDecimal(value)
+  return parsed ? formatExactDecimal(parsed) : undefined
+}
 
 function usableHash(value: unknown): string | undefined {
   if (typeof value !== 'string' || value.length === 0) return undefined
@@ -125,11 +131,21 @@ export function normalizeSolanaTransactionResult(item: RecordLike): RecordLike {
       ? item.block_number
       : undefined
   const timestamp = typeof item.timestamp === 'number' ? item.timestamp : undefined
+  const feeLamports = exactDecimalText(item.fee)
+  const computeUnits = exactDecimalText(item.computeUnitsConsumed)
 
   return withCommonAliases(
     {
       ...item,
       ...(txHash ? { signature: txHash } : {}),
+      ...(feeLamports ? { fee: feeLamports, fee_lamports: feeLamports, fee_unit: 'lamports' } : {}),
+      ...(computeUnits
+        ? {
+            computeUnitsConsumed: computeUnits,
+            compute_units_consumed: computeUnits,
+            compute_units_unit: 'compute units',
+          }
+        : {}),
     },
     {
       chain_kind: 'solana',
@@ -236,8 +252,18 @@ export function normalizeBitcoinInputResult(item: RecordLike): RecordLike {
   const fallbackPrimaryId = blockNumber !== undefined
     ? `${blockNumber}:${transactionIndex ?? 'tx'}:${inputIndex ?? 'input'}`
     : undefined
+  const prevoutValueBtc = exactDecimalText(item.prevoutValue)
 
-  return withCommonAliases(item, {
+  return withCommonAliases({
+    ...item,
+    ...(prevoutValueBtc
+      ? {
+          prevoutValue: prevoutValueBtc,
+          prevout_value_btc: prevoutValueBtc,
+          prevout_value_unit: 'BTC',
+        }
+      : {}),
+  }, {
     chain_kind: 'bitcoin',
     record_type: 'input',
     primary_id: txHash && inputIndex !== undefined
@@ -276,8 +302,12 @@ export function normalizeBitcoinOutputResult(item: RecordLike): RecordLike {
   const fallbackPrimaryId = blockNumber !== undefined
     ? `${blockNumber}:${transactionIndex ?? 'tx'}:${outputIndex ?? 'output'}`
     : undefined
+  const valueBtc = exactDecimalText(item.value)
 
-  return withCommonAliases(item, {
+  return withCommonAliases({
+    ...item,
+    ...(valueBtc ? { value: valueBtc, value_btc: valueBtc, value_unit: 'BTC' } : {}),
+  }, {
     chain_kind: 'bitcoin',
     record_type: 'output',
     primary_id: txHash && outputIndex !== undefined
@@ -415,7 +445,24 @@ export function normalizeHyperliquidFillResult(item: RecordLike): RecordLike {
         ? `hyperliquid:${blockNumber}:fill:${timestamp ?? 'unknown'}:${sender ?? 'unknown'}`
         : txHash
 
-  return withCommonAliases(item, {
+  const price = exactDecimalText(item.px)
+  const size = exactDecimalText(item.sz)
+  const fee = exactDecimalText(item.fee)
+  const closedPnl = exactDecimalText(item.closedPnl)
+  const startPosition = exactDecimalText(item.startPosition)
+  const builderFee = exactDecimalText(item.builderFee)
+  const coin = typeof item.coin === 'string' ? item.coin : undefined
+  const feeToken = typeof item.feeToken === 'string' ? item.feeToken : undefined
+
+  return withCommonAliases({
+    ...item,
+    ...(price ? { px: price, price_unit: 'USD per base asset' } : {}),
+    ...(size ? { sz: size, size_unit: coin ?? 'base asset' } : {}),
+    ...(fee ? { fee, fee_unit: feeToken ?? 'quote asset' } : {}),
+    ...(closedPnl ? { closedPnl, closed_pnl_unit: feeToken ?? 'quote asset' } : {}),
+    ...(startPosition ? { startPosition, start_position_unit: coin ?? 'base asset' } : {}),
+    ...(builderFee ? { builderFee, builder_fee_unit: feeToken ?? 'quote asset' } : {}),
+  }, {
     chain_kind: 'hyperliquid',
     record_type: 'fill',
     primary_id: primaryId,

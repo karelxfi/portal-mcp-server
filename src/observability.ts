@@ -27,6 +27,8 @@ export type RuntimeRequestContext = {
   clientName?: string
   clientVersion?: string
   protocolVersion?: string
+  /** Whether this connection opted into the beta SQD Explorer app surface. */
+  appEnabled?: boolean
 }
 
 export type ToolEventStatus = 'success' | 'partial' | 'tool_error' | 'request_error' | 'cancelled'

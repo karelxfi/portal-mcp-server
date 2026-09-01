@@ -16,6 +16,9 @@ let child: ChildProcessWithoutNullStreams | undefined
 let portalFixture: Server | undefined
 let portalFixtureUrl = ''
 let cancelledUpstreamRequests = 0
+let appIsolationStreamRequests = 0
+let activeAppIsolationStreams = 0
+let peakAppIsolationStreams = 0
 const stderrChunks: string[] = []
 
 function assert(condition: boolean, message: string) {
@@ -42,25 +45,37 @@ async function startPortalFixture() {
   portalFixture = createServer((req, res) => {
     if (req.url?.startsWith('/datasets?')) {
       res.writeHead(200, { 'Content-Type': 'application/json' })
-      res.end(JSON.stringify([
-        {
-          dataset: 'base-mainnet',
-          aliases: ['base'],
-          metadata: { kind: 'evm', display_name: 'Base' },
-          schema: { tables: {} },
-        },
-        {
-          dataset: 'slow-mainnet',
-          aliases: ['slow'],
-          metadata: { kind: 'evm', display_name: 'Slow fixture' },
-          schema: { tables: {} },
-        },
-      ]))
+      res.end(
+        JSON.stringify([
+          {
+            dataset: 'base-mainnet',
+            aliases: ['base'],
+            metadata: { kind: 'evm', display_name: 'Base' },
+            schema: { tables: {} },
+          },
+          {
+            dataset: 'slow-mainnet',
+            aliases: ['slow'],
+            metadata: { kind: 'evm', display_name: 'Slow fixture' },
+            schema: { tables: {} },
+          },
+        ]),
+      )
       return
     }
     if (req.url === '/datasets/base-mainnet/head') {
       res.writeHead(200, { 'Content-Type': 'application/json' })
       res.end(JSON.stringify({ number: 1_000, hash: `0x${'1'.repeat(64)}` }))
+      return
+    }
+    if (req.url === '/datasets/base-mainnet/finalized-head') {
+      res.writeHead(200, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({ number: 999, hash: `0x${'3'.repeat(64)}` }))
+      return
+    }
+    if (req.url === '/datasets/base-mainnet/metadata') {
+      res.writeHead(200, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({ start_block: 0 }))
       return
     }
     if (req.url === '/datasets/slow-mainnet/head') {
@@ -71,8 +86,42 @@ async function startPortalFixture() {
       res.flushHeaders()
       return
     }
+    if (req.method === 'POST' && req.url === '/datasets/base-mainnet/stream') {
+      req.resume()
+      appIsolationStreamRequests += 1
+      activeAppIsolationStreams += 1
+      peakAppIsolationStreams = Math.max(peakAppIsolationStreams, activeAppIsolationStreams)
+      res.once('finish', () => {
+        activeAppIsolationStreams -= 1
+      })
+      setTimeout(() => {
+        res.writeHead(200, { 'Content-Type': 'application/x-ndjson' })
+        res.end(
+          `${JSON.stringify({
+            header: { number: 1_000, hash: `0x${'1'.repeat(64)}`, timestamp: 1_775_000_000 },
+            transactions: [
+              {
+                transactionIndex: 0,
+                hash: `0x${'2'.repeat(64)}`,
+                from: '0x1111111111111111111111111111111111111111',
+                to: '0x2222222222222222222222222222222222222222',
+                value: '0x0',
+                gas: '0x5208',
+                gasUsed: '0x5208',
+                effectiveGasPrice: '0x1',
+                input: '0x',
+                nonce: 1,
+                status: 1,
+                type: 2,
+              },
+            ],
+          })}\n`,
+        )
+      }, 75)
+      return
+    }
     res.writeHead(404, { 'Content-Type': 'application/json' })
-    res.end(JSON.stringify({ error: 'fixture route not found' }))
+    res.end(JSON.stringify({ error: `fixture route not found: ${req.method ?? 'UNKNOWN'} ${req.url ?? '/'}` }))
   })
   await new Promise<void>((resolve) => portalFixture!.listen(0, '127.0.0.1', resolve))
   const address = portalFixture.address()
@@ -109,7 +158,7 @@ async function postRpc(id: number, method: string, params: Record<string, unknow
 async function assertPublicHttpSurface() {
   const health = await fetch(`${BASE_URL}/health`)
   assert(health.ok, `Public /health should stay reachable, got ${health.status}`)
-  const healthPayload = await health.json() as Record<string, any>
+  const healthPayload = (await health.json()) as Record<string, any>
   assert(
     healthPayload.observability?.captures_user_content === false,
     'Runtime should explicitly report that observability does not capture user content',
@@ -185,6 +234,94 @@ async function assertModernHttpProtocol() {
   }
 }
 
+function assertListedAppState(tools: Array<Record<string, any>>, enabled: boolean, label: string) {
+  const visualTool = tools.find((tool) => tool.name === 'portal_evm_query_transactions')
+  assert(Boolean(visualTool), `${label} should list portal_evm_query_transactions`)
+  const meta = visualTool?._meta as Record<string, any> | undefined
+  if (enabled) {
+    assert(Boolean(meta?.['ui/resourceUri']), `${label} should expose the opted-in App resource URI`)
+    assert(visualTool?.description?.includes('MCP APP:'), `${label} should expose the opted-in App description`)
+  } else {
+    assert(meta?.ui?.resourceUri === undefined, `${label} must not expose standard App metadata`)
+    assert(meta?.['ui/resourceUri'] === undefined, `${label} must not expose the App resource URI alias`)
+    assert(meta?.['openai/outputTemplate'] === undefined, `${label} must not expose the ChatGPT App template alias`)
+    assert(!visualTool?.description?.includes('MCP APP:'), `${label} must not expose the App description suffix`)
+  }
+}
+
+async function assertHttpAppIsolation() {
+  const clients = [
+    {
+      label: 'default connection',
+      enabled: false,
+      transport: new StreamableHTTPClientTransport(new URL(`${BASE_URL}/mcp`)),
+      client: new Client({ name: 'sqd-app-default-http', version: '1.0.0' }),
+    },
+    {
+      label: 'explicit app=0 connection',
+      enabled: false,
+      transport: new StreamableHTTPClientTransport(new URL(`${BASE_URL}/mcp?app=0`)),
+      client: new Client({ name: 'sqd-app-disabled-http', version: '1.0.0' }),
+    },
+    {
+      label: 'explicit app=1 connection',
+      enabled: true,
+      transport: new StreamableHTTPClientTransport(new URL(`${BASE_URL}/mcp?app=1`)),
+      client: new Client({ name: 'sqd-app-enabled-http', version: '1.0.0' }),
+    },
+  ]
+
+  await Promise.all(clients.map(({ client, transport }) => client.connect(transport)))
+  try {
+    const initialTools = await Promise.all(clients.map(({ client }) => client.listTools()))
+    initialTools.forEach(({ tools }, index) => {
+      const expected = clients[index]
+      assertListedAppState(tools as Array<Record<string, any>>, expected.enabled, expected.label)
+      const instructions = expected.client.getInstructions() ?? ''
+      assert(
+        instructions.includes('SQD Explorer') === expected.enabled,
+        `${expected.label} instructions must ${expected.enabled ? '' : 'not '}mention SQD Explorer`,
+      )
+    })
+
+    const toolArguments = { network: 'base', from_block: 1_000, to_block: 1_000, limit: 1 }
+    const results = await Promise.all(
+      clients.map(({ client }) => client.callTool({ name: 'portal_evm_query_transactions', arguments: toolArguments })),
+    )
+    assert(appIsolationStreamRequests === 3, 'all three App-isolation clients should reach the Portal fixture')
+    assert(
+      peakAppIsolationStreams >= 2,
+      `App-isolation tools/call requests must overlap in flight, observed ${peakAppIsolationStreams}`,
+    )
+    results.forEach((result, index) => {
+      assert(
+        result.isError !== true,
+        `${clients[index].label} App-isolation query should succeed: ${JSON.stringify(result.structuredContent ?? result.content)}`,
+      )
+      const structured = result.structuredContent as Record<string, any> | undefined
+      assert(
+        structured?._server?.name === 'SQD' && typeof structured?._server?.version === 'string',
+        `${clients[index].label} result must preserve observable server identity`,
+      )
+      assert(
+        Boolean(structured?._app) === clients[index].enabled,
+        `${clients[index].label} result must ${clients[index].enabled ? '' : 'not '}expose _app`,
+      )
+    })
+
+    const afterInterleave = await Promise.all(clients.map(({ client }) => client.listTools()))
+    afterInterleave.forEach(({ tools }, index) =>
+      assertListedAppState(
+        tools as Array<Record<string, any>>,
+        clients[index].enabled,
+        `${clients[index].label} after concurrent awaited calls`,
+      ),
+    )
+  } finally {
+    await Promise.allSettled(clients.map(({ client }) => client.close()))
+  }
+}
+
 function getHelpMetricNames(metricsText: string): Set<string> {
   const names = new Set<string>()
   for (const line of metricsText.split('\n')) {
@@ -246,6 +383,7 @@ async function main() {
       PORTAL_URL: portalFixtureUrl,
       METRICS_BEARER_TOKEN: METRICS_TOKEN,
       OBS_LOG_JSON: 'true',
+      MCP_APP_ENABLED: 'false',
     },
     stdio: ['pipe', 'pipe', 'pipe'],
   })
@@ -260,6 +398,7 @@ async function main() {
   await waitForHealth()
   await assertPublicHttpSurface()
   await assertModernHttpProtocol()
+  await assertHttpAppIsolation()
   await postRpc(1, 'initialize', {
     protocolVersion: '2024-11-05',
     capabilities: {},
@@ -289,9 +428,7 @@ async function main() {
     'Metrics should count the HTTP tool call',
   )
   assert(
-    metricsText.includes(
-      'mcp_tool_client_calls_total{transport="http",client_family="openai",client_major="v0"',
-    ),
+    metricsText.includes('mcp_tool_client_calls_total{transport="http",client_family="openai",client_major="v0"'),
     'Metrics should attribute the protocol-declared client to a bounded family and major version',
   )
   assert(
@@ -340,6 +477,7 @@ async function main() {
 
   console.log('PASS  /health and MCP remain public with no client credential setup')
   console.log('PASS  MCP 2026-07-28 negotiates and calls tools over stateless HTTP')
+  console.log('PASS  concurrent app=0, default, and app=1 clients keep metadata, instructions, and results isolated')
   console.log('PASS  HTTP cancellation closes upstream work and the same client recovers immediately')
   console.log('PASS  Retired duplicate /tools endpoint stays removed')
   console.log('PASS  observability ignores forwarded user content and arbitrary client headers')

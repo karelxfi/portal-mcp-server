@@ -6,6 +6,7 @@ import { z } from 'zod'
 import { resolveDataset, validateBlockRange } from '../../cache/datasets.js'
 import { PORTAL_URL } from '../../constants/index.js'
 import { detectChainType } from '../../helpers/chain.js'
+import { buildTableDescriptor } from '../../helpers/chart-metadata.js'
 import { createUnsupportedChainError } from '../../helpers/errors.js'
 import { portalFetchStreamRange } from '../../helpers/fetch.js'
 import { formatResult } from '../../helpers/format.js'
@@ -15,6 +16,7 @@ import type { ResponseFormat } from '../../helpers/response-modes.js'
 import { buildPercentileSummary } from '../../helpers/statistics.js'
 import { resolveTimeframeOrBlocks, type TimestampInput } from '../../helpers/timeframe.js'
 import { buildExecutionMetadata, buildToolDescription } from '../../helpers/tool-ux.js'
+import { buildMetricCard, buildPortalUi, buildRankedBarsPanel, buildTablePanel } from '../../helpers/ui-metadata.js'
 
 function formatBitcoinAnalyticsResponse(response: Record<string, any>, responseFormat: ResponseFormat) {
   if (responseFormat === 'full') {
@@ -59,6 +61,7 @@ function formatBitcoinAnalyticsResponse(response: Record<string, any>, responseF
           script_type_adoption: {
             taproot_percentage: response.script_type_adoption.taproot_percentage,
             segwit_v0_percentage: response.script_type_adoption.segwit_v0_percentage,
+            breakdown: response.script_type_adoption.breakdown,
           },
         }
       : {}),
@@ -72,6 +75,95 @@ function formatBitcoinAnalyticsResponse(response: Record<string, any>, responseF
           },
         }
       : {}),
+  }
+}
+
+function decorateBitcoinAnalyticsPresentation(response: Record<string, any>) {
+  const breakdown = response.script_type_adoption?.breakdown
+  const scriptTypes = breakdown && typeof breakdown === 'object'
+    ? Object.entries(breakdown).map(([type, value], index) => ({
+        rank: index + 1,
+        type,
+        count: Number((value as Record<string, unknown>)?.count ?? 0),
+        percentage: Number((value as Record<string, unknown>)?.percentage ?? 0),
+      })).sort((left, right) => right.count - left.count || left.type.localeCompare(right.type))
+        .map((row, index) => ({ ...row, rank: index + 1 }))
+    : []
+  const block = response.block_details ?? response.overview ?? {}
+  const transaction = response.transaction_stats ?? {}
+  const presentationSummary = {
+    blocks_analyzed: block.blocks_analyzed,
+    total_transactions: block.total_transactions,
+    avg_block_time_seconds: block.avg_block_time_seconds,
+    segwit_percentage: transaction.segwit_percentage ?? response.overview?.segwit_percentage,
+    avg_fee_per_tx_btc: response.fee_analysis?.avg_fee_per_tx_btc ?? response.overview?.avg_fee_per_tx_btc,
+  }
+  const table = scriptTypes.length > 0
+    ? buildTableDescriptor({
+        id: 'bitcoin_script_types',
+        dataKey: 'script_types',
+        rowCount: scriptTypes.length,
+        title: 'Bitcoin output script types',
+        subtitle: 'Observed output scripts ranked by count in the sampled blocks',
+        keyField: 'type',
+        defaultSort: { key: 'rank', direction: 'asc' },
+        dense: true,
+        columns: [
+          { key: 'rank', label: 'Rank', kind: 'rank', format: 'integer', align: 'right' },
+          { key: 'type', label: 'Script type', kind: 'dimension' },
+          { key: 'count', label: 'Outputs', kind: 'metric', format: 'integer', align: 'right' },
+          { key: 'percentage', label: 'Share', kind: 'metric', format: 'percent', unit: '%', align: 'right' },
+        ],
+      })
+    : undefined
+  const normalizedResponse = {
+    ...response,
+    presentation_summary: presentationSummary,
+    ...(scriptTypes.length > 0 ? { script_types: scriptTypes } : {}),
+    ...(table ? { tables: [table] } : {}),
+  }
+
+  return {
+    response: normalizedResponse,
+    ui: buildPortalUi({
+      version: 'portal_ui_v1',
+      layout: 'dashboard',
+      density: 'compact',
+      design_intent: 'analytics_dashboard',
+      headline: { title: 'Bitcoin network analytics' },
+      metric_cards: [
+        buildMetricCard({ id: 'blocks', label: 'Blocks analyzed', value_path: 'presentation_summary.blocks_analyzed', format: 'integer', emphasis: 'primary' }),
+        buildMetricCard({ id: 'transactions', label: 'Transactions', value_path: 'presentation_summary.total_transactions', format: 'integer' }),
+        buildMetricCard({ id: 'block-time', label: 'Average block time', value_path: 'presentation_summary.avg_block_time_seconds', format: 'decimal', unit: 'seconds' }),
+        buildMetricCard({ id: 'segwit', label: 'SegWit share', value_path: 'presentation_summary.segwit_percentage', format: 'percent' }),
+      ],
+      panels: table
+        ? [
+            buildRankedBarsPanel({
+              id: 'script-type-bars',
+              kind: 'ranked_bars_panel',
+              title: 'Output script adoption',
+              subtitle: 'Observed script types ranked by output count.',
+              data_key: 'script_types',
+              category_key: 'type',
+              value_key: 'count',
+              rank_key: 'rank',
+              value_format: 'integer',
+              emphasis: 'primary',
+            }),
+            buildTablePanel({
+              id: 'script-type-table-panel',
+              kind: 'table_panel',
+              title: 'Script type evidence',
+              subtitle: 'Counts and shares from the sampled output rows.',
+              table_id: 'bitcoin_script_types',
+            }),
+          ]
+        : [],
+      ...(scriptTypes.length > 0
+        ? { follow_up_actions: [{ label: 'Show script type rows', intent: 'show_raw' as const, target: 'script_types' }] }
+        : {}),
+    }),
   }
 }
 
@@ -444,12 +536,13 @@ export function registerBitcoinAnalyticsTool(server: McpServer) {
           ? [`Analyzed ${numBlocks} of ${requestedBlocks} requested blocks because the requested window exceeds the current Bitcoin analytics scan budget.`]
           : undefined
       const formattedResponse = formatBitcoinAnalyticsResponse(response, response_format as ResponseFormat)
+      const presentation = decorateBitcoinAnalyticsPresentation(formattedResponse)
       const message = response_format === 'summary'
         ? `Bitcoin summary: ${numBlocks} blocks, ${totalTxs.toLocaleString()} txs, ${avgBlockTime.toFixed(0)}s avg block time`
         : `Bitcoin network analytics: ${numBlocks} blocks, ${totalTxs.toLocaleString()} txs, ${avgTxsPerBlock.toFixed(0)} avg txs/block, ${avgBlockTime.toFixed(0)}s avg block time, ${segwitPct.toFixed(0)}% segwit`
 
       return formatResult(
-        formattedResponse,
+        presentation.response,
         message,
         {
           toolName: 'portal_bitcoin_get_analytics',
@@ -478,6 +571,13 @@ export function registerBitcoinAnalyticsTool(server: McpServer) {
             range_kind: resolvedWindow.range_kind,
             notes: [include_address_activity ? 'Address-activity enrichment was included.' : 'Address-activity enrichment was skipped for speed.'],
           }),
+          ui: presentation.ui,
+          llm: {
+            compact: true,
+            primary_path: presentation.response.script_types?.length ? 'script_types' : 'presentation_summary',
+            answer_sequence: ['presentation_summary', 'block_details', 'transaction_stats', 'network_activity', 'fee_analysis', 'script_types'],
+            parser_notes: ['Bitcoin values use BTC units in analytics summaries; script_types contains ranked output-script evidence when address activity is enabled.'],
+          },
           metadata: {
             dataset,
             from_block: effectiveFrom,

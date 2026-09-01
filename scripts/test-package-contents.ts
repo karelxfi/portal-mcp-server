@@ -85,6 +85,8 @@ const requiredFiles = [
   'README.md',
   'CHANGELOG.md',
   'LICENSE',
+  'THIRD_PARTY_NOTICES.md',
+  'dist/licenses/lightweight-charts-LICENSE.txt',
   'dist/index.js',
   'dist/http.js',
   'dist/server.js',

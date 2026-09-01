@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "retained": [
+    {
+      "version": "0.8.3",
+      "hash": "457443ca1623"
+    },
+    {
+      "version": "0.8.4",
+      "hash": "383ddd6e2c61"
+    }
+  ]
+}

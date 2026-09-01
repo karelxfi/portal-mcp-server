@@ -174,8 +174,8 @@ function hasTopicFilter(topics: string[] | undefined): boolean {
 }
 
 function getRecentLogChunkSize(blockRange: number, hasFilters: boolean): number {
-  if (!hasFilters) return 100
-  return Math.min(100_000, Math.max(5_000, Math.ceil(blockRange / 100)))
+  const safeChunkSize = hasFilters ? 500 : 100
+  return Math.max(1, Math.min(safeChunkSize, blockRange))
 }
 
 const DEFAULT_SELECTIVE_LATEST_SCAN_BLOCKS = 25_000

@@ -59,6 +59,7 @@ export type ToolExecutionMetadataInput = {
   metric?: string
   interval?: string
   duration?: string
+  duration_seconds?: number
   group_by?: string
   compare_previous?: boolean
   decode?: boolean
@@ -220,7 +221,7 @@ const TOOL_DEFINITIONS: Record<string, ToolDefinition> = {
       'Summarize wallet activity and fund flow with shared overview, asset movement, counterparties, evidence pivots, and follow-up filters across supported networks.',
     when_to_use: [
       'You want a single high-level answer about what one wallet has been doing and where value appears to move.',
-      'You want inbound/outbound flow, top counterparties, largest movements, and exact next pivots before drilling into raw transactions or fills.',
+      'You want inbound/outbound flow, activity and asset-movement counterparties, largest movements within each asset, and exact next pivots before drilling into raw transactions or fills.',
       'The user asks to investigate a suspicious wallet, stolen-funds path, exploit counterparty, or incident address.',
     ],
     avoid_when: ['You need every raw record with full chain-specific fields and no summarization.'],
@@ -1144,6 +1145,7 @@ export function buildExecutionMetadata(input: ToolExecutionMetadataInput): Recor
   if (input.metric) metadata.metric = input.metric
   if (input.interval) metadata.interval = input.interval
   if (input.duration) metadata.duration = input.duration
+  if (input.duration_seconds !== undefined) metadata.duration_seconds = input.duration_seconds
   if (input.group_by) metadata.group_by = input.group_by
   if (input.compare_previous !== undefined) metadata.compare_previous = input.compare_previous
   if (input.decode !== undefined) metadata.decode = input.decode
