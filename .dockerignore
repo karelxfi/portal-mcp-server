@@ -3,4 +3,9 @@ dist
 .git
 .claude
 *.md
-scripts
+!THIRD_PARTY_NOTICES.md
+scripts/*
+!scripts/clean-dist.mjs
+!scripts/generate-app-compat-manifest.mjs
+!scripts/build-activity-explorer.mjs
+!scripts/copy-third-party-licenses.mjs
