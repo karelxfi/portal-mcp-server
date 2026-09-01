@@ -2297,6 +2297,8 @@ async function buildNonEvmWalletSummary(params: {
     const fastBlockCap =
       chainType === 'solana'
         ? 250
+        : chainType === 'bitcoin'
+          ? 200
         : chainType === 'hyperliquidFills' || chainType === 'hyperliquidReplicaCmds'
           ? 2_000
           : undefined
@@ -2602,7 +2604,8 @@ async function buildNonEvmWalletSummary(params: {
               : 0
           },
           limit: limit_per_type + (outputCursor?.skip_inclusive_block ?? 0) + 1,
-          chunkSize: 20,
+          chunkSize: 100,
+          concurrency: 2,
           timeout: WALLET_QUERY_TIMEOUT_MS,
           retries: WALLET_QUERY_RETRIES,
         },
@@ -2629,7 +2632,8 @@ async function buildNonEvmWalletSummary(params: {
               : 0
           },
           limit: limit_per_type + (inputCursor?.skip_inclusive_block ?? 0) + 1,
-          chunkSize: 20,
+          chunkSize: 100,
+          concurrency: 2,
           timeout: WALLET_QUERY_TIMEOUT_MS,
           retries: WALLET_QUERY_RETRIES,
         },
