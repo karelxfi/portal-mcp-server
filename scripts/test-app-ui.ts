@@ -82,7 +82,9 @@ async function validate(page: Page, fixture: string, viewport: (typeof viewports
       successFill: root.getPropertyValue('--success-fill').trim(),
       warningFill: root.getPropertyValue('--warning-fill').trim(),
       dangerFill: root.getPropertyValue('--danger-fill').trim(),
-      chartFour: root.getPropertyValue('--chart-4').trim(),
+      chartSeries: ['--chart-1', '--chart-2', '--chart-3', '--chart-4', '--chart-5'].map((token) =>
+        root.getPropertyValue(token).trim(),
+      ),
       colorScheme: root.colorScheme,
       cardBackground: cardStyle?.backgroundColor,
       cardRadius: cardStyle?.borderRadius,
@@ -100,7 +102,10 @@ async function validate(page: Page, fixture: string, viewport: (typeof viewports
   assert(design.successFill === '#16a34a', `${fixture} should use the SQD success fill token`)
   assert(design.warningFill === '#f59e0b', `${fixture} should use the SQD warning fill token`)
   assert(design.dangerFill === '#ef4444', `${fixture} should use the SQD danger fill token`)
-  assert(design.chartFour === '#d97706', `${fixture} should use the SQD Chart Standards fourth series color`)
+  assert(
+    JSON.stringify(design.chartSeries) === JSON.stringify(['#6366f1', '#0891b2', '#d97706', '#16a34a', '#8b5cf6']),
+    `${fixture} co-equal series must follow tokens/chart-palette.json line_bar_area order (got ${design.chartSeries.join(', ')})`,
+  )
   assert(design.colorScheme === 'dark', `${fixture} should remain an intentional dark product surface`)
   if (design.cardBackground) {
     assert(design.cardBackground === 'rgb(19, 19, 22)', `${fixture} cards should use SQD raised surface #131316`)
@@ -233,7 +238,7 @@ async function validate(page: Page, fixture: string, viewport: (typeof viewports
       'Selecting a chart point should link to one exact table row',
     )
     assert(
-      (await page.locator('.sqd-table-pagination').innerText()).includes('Page 2 of 2'),
+      (await page.locator('.sqd-table-pagination').innerText()).includes('Page 3 of 3'),
       'Selecting a late candle should page the evidence table to its exact row',
     )
     assert((await hit.getAttribute('aria-pressed')) === 'true', 'Selected chart points should expose their state')
@@ -286,10 +291,10 @@ async function validate(page: Page, fixture: string, viewport: (typeof viewports
       'range focus should redraw only the selected six points',
     )
     assert(
-      (await page.locator('table.sqd-table tbody tr').count()) === Math.min(20, expected.length),
+      (await page.locator('table.sqd-table tbody tr').count()) === Math.min(10, expected.length),
       'range focus must keep the current exact evidence page',
     )
-    if (expected.length > 20) {
+    if (expected.length > 10) {
       assert(
         await page.locator('.sqd-table-pagination').isVisible(),
         'long chart evidence must remain reachable through table pages',
@@ -453,22 +458,22 @@ async function validate(page: Page, fixture: string, viewport: (typeof viewports
   }
   if (fixture === 'large_table') {
     const rows = APP_FIXTURES.large_table.items as Array<Record<string, unknown>>
-    assert((await page.locator('table.sqd-table tbody tr').count()) === 20, 'Large tables should use short local pages')
+    assert((await page.locator('table.sqd-table tbody tr').count()) === 10, 'Large tables should use short local pages')
     assert(
-      (await page.locator('.sqd-display-limit').innerText()).includes('20 of 125'),
+      (await page.locator('.sqd-display-limit').innerText()).includes('10 of 125'),
       'Large tables should disclose the local page size',
     )
     assert(
-      (await page.locator('.sqd-table-pagination').innerText()).includes('Page 1 of 7'),
+      (await page.locator('.sqd-table-pagination').innerText()).includes('Page 1 of 13'),
       'Large tables should expose page state',
     )
     await page.getByRole('button', { name: 'Next rows' }).click()
     assert(
-      (await page.locator('.sqd-table-pagination').innerText()).includes('Page 2 of 7'),
+      (await page.locator('.sqd-table-pagination').innerText()).includes('Page 2 of 13'),
       'Large table paging should advance',
     )
     assert(
-      (await page.locator('table.sqd-table').innerText()).includes(String(rows[20]?.address)),
+      (await page.locator('table.sqd-table').innerText()).includes(String(rows[10]?.address)),
       'The second page should start at the exact next row',
     )
     const lastAddress = String(rows.at(-1)?.address)
@@ -480,6 +485,34 @@ async function validate(page: Page, fixture: string, viewport: (typeof viewports
     assert(
       (await page.locator('table.sqd-table').innerText()).includes(lastAddress),
       'A hidden matching row should render exactly',
+    )
+    /* Prove the short local pages expose every exact row once: clearing the
+       filter and walking Next from the first page must collect all 125 row
+       keys with no missing and no duplicate identities. */
+    await page.locator('.sqd-input').fill('')
+    for (let guard = 0; guard < 60; guard += 1) {
+      const previous = page.getByRole('button', { name: 'Previous rows' })
+      if (await previous.isDisabled()) break
+      await previous.click()
+    }
+    const walkedKeys: string[] = []
+    let observedPages = 0
+    for (let guard = 0; guard < 60; guard += 1) {
+      observedPages += 1
+      walkedKeys.push(
+        ...(await page
+          .locator('table.sqd-table tbody tr[data-evidence-key]')
+          .evaluateAll((trs) => trs.map((tr) => (tr as HTMLElement).dataset.evidenceKey ?? ''))),
+      )
+      const next = page.getByRole('button', { name: 'Next rows' })
+      if (await next.isDisabled()) break
+      await next.click()
+    }
+    assert(observedPages === 13, `Large table should paginate into 13 short pages, walked ${observedPages}`)
+    assert(walkedKeys.length === rows.length, `Pagination should expose all ${rows.length} exact rows, saw ${walkedKeys.length}`)
+    assert(
+      new Set(walkedKeys).size === rows.length && !walkedKeys.includes(''),
+      'Pagination must expose every exact row key exactly once, with no gaps or duplicates',
     )
   }
   if (fixture === 'partial') {

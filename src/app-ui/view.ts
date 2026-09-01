@@ -42,7 +42,7 @@ type Column = {
 type Panel = Record<string, unknown>
 
 const ROOT_STYLE_ID = 'sqd-activity-explorer-style'
-const TABLE_PAGE_SIZE = 20
+const TABLE_PAGE_SIZE = 10
 const MAX_TIMELINE_ROWS = 40
 const MAX_RANKED_ROWS = 16
 const MAX_STAT_ROWS = 30
@@ -56,11 +56,13 @@ const TERMINAL_COLORS = {
   downSoft: 'rgba(217, 119, 6, 0.55)',
   accent: '#818cf8',
   accentLine: 'rgba(129, 140, 248, 0.45)',
-  ink: '#d1d1dc',
+  /* Axis ticks read in the muted whisper ink #9898a1 (chart-palette axis_label),
+     matching the SVG chart labels so the canvas and SVG grammars agree. */
+  ink: '#9898a1',
   grid: 'rgba(255, 255, 255, 0.055)',
   axis: 'rgba(255, 255, 255, 0.14)',
   crosshair: 'rgba(255, 255, 255, 0.24)',
-  crosshairLabel: '#2a2a31',
+  crosshairLabel: '#1a1a1e',
 }
 const TERMINAL_MONO = "'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace"
 
@@ -2091,16 +2093,17 @@ export function renderExplorer(root: HTMLElement, state: ExplorerState, actions:
   else if (!state.payload) shell.append(emptyState(state.error))
   else {
     const payload = state.payload
-    const ui = isRecord(payload._ui) ? payload._ui : {}
-    const marketTerminal = text(ui.design_intent) === 'market_terminal'
     shell.append(masthead(payload))
     const resultNotices = notices(payload)
     if (resultNotices) shell.append(resultNotices)
     const metrics = metricCards(payload)
-    if (metrics && !marketTerminal) shell.append(metrics)
+    /* The compact readout strip sits directly under the answer for every
+       mode, so a market terminal opens with its price summary and an
+       analytics result opens with its headline comparisons, both above the
+       dominant chart or table rather than stranded beneath the evidence. */
+    if (metrics) shell.append(metrics)
     const views = panels(payload)
     if (views) shell.append(views)
-    if (metrics && marketTerminal) shell.append(metrics)
     const next = followups(payload, actions)
     if (next) shell.append(next)
     const receipt = evidenceReceipt(payload, actions)
