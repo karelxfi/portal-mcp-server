@@ -45,13 +45,22 @@ type HyperliquidFill = Record<string, unknown> & {
 
 type CandleAccumulator = {
   open: ExactDecimal | null
+  open_order: FillOrder | null
   high: ExactDecimal | null
   low: ExactDecimal | null
   close: ExactDecimal | null
+  close_order: FillOrder | null
   volume: ExactDecimal
   base_volume: ExactDecimal
   fill_count: number
   notional_sum: ExactDecimal
+}
+
+type FillOrder = {
+  time_milliseconds: number
+  fill_index: number
+  block_number: number
+  position_in_block: number
 }
 
 type HyperliquidOhlcCursor = {
@@ -117,6 +126,15 @@ function sortFillsForOhlc(fills: HyperliquidFill[]): HyperliquidFill[] {
   })
 }
 
+function compareFillOrder(left: FillOrder, right: FillOrder): number {
+  return (
+    left.time_milliseconds - right.time_milliseconds ||
+    left.fill_index - right.fill_index ||
+    left.block_number - right.block_number ||
+    left.position_in_block - right.position_in_block
+  )
+}
+
 function getOrCreateBucket(
   buckets: Map<number, CandleAccumulator>,
   bucketTimestamp: number,
@@ -125,9 +143,11 @@ function getOrCreateBucket(
   if (!bucket) {
     bucket = {
       open: null,
+      open_order: null,
       high: null,
       low: null,
       close: null,
+      close_order: null,
       volume: EXACT_DECIMAL_ZERO,
       base_volume: EXACT_DECIMAL_ZERO,
       fill_count: 0,
@@ -266,6 +286,12 @@ export function registerHyperliquidOhlcTool(server: McpServer) {
             for (let index = 0; index < fills.length; index += 1) {
               const fill = fills[index]
               const timestamp = toSeconds(fill.time)
+              const order: FillOrder = {
+                time_milliseconds: toMilliseconds(fill.time),
+                fill_index: getFillIndex(fill),
+                block_number: blockNumber ?? 0,
+                position_in_block: index,
+              }
               const price = parseExactDecimal(fill.px)
               const size = parseExactDecimal(fill.sz)
 
@@ -293,10 +319,16 @@ export function registerHyperliquidOhlcTool(server: McpServer) {
               const bucket = getOrCreateBucket(buckets, bucketTimestamp)
               const notional = multiplyExactDecimals(price, size)
 
-              if (bucket.open === null) bucket.open = price
+              if (bucket.open_order === null || compareFillOrder(order, bucket.open_order) < 0) {
+                bucket.open = price
+                bucket.open_order = order
+              }
               bucket.high = bucket.high === null || compareExactDecimals(price, bucket.high) > 0 ? price : bucket.high
               bucket.low = bucket.low === null || compareExactDecimals(price, bucket.low) < 0 ? price : bucket.low
-              bucket.close = price
+              if (bucket.close_order === null || compareFillOrder(order, bucket.close_order) > 0) {
+                bucket.close = price
+                bucket.close_order = order
+              }
               bucket.volume = addExactDecimals(bucket.volume, notional)
               bucket.base_volume = addExactDecimals(bucket.base_volume, size)
               bucket.fill_count += 1
