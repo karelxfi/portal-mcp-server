@@ -2,7 +2,7 @@
 
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 
-import { assert, callToolWithRetry, closeTestClient, connectTestClient } from './test-helpers.ts'
+import { assert, callToolWithRetry, closeTestClient, connectTestClient, sleep } from './test-helpers.ts'
 import { RETAINED_ACTIVITY_EXPLORER_RESOURCE_URIS } from '../dist/apps/activity-explorer-compat.js'
 
 const CLIENTS = [
@@ -12,6 +12,8 @@ const CLIENTS = [
   { family: 'gemini', name: 'gemini-cli' },
   { family: 'cursor', name: 'cursor' },
 ] as const
+
+const CLIENT_BOUNDARY_COOLDOWN_MS = 5_000
 
 const PRE_UPGRADE_SCHEMA_FIXTURE = {
   hyperliquid_fill_limit: 200,
@@ -149,9 +151,20 @@ async function runClientJourney(clientIdentity: (typeof CLIENTS)[number]) {
         callToolWithRetry(connected.client, 'portal_get_head', { network: 'base-mainnet' }, { retries: 0 }),
       ),
     )
+    const failedConcurrentHeads = concurrentHeads.flatMap((result, index) =>
+      result.isError
+        ? [
+            {
+              call: index + 1,
+              elapsedMs: result.elapsedMs,
+              error: result.structuredContent?.error ?? result.text.slice(0, 240),
+            },
+          ]
+        : [],
+    )
     assert(
-      concurrentHeads.every((result) => !result.isError),
-      `${clientIdentity.family} bounded concurrency should complete all eight calls`,
+      failedConcurrentHeads.length === 0,
+      `${clientIdentity.family} bounded concurrency should complete all eight calls: ${JSON.stringify(failedConcurrentHeads)}`,
     )
     steps.push({
       step: 'bounded_concurrency',
@@ -225,10 +238,16 @@ async function runClientJourney(clientIdentity: (typeof CLIENTS)[number]) {
 async function main() {
   const packageJson = JSON.parse(await readFile('package.json', 'utf8')) as { version: string }
   const results = []
-  for (const client of CLIENTS) {
+  for (const [index, client] of CLIENTS.entries()) {
     const result = await runClientJourney(client)
     results.push(result)
     console.log(`PASS  ${client.family} declared-client MCP journey [${result.durationMs}ms]`)
+    if (index < CLIENTS.length - 1) {
+      console.log(
+        `Pausing ${CLIENT_BOUNDARY_COOLDOWN_MS / 1_000}s before the next declared-client journey to isolate client families.`,
+      )
+      await sleep(CLIENT_BOUNDARY_COOLDOWN_MS)
+    }
   }
 
   const outputPath = `artifacts/client-journeys/v${packageJson.version}.json`
