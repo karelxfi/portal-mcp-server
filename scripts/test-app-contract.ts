@@ -28,17 +28,21 @@ function assert(condition: unknown, message: string): asserts condition {
 }
 
 function buildAppResult() {
-  return formatResult(
-    { items: [{ primary_id: 'fixture-row' }] },
-    'Fixture result',
-    { toolName: 'portal_get_recent_activity', ui: { version: 'portal_ui_v1' } },
-  )
+  return formatResult({ items: [{ primary_id: 'fixture-row' }] }, 'Fixture result', {
+    toolName: 'portal_get_recent_activity',
+    ui: { version: 'portal_ui_v1' },
+  })
 }
 
 async function main() {
   const packageVersion = String(JSON.parse(await readFile('package.json', 'utf8')).version || '')
   delete process.env.MCP_APP_ENABLED
   const defaultResult = buildAppResult()
+  assert(
+    defaultResult.structuredContent?._server?.name === 'SQD' &&
+      defaultResult.structuredContent?._server?.version === packageVersion,
+    'every App-capable result must preserve the observable SQD server identity and exact package version',
+  )
   assert(
     defaultResult.structuredContent?._app === undefined,
     'the beta app must not announce itself to hosts unless the deployment opts in',
@@ -57,13 +61,28 @@ async function main() {
       appResult.structuredContent?._app?.host_render_confirmed === undefined,
     'App-enabled results must expose the canonical product name and delivery state without inventing a host render verdict',
   )
+  const inferredAppResult = formatResult(
+    [{ primary_id: 'fixture-transaction', hash: `0x${'1'.repeat(64)}` }],
+    'Fixture transaction',
+    { toolName: 'portal_evm_query_transactions' },
+  )
+  assert(
+    inferredAppResult.structuredContent?._ui === undefined &&
+      inferredAppResult.structuredContent?._app?.name === 'SQD Explorer',
+    'every advertised App tool must return the App identity even when the renderer uses its exact-row fallback',
+  )
+  for (const toolName of ACTIVITY_EXPLORER_TOOLS) {
+    const toolResult = formatResult([{ primary_id: `${toolName}-fixture` }], 'Fixture result', { toolName })
+    assert(
+      toolResult.structuredContent?._app?.name === 'SQD Explorer',
+      `${toolName} must return the App identity whenever it advertises the App`,
+    )
+  }
   delete process.env.MCP_APP_ENABLED
   assert(shorterDuration('in last 38 mins') === '19m', 'natural-language chart windows should narrow deterministically')
   assert(
-    evidenceArguments(
-      { _evidence: { request: { arguments: { duration: '1h', coin: 'BTC' } } } },
-      { coin: 'BTC' },
-    ).duration === '1h',
+    evidenceArguments({ _evidence: { request: { arguments: { duration: '1h', coin: 'BTC' } } } }, { coin: 'BTC' })
+      .duration === '1h',
     'follow-ups should recover schema defaults from the factual evidence receipt',
   )
   assert(
@@ -83,32 +102,54 @@ async function main() {
   })
   assert(
     JSON.stringify(continuationPlan.callArgs) === JSON.stringify({ cursor: 'next' }) &&
-      JSON.stringify(continuationPlan.persistedArgs) === JSON.stringify({ network: 'hyperliquid-fills', coin: 'BTC', duration: '1h' }),
+      JSON.stringify(continuationPlan.persistedArgs) ===
+        JSON.stringify({ network: 'hyperliquid-fills', coin: 'BTC', duration: '1h' }),
     'continuation should call by cursor while preserving the investigation arguments for later follow-ups',
   )
   const timeSeriesContract = buildTimeSeriesChart({ interval: '1m', totalPoints: 12 })
   const candleContract = buildCandlestickChart({ interval: '1m', totalCandles: 12 })
-  for (const [name, chart] of [['time series', timeSeriesContract], ['candlestick', candleContract]] as const) {
+  for (const [name, chart] of [
+    ['time series', timeSeriesContract],
+    ['candlestick', candleContract],
+  ] as const) {
     assert(chart.interactions?.hover?.enabled === true, `${name} charts should declare exact point inspection`)
     assert(chart.interactions?.zoom?.enabled === true, `${name} charts should declare implemented x-axis range focus`)
     assert(chart.interactions?.toolbar?.enabled === true, `${name} charts should expose the implemented range controls`)
-    assert(chart.interactions?.toolbar?.actions.includes('reset_zoom') === true, `${name} charts should expose reset range`)
+    assert(
+      chart.interactions?.toolbar?.actions.includes('reset_zoom') === true,
+      `${name} charts should expose reset range`,
+    )
   }
   const shortChart = buildTimeSeriesChart({ interval: '1m', totalPoints: 4 })
-  assert(shortChart.interactions?.zoom?.enabled === false, 'short charts should not advertise unnecessary range controls')
+  assert(
+    shortChart.interactions?.zoom?.enabled === false,
+    'short charts should not advertise unnecessary range controls',
+  )
 
   const jsonExport = buildEvidenceExport(APP_FIXTURES.hyperliquid, 'json')
   const csvExport = buildEvidenceExport(APP_FIXTURES.hyperliquid, 'csv')
   const hyperliquidRows = (APP_FIXTURES.hyperliquid.ohlc as unknown[]).length
-  assert(jsonExport.filename.endsWith('.json') && jsonExport.rowCount === hyperliquidRows, 'JSON evidence export should include all candles')
-  assert(csvExport.filename.endsWith('.csv') && csvExport.rowCount === hyperliquidRows, 'CSV evidence export should include all candles')
+  assert(
+    jsonExport.filename.endsWith('.json') && jsonExport.rowCount === hyperliquidRows,
+    'JSON evidence export should include all candles',
+  )
+  assert(
+    csvExport.filename.endsWith('.csv') && csvExport.rowCount === hyperliquidRows,
+    'CSV evidence export should include all candles',
+  )
   assert(csvExport.content.includes('sqd_evidence_sha256'), 'CSV evidence export should preserve receipt identity')
-  assert(csvExport.content.split('\r\n').length === hyperliquidRows + 2, 'CSV export should contain one header and every exact row')
+  assert(
+    csvExport.content.split('\r\n').length === hyperliquidRows + 2,
+    'CSV export should contain one header and every exact row',
+  )
   const activityJson = buildEvidenceExport(APP_FIXTURES.activity, 'json')
   const activityCsv = buildEvidenceExport(APP_FIXTURES.activity, 'csv')
   const exactActivityHash = String((APP_FIXTURES.activity.items as Array<Record<string, unknown>>)[0]?.tx_hash)
   for (const exported of [activityJson, activityCsv]) {
-    assert(exported.content.includes(exactActivityHash), 'evidence exports should keep transaction hashes byte-for-byte exact')
+    assert(
+      exported.content.includes(exactActivityHash),
+      'evidence exports should keep transaction hashes byte-for-byte exact',
+    )
     assert(exported.content.includes('0.000000009 USDC'), 'evidence exports should keep tiny non-zero amounts exact')
   }
   assert(
@@ -123,7 +164,12 @@ async function main() {
     ACTIVITY_EXPLORER_BYTES > 20_000 && ACTIVITY_EXPLORER_BYTES < 700_000,
     'embedded app must stay inside its release byte budget',
   )
-  for (const tool of ['portal_list_networks', 'portal_get_network_info', 'portal_get_head', 'portal_debug_resolve_time_to_block']) {
+  for (const tool of [
+    'portal_list_networks',
+    'portal_get_network_info',
+    'portal_get_head',
+    'portal_debug_resolve_time_to_block',
+  ]) {
     assert(!ACTIVITY_EXPLORER_TOOLS.has(tool), `${tool} is metadata evidence and must not advertise a data explorer`)
   }
 
@@ -211,6 +257,14 @@ async function main() {
   try {
     const listedTools = await client.listTools()
     assert(listedTools.tools.length === 28, 'the MCP App must not change the 28-tool catalog')
+    const advertisedAppTools = listedTools.tools
+      .filter((tool) => Boolean((tool._meta as Record<string, any> | undefined)?.['ui/resourceUri']))
+      .map((tool) => tool.name)
+      .sort()
+    assert(
+      JSON.stringify(advertisedAppTools) === JSON.stringify([...ACTIVITY_EXPLORER_TOOLS].sort()),
+      'the advertised App tool set must exactly match the formatter App tool set',
+    )
     for (const tool of listedTools.tools) {
       const meta = tool._meta as Record<string, any> | undefined
       if (ACTIVITY_EXPLORER_TOOLS.has(tool.name)) {
@@ -233,6 +287,14 @@ async function main() {
     }
     const fillsTool = listedTools.tools.find((tool) => tool.name === 'portal_hyperliquid_query_fills')
     const walletTool = listedTools.tools.find((tool) => tool.name === 'portal_get_wallet_summary')
+    const serverSchema = (walletTool?.outputSchema as Record<string, any> | undefined)?.properties?._server
+    assert(
+      serverSchema?.properties?.name?.type === 'string' &&
+        serverSchema?.properties?.version?.type === 'string' &&
+        serverSchema?.required?.includes('name') &&
+        serverSchema?.required?.includes('version'),
+      'the public output schema must keep the exact required _server name and version fields',
+    )
     assert(
       fillsTool?.inputSchema?.properties?.limit?.maximum === 200,
       'fills should accept the retained installed-client limit and adapt it to a safe page',
@@ -253,18 +315,22 @@ async function main() {
       'resource bytes must match the generated artifact',
     )
     assert(
-      content.text.includes('SQD Explorer')
-        && content.text.includes(`version:${JSON.stringify(packageVersion)}`)
-        && content.text.includes('viewBox="0 0 306 306"')
-        && content.text.includes('#08090a')
-        && content.text.includes('#818cf8')
-        && content.text.includes('Inter SQD')
-        && content.text.includes('JetBrains Mono SQD'),
+      content.text.includes('SQD Explorer') &&
+        content.text.includes(`version:${JSON.stringify(packageVersion)}`) &&
+        content.text.includes('viewBox="0 0 306 306"') &&
+        content.text.includes('#08090a') &&
+        content.text.includes('#818cf8') &&
+        content.text.includes('Inter SQD') &&
+        content.text.includes('JetBrains Mono SQD'),
       'the app should contain the official SQD mark, dark product tokens, and embedded typefaces',
     )
     assert(
       !content.text.includes('<script src=') && !content.text.includes('<link rel='),
       'the app must be self-contained',
+    )
+    assert(
+      content.text.includes('https://www.tradingview.com/'),
+      'the bundled market chart must retain the required TradingView product-creator link',
     )
     const publicCopySources = await Promise.all([
       readFile('src/app-ui/view.ts', 'utf8'),
@@ -276,6 +342,11 @@ async function main() {
       'public app copy must not contain em dashes',
     )
     const appBridgeSource = publicCopySources[1]
+    assert(
+      publicCopySources[0].includes("'Charts by TradingView'") &&
+        publicCopySources[0].includes("attribution.href = 'https://www.tradingview.com/'"),
+      'the market chart must keep the required TradingView attribution visible',
+    )
     assert(
       appBridgeSource.includes("from '@modelcontextprotocol/ext-apps'") &&
         appBridgeSource.includes('new App(') &&

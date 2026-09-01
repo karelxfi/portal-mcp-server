@@ -119,9 +119,7 @@ function text(value: unknown): string {
 }
 
 function compact(value: number): string {
-  return Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 2 })
-    .format(value)
-    .replace(/K/g, 'k')
+  return Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 2 }).format(value).replace(/K/g, 'k')
 }
 
 function pillCompact(value: number): string {
@@ -345,9 +343,7 @@ function masthead(payload: Record<string, unknown>): HTMLElement {
     const value = getByPath(payload, text(heroSpec.value_path))
     if (value !== undefined && value !== null && value !== '') {
       const figure = element('div', 'sqd-hero-figure')
-      figure.append(
-        element('div', 'sqd-hero-value', formatValue(value, text(heroSpec.format), text(heroSpec.unit))),
-      )
+      figure.append(element('div', 'sqd-hero-value', formatValue(value, text(heroSpec.format), text(heroSpec.unit))))
       figure.append(element('div', 'sqd-hero-label', text(heroSpec.label ?? 'Headline value')))
       section.append(figure)
     }
@@ -557,7 +553,11 @@ function intervalSeconds(value: unknown): number | undefined {
    so lines get a banded axis with a labelled floor and no area fill. */
 const STEP_LADDER = [1, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10]
 
-function bandScale(min: number, max: number, zeroBased: boolean): { domainMin: number; domainMax: number; ticks: number[] } {
+function bandScale(
+  min: number,
+  max: number,
+  zeroBased: boolean,
+): { domainMin: number; domainMax: number; ticks: number[] } {
   let low = zeroBased ? Math.min(0, min) : min
   let high = zeroBased ? Math.max(0, max) : max
   if (high === low) {
@@ -583,7 +583,12 @@ function bandScale(min: number, max: number, zeroBased: boolean): { domainMin: n
   }
   if (!best) {
     const step = 10 * power
-    best = { step, domainMin: Math.floor(paddedLow / step) * step, domainMax: Math.ceil(paddedHigh / step) * step, score: 0 }
+    best = {
+      step,
+      domainMin: Math.floor(paddedLow / step) * step,
+      domainMax: Math.ceil(paddedHigh / step) * step,
+      score: 0,
+    }
   }
   const ticks: number[] = []
   for (let value = best.domainMin; value <= best.domainMax + best.step / 2; value += best.step) {
@@ -660,7 +665,10 @@ function bindPointSelection(hit: SVGElement, row: Record<string, unknown>) {
   })
 }
 
-function normalizeSeries(rows: Record<string, unknown>[], chart: Record<string, unknown>): {
+function normalizeSeries(
+  rows: Record<string, unknown>[],
+  chart: Record<string, unknown>,
+): {
   points: ChartPoint[]
   series: ChartSeries[]
 } {
@@ -700,7 +708,11 @@ function normalizeSeries(rows: Record<string, unknown>[], chart: Record<string, 
           }),
         }
       }),
-      series: keys.map((key, index) => ({ key, label: humanize(key), color: CHART_COLORS[index % CHART_COLORS.length] })),
+      series: keys.map((key, index) => ({
+        key,
+        label: humanize(key),
+        color: CHART_COLORS[index % CHART_COLORS.length],
+      })),
     }
   }
 
@@ -770,7 +782,9 @@ function buildCandleTerminal(
     text(getByPath(point.row, titleField) ?? point.row.timestamp_human ?? point.row.timestamp ?? `Candle ${index + 1}`),
   )
   const timeToLabel = new Map<number, string>()
-  times.forEach((time, index) => timeToLabel.set(time as number, shortTimeLabel(fullLabels[index]) || fullLabels[index]))
+  times.forEach((time, index) =>
+    timeToLabel.set(time as number, shortTimeLabel(fullLabels[index]) || fullLabels[index]),
+  )
   const isOpenCandle = (point: (typeof parsed)[number]) =>
     point.row.is_closed === false || point.row.open_candle === true
   const hasVolume = chart.volume_panel !== false && parsed.some((point) => point.volume !== undefined)
@@ -829,7 +843,11 @@ function buildCandleTerminal(
     volumeCaption.hidden = true
     chartBox.append(volumeCaption)
   }
-  terminal.append(readout, chartBox)
+  const attribution = element('a', 'sqd-chart-attribution', 'Charts by TradingView') as HTMLAnchorElement
+  attribution.href = 'https://www.tradingview.com/'
+  attribution.target = '_blank'
+  attribution.rel = 'noopener noreferrer'
+  terminal.append(readout, chartBox, attribution)
 
   const chartApi = createChart(mount, {
     autoSize: true,
@@ -1215,7 +1233,7 @@ function chartPanel(payload: Record<string, unknown>, panel: Panel): HTMLElement
     const y = (value: number) => CHART_PAD.top + (1 - (value - domainMin) / range) * plotH
     const xField = text(chart.x_field || 'timestamp')
     const optionalXValues = normalized.points.map((point) => numeric(getByPath(point.row, xField)))
-    const xValues = optionalXValues.every((value) => value !== undefined) ? optionalXValues as number[] : undefined
+    const xValues = optionalXValues.every((value) => value !== undefined) ? (optionalXValues as number[]) : undefined
     const numericX = Boolean(xValues && Math.max(...xValues) > Math.min(...xValues))
     const minX = numericX && xValues ? Math.min(...xValues) : 0
     const maxX = numericX && xValues ? Math.max(...xValues) : Math.max(normalized.points.length - 1, 1)
@@ -1281,7 +1299,9 @@ function chartPanel(payload: Record<string, unknown>, panel: Panel): HTMLElement
       normalized.series.flatMap((series, seriesIndex) => {
         if (!visibleSeries.has(seriesIndex)) return []
         const value = point.values[seriesIndex]
-        return [`${series.label} ${value === null ? 'not available' : formatValue(value, text(chart.value_format), text(chart.unit))}`]
+        return [
+          `${series.label} ${value === null ? 'not available' : formatValue(value, text(chart.value_format), text(chart.unit))}`,
+        ]
       })
     const updatePointLabels = () => {
       pointHits.forEach(({ node, point, timeLabel }) => {
@@ -1324,7 +1344,9 @@ function chartPanel(payload: Record<string, unknown>, panel: Panel): HTMLElement
     } else if (stacked) {
       const bottoms = new Array(normalized.points.length).fill(0) as number[]
       normalized.series.forEach((series, seriesIndex) => {
-        const topValues = normalized.points.map((point, index) => bottoms[index] + Math.max(0, point.values[seriesIndex] ?? 0))
+        const topValues = normalized.points.map(
+          (point, index) => bottoms[index] + Math.max(0, point.values[seriesIndex] ?? 0),
+        )
         const top = topValues.map((value, index) => `${x(index)},${y(value)}`).join(' ')
         const bottom = bottoms
           .map((value, index) => `${x(index)},${y(value)}`)
@@ -1334,7 +1356,9 @@ function chartPanel(payload: Record<string, unknown>, panel: Panel): HTMLElement
           points: `${top} ${bottom}`,
           class: 'sqd-chart-series-area',
           fill: series.color,
-          'data-series-total': String(normalized.points.reduce((sum, point) => sum + (point.values[seriesIndex] ?? 0), 0)),
+          'data-series-total': String(
+            normalized.points.reduce((sum, point) => sum + (point.values[seriesIndex] ?? 0), 0),
+          ),
         })
         trackSeriesNode(seriesIndex, area)
         topValues.forEach((value, index) => {
@@ -1403,7 +1427,9 @@ function chartPanel(payload: Record<string, unknown>, panel: Panel): HTMLElement
     }
 
     normalized.points.forEach((point, index) => {
-      const timeLabel = text(point.row.timestamp_human ?? point.row.timestamp ?? point.row.bucket_index ?? `Point ${index + 1}`)
+      const timeLabel = text(
+        point.row.timestamp_human ?? point.row.timestamp ?? point.row.bucket_index ?? `Point ${index + 1}`,
+      )
       const cx = x(index)
       const hit = add('rect', {
         x: String(Math.max(CHART_PAD.left, cx - plotW / Math.max(normalized.points.length, 1) / 2)),
@@ -1641,7 +1667,10 @@ function tablePanel(payload: Record<string, unknown>, panel: Panel): HTMLElement
       sortDirection = sortKey === column.key && sortDirection === 'asc' ? 'desc' : 'asc'
       sortKey = column.key
       headerByKey.forEach((header, key) =>
-        header.setAttribute('aria-sort', key === sortKey ? (sortDirection === 'asc' ? 'ascending' : 'descending') : 'none'),
+        header.setAttribute(
+          'aria-sort',
+          key === sortKey ? (sortDirection === 'asc' ? 'ascending' : 'descending') : 'none',
+        ),
       )
       pageIndex = 0
       renderBody()
@@ -1749,7 +1778,12 @@ function tablePanel(payload: Record<string, unknown>, panel: Panel): HTMLElement
   renderBody()
   const declaredRows = Number(descriptor.row_count)
   const totalRows = Number.isFinite(declaredRows) ? Math.max(rows.length, declaredRows) : rows.length
-  const limitNotice = displayLimitNotice('evidence rows', Math.min(rows.length, TABLE_PAGE_SIZE), rows.length, totalRows)
+  const limitNotice = displayLimitNotice(
+    'evidence rows',
+    Math.min(rows.length, TABLE_PAGE_SIZE),
+    rows.length,
+    totalRows,
+  )
   if (limitNotice) body.append(limitNotice)
   return root
 }
@@ -1769,7 +1803,9 @@ function timelinePanel(payload: Record<string, unknown>, panel: Panel): HTMLElem
     event.append(element('span', `sqd-event-dot${dotTone}`))
     const copy = element('div')
     copy.append(element('div', 'sqd-event-title', text(getByPath(row, text(panel.title_key)) ?? 'Activity')))
-    const subtitleParts = asArray(panel.subtitle_keys).map((key) => text(getByPath(row, text(key)))).filter(Boolean)
+    const subtitleParts = asArray(panel.subtitle_keys)
+      .map((key) => text(getByPath(row, text(key))))
+      .filter(Boolean)
     const joiner = directionKey && subtitleParts.length === 2 ? ' → ' : ' · '
     if (subtitleParts.length) {
       const subtitleNode = element('div', 'sqd-event-subtitle', subtitleParts.map(shortIdentifier).join(joiner))
@@ -1968,9 +2004,11 @@ function notices(payload: Record<string, unknown>): HTMLElement | null {
   if (!entries.length) return null
   const wrap = element('section', 'sqd-notices')
   wrap.setAttribute('aria-label', 'Important result notices')
-  entries.slice(0, 6).forEach((entry) =>
-    wrap.append(element('div', `sqd-notice${entry.tone ? ` sqd-notice--${entry.tone}` : ''}`, entry.copy)),
-  )
+  entries
+    .slice(0, 6)
+    .forEach((entry) =>
+      wrap.append(element('div', `sqd-notice${entry.tone ? ` sqd-notice--${entry.tone}` : ''}`, entry.copy)),
+    )
   return wrap
 }
 

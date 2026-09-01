@@ -11,7 +11,21 @@ import { APP_FIXTURES } from '../src/app-ui/fixtures.ts'
 
 const preview = path.resolve('output/activity-explorer/index.html')
 const screenshots = path.resolve('output/activity-explorer/screenshots')
-const fixtures = ['hyperliquid', 'ratio', 'timeseries', 'grouped', 'sparse', 'mixed', 'activity', 'wallet', 'contract', 'large_table', 'partial', 'error', 'empty']
+const fixtures = [
+  'hyperliquid',
+  'ratio',
+  'timeseries',
+  'grouped',
+  'sparse',
+  'mixed',
+  'activity',
+  'wallet',
+  'contract',
+  'large_table',
+  'partial',
+  'error',
+  'empty',
+]
 const WALLET_FIXTURE_ROW_COUNT = ((APP_FIXTURES.wallet.activity as Record<string, unknown>).items as unknown[]).length
 const viewports = [
   { name: 'desktop-light', width: 1280, height: 900, colorScheme: 'light' as const },
@@ -27,10 +41,14 @@ function assert(condition: unknown, message: string): asserts condition {
 
 async function validate(page: Page, fixture: string, viewport: (typeof viewports)[number]) {
   const errors: string[] = []
+  const externalRequests: string[] = []
   page.on('console', (message) => {
     if (message.type() === 'error') errors.push(message.text())
   })
   page.on('pageerror', (error) => errors.push(error.message))
+  page.on('request', (request) => {
+    if (!request.url().startsWith(baseUrl)) externalRequests.push(request.url())
+  })
   const startedAt = performance.now()
   await page.goto(`${baseUrl}?fixture=${fixture}`, { waitUntil: 'load' })
   await page.waitForSelector('.sqd-shell')
@@ -41,6 +59,10 @@ async function validate(page: Page, fixture: string, viewport: (typeof viewports
   const nodeCount = await page.locator('*').count()
   assert(nodeCount < 2_000, `${fixture} ${viewport.name} rendered ${nodeCount} DOM nodes`)
   assert(errors.length === 0, `${fixture} ${viewport.name} console errors: ${errors.join(' | ')}`)
+  assert(
+    externalRequests.length === 0,
+    `${fixture} ${viewport.name} made unexpected external requests: ${externalRequests.join(' | ')}`,
+  )
   const design = await page.evaluate(() => {
     const body = getComputedStyle(document.body)
     const title = getComputedStyle(document.querySelector('.sqd-title')!)
@@ -87,10 +109,16 @@ async function validate(page: Page, fixture: string, viewport: (typeof viewports
   if (design.tableHeaderFont) {
     assert(design.tableHeaderFont.startsWith('"Inter SQD"'), `${fixture} table headers should use Inter`)
     assert(design.tableHeaderWeight === '510', `${fixture} table headers should use weight 510`)
-    assert(design.tableHeaderTracking === 'normal', `${fixture} table headers should use untracked sentence case per the Chart Standards table spec`)
+    assert(
+      design.tableHeaderTracking === 'normal',
+      `${fixture} table headers should use untracked sentence case per the Chart Standards table spec`,
+    )
   }
   if (viewport.width <= 520 && (await page.locator('.sqd-input').count()) > 0) {
-    const inputSize = await page.locator('.sqd-input').first().evaluate((node) => getComputedStyle(node).fontSize)
+    const inputSize = await page
+      .locator('.sqd-input')
+      .first()
+      .evaluate((node) => getComputedStyle(node).fontSize)
     assert(inputSize === '16px', `${fixture} mobile inputs should keep the SQD 16px floor`)
   }
   assert((await page.locator('.sqd-mark').count()) === 1, `${fixture} should show one SQD mark`)
@@ -113,25 +141,36 @@ async function validate(page: Page, fixture: string, viewport: (typeof viewports
     assert(box && box.width >= 300 && box.height >= minimumChartHeight, `${fixture} chart should stay readable`)
     const rightScaleX = await svg.locator('.sqd-chart-label').first().getAttribute('x')
     const chartViewBoxWidth = Number((await svg.getAttribute('viewBox'))?.split(' ')[2])
+    assert(Number(rightScaleX) > chartViewBoxWidth * 0.85, `${fixture} should use the SQD right-side value scale`)
     assert(
-      Number(rightScaleX) > chartViewBoxWidth * 0.85,
-      `${fixture} should use the SQD right-side value scale`,
+      (await svg.getAttribute('role')) === 'group',
+      `${fixture} interactive charts should expose their point descendants`,
     )
-    assert((await svg.getAttribute('role')) === 'group', `${fixture} interactive charts should expose their point descendants`)
   }
   if (['hyperliquid', 'ratio'].includes(fixture)) {
     const terminal = page.locator('.sqd-candle-chart')
     assert((await terminal.count()) >= 1, `${fixture} should render the market terminal surface`)
     const box = await terminal.first().boundingBox()
     const minimumChartHeight = viewport.width <= 520 ? 110 : 280
-    assert(box && box.width >= 300 && box.height >= minimumChartHeight, `${fixture} terminal chart should stay readable`)
-    assert((await page.locator('.sqd-candle-chart canvas').count()) >= 2, `${fixture} should paint the canvas chart surface`)
+    assert(
+      box && box.width >= 300 && box.height >= minimumChartHeight,
+      `${fixture} terminal chart should stay readable`,
+    )
+    assert(
+      (await page.locator('.sqd-candle-chart canvas').count()) >= 2,
+      `${fixture} should paint the canvas chart surface`,
+    )
     const pillBox = await page.locator('.sqd-candle-pill').first().boundingBox()
     assert(
       pillBox && box && pillBox.x - box.x > box.width * 0.8,
       `${fixture} should pin the last value on the SQD right-side value scale`,
     )
-    assert((await terminal.first().getAttribute('role')) === 'group', `${fixture} terminal should expose grouped chart semantics`)
+    assert(
+      (await terminal.first().getAttribute('role')) === 'group',
+      `${fixture} terminal should expose grouped chart semantics`,
+    )
+    const attribution = page.locator('a[href*="tradingview.com"]').first()
+    assert((await attribution.count()) === 1, `${fixture} should show the required TradingView product attribution`)
     assert(
       (await page.locator('.sqd-candle-readout').innerText()).length > 0,
       `${fixture} should show the crosshair-linked OHLC readout`,
@@ -142,12 +181,21 @@ async function validate(page: Page, fixture: string, viewport: (typeof viewports
     assert(!readoutText.includes('$'), 'Token-ratio candles must not be relabeled as USD')
     const finalPoint = page.locator('.sqd-chart-hit').last()
     await finalPoint.focus()
-    assert((await finalPoint.getAttribute('aria-label'))?.includes('WETH per TOKEN'), 'Token-ratio point inspection should retain its declared unit')
+    assert(
+      (await finalPoint.getAttribute('aria-label'))?.includes('WETH per TOKEN'),
+      'Token-ratio point inspection should retain its declared unit',
+    )
   }
   if (fixture === 'hyperliquid') {
     const expected = APP_FIXTURES.hyperliquid.ohlc as Array<Record<string, number>>
-    assert((await page.locator('[data-candle-index]').count()) === expected.length, 'Hyperliquid should keep every candle individually inspectable')
-    assert((await page.locator('[data-volume]').count()) === expected.length, 'Hyperliquid should carry exact volume on every candle')
+    assert(
+      (await page.locator('[data-candle-index]').count()) === expected.length,
+      'Hyperliquid should keep every candle individually inspectable',
+    )
+    assert(
+      (await page.locator('[data-volume]').count()) === expected.length,
+      'Hyperliquid should carry exact volume on every candle',
+    )
     assert(
       (await page.locator('.sqd-candle-readout').innerText()).includes('Open candle, still forming'),
       'The forming candle must stay visibly non-final in the readout',
@@ -158,46 +206,94 @@ async function validate(page: Page, fixture: string, viewport: (typeof viewports
     const interactionStarted = performance.now()
     await hit.focus()
     interactionTimings.push(performance.now() - interactionStarted)
-    assert(await page.locator('.sqd-chart-tooltip').isVisible(), 'Hyperliquid keyboard focus should expose exact candle values')
+    assert(
+      await page.locator('.sqd-chart-tooltip').isVisible(),
+      'Hyperliquid keyboard focus should expose exact candle values',
+    )
     const tooltipText = await page.locator('.sqd-chart-tooltip').innerText()
-    assert(tooltipText.includes('Fills') && tooltipText.includes('VWAP'), 'Hyperliquid point inspection should expose every promised field')
+    assert(
+      tooltipText.includes('Fills') && tooltipText.includes('VWAP'),
+      'Hyperliquid point inspection should expose every promised field',
+    )
     const showRaw = page.getByRole('button', { name: 'Show raw candle rows' })
     assert((await showRaw.count()) === 1, 'Hyperliquid should expose its raw candle action')
     await showRaw.click()
-    assert(await page.locator('.sqd-raw').getAttribute('open') !== null, 'Raw candle action should open exact JSON evidence')
+    assert(
+      (await page.locator('.sqd-raw').getAttribute('open')) !== null,
+      'Raw candle action should open exact JSON evidence',
+    )
     const rawRows = JSON.parse(await page.locator('.sqd-raw pre').innerText())
-    assert(Array.isArray(rawRows) && rawRows.length === expected.length, 'Raw candle action should target the exact candle rows')
+    assert(
+      Array.isArray(rawRows) && rawRows.length === expected.length,
+      'Raw candle action should target the exact candle rows',
+    )
     await hit.click()
-    assert((await page.locator('table.sqd-table tbody tr[data-selected="true"]').count()) === 1, 'Selecting a chart point should link to one exact table row')
-    assert((await page.locator('.sqd-table-pagination').innerText()).includes('Page 2 of 2'), 'Selecting a late candle should page the evidence table to its exact row')
+    assert(
+      (await page.locator('table.sqd-table tbody tr[data-selected="true"]').count()) === 1,
+      'Selecting a chart point should link to one exact table row',
+    )
+    assert(
+      (await page.locator('.sqd-table-pagination').innerText()).includes('Page 2 of 2'),
+      'Selecting a late candle should page the evidence table to its exact row',
+    )
     assert((await hit.getAttribute('aria-pressed')) === 'true', 'Selected chart points should expose their state')
     await page.getByRole('button', { name: 'Previous rows' }).click()
     const receipt = page.locator('.sqd-receipt')
     assert((await receipt.count()) === 1, 'Successful results should show one factual evidence receipt')
     assert((await receipt.innerText()).includes('SHA-256'), 'Evidence receipt should expose a short exact-data digest')
     await page.getByRole('button', { name: 'Download JSON' }).click()
-    assert((await page.locator('body').getAttribute('data-export-format')) === 'json', 'JSON export action should be wired')
+    assert(
+      (await page.locator('body').getAttribute('data-export-format')) === 'json',
+      'JSON export action should be wired',
+    )
     await page.getByRole('button', { name: 'Download CSV' }).click()
-    assert((await page.locator('body').getAttribute('data-export-format')) === 'csv', 'CSV export action should be wired')
+    assert(
+      (await page.locator('body').getAttribute('data-export-format')) === 'csv',
+      'CSV export action should be wired',
+    )
     await page.getByRole('button', { name: 'Open previous result in this session' }).click()
-    assert((await page.locator('body').getAttribute('data-history-action')) === 'back', 'session history should support back navigation')
+    assert(
+      (await page.locator('body').getAttribute('data-history-action')) === 'back',
+      'session history should support back navigation',
+    )
     await page.getByRole('button', { name: 'Open next result in this session' }).click()
-    assert((await page.locator('body').getAttribute('data-history-action')) === 'forward', 'session history should support forward navigation')
+    assert(
+      (await page.locator('body').getAttribute('data-history-action')) === 'forward',
+      'session history should support forward navigation',
+    )
   }
   if (fixture === 'timeseries') {
     const expected = APP_FIXTURES.timeseries.time_series as Array<Record<string, number>>
-    assert((await page.locator('.sqd-chart-hit').count()) === expected.length, 'Time series should render every source point')
-    assert(Number(await page.locator('.sqd-chart-line').getAttribute('data-point-count')) === expected.length, 'Time-series line should contain every source point')
-    assert(Number(await page.locator('[data-final-value]').getAttribute('data-final-value')) === expected.at(-1)?.value, 'Time-series final value should match structured content')
+    assert(
+      (await page.locator('.sqd-chart-hit').count()) === expected.length,
+      'Time series should render every source point',
+    )
+    assert(
+      Number(await page.locator('.sqd-chart-line').getAttribute('data-point-count')) === expected.length,
+      'Time-series line should contain every source point',
+    )
+    assert(
+      Number(await page.locator('[data-final-value]').getAttribute('data-final-value')) === expected.at(-1)?.value,
+      'Time-series final value should match structured content',
+    )
     const ranges = page.locator('.sqd-range')
     assert((await ranges.count()) === 2, 'long charts should expose an exact start and end range')
     await ranges.nth(0).fill('6')
     await ranges.nth(1).fill('11')
     await page.getByRole('button', { name: 'Focus range' }).click()
-    assert((await page.locator('.sqd-chart-hit').count()) === 6, 'range focus should redraw only the selected six points')
-    assert((await page.locator('table.sqd-table tbody tr').count()) === Math.min(20, expected.length), 'range focus must keep the current exact evidence page')
+    assert(
+      (await page.locator('.sqd-chart-hit').count()) === 6,
+      'range focus should redraw only the selected six points',
+    )
+    assert(
+      (await page.locator('table.sqd-table tbody tr').count()) === Math.min(20, expected.length),
+      'range focus must keep the current exact evidence page',
+    )
     if (expected.length > 20) {
-      assert(await page.locator('.sqd-table-pagination').isVisible(), 'long chart evidence must remain reachable through table pages')
+      assert(
+        await page.locator('.sqd-table-pagination').isVisible(),
+        'long chart evidence must remain reachable through table pages',
+      )
     }
     await page.getByRole('button', { name: 'Reset range' }).click()
     assert((await page.locator('.sqd-chart-hit').count()) === expected.length, 'reset range should restore every point')
@@ -205,37 +301,80 @@ async function validate(page: Page, fixture: string, viewport: (typeof viewports
   if (fixture === 'grouped') {
     const rows = APP_FIXTURES.grouped.time_series as Array<{ series_values: Record<string, number> }>
     const keys = ['transfers', 'swaps', 'contract_calls']
-    assert((await page.locator('.sqd-chart-legend-item').count()) === keys.length, 'Grouped charts should expose every series')
-    const renderedTotals = await page.locator('[data-series-total]').evaluateAll((nodes) =>
-      nodes.map((node) => Number(node.getAttribute('data-series-total'))),
+    assert(
+      (await page.locator('.sqd-chart-legend-item').count()) === keys.length,
+      'Grouped charts should expose every series',
     )
+    const renderedTotals = await page
+      .locator('[data-series-total]')
+      .evaluateAll((nodes) => nodes.map((node) => Number(node.getAttribute('data-series-total'))))
     const expectedTotals = keys.map((key) => rows.reduce((sum, row) => sum + row.series_values[key], 0))
-    assert(JSON.stringify(renderedTotals) === JSON.stringify(expectedTotals), 'Grouped chart totals should reconcile with every structured row')
+    assert(
+      JSON.stringify(renderedTotals) === JSON.stringify(expectedTotals),
+      'Grouped chart totals should reconcile with every structured row',
+    )
     const firstLegend = page.locator('.sqd-chart-legend-item').first()
     await firstLegend.click()
-    assert((await firstLegend.getAttribute('aria-pressed')) === 'false', 'Grouped series controls should expose their state')
+    assert(
+      (await firstLegend.getAttribute('aria-pressed')) === 'false',
+      'Grouped series controls should expose their state',
+    )
     const firstPoint = page.locator('.sqd-chart-hit').first()
     await firstPoint.focus()
-    assert(!(await firstPoint.getAttribute('aria-label'))?.includes('Transfers'), 'Hidden series should leave point accessibility text')
-    assert(!(await page.locator('.sqd-chart-tooltip').innerText()).includes('Transfers'), 'Hidden series should leave point tooltips')
-    assert(await page.locator('.sqd-chart-series-area[data-series-index="0"]').evaluate((node) => getComputedStyle(node).display === 'none'), 'Hiding the first series should hide its stacked band')
+    assert(
+      !(await firstPoint.getAttribute('aria-label'))?.includes('Transfers'),
+      'Hidden series should leave point accessibility text',
+    )
+    assert(
+      !(await page.locator('.sqd-chart-tooltip').innerText()).includes('Transfers'),
+      'Hidden series should leave point tooltips',
+    )
+    assert(
+      await page
+        .locator('.sqd-chart-series-area[data-series-index="0"]')
+        .evaluate((node) => getComputedStyle(node).display === 'none'),
+      'Hiding the first series should hide its stacked band',
+    )
   }
   if (fixture === 'sparse') {
-    const orderedX = await page.locator('.sqd-chart-hit').evaluateAll((nodes) => nodes.map((node) => Number(node.getAttribute('data-x-value'))))
-    assert(JSON.stringify(orderedX) === JSON.stringify([0, 1, 3, 4]), 'Sparse series should render in chronological order')
-    const segments = await page.locator('.sqd-chart-line').evaluateAll((nodes) => nodes.map((node) => Number(node.getAttribute('data-point-count'))))
-    assert(JSON.stringify(segments) === JSON.stringify([2, 2]), 'Sparse series should leave a visual gap for the missing bucket')
+    const orderedX = await page
+      .locator('.sqd-chart-hit')
+      .evaluateAll((nodes) => nodes.map((node) => Number(node.getAttribute('data-x-value'))))
+    assert(
+      JSON.stringify(orderedX) === JSON.stringify([0, 1, 3, 4]),
+      'Sparse series should render in chronological order',
+    )
+    const segments = await page
+      .locator('.sqd-chart-line')
+      .evaluateAll((nodes) => nodes.map((node) => Number(node.getAttribute('data-point-count'))))
+    assert(
+      JSON.stringify(segments) === JSON.stringify([2, 2]),
+      'Sparse series should leave a visual gap for the missing bucket',
+    )
   }
   if (fixture === 'mixed') {
-    const values = await page.locator('.sqd-chart-bar').evaluateAll((nodes) => nodes.map((node) => Number(node.getAttribute('data-value'))))
-    assert(JSON.stringify(values) === JSON.stringify([-30, -10, 15, 0, 50]), 'Signed bars should preserve chronological values')
-    assert((await page.locator('.sqd-chart-hit').count()) === 6, 'Missing signed values should remain inspectable without becoming a bar')
-    assert((await page.locator('.sqd-chart-hit').last().getAttribute('aria-label'))?.includes('not available'), 'Null chart values must not become factual zeroes')
-    const validGeometry = await page.locator('.sqd-chart-bar').evaluateAll((nodes) => nodes.every((node) => {
-      const height = Number(node.getAttribute('height'))
-      const y = Number(node.getAttribute('y'))
-      return Number.isFinite(height) && height >= 1 && Number.isFinite(y)
-    }))
+    const values = await page
+      .locator('.sqd-chart-bar')
+      .evaluateAll((nodes) => nodes.map((node) => Number(node.getAttribute('data-value'))))
+    assert(
+      JSON.stringify(values) === JSON.stringify([-30, -10, 15, 0, 50]),
+      'Signed bars should preserve chronological values',
+    )
+    assert(
+      (await page.locator('.sqd-chart-hit').count()) === 6,
+      'Missing signed values should remain inspectable without becoming a bar',
+    )
+    assert(
+      (await page.locator('.sqd-chart-hit').last().getAttribute('aria-label'))?.includes('not available'),
+      'Null chart values must not become factual zeroes',
+    )
+    const validGeometry = await page.locator('.sqd-chart-bar').evaluateAll((nodes) =>
+      nodes.every((node) => {
+        const height = Number(node.getAttribute('height'))
+        const y = Number(node.getAttribute('y'))
+        return Number.isFinite(height) && height >= 1 && Number.isFinite(y)
+      }),
+    )
     assert(validGeometry, 'Signed bars should have valid geometry on both sides of zero')
   }
   if (['hyperliquid', 'timeseries', 'activity', 'large_table'].includes(fixture)) {
@@ -252,52 +391,111 @@ async function validate(page: Page, fixture: string, viewport: (typeof viewports
     const sortStarted = performance.now()
     await table.locator('.sqd-sort').first().click()
     interactionTimings.push(performance.now() - sortStarted)
-    assert((await table.locator('th').first().getAttribute('aria-sort')) !== 'none', `${fixture} sorting should expose direction`)
+    assert(
+      (await table.locator('th').first().getAttribute('aria-sort')) !== 'none',
+      `${fixture} sorting should expose direction`,
+    )
     await table.locator('.sqd-row-button').first().click()
     assert(await page.locator('.sqd-dialog').isVisible(), `${fixture} should open exact row evidence`)
-    assert((await page.locator('.sqd-dialog').getAttribute('aria-labelledby')) === 'sqd-evidence-dialog-title', `${fixture} evidence dialog should have an accessible name`)
+    assert(
+      (await page.locator('.sqd-dialog').getAttribute('aria-labelledby')) === 'sqd-evidence-dialog-title',
+      `${fixture} evidence dialog should have an accessible name`,
+    )
     const dialogAccessibility = await new AxeBuilder({ page }).include('.sqd-dialog').analyze()
-    const dialogSerious = dialogAccessibility.violations.filter((violation) => ['serious', 'critical'].includes(violation.impact ?? ''))
-    assert(dialogSerious.length === 0, `${fixture} evidence dialog accessibility: ${dialogSerious.map((violation) => violation.id).join(', ')}`)
+    const dialogSerious = dialogAccessibility.violations.filter((violation) =>
+      ['serious', 'critical'].includes(violation.impact ?? ''),
+    )
+    assert(
+      dialogSerious.length === 0,
+      `${fixture} evidence dialog accessibility: ${dialogSerious.map((violation) => violation.id).join(', ')}`,
+    )
     await page.locator('.sqd-dialog[open]').evaluate((node) => (node as HTMLDialogElement).close())
   }
   if (fixture === 'activity') {
     const expectedHash = String((APP_FIXTURES.activity.items as Array<Record<string, unknown>>)[0].tx_hash)
-    assert((await page.locator('table.sqd-table').innerText()).includes(expectedHash), 'Activity tables should keep exact transaction hashes')
+    assert(
+      (await page.locator('table.sqd-table').innerText()).includes(expectedHash),
+      'Activity tables should keep exact transaction hashes',
+    )
     assert(
       (await page.locator('table.sqd-table').innerText()).includes('0.000000009 USDC'),
       'Activity tables should keep exact tiny non-zero amounts',
     )
   }
   if (fixture === 'wallet') {
-    assert((await page.locator('.sqd-card').count()) >= 3, 'wallet workspace should combine timeline, exact rows, and counterparties')
-    assert((await page.locator('.sqd-event').count()) === WALLET_FIXTURE_ROW_COUNT, 'wallet timeline should preserve every exact activity row')
-    assert((await page.locator('table.sqd-table tbody tr').count()) === WALLET_FIXTURE_ROW_COUNT, 'wallet table should preserve every exact activity row')
-    assert((await page.locator('.sqd-ranked-row').count()) === 3, 'wallet workspace should rank the exact counterparties')
+    assert(
+      (await page.locator('.sqd-card').count()) >= 3,
+      'wallet workspace should combine timeline, exact rows, and counterparties',
+    )
+    assert(
+      (await page.locator('.sqd-event').count()) === WALLET_FIXTURE_ROW_COUNT,
+      'wallet timeline should preserve every exact activity row',
+    )
+    assert(
+      (await page.locator('table.sqd-table tbody tr').count()) === WALLET_FIXTURE_ROW_COUNT,
+      'wallet table should preserve every exact activity row',
+    )
+    assert(
+      (await page.locator('.sqd-ranked-row').count()) === 3,
+      'wallet workspace should rank the exact counterparties',
+    )
   }
   if (fixture === 'contract') {
-    assert((await page.locator('.sqd-metric').count()) === 4, 'contract workspace should expose interactions, callers, events, and event types')
+    assert(
+      (await page.locator('.sqd-metric').count()) === 4,
+      'contract workspace should expose interactions, callers, events, and event types',
+    )
     assert((await page.locator('.sqd-card').count()) === 2, 'contract workspace should compare callers and event types')
-    assert((await page.locator('.sqd-ranked-row').count()) === 7, 'contract workspace should retain four callers and three event types')
+    assert(
+      (await page.locator('.sqd-ranked-row').count()) === 7,
+      'contract workspace should retain four callers and three event types',
+    )
   }
   if (fixture === 'large_table') {
     const rows = APP_FIXTURES.large_table.items as Array<Record<string, unknown>>
     assert((await page.locator('table.sqd-table tbody tr').count()) === 20, 'Large tables should use short local pages')
-    assert((await page.locator('.sqd-display-limit').innerText()).includes('20 of 125'), 'Large tables should disclose the local page size')
-    assert((await page.locator('.sqd-table-pagination').innerText()).includes('Page 1 of 7'), 'Large tables should expose page state')
+    assert(
+      (await page.locator('.sqd-display-limit').innerText()).includes('20 of 125'),
+      'Large tables should disclose the local page size',
+    )
+    assert(
+      (await page.locator('.sqd-table-pagination').innerText()).includes('Page 1 of 7'),
+      'Large tables should expose page state',
+    )
     await page.getByRole('button', { name: 'Next rows' }).click()
-    assert((await page.locator('.sqd-table-pagination').innerText()).includes('Page 2 of 7'), 'Large table paging should advance')
-    assert((await page.locator('table.sqd-table').innerText()).includes(String(rows[20]?.address)), 'The second page should start at the exact next row')
+    assert(
+      (await page.locator('.sqd-table-pagination').innerText()).includes('Page 2 of 7'),
+      'Large table paging should advance',
+    )
+    assert(
+      (await page.locator('table.sqd-table').innerText()).includes(String(rows[20]?.address)),
+      'The second page should start at the exact next row',
+    )
     const lastAddress = String(rows.at(-1)?.address)
     await page.locator('.sqd-input').fill(lastAddress)
-    assert((await page.locator('table.sqd-table tbody tr').count()) === 1, 'Table search should include rows beyond the first rendered page')
-    assert((await page.locator('table.sqd-table').innerText()).includes(lastAddress), 'A hidden matching row should render exactly')
+    assert(
+      (await page.locator('table.sqd-table tbody tr').count()) === 1,
+      'Table search should include rows beyond the first rendered page',
+    )
+    assert(
+      (await page.locator('table.sqd-table').innerText()).includes(lastAddress),
+      'A hidden matching row should render exactly',
+    )
   }
   if (fixture === 'partial') {
-    assert((await page.locator('.sqd-display-limit').innerText()).includes('8 of 40 declared'), 'Partial results must disclose declared against present rows')
-    assert((await page.locator('.sqd-context').innerText()).includes('partial'), 'Partial results must be labeled partial next to the headline')
+    assert(
+      (await page.locator('.sqd-display-limit').innerText()).includes('8 of 40 declared'),
+      'Partial results must disclose declared against present rows',
+    )
+    assert(
+      (await page.locator('.sqd-context').innerText()).includes('partial'),
+      'Partial results must be labeled partial next to the headline',
+    )
     const continueButton = page.getByRole('button', { name: 'Load the next rows' })
-    assert((await continueButton.count()) === 1 && (await continueButton.isEnabled()), 'Partial results should offer an enabled continuation action')
+    assert(
+      (await continueButton.count()) === 1 && (await continueButton.isEnabled()),
+      'Partial results should offer an enabled continuation action',
+    )
   }
   const keyboardTarget = page.locator('button:visible, [tabindex="0"]:visible').first()
   if (!['error', 'empty'].includes(fixture)) {
@@ -325,18 +523,35 @@ let baseUrl = ''
 async function main() {
   const wallet = APP_FIXTURES.wallet as Record<string, any>
   const walletRows = wallet.activity.items as Array<Record<string, any>>
-  assert(wallet.fund_flow.summary.total_in_usd === walletRows.filter((row) => row.direction === 'in').reduce((sum, row) => sum + row.value_usd, 0), 'Wallet inbound total must reconcile with exact rows')
-  assert(wallet.fund_flow.summary.total_out_usd === walletRows.filter((row) => row.direction === 'out').reduce((sum, row) => sum + row.value_usd, 0), 'Wallet outbound total must reconcile with exact rows')
+  assert(
+    wallet.fund_flow.summary.total_in_usd ===
+      walletRows.filter((row) => row.direction === 'in').reduce((sum, row) => sum + row.value_usd, 0),
+    'Wallet inbound total must reconcile with exact rows',
+  )
+  assert(
+    wallet.fund_flow.summary.total_out_usd ===
+      walletRows.filter((row) => row.direction === 'out').reduce((sum, row) => sum + row.value_usd, 0),
+    'Wallet outbound total must reconcile with exact rows',
+  )
   const contract = APP_FIXTURES.contract as Record<string, any>
-  assert(contract.interactions.total_transactions === contract.interactions.top_callers.reduce((sum: number, row: any) => sum + row.interaction_count, 0), 'Contract interaction total must reconcile with callers')
-  assert(contract.events.total_events === Object.values(contract.events.events_by_type).reduce((sum: number, value) => sum + Number(value), 0), 'Contract event total must reconcile with event types')
+  assert(
+    contract.interactions.total_transactions ===
+      contract.interactions.top_callers.reduce((sum: number, row: any) => sum + row.interaction_count, 0),
+    'Contract interaction total must reconcile with callers',
+  )
+  assert(
+    contract.events.total_events ===
+      Object.values(contract.events.events_by_type).reduce((sum: number, value) => sum + Number(value), 0),
+    'Contract event total must reconcile with event types',
+  )
   const hyperliquid = APP_FIXTURES.hyperliquid as Record<string, any>
   assert(
     hyperliquid.summary.total_fills === hyperliquid.ohlc.reduce((sum: number, row: any) => sum + row.fill_count, 0),
     'Hyperliquid fixture fill total must reconcile with its pinned rows',
   )
   assert(
-    hyperliquid.summary.total_volume === Number(hyperliquid.ohlc.reduce((sum: number, row: any) => sum + row.volume, 0).toFixed(2)),
+    hyperliquid.summary.total_volume ===
+      Number(hyperliquid.ohlc.reduce((sum: number, row: any) => sum + row.volume, 0).toFixed(2)),
     'Hyperliquid fixture volume must reconcile with its pinned rows',
   )
   const timeseries = APP_FIXTURES.timeseries as Record<string, any>
@@ -387,7 +602,10 @@ async function main() {
   const percentile = (values: number[], fraction: number) =>
     values[Math.min(values.length - 1, Math.ceil(values.length * fraction) - 1)] ?? 0
   const sortedInteractions = [...interactionTimings].sort((a, b) => a - b)
-  assert(percentile(sortedInteractions, 0.95) < 250, `UI interaction p95 exceeded 250ms: ${percentile(sortedInteractions, 0.95).toFixed(0)}ms`)
+  assert(
+    percentile(sortedInteractions, 0.95) < 250,
+    `UI interaction p95 exceeded 250ms: ${percentile(sortedInteractions, 0.95).toFixed(0)}ms`,
+  )
   console.log(
     `Render latency: median ${percentile(sorted, 0.5).toFixed(0)}ms, p95 ${percentile(sorted, 0.95).toFixed(0)}ms, max ${percentile(sorted, 1).toFixed(0)}ms`,
   )

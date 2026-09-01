@@ -9,7 +9,7 @@ RUN corepack enable \
   && pnpm install --frozen-lockfile
 
 COPY . .
-RUN pnpm exec tsc
+RUN pnpm run build
 
 FROM node:24-alpine
 
@@ -18,6 +18,7 @@ RUN apk add --no-cache curl
 WORKDIR /app
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/package.json ./
+COPY --from=build /app/THIRD_PARTY_NOTICES.md ./
 COPY --from=build /app/node_modules ./node_modules
 
 EXPOSE 3000

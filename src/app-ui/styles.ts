@@ -218,6 +218,9 @@ button.sqd-chart-hit[aria-pressed='true'] { background: rgb(129 140 248 / 0.08);
 .sqd-candle-pill { position: absolute; right: 0; z-index: 3; transform: translateY(-50%); border-radius: 5px; padding: 3px 7px; background: var(--accent); color: var(--surface); font: 510 11px/1 var(--font-mono); font-variant-numeric: tabular-nums; pointer-events: none; }
 .sqd-chart-volume-caption { position: absolute; left: 2px; z-index: 2; color: var(--fg-muted); font: 510 9px/12px var(--font-sans); letter-spacing: 0.1em; pointer-events: none; }
 .sqd-candle-chart .sqd-chart-tooltip { z-index: 4; }
+.sqd-chart-attribution { display: block; width: fit-content; margin: 7px 2px 0 auto; color: var(--fg-muted); font: 400 10px/14px var(--font-sans); text-decoration: none; }
+.sqd-chart-attribution:hover { color: var(--fg-secondary); text-decoration: underline; }
+.sqd-chart-attribution:focus-visible { border-radius: 2px; outline: 2px solid var(--accent); outline-offset: 2px; }
 @media (max-width: 520px) {
   .sqd-candle-chart { height: 240px; }
 }

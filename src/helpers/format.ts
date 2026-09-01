@@ -9,7 +9,11 @@ import type { PipesRecipe } from './pipes-recipe.js'
 import { getToolContract } from './tool-ux.js'
 import type { UiFollowUpAction } from './ui-metadata.js'
 import { ActionableError } from './errors.js'
-import { ACTIVITY_EXPLORER_RESOURCE_URI, isActivityExplorerEnabled } from '../apps/activity-explorer.js'
+import {
+  ACTIVITY_EXPLORER_RESOURCE_URI,
+  ACTIVITY_EXPLORER_TOOLS,
+  isActivityExplorerEnabled,
+} from '../apps/activity-explorer.js'
 import { npmVersion } from '../version.js'
 import { formatIntegerUnitsExact } from './exact-decimal.js'
 
@@ -1363,7 +1367,13 @@ export function formatResult(
     payloadRecord._execution = execution
     if (options?.ui !== undefined) {
       payloadRecord._ui = options.ui
-      if (isActivityExplorerEnabled()) payloadRecord._app = {
+    }
+    if (
+      options?.toolName &&
+      ACTIVITY_EXPLORER_TOOLS.has(options.toolName) &&
+      isActivityExplorerEnabled()
+    ) {
+      payloadRecord._app = {
         name: 'SQD Explorer',
         version: npmVersion,
         resource_uri: ACTIVITY_EXPLORER_RESOURCE_URI,
