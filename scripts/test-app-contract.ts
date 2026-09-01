@@ -11,6 +11,7 @@ import {
   MCP_APP_MIME_TYPE,
   classifyUiCapability,
   recordActivityExplorerResult,
+  resolveActivityExplorerSurface,
 } from '../src/apps/activity-explorer.js'
 import { ACTIVITY_EXPLORER_BYTES, ACTIVITY_EXPLORER_HASH } from '../src/generated/activity-explorer.version.js'
 import { evidenceArguments, planFollowup, shorterDuration } from '../src/app-ui/followup-state.js'
@@ -19,24 +20,40 @@ import { APP_FIXTURES } from '../src/app-ui/fixtures.js'
 import { buildCandlestickChart, buildTimeSeriesChart } from '../src/helpers/chart-metadata.js'
 import { formatResult } from '../src/helpers/format.js'
 import { register } from '../src/metrics.js'
-import { createPortalServer } from '../src/server.js'
+import { createPortalServer, getPortalServerInstructions } from '../src/server.js'
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message)
 }
 
-async function main() {
-  const packageVersion = String(JSON.parse(await readFile('package.json', 'utf8')).version || '')
-  const appResult = formatResult(
+function buildAppResult() {
+  return formatResult(
     { items: [{ primary_id: 'fixture-row' }] },
     'Fixture result',
     { toolName: 'portal_get_recent_activity', ui: { version: 'portal_ui_v1' } },
   )
+}
+
+async function main() {
+  const packageVersion = String(JSON.parse(await readFile('package.json', 'utf8')).version || '')
+  delete process.env.MCP_APP_ENABLED
+  const defaultResult = buildAppResult()
   assert(
-    appResult.structuredContent?._app?.name === 'SQD Blockchain Activity Explorer' &&
+    defaultResult.structuredContent?._app === undefined,
+    'the beta app must not announce itself to hosts unless the deployment opts in',
+  )
+  assert(
+    defaultResult.structuredContent?._ui !== undefined,
+    'opting out of the beta app must not change the presentation metadata in the payload',
+  )
+  process.env.MCP_APP_ENABLED = 'true'
+  const appResult = buildAppResult()
+  assert(
+    appResult.structuredContent?._app?.name === 'SQD Explorer' &&
       appResult.structuredContent?._app?.host_render_confirmed === false,
     'App-enabled results must expose the canonical product name without claiming a host render',
   )
+  delete process.env.MCP_APP_ENABLED
   assert(shorterDuration('in last 38 mins') === '19m', 'natural-language chart windows should narrow deterministically')
   assert(
     evidenceArguments(
@@ -99,6 +116,82 @@ async function main() {
     assert(!ACTIVITY_EXPLORER_TOOLS.has(tool), `${tool} is metadata evidence and must not advertise a data explorer`)
   }
 
+  const [defaultClientTransport, defaultServerTransport] = InMemoryTransport.createLinkedPair()
+  const defaultServer = createPortalServer({ transport: 'stdio' })
+  const defaultClient = new Client({ name: 'sqd-app-contract-default', version: '1.0.0' })
+  await defaultServer.connect(defaultServerTransport)
+  await defaultClient.connect(defaultClientTransport)
+  try {
+    const listedTools = await defaultClient.listTools()
+    assert(listedTools.tools.length === 28, 'opting out of the beta app must not change the 28-tool catalog')
+    for (const tool of listedTools.tools) {
+      const meta = tool._meta as Record<string, any> | undefined
+      assert(
+        meta?.ui?.resourceUri === undefined &&
+          meta?.['ui/resourceUri'] === undefined &&
+          meta?.['openai/outputTemplate'] === undefined,
+        `${tool.name} must not ask a host to render the beta app by default`,
+      )
+      assert(
+        !tool.description?.includes('MCP APP:'),
+        `${tool.name} must not promise an app surface the host was never offered`,
+      )
+    }
+    assert(
+      !getPortalServerInstructions().includes('MCP App'),
+      'default server instructions must not point the model at a beta app the host was never offered',
+    )
+    const resources = await defaultClient.listResources()
+    assert(
+      resources.resources.some((entry) => entry.uri === ACTIVITY_EXPLORER_RESOURCE_URI),
+      'the beta app resource should stay readable for hosts that opt in',
+    )
+  } finally {
+    await defaultClient.close()
+    await defaultServer.close()
+  }
+
+  delete process.env.MCP_APP_ENABLED
+  assert(
+    resolveActivityExplorerSurface({ url: 'https://portal.sqd.dev/mcp?app=1' }) === true &&
+      resolveActivityExplorerSurface({ url: 'https://portal.sqd.dev/mcp?app=true' }) === true,
+    'a connection should be able to opt into the beta app without enabling it for the deployment',
+  )
+  assert(
+    resolveActivityExplorerSurface({ url: 'https://portal.sqd.dev/mcp' }) === false &&
+      resolveActivityExplorerSurface(undefined) === false,
+    'a connection without the opt-in should stay on the data-only default',
+  )
+  process.env.MCP_APP_ENABLED = 'true'
+  assert(
+    resolveActivityExplorerSurface({ url: 'https://portal.sqd.dev/mcp?app=0' }) === false &&
+      resolveActivityExplorerSurface({ url: 'https://portal.sqd.dev/mcp' }) === true,
+    'an explicit connection choice should override the deployment default in both directions',
+  )
+  delete process.env.MCP_APP_ENABLED
+
+  const [optInClientTransport, optInServerTransport] = InMemoryTransport.createLinkedPair()
+  const optInServer = createPortalServer({ transport: 'http', appEnabled: true })
+  const optInClient = new Client({ name: 'sqd-app-contract-opt-in', version: '1.0.0' })
+  await optInServer.connect(optInServerTransport)
+  await optInClient.connect(optInClientTransport)
+  try {
+    const optedIn = (await optInClient.listTools()).tools.find((tool) => tool.name === 'portal_hyperliquid_get_ohlc')
+    const meta = optedIn?._meta as Record<string, any> | undefined
+    assert(
+      meta?.['ui/resourceUri'] === ACTIVITY_EXPLORER_RESOURCE_URI,
+      'a connection that opted in should receive the app metadata even when the deployment default is off',
+    )
+    assert(
+      (optInClient.getInstructions() ?? '').includes('SQD Explorer'),
+      'an opted-in connection should be told the app exists',
+    )
+  } finally {
+    await optInClient.close()
+    await optInServer.close()
+  }
+
+  process.env.MCP_APP_ENABLED = 'true'
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
   const server = createPortalServer({ transport: 'stdio' })
   const client = new Client({ name: 'sqd-app-contract', version: '1.0.0' })
@@ -139,7 +232,7 @@ async function main() {
       'resource bytes must match the generated artifact',
     )
     assert(
-      content.text.includes('Blockchain Activity Explorer')
+      content.text.includes('SQD Explorer')
         && content.text.includes(`version:${JSON.stringify(packageVersion)}`)
         && content.text.includes('viewBox="0 0 306 306"')
         && content.text.includes('#08090a')
@@ -179,6 +272,11 @@ async function main() {
     assert(
       content._meta?.['openai/widgetDomain'] === 'https://portal.sqd.dev',
       'ChatGPT compatibility metadata should use the canonical SQD domain',
+    )
+
+    assert(
+      getPortalServerInstructions().includes('SQD Explorer'),
+      'an opted-in deployment should tell the model the app exists',
     )
 
     const declared = classifyUiCapability(
@@ -230,8 +328,11 @@ async function main() {
   } finally {
     await client.close()
     await server.close()
+    delete process.env.MCP_APP_ENABLED
   }
 
+  console.log('PASS  the beta app stays opt-in and silent in a default deployment')
+  console.log('PASS  a single connection can opt in or out without changing the deployment')
   console.log('PASS  28 tool contracts remain intact with selective app metadata')
   console.log('PASS  versioned self-contained resource exposes exact standard and ChatGPT metadata')
   console.log('PASS  capability states and app runtime metrics are bounded and deterministic')

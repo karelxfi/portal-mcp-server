@@ -11,7 +11,7 @@ import { APP_FIXTURES } from '../src/app-ui/fixtures.ts'
 
 const preview = path.resolve('output/activity-explorer/index.html')
 const screenshots = path.resolve('output/activity-explorer/screenshots')
-const fixtures = ['hyperliquid', 'ratio', 'timeseries', 'grouped', 'sparse', 'mixed', 'activity', 'wallet', 'contract', 'large_table', 'error', 'empty']
+const fixtures = ['hyperliquid', 'ratio', 'timeseries', 'grouped', 'sparse', 'mixed', 'activity', 'wallet', 'contract', 'large_table', 'partial', 'error', 'empty']
 const WALLET_FIXTURE_ROW_COUNT = ((APP_FIXTURES.wallet.activity as Record<string, unknown>).items as unknown[]).length
 const viewports = [
   { name: 'desktop-light', width: 1280, height: 900, colorScheme: 'light' as const },
@@ -78,16 +78,16 @@ async function validate(page: Page, fixture: string, viewport: (typeof viewports
   assert(design.successFill === '#16a34a', `${fixture} should use the SQD success fill token`)
   assert(design.warningFill === '#f59e0b', `${fixture} should use the SQD warning fill token`)
   assert(design.dangerFill === '#ef4444', `${fixture} should use the SQD danger fill token`)
-  assert(design.chartFour === '#f79ce0', `${fixture} should use the exact SQD fourth chart color`)
+  assert(design.chartFour === '#d97706', `${fixture} should use the SQD Chart Standards fourth series color`)
   assert(design.colorScheme === 'dark', `${fixture} should remain an intentional dark product surface`)
   if (design.cardBackground) {
     assert(design.cardBackground === 'rgb(19, 19, 22)', `${fixture} cards should use SQD raised surface #131316`)
-    assert(design.cardRadius === '8px', `${fixture} cards should use the SQD 8px radius`)
+    assert(design.cardRadius === '12px', `${fixture} cards should use the SQD pane radius`)
   }
   if (design.tableHeaderFont) {
     assert(design.tableHeaderFont.startsWith('"Inter SQD"'), `${fixture} table headers should use Inter`)
     assert(design.tableHeaderWeight === '510', `${fixture} table headers should use weight 510`)
-    assert(design.tableHeaderTracking === '0.48px', `${fixture} table headers should use 0.04em tracking`)
+    assert(design.tableHeaderTracking === 'normal', `${fixture} table headers should use untracked sentence case per the Chart Standards table spec`)
   }
   if (viewport.width <= 520 && (await page.locator('.sqd-input').count()) > 0) {
     const inputSize = await page.locator('.sqd-input').first().evaluate((node) => getComputedStyle(node).fontSize)
@@ -105,27 +105,53 @@ async function validate(page: Page, fixture: string, viewport: (typeof viewports
   assert(emptyCards === 0, `${fixture} ${viewport.name} has collapsed evidence cards`)
   await page.locator('.sqd-preview-picker').evaluate((node) => node.setAttribute('hidden', ''))
   await page.screenshot({ path: path.join(screenshots, `${viewport.name}-${fixture}.png`), fullPage: true })
-  if (['hyperliquid', 'ratio', 'timeseries', 'grouped', 'sparse', 'mixed'].includes(fixture)) {
+  if (['timeseries', 'grouped', 'sparse', 'mixed'].includes(fixture)) {
     const svg = page.locator('svg.sqd-chart')
     assert((await svg.count()) >= 1, `${fixture} should render an accessible chart workspace`)
     const box = await svg.boundingBox()
     const minimumChartHeight = viewport.width <= 520 ? 110 : 280
     assert(box && box.width >= 300 && box.height >= minimumChartHeight, `${fixture} chart should stay readable`)
     const rightScaleX = await svg.locator('.sqd-chart-label').first().getAttribute('x')
-    assert(Number(rightScaleX) > 800, `${fixture} should use the SQD right-side value scale`)
+    const chartViewBoxWidth = Number((await svg.getAttribute('viewBox'))?.split(' ')[2])
+    assert(
+      Number(rightScaleX) > chartViewBoxWidth * 0.85,
+      `${fixture} should use the SQD right-side value scale`,
+    )
     assert((await svg.getAttribute('role')) === 'group', `${fixture} interactive charts should expose their point descendants`)
   }
+  if (['hyperliquid', 'ratio'].includes(fixture)) {
+    const terminal = page.locator('.sqd-candle-chart')
+    assert((await terminal.count()) >= 1, `${fixture} should render the market terminal surface`)
+    const box = await terminal.first().boundingBox()
+    const minimumChartHeight = viewport.width <= 520 ? 110 : 280
+    assert(box && box.width >= 300 && box.height >= minimumChartHeight, `${fixture} terminal chart should stay readable`)
+    assert((await page.locator('.sqd-candle-chart canvas').count()) >= 2, `${fixture} should paint the canvas chart surface`)
+    const pillBox = await page.locator('.sqd-candle-pill').first().boundingBox()
+    assert(
+      pillBox && box && pillBox.x - box.x > box.width * 0.8,
+      `${fixture} should pin the last value on the SQD right-side value scale`,
+    )
+    assert((await terminal.first().getAttribute('role')) === 'group', `${fixture} terminal should expose grouped chart semantics`)
+    assert(
+      (await page.locator('.sqd-candle-readout').innerText()).length > 0,
+      `${fixture} should show the crosshair-linked OHLC readout`,
+    )
+  }
   if (fixture === 'ratio') {
-    const axisText = await page.locator('.sqd-chart-label').allTextContents()
-    assert(axisText.every((value) => !value.includes('$')), 'Token-ratio candles must not be relabeled as USD')
+    const readoutText = await page.locator('.sqd-candle-readout').innerText()
+    assert(!readoutText.includes('$'), 'Token-ratio candles must not be relabeled as USD')
     const finalPoint = page.locator('.sqd-chart-hit').last()
     await finalPoint.focus()
     assert((await finalPoint.getAttribute('aria-label'))?.includes('WETH per TOKEN'), 'Token-ratio point inspection should retain its declared unit')
   }
   if (fixture === 'hyperliquid') {
     const expected = APP_FIXTURES.hyperliquid.ohlc as Array<Record<string, number>>
-    assert((await page.locator('[data-candle-index]').count()) === expected.length * 2, 'Hyperliquid should render every candle body and wick')
-    assert((await page.locator('[data-volume]').count()) === expected.length, 'Hyperliquid should render one volume bar per candle')
+    assert((await page.locator('[data-candle-index]').count()) === expected.length, 'Hyperliquid should keep every candle individually inspectable')
+    assert((await page.locator('[data-volume]').count()) === expected.length, 'Hyperliquid should carry exact volume on every candle')
+    assert(
+      (await page.locator('.sqd-candle-readout').innerText()).includes('Open candle, still forming'),
+      'The forming candle must stay visibly non-final in the readout',
+    )
     const final = await page.locator('[data-candle-index][data-close]').last().getAttribute('data-close')
     assert(Number(final) === expected.at(-1)?.close, 'Hyperliquid final candle should match the pinned Portal row')
     const hit = page.locator('.sqd-chart-hit').last()
@@ -143,7 +169,9 @@ async function validate(page: Page, fixture: string, viewport: (typeof viewports
     assert(Array.isArray(rawRows) && rawRows.length === expected.length, 'Raw candle action should target the exact candle rows')
     await hit.click()
     assert((await page.locator('table.sqd-table tbody tr[data-selected="true"]').count()) === 1, 'Selecting a chart point should link to one exact table row')
+    assert((await page.locator('.sqd-table-pagination').innerText()).includes('Page 2 of 2'), 'Selecting a late candle should page the evidence table to its exact row')
     assert((await hit.getAttribute('aria-pressed')) === 'true', 'Selected chart points should expose their state')
+    await page.getByRole('button', { name: 'Previous rows' }).click()
     const receipt = page.locator('.sqd-receipt')
     assert((await receipt.count()) === 1, 'Successful results should show one factual evidence receipt')
     assert((await receipt.innerText()).includes('SHA-256'), 'Evidence receipt should expose a short exact-data digest')
@@ -190,7 +218,7 @@ async function validate(page: Page, fixture: string, viewport: (typeof viewports
     await firstPoint.focus()
     assert(!(await firstPoint.getAttribute('aria-label'))?.includes('Transfers'), 'Hidden series should leave point accessibility text')
     assert(!(await page.locator('.sqd-chart-tooltip').innerText()).includes('Transfers'), 'Hidden series should leave point tooltips')
-    assert(await page.locator('.sqd-chart-last-line').evaluate((node) => getComputedStyle(node).display === 'none'), 'Hiding the first series should hide its final-value line')
+    assert(await page.locator('.sqd-chart-series-area[data-series-index="0"]').evaluate((node) => getComputedStyle(node).display === 'none'), 'Hiding the first series should hide its stacked band')
   }
   if (fixture === 'sparse') {
     const orderedX = await page.locator('.sqd-chart-hit').evaluateAll((nodes) => nodes.map((node) => Number(node.getAttribute('data-x-value'))))
@@ -260,6 +288,12 @@ async function validate(page: Page, fixture: string, viewport: (typeof viewports
     await page.locator('.sqd-input').fill(lastAddress)
     assert((await page.locator('table.sqd-table tbody tr').count()) === 1, 'Table search should include rows beyond the first rendered page')
     assert((await page.locator('table.sqd-table').innerText()).includes(lastAddress), 'A hidden matching row should render exactly')
+  }
+  if (fixture === 'partial') {
+    assert((await page.locator('.sqd-display-limit').innerText()).includes('8 of 40 declared'), 'Partial results must disclose declared against present rows')
+    assert((await page.locator('.sqd-context').innerText()).includes('partial'), 'Partial results must be labeled partial next to the headline')
+    const continueButton = page.getByRole('button', { name: 'Load the next rows' })
+    assert((await continueButton.count()) === 1 && (await continueButton.isEnabled()), 'Partial results should offer an enabled continuation action')
   }
   const keyboardTarget = page.locator('button:visible, [tabindex="0"]:visible').first()
   if (!['error', 'empty'].includes(fixture)) {

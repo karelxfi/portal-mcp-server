@@ -9,7 +9,7 @@ import type { PipesRecipe } from './pipes-recipe.js'
 import { getToolContract } from './tool-ux.js'
 import type { UiFollowUpAction } from './ui-metadata.js'
 import { ActionableError } from './errors.js'
-import { ACTIVITY_EXPLORER_RESOURCE_URI } from '../apps/activity-explorer.js'
+import { ACTIVITY_EXPLORER_RESOURCE_URI, isActivityExplorerEnabled } from '../apps/activity-explorer.js'
 import { npmVersion } from '../version.js'
 
 const MAX_RESPONSE_BYTES = 50_000
@@ -1363,8 +1363,8 @@ export function formatResult(
     payloadRecord._execution = execution
     if (options?.ui !== undefined) {
       payloadRecord._ui = options.ui
-      payloadRecord._app = {
-        name: 'SQD Blockchain Activity Explorer',
+      if (isActivityExplorerEnabled()) payloadRecord._app = {
+        name: 'SQD Explorer',
         version: npmVersion,
         capability: 'mcp_app',
         resource_uri: ACTIVITY_EXPLORER_RESOURCE_URI,

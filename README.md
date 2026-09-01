@@ -8,7 +8,7 @@ This server does not index chains itself. It validates user input, maps it onto 
 
 The current v0.8.4 release supports the stateless MCP `2026-07-28` protocol over HTTP and stdio, while retaining the SDK-managed legacy negotiation path for clients still rolling out the revision. No SQD account, API key, or client credential is required.
 
-v0.8.4 makes factual completeness a release gate. It verifies requested and actual time bounds, stable row identities, exact page continuation, wallet membership, Bitcoin units, transaction and candle totals, input validation, and response budgets against direct Portal evidence across EVM, Solana, Bitcoin, Substrate, Hyperliquid, and applicable Tron metadata paths. The SQD Blockchain Activity Explorer keeps the current SQD Design System and adds honest app identity, safe failed-follow-up states, and client-side paging for large evidence tables.
+v0.8.4 makes factual completeness a release gate. It verifies requested and actual time bounds, stable row identities, exact page continuation, wallet membership, Bitcoin units, transaction and candle totals, input validation, and response budgets against direct Portal evidence across EVM, Solana, Bitcoin, Substrate, Hyperliquid, and applicable Tron metadata paths. The SQD Explorer keeps the current SQD Design System and adds honest app identity, safe failed-follow-up states, and client-side paging for large evidence tables.
 
 ## Current public surface
 
@@ -102,7 +102,14 @@ When a response uses estimated, partial, sampled, capped, or paginated data, the
 
 Chart-oriented tools also return chart and table descriptors so MCP clients or LLMs can render them without reverse-engineering the payload.
 
-v0.8.4 includes one portable SQD Blockchain Activity Explorer for 21 data tools. Compatible MCP App hosts receive linked overview, chart, evidence, and investigation sections; exact metrics, multi-series and signed-value charts, right-scaled price candles with linked volume, tables, timelines, coverage, freshness, and continuation controls; range-focused follow-ups; current-session investigation history; and JSON or CSV export of the received evidence. Pointer and keyboard inspection expose exact plotted values. Large received tables page in 20-row views without discarding evidence. Missing buckets remain visible as gaps, identifiers stay unshortened, and any local row cap is separate from server completeness. Failed calls clear stale success data. The app is self-contained, does not use persistent browser storage, and makes no browser-side network requests. Hosts without MCP App support receive the same `structuredContent` and compact JSON text fallback, so the underlying answer never depends on the UI.
+SQD Explorer is in beta and is off by default. A default deployment answers with `structuredContent` and compact JSON text only, and no tool result asks a host to open a UI. There are two ways to opt in:
+
+- One connection: add `?app=1` to the endpoint, for example `https://portal.sqd.dev/mcp?app=1`. Use this to try the beta without changing anything for other users.
+- Whole deployment: set `MCP_APP_ENABLED=true`. A connection can still override it in either direction, so `?app=0` opts a single client back out.
+
+The app resource stays registered either way, so a host can read it directly without anyone opting in.
+
+v0.8.4 includes one portable SQD Explorer for 21 data tools. When it is enabled, compatible MCP App hosts receive linked overview, chart, evidence, and investigation sections; exact metrics, multi-series and signed-value charts, right-scaled price candles with linked volume, tables, timelines, coverage, freshness, and continuation controls; range-focused follow-ups; current-session investigation history; and JSON or CSV export of the received evidence. Pointer and keyboard inspection expose exact plotted values. Large received tables page in 20-row views without discarding evidence. Missing buckets remain visible as gaps, identifiers stay unshortened, and any local row cap is separate from server completeness. Failed calls clear stale success data. The app is self-contained, does not use persistent browser storage, and makes no browser-side network requests. Hosts without MCP App support receive the same `structuredContent` and compact JSON text fallback, so the underlying answer never depends on the UI.
 
 Three MCP prompts provide reproducible starting points without adding tools:
 
@@ -220,6 +227,7 @@ HTTP mode exposes MCP at `/` and `/mcp`, with health state at `/health`.
 Useful environment variables:
 
 - `MCP_CURSOR_SECRET` to sign pagination cursors
+- `MCP_APP_ENABLED` to offer the beta SQD Explorer to compatible hosts, default off. Accepts `true` or `1`. Per-connection `?app=1` and `?app=0` override it.
 - `MCP_TOOL_WEIGHT_BUDGET` to bound the combined cost of active tool calls, default `32`. Measured profiles allow up to 32 lookups, 4 raw or summary calls, or 2 analytics calls at once while queued work remains cancellation-aware.
 - `MCP_TOOL_MAX_QUEUE` to bound queued tool calls, default `64`
 - `MCP_TOOL_QUEUE_TIMEOUT_MS` to bound tool admission wait time, default `5000`

@@ -4,6 +4,7 @@ import { type IncomingMessage, type ServerResponse, createServer } from 'node:ht
 import { toNodeHandler } from '@modelcontextprotocol/node'
 import { type McpRequestContext, createMcpHandler } from '@modelcontextprotocol/server'
 
+import { resolveActivityExplorerSurface } from './apps/activity-explorer.js'
 import { register } from './metrics.js'
 import { type RuntimeRequestContext, getObservabilityStatus } from './observability.js'
 import { createPortalServer } from './server.js'
@@ -49,6 +50,7 @@ function runtimeContextFromRequest(ctx: McpRequestContext): RuntimeRequestContex
     transport: 'http',
     requestId: headers?.get('x-request-id') || undefined,
     protocolVersion: ctx.era === 'modern' ? '2026-07-28' : undefined,
+    appEnabled: resolveActivityExplorerSurface(ctx.requestInfo),
   }
 }
 
