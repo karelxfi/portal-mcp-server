@@ -208,7 +208,7 @@ async function runClientJourney(clientIdentity: (typeof CLIENTS)[number]) {
       { retries: 1 },
     )
     assert(!retainedWallet.isError, `${clientIdentity.family} retained wallet schema should remain callable`)
-    assert(retainedWallet.data?._pagination?.page_size === 5, `${clientIdentity.family} retained wallet limit should adapt to 5 rows`)
+    assert(retainedWallet.data?._pagination?.page_size === 4, `${clientIdentity.family} retained wallet limit should adapt to 4 rows`)
     steps.push({ step: 'retained_schema_execution', elapsedMs: recovery.elapsedMs + retainedWallet.elapsedMs })
 
     const reconnected = await connectTestClient(`${clientIdentity.name}-reconnected`)

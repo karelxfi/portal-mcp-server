@@ -401,7 +401,7 @@ async function assertLiveAggregateAndOhlcParity() {
       compatibleWalletPage.data?._server?.name === 'SQD' && compatibleWalletPage.data?._server?.version === '0.8.4',
       'every tool response must make the exact SQD server version observable in-session',
     )
-    assert(compatibleWalletPage.data?._pagination?.page_size === 5, 'retained wallet limits must adapt to the verified safe page size')
+    assert(compatibleWalletPage.data?._pagination?.page_size === 4, 'retained wallet limits must adapt to the verified safe page size')
     const walletNotices = [
       ...(typeof compatibleWalletPage.data?._notice === 'string' ? [compatibleWalletPage.data._notice] : []),
       ...(Array.isArray(compatibleWalletPage.data?._notices) ? compatibleWalletPage.data._notices : []),
@@ -516,7 +516,9 @@ async function assertLiveAggregateAndOhlcParity() {
       assert(Buffer.byteLength(first.text, 'utf8') <= 50_000, `${network} wallet page must fit the 50 KB contract`)
       assertNoUnsafeIntegers(first.data, `${network}.wallet`)
       const firstItems = first.data?.activity?.items ?? []
-      assert(firstItems.length > 0 && firstItems.length <= 5, `${network} wallet page must honor the accepted maximum`)
+      const walletPageSize = Number(first.data?._pagination?.page_size)
+      assert(walletPageSize === 4, `${network} wallet page must expose the verified safe page size`)
+      assert(firstItems.length > 0 && firstItems.length <= walletPageSize, `${network} wallet page must honor the safe page size`)
       assert(
         typeof first.data?.fund_flow?.ranking_definition === 'string',
         `${network} wallet movement ranking must state its comparison domain`,
@@ -552,7 +554,7 @@ async function assertLiveAggregateAndOhlcParity() {
         assert(first.data?._pagination?.has_more === false, `${network} cursor absence must mean the result is exhausted`)
         continue
       }
-      assert(firstItems.length === 5, `${network} continued wallet page must fill the requested page before continuing`)
+      assert(firstItems.length === walletPageSize, `${network} continued wallet page must fill the declared page before continuing`)
 
       const second = await callToolWithRetry(
         connected.client,
@@ -563,8 +565,10 @@ async function assertLiveAggregateAndOhlcParity() {
       assert(!second.isError, `${network} wallet continuation must succeed: ${second.text.slice(0, 240)}`)
       assert(Buffer.byteLength(second.text, 'utf8') <= 50_000, `${network} continued wallet page must fit the 50 KB contract`)
       assert(
-        second.data?.activity?.items?.length > 0 && second.data?.activity?.items?.length <= 5,
-        `${network} continued wallet page must honor the accepted maximum`,
+        second.data?._pagination?.page_size === walletPageSize &&
+          second.data?.activity?.items?.length > 0 &&
+          second.data?.activity?.items?.length <= walletPageSize,
+        `${network} continued wallet page must preserve the safe page size`,
       )
       const firstIds = new Set(firstItems.map((row: any) => row.primary_id))
       assert(

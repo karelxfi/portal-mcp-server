@@ -77,7 +77,7 @@ const WALLET_QUERY_TIMEOUT_MS = 8_000
 const WALLET_QUERY_RETRIES = 0
 const WALLET_SECTION_DEADLINE_MS = 10_000
 const WALLET_TOOL_DEADLINE_MS = 25_000
-const SAFE_WALLET_PAGE_SIZE = 5
+const SAFE_WALLET_PAGE_SIZE = 4
 const RETAINED_WALLET_LIMIT_MAX = 10
 
 export type WalletCompleteness = {
@@ -1272,7 +1272,7 @@ export function registerGetWalletSummaryTool(server: McpServer) {
         .max(RETAINED_WALLET_LIMIT_MAX)
         .optional()
         .default(5)
-        .describe('Requested items per category (default: 5). Values up to the retained compatibility maximum of 10 are accepted, while each category is safely capped at 5 rows and remains cursorable.'),
+        .describe('Requested items per category (default: 5). Values up to the retained compatibility maximum of 10 are accepted, while each category is safely capped at 4 rows and remains cursorable.'),
       mode: z
         .enum(['fast', 'deep'])
         .optional()
