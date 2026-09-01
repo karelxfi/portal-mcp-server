@@ -266,8 +266,37 @@ function assertManifest() {
   }
   const skillsSource = readFileSync(SKILLS_SOURCE_PATH, 'utf8')
   assert(
-    skillsSource.includes('6eed8d82d0ceac35855742d6e4b5cc150bc5d402'),
+    skillsSource.includes('66aebe851af0258bf9d38c0bc43fcbb33ae7e47d'),
     'bundled skills should record the verified upstream commit',
+  )
+  const portalSkill = readFileSync(resolve(PLUGIN_ROOT, 'skills/portal/SKILL.md'), 'utf8')
+  const portalResultContract = readFileSync(
+    resolve(PLUGIN_ROOT, 'skills/portal/references/mcp-results.md'),
+    'utf8',
+  )
+  for (const required of [
+    'tools/list',
+    'sqd://tools',
+    '_server',
+    '_evidence',
+    '_coverage',
+    '_pagination',
+    '_app',
+    '_ui',
+    'https://portal.sqd.dev/mcp/health',
+  ]) {
+    assert(
+      `${portalSkill}\n${portalResultContract}`.includes(required),
+      `bundled Portal skill should document ${required}`,
+    )
+  }
+  assert(
+    portalSkill.includes('The duplicate HTTP `/tools` endpoint is retired.'),
+    'bundled Portal skill should not route agents to the retired HTTP /tools endpoint',
+  )
+  assert(
+    !/[\u2014\u2013]/.test(`${portalSkill}\n${portalResultContract}`),
+    'bundled Portal MCP guidance should not use em or en dashes',
   )
   assertOptionalAsset(PLUGIN_ROOT, manifest.interface.composerIcon, 'interface.composerIcon')
   assertOptionalAsset(PLUGIN_ROOT, manifest.interface.logo, 'interface.logo')
