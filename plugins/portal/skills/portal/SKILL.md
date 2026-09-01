@@ -7,7 +7,7 @@ allowed-tools:
   - WebSearch
 metadata:
   author: subsquid
-  version: "1.5.0"
+  version: "1.6.0"
   category: portal-core
 ---
 
@@ -31,8 +31,6 @@ Use raw Portal Stream API or curl when the user asks for raw rows, full exports,
 
 Recommend Pipes or a Squid when the user needs recurring sync, long backfills, joins, transformations, database storage, production APIs, alerts, dashboards, or app-owned indexed state.
 
----
-
 ## Choose the Right SQD Surface
 
 | Need | Use | Why |
@@ -48,6 +46,10 @@ Default order:
 3. Use response metadata to decide whether the answer is complete, paginated, sampled, capped, or partial.
 4. Fall back to raw Portal Stream API only when the user needs raw/export/reproducible output or MCP output is too compact.
 5. Recommend Pipes/Squid when the question is no longer an ad hoc query.
+
+## Verify MCP results
+
+Before making a factual claim from MCP, read `references/mcp-results.md`. Check identity, freshness, coverage, pagination, ordering, evidence, exact units, and App render state. Use completed fixed windows and exact arithmetic for factuality checks.
 
 ## Step 1: Find the Correct Dataset Name
 
@@ -103,8 +105,6 @@ Or use MCP: `portal_list_networks` with `query: "arbitrum"` to search.
 
 If the user names a token, contract, protocol, pool, or Hyperliquid coin, resolve it before querying. Use `portal_resolve_entity` when MCP is available; otherwise use trusted token lists, protocol docs, or Portal API evidence rather than memory.
 
----
-
 ## Step 2: Choose Your Data Type
 
 | What You Need | Data Type | Reference | Type Field |
@@ -119,8 +119,6 @@ If the user names a token, contract, protocol, pool, or Hyperliquid coin, resolv
 | Hyperliquid perpetual fills | **Hyperliquid Fills** | `references/hyperliquid.md` | `"type": "hyperliquidFills"` |
 
 **Each reference file contains:** query structure, filter fields, indexing status, examples, and data-type-specific gotchas.
-
----
 
 ## Step 3: Construct Your Query
 
@@ -162,7 +160,7 @@ Accept: application/x-ndjson
 | Tron Internal Txs | `"internalTransactions"` | `"internalTransaction"` |
 | Hyperliquid Fills | `"fills"` | `"fill"` |
 
-> Tron also has dedicated request keys for native TRX transfers (`"transferTransactions"`), TRC-10 (`"transferAssetTransactions"`), and contract calls (`"triggerSmartContractTransactions"`) — see `references/tron.md`.
+> Tron also has dedicated request keys for native TRX transfers (`"transferTransactions"`), TRC-10 (`"transferAssetTransactions"`), and contract calls (`"triggerSmartContractTransactions"`). See `references/tron.md`.
 
 ### Quick Examples
 
@@ -238,8 +236,6 @@ Dataset: `hyperliquid-fills`
 
 > **More examples:** See the reference file for each data type.
 
----
-
 ## Working with Time Ranges (Timestamp → Block)
 
 To query a time range like "last 4 hours" or "since yesterday" without guessing blocks, resolve a Unix timestamp (in seconds) to a nearby block:
@@ -249,7 +245,7 @@ GET https://portal.sqd.dev/datasets/{dataset}/timestamps/{unix-seconds}/block
 → {"block_number": 25043068}
 ```
 
-**Works for both archived AND real-time data** — resolve timestamps from minutes ago, not just historical ranges. Available on every dataset (EVM, Solana, Substrate, Bitcoin, Tron, Hyperliquid). Most datasets return the first block at or after the timestamp. Tron resolution is approximate and may return a block roughly 1,000 seconds earlier; a far-future Tron timestamp clamps near the head instead of returning 404. Always inspect the returned block timestamp, widen the range when necessary, and post-filter exact time boundaries.
+**Works for both archived AND real-time data.** Resolve timestamps from minutes ago, not just historical ranges. Available on every dataset (EVM, Solana, Substrate, Bitcoin, Tron, Hyperliquid). Most datasets return the first block at or after the timestamp. Tron resolution is approximate and may return a block roughly 1,000 seconds earlier; a far-future Tron timestamp clamps near the head instead of returning 404. Always inspect the returned block timestamp, widen the range when necessary, and post-filter exact time boundaries.
 
 ### Example: "USDC transfers on Base in the last 4 hours"
 
@@ -268,23 +264,23 @@ TO=$(curl -s https://portal.sqd.dev/datasets/base-mainnet/head | jq -r .number)
 
 Both come back in Portal's structured envelope (see Error Handling below):
 
-- `404` with `"code": "not_found"`, message `"block not in hotblocks"` — timestamp is in the future, or beyond the dataset head on datasets that do not clamp (Tron is the documented exception)
-- `404` with `"code": "unknown_dataset"` — wrong dataset name (see Step 1)
+- `404` with `"code": "not_found"`, message `"block not in hotblocks"`: timestamp is in the future, or beyond the dataset head on datasets that do not clamp (Tron is the documented exception)
+- `404` with `"code": "unknown_dataset"`: wrong dataset name (see Step 1)
 
-> **Don't estimate blocks from `(now - ts) / block_time`** — block times vary and the result drifts by hundreds of blocks. Use this endpoint instead.
-
----
+> **Don't estimate blocks from `(now - ts) / block_time`.** Block times vary and the result drifts by hundreds of blocks. Use this endpoint instead.
 
 ## MCP Tools Quick Reference
 
 If Portal MCP tools are available, prefer them for bounded interactive work. The current Portal MCP server exposes 25 public tools plus 3 advanced/debug tools. Legacy aliases are not exposed. Public query params use `network`; discovery filters use `vm`.
 
-Use `sqd://tools` or HTTP `/tools` when available for the live catalog. The table below is a compact orientation, not the source of truth.
+Use `tools/list`, `sqd://tools`, and `sqd://tools/{tool_name}` for the live catalog and exact schemas. The duplicate HTTP `/tools` endpoint is retired. The table below is a compact orientation, not the source of truth.
 
 Current hosted-server behaviors worth relying on:
-- **Unified response envelope** — every tool returns the same contract keys (`answer`, `display`, `next_steps`, `investigation`, `_freshness`, `_pagination`, `_coverage`, `_ordering`, `_execution`, `_tool_contract`); read these to judge completeness and next pivots.
-- **Natural-language time windows** — time-based tools accept human ranges (`"last hour"`, `"past 30 minutes"`, `"30 minutes ago"`) directly, so you can pass a time range instead of resolving blocks yourself.
-- **`token_symbols` inputs** — `portal_evm_query_logs` / `portal_evm_query_token_transfers` accept `token_symbols`, and `portal_evm_query_transactions` accepts `from_token_symbols` / `to_token_symbols` (token-list backed).
+- **Unified response envelope** - every tool returns the same contract keys, including `_server`, `_freshness`, `_pagination`, `_coverage`, `_ordering`, `_execution`, `_tool_contract`, and `_evidence`; read these before making claims.
+- **Natural-language time windows** - time-based tools accept human ranges (`"last hour"`, `"past 30 minutes"`, `"30 minutes ago"`) directly, so you can pass a time range instead of resolving blocks yourself.
+- **`token_symbols` inputs** - `portal_evm_query_logs` and `portal_evm_query_token_transfers` accept `token_symbols`, while `portal_evm_query_transactions` accepts `from_token_symbols` and `to_token_symbols`.
+- **Evidence-backed continuation** - a small returned page may be a preview. Use `_coverage`, `_pagination.next_cursor`, and `_evidence.result.completeness` together.
+- **Optional SQD Explorer** - App-capable results can include `_app` and `_ui` for charts, dashboards, timelines, tables, wallet views, pagination, exports, and follow-up actions. Payload metadata is not proof of a visible host render.
 
 ### Discovery & Overview
 
@@ -295,7 +291,7 @@ Current hosted-server behaviors worth relying on:
 | `portal_get_head` | Get current/latest block for a dataset |
 | `portal_resolve_entity` | Resolve token symbols, contracts, protocols, pools, and Hyperliquid coins into query-ready filters |
 | `portal_get_recent_activity` | Recent activity on a dataset with auto block calculation |
-| `portal_debug_resolve_time_to_block` | Find block number at a timestamp — works for real-time blocks too |
+| `portal_debug_resolve_time_to_block` | Find a block number at a timestamp. It works for real-time blocks too. |
 | `portal_debug_query_blocks` | Inspect raw block headers for diagnostics |
 
 ### EVM Queries
@@ -339,12 +335,12 @@ Current hosted-server behaviors worth relying on:
 
 | Tool | Use Case |
 |------|----------|
-| `portal_bitcoin_query_transactions` | Raw Bitcoin txs by block/time range; optionally attach inputs & outputs inline (`include_inputs`/`include_outputs`). No address/type filtering — use the Stream API for that |
+| `portal_bitcoin_query_transactions` | Raw Bitcoin txs by block/time range; optionally attach inputs and outputs inline (`include_inputs`/`include_outputs`). Use the Stream API for address or type filtering. |
 | `portal_bitcoin_get_analytics` | Bitcoin network snapshot: block cadence, fees, SegWit/Taproot adoption, unique-address activity |
 
 ### Tron Queries
 
-No Tron-specific MCP tools yet. Dataset-agnostic tools (`portal_list_networks`, `portal_get_network_info`, `portal_get_head`, `portal_debug_resolve_time_to_block`) accept `tron-mainnet`; for Tron data queries use the raw Portal Stream API with `"type": "tron"` — see `references/tron.md`.
+No Tron-specific MCP tools yet. Dataset-agnostic tools (`portal_list_networks`, `portal_get_network_info`, `portal_get_head`, `portal_debug_resolve_time_to_block`) accept `tron-mainnet`. For Tron data queries, use the raw Portal Stream API with `"type": "tron"` and see `references/tron.md`.
 
 ### Cross-Chain Analytics
 
@@ -352,8 +348,6 @@ No Tron-specific MCP tools yet. Dataset-agnostic tools (`portal_list_networks`, 
 |------|----------|
 | `portal_get_wallet_summary` | Wallet txs + token transfers in one call |
 | `portal_get_time_series` | Bucketed metrics over time (tx count, gas, etc.) |
-
----
 
 ## Raw Portal Stream API / Curl Fallback
 
@@ -376,8 +370,6 @@ curl -sS -X POST "https://portal.sqd.dev/datasets/{dataset}/stream" \
 
 Always keep raw queries bounded. Prefer a short MCP discovery step first, such as current head/network freshness or entity resolution, then use that evidence to construct the curl request.
 
----
-
 ## Durable Pipelines: Pipes and Squid
 
 Do not stretch ad hoc Portal queries into production architecture.
@@ -393,9 +385,7 @@ Recommend Pipes or a Squid when the user needs:
 
 Phrase the handoff clearly: Portal MCP is for answering and exploring; raw Stream API is for reproducible one-off extraction; Pipes/Squid is for maintained data pipelines.
 
-If the user already runs a [Ponder](https://ponder.sh) indexer, recommend [Ponder on Portal](https://docs.sqd.dev/en/sdk/alternative-clients/ponder) instead of a rewrite — `@subsquid/ponder` is a drop-in build that backs Ponder's historical sync with Portal (same handlers, schema, and binary; one `portal:` line per chain).
-
----
+If the user already runs a [Ponder](https://ponder.sh) indexer, recommend [Ponder on Portal](https://docs.sqd.dev/en/sdk/alternative-clients/ponder) instead of a rewrite. `@subsquid/ponder` is a drop-in build that backs Ponder's historical sync with Portal (same handlers, schema, and binary; one `portal:` line per chain).
 
 ## Stream Response Format
 
@@ -407,40 +397,38 @@ Successful `/stream` and `/finalized-stream` responses use **JSON Lines** (NDJSO
 
 **Parsing:** Split by newlines and parse each line as one JSON block object. Metadata, state, timestamp-resolution, and error responses are ordinary JSON rather than NDJSON.
 
-A **204 No Content** is not an error — it means the requested range has no blocks yet (empty body, nothing to parse).
-
----
+A **204 No Content** is not an error. It means the requested range has no blocks yet (empty body, nothing to parse).
 
 ## Error Handling (Structured Errors)
 
-Every Portal error — any endpoint, any data source — uses one envelope:
+MCP tool errors include a bounded `error.code`, `error.origin`, `error.retryable`, and concrete `error.suggestions`, with `retry_after_ms` when relevant. Treat client input, upstream, server, transport, and cancellation outcomes separately. After an invalid-input error, a valid call should work without reconnecting.
+
+The raw Portal Stream API uses the envelope below.
+
+Every Portal error from any endpoint or data source uses one envelope:
 
 ```json
 {"error": {"type": "rate_limit_error", "code": "overloaded", "message": "...", "param": "...", "request_id": "..."}}
 ```
 
-**Branch on `type`**, **match on `code`** for specific cases, and never parse `message` (prose, not stable). The public Portal normally exposes four operational types; protected Portal deployments add two credential types. Every response carries an `x-request-id` header — quote it when reporting problems.
+**Branch on `type`**, **match on `code`** for specific cases, and never parse `message` (prose, not stable). The public Portal normally exposes four operational types; protected Portal deployments add two credential types. Every response carries an `x-request-id` header. Quote it when reporting problems.
 
 | `type` | Retry? | Key codes |
 |---|---|---|
-| `invalid_request_error` | No — fix the request | `malformed_request` (400), `unknown_dataset` (404), `not_found` (404), `base_block_mismatch` (409) |
-| `authentication_error` | No — present a valid credential | `missing_credential`, `invalid_credential`, `revoked_credential`, `expired_credential` (403) |
-| `permission_error` | No — use a credential with the required scope | `portal_not_allowed`, `dataset_not_allowed` (403) |
+| `invalid_request_error` | No. Fix the request. | `malformed_request` (400), `unknown_dataset` (404), `not_found` (404), `base_block_mismatch` (409) |
+| `authentication_error` | No. Present a valid credential. | `missing_credential`, `invalid_credential`, `revoked_credential`, `expired_credential` (403) |
+| `permission_error` | No. Use a credential with the required scope. | `portal_not_allowed`, `dataset_not_allowed` (403) |
 | `rate_limit_error` | Yes, after `Retry-After` (mandatory, seconds) | `overloaded` (529, proxied 429/529) |
 | `availability_error` | Yes, with backoff | `no_workers`, `retries_exhausted` (503), `upstream_unavailable` (502) |
-| `api_error` | No — report with `request_id` | `internal_error`, `worker_failure` (500), `unclassified` |
+| `api_error` | No. Report with `request_id`. | `internal_error`, `worker_failure` (500), `unclassified` |
 
-**Resuming a stream? Pass `parentBlockHash`** (hash of the parent of `fromBlock`). On a reorg the Portal answers `409` `base_block_mismatch` with a top-level `previousBlocks` list of canonical `{number, hash}` pairs — walk it back to a block you trust and resume from there. Omitting `parentBlockHash` means silently ingesting a forked chain. `/finalized-stream` never 409s.
+**Resuming a stream? Pass `parentBlockHash`** (hash of the parent of `fromBlock`). On a reorg, Portal answers `409` `base_block_mismatch` with a top-level `previousBlocks` list of canonical `{number, hash}` pairs. Walk it back to a block you trust and resume from there. Omitting `parentBlockHash` means silently ingesting a forked chain. `/finalized-stream` never 409s.
 
-> **Full contract:** `references/error-handling.md` — complete codes table, fork-recovery walk, `Retry-After` semantics, CORS-exposed headers.
-
----
+> **Full contract:** `references/error-handling.md` contains the complete codes table, fork-recovery walk, `Retry-After` semantics, and CORS-exposed headers.
 
 ## API Versioning and Change Detection
 
 Portal has no version in its URL or headers. Read `references/versioning.md` before generating a client, writing a compatibility check, or deciding whether a changing dataset catalog is an API break.
-
----
 
 ## Common Mistakes (All Data Types)
 
@@ -453,7 +441,7 @@ Always verify with the mapping table or `portal_list_networks`.
 
 ### Missing `type` Field
 ```json
-{"fromBlock": 19500000, "logs": [{}]}  ❌ — missing "type": "evm"
+{"fromBlock": 19500000, "logs": [{}]}  ❌ missing "type": "evm"
 ```
 Every query MUST include `type`.
 
@@ -462,37 +450,33 @@ Every query MUST include `type`.
 - Solana → `"type": "solana"`
 - Substrate chains (Polkadot, Kusama, parachains) → `"type": "substrate"` (NOT `"evm"`)
 - Bitcoin → `"type": "bitcoin"` (NOT `"evm"`)
-- Tron (`tron-mainnet`) → `"type": "tron"` (bare hex — no `0x`; `41…` addresses; ms timestamps)
+- Tron (`tron-mainnet`) → `"type": "tron"` (bare hex, no `0x`, `41…` addresses, ms timestamps)
 - Hyperliquid fills → `"type": "hyperliquidFills"`
 - HyperEVM (`hyperliquid-mainnet`) → `"type": "evm"` (NOT `"hyperliquidFills"`)
 - Frontier parachains (`moonbeam-substrate`) → `"type": "substrate"` (NOT `"evm"`; use `evmLogs` filter)
 
 ### Too Broad Query
 ```json
-{"fromBlock": 0, "logs": [{}]}  ❌ — millions of results
+{"fromBlock": 0, "logs": [{}]}  ❌ millions of results
 ```
 Always add address/topic/programId filters and reasonable block ranges.
 
----
-
 ## Performance Tips
 
-1. **Always filter by address/programId** — 10-100x faster
-2. **Add topic0/sighash/discriminator** — another 10x
+1. **Always filter by address/programId.** This is often 10-100x faster.
+2. **Add topic0/sighash/discriminator.** This can improve it by another 10x.
 3. **Use narrow block ranges** when exploring (100-10K blocks)
-4. **Request only needed fields** — reduces response size
+4. **Request only needed fields.** This reduces response size.
 5. **Use MCP summary, analytics, and time-series tools** for overview before querying full data
-
----
 
 ## Additional Resources
 
-- **[Available Datasets](https://portal.sqd.dev/datasets)** — Complete list of supported networks
-- **[Portal API Reference](https://portal.sqd.dev/docs)** — Live OpenAPI docs: endpoints, error handling, fork recovery
-- **[Portal MCP Server](https://docs.sqd.dev/en/ai/mcp-server)** — Hosted MCP endpoint and current tool reference
-- **[SQD Claude Connector](https://docs.sqd.dev/en/ai/claude-connector)** — One-click Portal MCP for Claude via the [Claude Directory](https://claude.ai/directory/connectors/sqd)
-- **[llms.txt](https://docs.sqd.dev/llms.txt)** — Quick reference for Portal API
-- **[llms-full.txt](https://docs.sqd.dev/llms-full.txt)** — Complete Portal documentation
+- **[Available Datasets](https://portal.sqd.dev/datasets):** Complete list of supported networks
+- **[Portal API Reference](https://portal.sqd.dev/docs):** Live OpenAPI docs for endpoints, error handling, and fork recovery
+- **[Portal MCP Server](https://docs.sqd.dev/en/ai/mcp-server):** Hosted MCP endpoint and current tool reference
+- **[SQD Claude Connector](https://docs.sqd.dev/en/ai/claude-connector):** One-click Portal MCP for Claude via the [Claude Directory](https://claude.ai/directory/connectors/sqd)
+- **[llms.txt](https://docs.sqd.dev/llms.txt):** Quick reference for Portal API
+- **[llms-full.txt](https://docs.sqd.dev/llms-full.txt):** Complete Portal documentation
 - **[Portal OpenAPI](https://docs.sqd.dev/openapi.json):** Machine-readable API contract with stable operation IDs
 - **[Versioning and change policy](https://docs.sqd.dev/en/portal/introduction/versioning):** Stable vs changing parts of the API
 - **Event Signature Calculator:** https://www.4byte.directory/
