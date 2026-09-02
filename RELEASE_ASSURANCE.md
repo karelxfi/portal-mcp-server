@@ -12,6 +12,7 @@ v0.8.5 keeps every earlier gate and adds Explorer gates for the host-fit beta.
 | Chain identity and links | Network logo and display name from SQD metadata, one explorer link per identifier kind, CSP limited to the two logo origins | `test:app-ui`, `test:app-contract` |
 | Beta labelling and opt-in | Beta tag in the widget, `_app.stage`, deployment and per-connection gate | `test:app-contract`, `test:app-ui` |
 | Bundle budget | Self-contained resource under 720,000 bytes | `test:app-contract` |
+| Bitcoin fee truth | Fees summed in exact satoshis per block from inputs and outputs; the analytics fee section names its exact block set and marks sample scope in the answer, notices, coverage sections, execution notes, and receipt; `fees_btc` buckets are non-zero and reconcile to the window total; generic series and OHLC candles declare their bucket alignment | `test:bitcoin-fees` |
 
 ## v0.8.4 additions
 

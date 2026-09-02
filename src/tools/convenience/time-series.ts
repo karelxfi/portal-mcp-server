@@ -24,6 +24,7 @@ import {
 } from '../../helpers/exact-decimal.js'
 import { portalFetchStream, portalFetchStreamRangeVisit } from '../../helpers/fetch.js'
 import { formatResult } from '../../helpers/format.js'
+import { fetchBitcoinBlockFees, satsToBtcString } from '../../helpers/bitcoin-fees.js'
 import { formatBTC, formatDuration, formatTimestamp, formatUSD } from '../../helpers/format.js'
 import { buildTimeSeriesPipesRecipe } from '../../helpers/pipes-recipe.js'
 import { buildBucketCoverage, buildBucketGapDiagnostics, buildQueryFreshness } from '../../helpers/result-metadata.js'
@@ -121,6 +122,9 @@ const MIN_EVM_GENERIC_CHUNK_SIZE = 50
 const MIN_SOLANA_GENERIC_CHUNK_SIZE = 250
 const SOLANA_GENERIC_MAX_BYTES = 150 * 1024 * 1024
 const FAST_EVM_TIME_SERIES_BLOCK_CAP = 1500
+/* Bitcoin inputs and outputs weigh about a megabyte per block; a fee series
+   scans at most this many of the newest requested blocks and says so. */
+const BITCOIN_FEE_SERIES_MAX_BLOCKS = 144
 const TIME_SERIES_CACHE_TTL_MS = 30_000
 const TIME_SERIES_CACHE_MAX_ENTRIES = 16
 
@@ -869,6 +873,8 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
             interval,
             duration,
             compare_previous: true,
+            window_anchor: 'latest_block',
+            bucket_alignment: 'anchored_to_latest_block',
           },
           chart: buildTimeSeriesChart({
             interval,
@@ -1066,8 +1072,11 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
           }
           const timestamp = block.header?.timestamp ?? block.timestamp
           if (typeof timestamp !== 'number' || timestamp <= 0) return
-          const bucketIndex = Math.floor((timestamp - seriesStartTimestamp) / intervalSeconds)
-          if (bucketIndex < 0 || bucketIndex >= expectedBuckets) return
+          const bucketIndex = Math.min(
+            Math.floor((timestamp - seriesStartTimestamp) / intervalSeconds),
+            expectedBuckets - 1,
+          )
+          if (bucketIndex < 0) return
           for (const tx of block.transactions || []) {
             if (!tx.to) continue
             const contract = tx.to.toLowerCase()
@@ -1121,6 +1130,8 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
             duration,
             group_by,
             group_limit,
+            window_anchor: 'latest_block',
+            bucket_alignment: 'anchored_to_latest_block',
             tracked_contracts: topContracts.length,
             total_transactions: totalTransactions,
             from_block: fromBlock,
@@ -1275,6 +1286,8 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
         }
         const solanaNotices = [...notices]
         const summary: any = {
+          window_anchor: 'latest_block',
+          bucket_alignment: 'anchored_to_latest_block',
           metric,
           interval,
           duration,
@@ -1573,6 +1586,7 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
             metric_definition: metricDefinition,
             interval,
             duration,
+            bucket_alignment: 'interval_boundary',
             total_buckets: timeSeries.length,
             filled_buckets: filledBuckets,
             empty_buckets: timeSeries.length - filledBuckets,
@@ -1700,6 +1714,162 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
         const intervalSeconds = parseTimeframeToSeconds(interval)
         const durationSeconds = parseTimeframeToSeconds(duration)
         const expectedBuckets = Math.ceil(durationSeconds / intervalSeconds)
+        if (metric === 'fees_btc') {
+          const requestedBlocks = toBlock - fromBlock + 1
+          const scanFrom = requestedBlocks > BITCOIN_FEE_SERIES_MAX_BLOCKS ? toBlock - BITCOIN_FEE_SERIES_MAX_BLOCKS + 1 : fromBlock
+          const fees = await fetchBitcoinBlockFees({ dataset, fromBlock: scanFrom, toBlock })
+          if (fees.blocks.length === 0) throw new Error('No data available for this time period')
+          const firstTimestamp = fees.blocks[0].timestamp
+          const lastTimestamp = fees.blocks[fees.blocks.length - 1].timestamp
+          const seriesStartTimestamp = lastTimestamp - durationSeconds
+          const feeBuckets = Array.from({ length: expectedBuckets }, (_, bucketIndex) => ({
+            bucketIndex,
+            bucketTimestamp: seriesStartTimestamp + bucketIndex * intervalSeconds,
+            blocksInBucket: 0,
+            transactions: 0,
+            feeSats: 0n,
+            firstBlockNumber: undefined as number | undefined,
+            lastBlockNumber: undefined as number | undefined,
+          }))
+          for (const block of fees.blocks) {
+            const bucketIndex = Math.floor((block.timestamp - seriesStartTimestamp) / intervalSeconds)
+            if (bucketIndex < 0) continue
+            /* The newest block sits exactly at the series end and belongs to
+               the last bucket, so the window total and the bucket sum agree. */
+            const bucket = feeBuckets[Math.min(bucketIndex, expectedBuckets - 1)]
+            bucket.blocksInBucket += 1
+            bucket.transactions += block.transaction_count
+            bucket.feeSats += block.fee_sats
+            bucket.firstBlockNumber = bucket.firstBlockNumber ?? block.block_number
+            bucket.lastBlockNumber = block.block_number
+          }
+          const totalFeeSats = feeBuckets.reduce((sum, bucket) => sum + bucket.feeSats, 0n)
+          const timeSeries = feeBuckets.map((bucket) => ({
+            bucket_index: bucket.bucketIndex,
+            timestamp: bucket.bucketTimestamp,
+            timestamp_human: formatTimestamp(bucket.bucketTimestamp),
+            blocks_in_bucket: bucket.blocksInBucket,
+            transactions: bucket.transactions,
+            /* value is the BTC amount for charts; value_sats and value_btc are exact. */
+            value: Number(satsToBtcString(bucket.feeSats)),
+            value_btc: satsToBtcString(bucket.feeSats),
+            value_sats: bucket.feeSats.toString(),
+            ...(bucket.firstBlockNumber !== undefined ? { from_block: bucket.firstBlockNumber } : {}),
+            ...(bucket.lastBlockNumber !== undefined ? { to_block: bucket.lastBlockNumber } : {}),
+          }))
+          const filledBuckets = feeBuckets.filter((bucket) => bucket.blocksInBucket > 0).length
+          const scanCapped = scanFrom > fromBlock
+          /* A verified from-boundary proves there is no earlier block inside
+             the window, so a bucket before the first block is a real gap in
+             block production, not missing coverage. */
+          const windowComplete =
+            !scanCapped &&
+            fees.excluded_blocks.length === 0 &&
+            (resolvedWindow.from_lookup?.resolution === 'verified_boundary' || firstTimestamp <= seriesStartTimestamp)
+          if (scanCapped) {
+            notices.push(
+              `Partial fee coverage: fees were scanned for the latest ${toBlock - scanFrom + 1} of ${requestedBlocks} requested blocks (${scanFrom}-${toBlock}). Earlier buckets are empty because they were not scanned, not because fees were zero.`,
+            )
+          }
+          if (fees.excluded_blocks.length > 0) {
+            notices.push(
+              `Partial fee coverage: ${fees.excluded_blocks.length} block(s) were excluded because their inputs or outputs were incomplete (${fees.excluded_blocks.slice(0, 10).join(', ')}${fees.excluded_blocks.length > 10 ? ', ...' : ''}).`,
+            )
+          }
+          const resultMessage = withWindowNotice(
+            buildTimeSeriesAnswer({ dataset, metric, interval, duration, timeSeries, fromBlock: scanFrom, toBlock }),
+            longWindowNotice,
+          )
+          return formatResult({
+            summary: {
+              metric,
+              metric_definition: 'Sum of non-coinbase input value minus non-coinbase output value per block, in satoshis, converted to BTC for display.',
+              interval,
+              duration,
+              from_block: scanFrom,
+              to_block: toBlock,
+              requested_from_block: fromBlock,
+              requested_blocks: requestedBlocks,
+              scanned_blocks: fees.blocks.length,
+              transactions: fees.blocks.reduce((sum, block) => sum + block.transaction_count, 0),
+              total_fees_sats: totalFeeSats.toString(),
+              total_fees_btc: satsToBtcString(totalFeeSats),
+              total_buckets: timeSeries.length,
+              filled_buckets: filledBuckets,
+              window_anchor: 'latest_block',
+              bucket_alignment: 'anchored_to_latest_block',
+              ...(fees.excluded_blocks.length > 0 ? { excluded_blocks: fees.excluded_blocks } : {}),
+            },
+            chart: buildTimeSeriesChart({
+              interval,
+              totalPoints: timeSeries.length,
+              recommendedVisual: getMetricRecommendedVisual(metric),
+              title: `Bitcoin ${getMetricLabel(metric)}`,
+              yAxisLabel: getMetricLabel(metric),
+              valueFormat: getMetricValueFormat(metric),
+              unit: getMetricUnit(metric),
+            }),
+            tables: [
+              buildTimeSeriesTable({
+                rowCount: timeSeries.length,
+                title: 'Time series buckets',
+                valueLabel: getMetricLabel(metric),
+                valueFormat: getMetricValueFormat(metric),
+                unit: getMetricUnit(metric),
+                timestampField: 'timestamp',
+                blocksInBucketField: 'blocks_in_bucket',
+                defaultSort: { key: 'bucket_index', direction: 'asc' },
+              }),
+            ],
+            gap_diagnostics: buildBucketGapDiagnostics({
+              buckets: timeSeries,
+              intervalSeconds,
+              isFilled: (bucket) => bucket.blocks_in_bucket > 0,
+              anchor: 'latest_block',
+              windowComplete,
+              firstObservedTimestamp: firstTimestamp,
+              lastObservedTimestamp: lastTimestamp,
+            }),
+            time_series: timeSeries,
+          }, resultMessage, {
+            toolName: 'portal_get_time_series',
+            ...(notices.length > 0 ? { notices } : {}),
+            freshness: buildQueryFreshness({
+              finality: 'latest',
+              headBlockNumber: head.number,
+              windowToBlock: toBlock,
+              resolvedWindow,
+            }),
+            coverage: buildBucketCoverage({
+              expectedBuckets,
+              returnedBuckets: timeSeries.length,
+              filledBuckets,
+              anchor: 'latest_block',
+              windowComplete,
+            }),
+            execution: buildExecutionMetadata({
+              mode,
+              metric,
+              interval,
+              duration,
+              from_block: scanFrom,
+              to_block: toBlock,
+              range_kind: resolvedWindow.range_kind,
+              notes: [
+                `Fees were computed from Bitcoin inputs and outputs for blocks ${scanFrom}-${toBlock} in exact satoshis.`,
+                ...(scanCapped ? [`The requested window had ${requestedBlocks} blocks; the fee series is capped at ${BITCOIN_FEE_SERIES_MAX_BLOCKS}.`] : []),
+                ...(longWindowNotice ? [longWindowNotice] : []),
+              ],
+            }),
+            metadata: {
+              network: dataset,
+              dataset,
+              from_block: scanFrom,
+              to_block: toBlock,
+              query_start_time: queryStartTime,
+            },
+          })
+        }
         const blockResults = await portalFetchStream(
           `${PORTAL_URL}/datasets/${dataset}/stream`,
           {
@@ -1725,8 +1895,13 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
           const timestamp = getBlockTimestamp(block)
           const blockNumber = getBlockNumber(block)
           if (timestamp === undefined || blockNumber === undefined) return
-          const bucketIndex = Math.floor((timestamp - seriesStartTimestamp) / intervalSeconds)
-          if (bucketIndex < 0 || bucketIndex >= expectedBuckets) return
+          /* The newest block sits exactly at the series end and belongs to the
+             last bucket. */
+          const bucketIndex = Math.min(
+            Math.floor((timestamp - seriesStartTimestamp) / intervalSeconds),
+            expectedBuckets - 1,
+          )
+          if (bucketIndex < 0) return
           const bucket = buckets[bucketIndex]
           bucket.blocksInBucket += 1
           bucket.firstBlockNumber = bucket.firstBlockNumber ?? blockNumber
@@ -1739,7 +1914,7 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
           timestamp: bucket.bucketTimestamp,
           timestamp_human: formatTimestamp(bucket.bucketTimestamp),
           blocks_in_bucket: bucket.blocksInBucket,
-          value: metric === 'block_size_bytes' ? bucket.gasUsedSum : 0,
+          value: bucket.gasUsedSum,
         }))
         const filledBuckets = buckets.filter((bucket) => bucket.blocksInBucket > 0).length
         const resultMessage = withWindowNotice(
@@ -1755,7 +1930,17 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
           longWindowNotice,
         )
         return formatResult({
-          summary: { metric, interval, duration, from_block: fromBlock, to_block: toBlock, total_buckets: timeSeries.length, filled_buckets: filledBuckets },
+          summary: {
+            metric,
+            interval,
+            duration,
+            from_block: fromBlock,
+            to_block: toBlock,
+            total_buckets: timeSeries.length,
+            filled_buckets: filledBuckets,
+            window_anchor: 'latest_block',
+            bucket_alignment: 'anchored_to_latest_block',
+          },
           chart: buildTimeSeriesChart({
             interval,
             totalPoints: timeSeries.length,
@@ -2074,8 +2259,13 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
             return
           }
 
-          const bucketIndex = Math.floor((timestamp - seriesStartTimestamp) / intervalSeconds)
-          if (bucketIndex < 0 || bucketIndex >= expectedBuckets) {
+          /* The newest block sits exactly at the series end and belongs to the
+             last bucket. */
+          const bucketIndex = Math.min(
+            Math.floor((timestamp - seriesStartTimestamp) / intervalSeconds),
+            expectedBuckets - 1,
+          )
+          if (bucketIndex < 0) {
             return
           }
 
@@ -2164,6 +2354,8 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
         const hasCoverageGap = !address && observedCoveragePct < 80
 
         const summary: Record<string, unknown> = {
+          window_anchor: 'latest_block',
+          bucket_alignment: 'anchored_to_latest_block',
           metric,
           interval,
           duration,

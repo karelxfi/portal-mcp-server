@@ -1978,6 +1978,7 @@ export function registerEvmOhlcTool(server: McpServer) {
         window_start_timestamp_human: formatTimestamp(seriesStartTimestamp),
         window_end_exclusive: indexedEvidenceEndExclusive,
         window_end_exclusive_human: formatTimestamp(indexedEvidenceEndExclusive),
+        bucket_alignment: 'interval_boundary',
         final_bucket_complete: ohlc.at(-1)?.bucket_complete ?? false,
         ...(firstFilled ? { series_open: firstFilled.open } : {}),
         ...(lastFilled ? { series_close: lastFilled.close } : {}),

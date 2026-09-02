@@ -11,7 +11,13 @@ import { createUnsupportedChainError } from '../../helpers/errors.js'
 import { portalFetchStreamRange } from '../../helpers/fetch.js'
 import { formatResult } from '../../helpers/format.js'
 import { formatNumber, formatBTC, formatPct, formatDuration } from '../../helpers/format.js'
-import { buildAnalysisCoverage, buildQueryFreshness } from '../../helpers/result-metadata.js'
+import { fetchBitcoinBlockFees, satsToBtcString, totalBitcoinFees } from '../../helpers/bitcoin-fees.js'
+import {
+  type AnalysisSectionCoverage,
+  buildAnalysisCoverage,
+  buildAnalysisSectionCoverage,
+  buildQueryFreshness,
+} from '../../helpers/result-metadata.js'
 import type { ResponseFormat } from '../../helpers/response-modes.js'
 import { buildPercentileSummary } from '../../helpers/statistics.js'
 import { resolveTimeframeOrBlocks, type TimestampInput } from '../../helpers/timeframe.js'
@@ -35,6 +41,8 @@ function formatBitcoinAnalyticsResponse(response: Record<string, any>, responseF
         segwit_percentage: response.transaction_stats?.segwit_percentage,
         tx_rate_per_second: response.transaction_stats?.tx_rate_per_second,
         avg_fee_per_tx_btc: response.fee_analysis?.avg_fee_per_tx_btc,
+        fee_scope: response.fee_analysis?.scope,
+        fee_blocks_scanned: response.fee_analysis?.blocks_scanned,
         unique_addresses: response.network_activity?.unique_addresses,
       },
       percentiles: {
@@ -68,10 +76,19 @@ function formatBitcoinAnalyticsResponse(response: Record<string, any>, responseF
     ...(response.fee_analysis
       ? {
           fee_analysis: {
-            blocks_sampled: response.fee_analysis.blocks_sampled,
+            scope: response.fee_analysis.scope,
+            sampled: response.fee_analysis.sampled,
+            blocks_scanned: response.fee_analysis.blocks_scanned,
+            window_blocks: response.fee_analysis.window_blocks,
+            block_range: response.fee_analysis.block_range,
+            transactions: response.fee_analysis.transactions,
             total_fees_btc: response.fee_analysis.total_fees_btc,
+            total_fees_sats: response.fee_analysis.total_fees_sats,
             avg_fee_per_tx_btc: response.fee_analysis.avg_fee_per_tx_btc,
+            avg_fee_per_tx_sats: response.fee_analysis.avg_fee_per_tx_sats,
             fees_per_block_btc: response.fee_analysis.fees_per_block_btc,
+            fees_per_block_sats: response.fee_analysis.fees_per_block_sats,
+            ...(response.fee_analysis.error ? { error: response.fee_analysis.error } : {}),
           },
         }
       : {}),
@@ -178,6 +195,11 @@ function decorateBitcoinAnalyticsPresentation(response: Record<string, any>) {
 export function registerBitcoinAnalyticsTool(server: McpServer) {
   const FAST_MODE_MAX_BLOCKS = 72
   const DEEP_MODE_MAX_BLOCKS = 200
+  /* Inputs and outputs weigh about a megabyte per block, so fee and
+     address sections scan the newest blocks of the window up to these caps
+     and say so in the coverage, notices, execution notes, and answer. */
+  const FEE_SCAN_MAX_BLOCKS = 36
+  const ADDRESS_SCAN_MAX_BLOCKS = 50
 
   registerPortalTool(server,
     'portal_bitcoin_get_analytics',
@@ -370,11 +392,26 @@ export function registerBitcoinAnalyticsTool(server: McpServer) {
         },
       }
 
+      const analyzedBlocks = endBlock - effectiveFrom + 1
+      const sections: Record<string, AnalysisSectionCoverage> = {}
+      const sectionNotices: string[] = []
+
       // Query 2: Outputs for address activity and value flow (optional)
       if (include_address_activity) {
         // Limit output query to fewer blocks to keep it fast
-        const outputMaxBlocks = Math.min(numBlocks, 50)
-        const outputFrom = endBlock - outputMaxBlocks
+        const outputMaxBlocks = Math.min(analyzedBlocks, ADDRESS_SCAN_MAX_BLOCKS)
+        const outputFrom = endBlock - outputMaxBlocks + 1
+        sections.address_activity = buildAnalysisSectionCoverage({
+          windowFromBlock: effectiveFrom,
+          windowToBlock: endBlock,
+          analyzedFromBlock: outputFrom,
+          analyzedToBlock: endBlock,
+        })
+        if (sections.address_activity.sampled) {
+          sectionNotices.push(
+            `Address activity and script types cover the latest ${outputMaxBlocks} of ${analyzedBlocks} analyzed blocks (${outputFrom}-${endBlock}).`,
+          )
+        }
 
         const outputQuery = {
           type: 'bitcoin',
@@ -432,6 +469,8 @@ export function registerBitcoinAnalyticsTool(server: McpServer) {
 
           response.network_activity = {
             blocks_sampled: outputMaxBlocks,
+            block_range: `${outputFrom}-${endBlock}`,
+            sampled: sections.address_activity.sampled,
             unique_addresses: addresses.size,
             total_outputs: totalOutputs,
             total_output_value_btc: parseFloat(totalOutputValue.toFixed(8)),
@@ -448,105 +487,94 @@ export function registerBitcoinAnalyticsTool(server: McpServer) {
         }
       }
 
-      // Query 3: Inputs for fee estimation (sample a few blocks)
-      const feeSampleBlocks = Math.min(numBlocks, 10)
-      const feeSampleFrom = endBlock - feeSampleBlocks
-
+      // Query 3: Inputs and outputs for exact fees over the newest blocks of
+      // the analyzed window. Fees are summed in satoshis per block; every
+      // section field names the exact block set it came from.
+      const feeScanBlocks = Math.min(analyzedBlocks, FEE_SCAN_MAX_BLOCKS)
+      const feeFrom = endBlock - feeScanBlocks + 1
       try {
-        const inputQuery = {
-          type: 'bitcoin',
-          fromBlock: feeSampleFrom,
-          toBlock: endBlock,
-          fields: {
-            block: { number: true, timestamp: true },
-            input: { prevoutValue: true, transactionIndex: true },
-          },
-          inputs: [{}],
-        }
-        const outputFeeQuery = {
-          type: 'bitcoin',
-          fromBlock: feeSampleFrom,
-          toBlock: endBlock,
-          fields: {
-            block: { number: true, timestamp: true },
-            output: { value: true, transactionIndex: true },
-          },
-          outputs: [{}],
-        }
-
-        const [inputResults, outputFeeResults] = await Promise.all([
-          portalFetchStreamRange(`${PORTAL_URL}/datasets/${dataset}/stream`, inputQuery, { maxBlocks: feeSampleBlocks }),
-          portalFetchStreamRange(`${PORTAL_URL}/datasets/${dataset}/stream`, outputFeeQuery, { maxBlocks: feeSampleBlocks }),
-        ])
-
-        // Sum input values and output values to estimate fees.
-        // Exclude coinbase (transactionIndex 0) — it has no real inputs
-        // and its outputs include the block reward, which skews the calculation.
-        let totalInputValue = 0
-        let totalOutputValueFee = 0
-        let feeTxCount = 0
-
-        inputResults.forEach((block: any) => {
-          ;(block.inputs || []).forEach((input: any) => {
-            // Coinbase inputs have no prevoutValue (or 0)
-            if (input.transactionIndex !== 0) {
-              totalInputValue += input.prevoutValue || 0
-            }
-          })
+        const fees = await fetchBitcoinBlockFees({ dataset, fromBlock: feeFrom, toBlock: endBlock })
+        const totals = totalBitcoinFees(fees.blocks)
+        sections.fee_analysis = buildAnalysisSectionCoverage({
+          windowFromBlock: effectiveFrom,
+          windowToBlock: endBlock,
+          analyzedFromBlock: feeFrom,
+          analyzedToBlock: endBlock,
+          excludedBlocks: fees.excluded_blocks,
         })
-
-        outputFeeResults.forEach((block: any) => {
-          ;(block.outputs || []).forEach((output: any) => {
-            // Skip coinbase transaction outputs (block reward + fees)
-            if (output.transactionIndex !== 0) {
-              totalOutputValueFee += output.value || 0
-            }
-          })
-        })
-
-        // Count non-coinbase transactions in fee sample
-        txResults.forEach((block: any) => {
-          const bn = block.header?.number ?? block.number
-          if (bn >= feeSampleFrom && bn <= endBlock) {
-            feeTxCount += Math.max(0, (block.transactions?.length || 1) - 1)
-          }
-        })
-
-        // Portal returns Bitcoin values in BTC (decimal), not satoshis
-        const totalFees = Math.max(0, totalInputValue - totalOutputValueFee)
-        const avgFeePerTx = feeTxCount > 0 ? totalFees / feeTxCount : 0
-
-        const feesPerBlock = totalFees / feeSampleBlocks
-
+        const sampled = sections.fee_analysis.sampled
+        const totalFeesBtc = satsToBtcString(totals.total_fee_sats)
+        const avgFeeBtc = satsToBtcString(totals.avg_fee_per_tx_sats)
+        const feesPerBlockBtc = satsToBtcString(totals.fees_per_block_sats)
         response.fee_analysis = {
-          blocks_sampled: feeSampleBlocks,
-          total_fees_btc: parseFloat(totalFees.toFixed(8)),
-          total_fees_formatted: formatBTC(totalFees),
-          avg_fee_per_tx_btc: parseFloat(avgFeePerTx.toFixed(8)),
-          avg_fee_per_tx_formatted: formatBTC(avgFeePerTx),
-          fees_per_block_btc: parseFloat(feesPerBlock.toFixed(8)),
-          fees_per_block_formatted: formatBTC(feesPerBlock),
+          scope: sampled ? 'sample' : 'window',
+          sampled,
+          blocks_scanned: totals.blocks,
+          blocks_sampled: totals.blocks,
+          window_blocks: analyzedBlocks,
+          block_range: `${feeFrom}-${endBlock}`,
+          from_block: feeFrom,
+          to_block: endBlock,
+          transactions: totals.transactions,
+          total_fees_sats: totals.total_fee_sats.toString(),
+          total_fees_btc: totalFeesBtc,
+          total_fees_formatted: formatBTC(Number(totalFeesBtc)),
+          avg_fee_per_tx_sats: totals.avg_fee_per_tx_sats.toString(),
+          avg_fee_per_tx_btc: avgFeeBtc,
+          avg_fee_per_tx_formatted: formatBTC(Number(avgFeeBtc)),
+          fees_per_block_sats: totals.fees_per_block_sats.toString(),
+          fees_per_block_btc: feesPerBlockBtc,
+          fees_per_block_formatted: formatBTC(Number(feesPerBlockBtc)),
+          ...(fees.excluded_blocks.length > 0 ? { excluded_blocks: fees.excluded_blocks } : {}),
+        }
+        if (sampled) {
+          sectionNotices.push(
+            fees.excluded_blocks.length > 0
+              ? `Fee analysis covers ${totals.blocks} of ${analyzedBlocks} analyzed blocks (${feeFrom}-${endBlock}, ${fees.excluded_blocks.length} excluded because their inputs or outputs were incomplete); block and transaction statistics cover all ${analyzedBlocks}.`
+              : `Fee analysis covers the latest ${totals.blocks} of ${analyzedBlocks} analyzed blocks (${feeFrom}-${endBlock}); block and transaction statistics cover all ${analyzedBlocks}.`,
+          )
         }
       } catch {
-        response.fee_analysis = { error: 'Failed to estimate fees — try a smaller range' }
+        sections.fee_analysis = buildAnalysisSectionCoverage({
+          windowFromBlock: effectiveFrom,
+          windowToBlock: endBlock,
+          analyzedFromBlock: endBlock + 1,
+          analyzedToBlock: endBlock,
+        })
+        sectionNotices.push('Fee analysis is unavailable for this window because the fee scan failed; retry or use a smaller range.')
+        response.fee_analysis = {
+          scope: 'unavailable',
+          sampled: true,
+          blocks_scanned: 0,
+          window_blocks: analyzedBlocks,
+          error: 'Failed to compute fees — try a smaller range',
+        }
       }
 
-      const notices =
-        requestedBlocks > maxBlocks
+      const notices = [
+        ...(requestedBlocks > maxBlocks
           ? [`Analyzed ${numBlocks} of ${requestedBlocks} requested blocks because the requested window exceeds the current Bitcoin analytics scan budget.`]
-          : undefined
+          : []),
+        ...sectionNotices,
+      ]
+      const feeScope =
+        response.fee_analysis?.scope === 'sample'
+          ? `, fees from the latest ${response.fee_analysis.blocks_scanned} of ${analyzedBlocks} blocks`
+          : response.fee_analysis?.scope === 'unavailable'
+            ? ', fees unavailable'
+            : ''
       const formattedResponse = formatBitcoinAnalyticsResponse(response, response_format as ResponseFormat)
       const presentation = decorateBitcoinAnalyticsPresentation(formattedResponse)
       const message = response_format === 'summary'
-        ? `Bitcoin summary: ${numBlocks} blocks, ${totalTxs.toLocaleString()} txs, ${avgBlockTime.toFixed(0)}s avg block time`
-        : `Bitcoin network analytics: ${numBlocks} blocks, ${totalTxs.toLocaleString()} txs, ${avgTxsPerBlock.toFixed(0)} avg txs/block, ${avgBlockTime.toFixed(0)}s avg block time, ${segwitPct.toFixed(0)}% segwit`
+        ? `Bitcoin summary: ${numBlocks} blocks, ${totalTxs.toLocaleString()} txs, ${avgBlockTime.toFixed(0)}s avg block time${feeScope}`
+        : `Bitcoin network analytics: ${numBlocks} blocks, ${totalTxs.toLocaleString()} txs, ${avgTxsPerBlock.toFixed(0)} avg txs/block, ${avgBlockTime.toFixed(0)}s avg block time, ${segwitPct.toFixed(0)}% segwit${feeScope}`
 
       return formatResult(
         presentation.response,
         message,
         {
           toolName: 'portal_bitcoin_get_analytics',
-          notices,
+          ...(notices.length > 0 ? { notices } : {}),
           ordering: {
             kind: 'sections',
             block_series: 'oldest_to_newest',
@@ -562,6 +590,7 @@ export function registerBitcoinAnalyticsTool(server: McpServer) {
             windowToBlock: endBlock,
             analyzedFromBlock: effectiveFrom,
             analyzedToBlock: endBlock,
+            sections,
           }),
           execution: buildExecutionMetadata({
             mode,
@@ -569,14 +598,20 @@ export function registerBitcoinAnalyticsTool(server: McpServer) {
             from_block: effectiveFrom,
             to_block: endBlock,
             range_kind: resolvedWindow.range_kind,
-            notes: [include_address_activity ? 'Address-activity enrichment was included.' : 'Address-activity enrichment was skipped for speed.'],
+            notes: [
+              include_address_activity ? 'Address-activity enrichment was included.' : 'Address-activity enrichment was skipped for speed.',
+              ...sectionNotices,
+            ],
           }),
           ui: presentation.ui,
           llm: {
             compact: true,
             primary_path: presentation.response.script_types?.length ? 'script_types' : 'presentation_summary',
             answer_sequence: ['presentation_summary', 'block_details', 'transaction_stats', 'network_activity', 'fee_analysis', 'script_types'],
-            parser_notes: ['Bitcoin values use BTC units in analytics summaries; script_types contains ranked output-script evidence when address activity is enabled.'],
+            parser_notes: [
+              'Bitcoin values use BTC units in analytics summaries with exact satoshi companions; script_types contains ranked output-script evidence when address activity is enabled.',
+              'fee_analysis.scope says whether fees cover the whole analyzed window or only its newest blocks; _coverage.sections carries the exact block set per section.',
+            ],
           },
           metadata: {
             dataset,

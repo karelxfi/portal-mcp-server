@@ -76,6 +76,15 @@ export interface BucketCoverage {
   final_bucket_complete?: boolean
 }
 
+export interface AnalysisSectionCoverage {
+  analyzed_from_block: number
+  analyzed_to_block: number
+  analyzed_blocks: number
+  window_blocks: number
+  sampled: boolean
+  excluded_blocks?: number[]
+}
+
 export interface AnalysisCoverage {
   kind: 'analysis_window'
   window_complete: boolean
@@ -88,6 +97,10 @@ export interface AnalysisCoverage {
   requested_blocks: number
   analyzed_blocks: number
   sampled: boolean
+  /* Sections that scanned fewer blocks than the analyzed window. When any
+     section is sampled the whole result is marked sampled, so a section
+     total is never read as a window total. */
+  sections?: Record<string, AnalysisSectionCoverage>
 }
 
 export interface SectionCoverage {
@@ -287,13 +300,36 @@ export function buildBucketCoverage(params: {
   }
 }
 
+export function buildAnalysisSectionCoverage(params: {
+  windowFromBlock: number
+  windowToBlock: number
+  analyzedFromBlock: number
+  analyzedToBlock: number
+  excludedBlocks?: number[]
+}): AnalysisSectionCoverage {
+  const excluded = params.excludedBlocks ?? []
+  const analyzedBlocks = Math.max(0, params.analyzedToBlock - params.analyzedFromBlock + 1 - excluded.length)
+  const windowBlocks = Math.max(0, params.windowToBlock - params.windowFromBlock + 1)
+  return {
+    analyzed_from_block: params.analyzedFromBlock,
+    analyzed_to_block: params.analyzedToBlock,
+    analyzed_blocks: analyzedBlocks,
+    window_blocks: windowBlocks,
+    sampled: analyzedBlocks < windowBlocks,
+    ...(excluded.length > 0 ? { excluded_blocks: excluded } : {}),
+  }
+}
+
 export function buildAnalysisCoverage(params: {
   windowFromBlock: number
   windowToBlock: number
   analyzedFromBlock: number
   analyzedToBlock: number
   hasMore?: boolean
+  sections?: Record<string, AnalysisSectionCoverage>
 }): AnalysisCoverage {
+  const sections = params.sections ?? {}
+  const sectionSampled = Object.values(sections).some((section) => section.sampled)
   return {
     kind: 'analysis_window',
     window_complete: params.analyzedFromBlock <= params.windowFromBlock && params.analyzedToBlock >= params.windowToBlock,
@@ -305,7 +341,11 @@ export function buildAnalysisCoverage(params: {
     analyzed_to_block: params.analyzedToBlock,
     requested_blocks: Math.max(0, params.windowToBlock - params.windowFromBlock + 1),
     analyzed_blocks: Math.max(0, params.analyzedToBlock - params.analyzedFromBlock + 1),
-    sampled: params.analyzedFromBlock > params.windowFromBlock || params.analyzedToBlock < params.windowToBlock,
+    sampled:
+      params.analyzedFromBlock > params.windowFromBlock ||
+      params.analyzedToBlock < params.windowToBlock ||
+      sectionSampled,
+    ...(Object.keys(sections).length > 0 ? { sections } : {}),
   }
 }
 

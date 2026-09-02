@@ -602,6 +602,9 @@ export function registerHyperliquidOhlcTool(server: McpServer) {
             }
           : {}),
         window_anchor: seriesAnchor,
+        /* Buckets start on interval boundaries (wall clock), unlike the generic
+           time series whose buckets are anchored to the latest block. */
+        bucket_alignment: 'interval_boundary',
         requested_window_start_timestamp: requestedWindowStartTimestamp,
         requested_window_start_timestamp_human: formatTimestamp(requestedWindowStartTimestamp),
         requested_window_end_exclusive: requestedWindowEndExclusive,
