@@ -198,7 +198,7 @@ button { color: inherit; }
    right edge on a dashed accent reference line, the same line the chart pins
    its last value to. The eyebrow is the sqd-mono-label role: 11px uppercase
    mono. Everything sits on the ground and closes on a hairline. */
-.sqd-hero { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 32px; align-items: start; padding: 0 0 12px; border-bottom: 1px solid var(--edge); }
+.sqd-hero { display: grid; grid-template-columns: minmax(0, 1fr); gap: 4px 0; align-items: start; padding: 0 0 12px; border-bottom: 1px solid var(--edge); }
 .sqd-eyebrow { grid-column: 1 / -1; display: flex; align-items: center; gap: 8px; color: var(--accent); font: 500 11px/16px var(--sqd-font-mono); text-transform: uppercase; letter-spacing: 0.08em; }
 .sqd-eyebrow::before { content: ''; width: 2px; height: 12px; flex: 0 0 2px; border-radius: 1px; background: var(--accent); }
 .sqd-dot { width: 6px; height: 6px; flex: 0 0 6px; border-radius: 50%; background: var(--success-fill); }
@@ -211,14 +211,10 @@ button { color: inherit; }
 .sqd-title--id { font-family: var(--sqd-font-mono); font-weight: 510; letter-spacing: 0; font-size: clamp(15px, 1.7cqi, 19px); }
 .sqd-app[data-mode='fullscreen'] .sqd-title--id { font-size: clamp(16px, 1.4cqi, 20px); }
 .sqd-subtitle { grid-column: 1; max-width: 74ch; overflow-wrap: anywhere; margin: 6px 0 0; color: var(--fg-secondary); font-size: 13px; line-height: 19px; }
-.sqd-hero-figure { grid-column: 2; grid-row: 2 / span 2; justify-self: end; text-align: right; padding-top: 4px; }
-.sqd-hero-value { display: inline-block; padding-bottom: 6px; border-bottom: 1.5px dashed var(--accent-line); color: var(--fg); font: 500 28px/1.05 var(--sqd-font-mono); letter-spacing: -0.01em; font-variant-numeric: tabular-nums; white-space: nowrap; }
-.sqd-hero-label { margin-top: 6px; color: var(--fg-muted); font: 500 10.5px/15px var(--sqd-font-mono); text-transform: uppercase; letter-spacing: 0.08em; }
 .sqd-context { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 4px 6px; margin-top: 10px; color: var(--fg-muted); font: 400 11px/16px var(--sqd-font-mono); letter-spacing: 0.01em; }
 .sqd-context span { display: inline-flex; align-items: center; border: 1px solid var(--edge); border-radius: var(--radius-sm); padding: 1px 7px; background: var(--surface); }
 .sqd-app[data-mode='inline'] .sqd-hero { padding-bottom: 10px; }
 .sqd-app[data-mode='inline'] .sqd-title { font-size: clamp(16px, 2.1cqi, 19px); line-height: 1.25; }
-.sqd-app[data-mode='inline'] .sqd-hero-value { font-size: 24px; }
 .sqd-app[data-mode='inline'] .sqd-notices--after { margin-top: -4px; }
 .sqd-app[data-mode='inline'] .sqd-context span:nth-child(n+5):not(.sqd-context--warning):not(.sqd-context--danger) { display: none; }
 .sqd-context .sqd-context--warning { color: var(--warning-text); border-color: var(--warning-edge); background: var(--warning-muted); }
@@ -232,7 +228,7 @@ button { color: inherit; }
 .sqd-metric-value { margin-top: 3px; color: var(--fg-value); font: 500 17px/24px var(--sqd-font-mono); letter-spacing: -0.01em; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .sqd-app[data-mode='fullscreen'] .sqd-metric-value { font-size: 20px; line-height: 26px; }
 .sqd-metric-unit { color: var(--fg-muted); font: 400 11px/14px var(--sqd-font-mono); letter-spacing: 0.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.sqd-metric--primary .sqd-metric-value { color: var(--fg); }
+.sqd-metric--primary .sqd-metric-value { color: var(--fg); font-weight: 560; }
 .sqd-metric-subtitle { margin-top: 2px; color: var(--fg-muted); font-size: 11px; line-height: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 /* ── Panels · regions of one sheet, divided rather than boxed ────────────
@@ -382,7 +378,10 @@ button.sqd-chart-hit[aria-pressed='true'] { background: var(--accent-subtle); bo
 .sqd-hash { font-family: var(--sqd-font-mono); font-size: 12px; font-variant-numeric: tabular-nums slashed-zero; font-variant-ligatures: none; letter-spacing: 0; overflow-wrap: anywhere; }
 .sqd-table-pagination { display: flex; align-items: center; justify-content: flex-end; gap: 10px; padding-top: 10px; }
 .sqd-table-pagination .sqd-brand-subtitle { font-family: var(--sqd-font-mono); text-transform: none; letter-spacing: 0.01em; }
-.sqd-table-more { margin: 8px 0 0; color: var(--fg-muted); font: 400 11px/16px var(--sqd-font-mono); }
+.sqd-table-more { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 14px; margin: 8px 0 0; color: var(--fg-muted); font: 400 11px/16px var(--sqd-font-mono); }
+.sqd-more-button { margin: 0; border: 0; padding: 0; background: transparent; color: var(--accent); font: inherit; cursor: pointer; text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--accent-line); }
+.sqd-more-button:hover { text-decoration-color: currentColor; }
+.sqd-more-button:focus-visible { border-radius: 2px; outline: 2px solid var(--accent); outline-offset: 2px; }
 
 /* ── Activity timeline · direction shown by dot, sign, and column ───────── */
 .sqd-timeline { display: grid; }
@@ -470,10 +469,6 @@ button.sqd-chart-hit[aria-pressed='true'] { background: var(--accent-subtle); bo
 @container sqd (min-width: 1100px) {
   .sqd-app[data-mode='fullscreen'] .sqd-workspace--split { grid-template-columns: minmax(0, 8fr) minmax(0, 4fr); }
 }
-@container sqd (max-width: 600px) {
-  .sqd-hero { grid-template-columns: 1fr; gap: 4px 0; }
-  .sqd-hero-figure { grid-column: 1; grid-row: auto; justify-self: start; text-align: left; padding-top: 8px; }
-}
 @container sqd (max-width: 820px) {
   .sqd-title { max-width: none; }
   .sqd-grid .sqd-card--half { grid-column: span 12; }
@@ -492,7 +487,6 @@ button.sqd-chart-hit[aria-pressed='true'] { background: var(--accent-subtle); bo
   .sqd-brand-copy .sqd-brand-subtitle { display: none; }
   .sqd-query { display: none; }
   .sqd-actions { gap: 4px; }
-  .sqd-hero-value { font-size: 24px; }
   .sqd-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .sqd-metric + .sqd-metric { border-left: 0; padding-left: 0; }
   .sqd-metric:nth-child(even) { border-left: 1px solid var(--edge); padding-left: 14px; }

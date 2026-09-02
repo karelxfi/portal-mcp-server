@@ -40,6 +40,13 @@ const themeToggle = document.querySelector('#theme')
 let theme = 'dark'
 let displayMode = 'inline'
 let bridge
+/* Real hosts size the inline card from ui/notifications/size-changed; do the
+   same so the local card is exactly as tall as the app's content. */
+let inlineHeight = 320
+function fitFrame() {
+  if (displayMode === 'inline') frame.style.height = inlineHeight + 'px'
+  else frame.style.height = ''
+}
 
 function context() {
   return { theme, displayMode, availableDisplayModes: ['inline', 'fullscreen'] }
@@ -48,6 +55,7 @@ function context() {
 function applyMode(mode) {
   displayMode = mode
   document.body.dataset.mode = mode
+  fitFrame()
 }
 
 function say(text) {
@@ -82,6 +90,11 @@ async function main() {
     return { mode }
   }
   bridge.oncalltool = async (params) => callTool(params)
+  bridge.onsizechange = ({ height }) => {
+    if (typeof height !== 'number' || displayMode !== 'inline') return
+    inlineHeight = Math.max(120, Math.ceil(height))
+    fitFrame()
+  }
   bridge.onopenlink = async ({ url }) => {
     window.open(url, '_blank', 'noopener')
     say('Opened ' + url)
@@ -156,7 +169,7 @@ const page = (presets: typeof PRESETS) => `<!doctype html>
   body[data-theme='light'] #custom { background: #fff; border-color: #c9ccd3; }
   #status { margin-left: auto; opacity: 0.75; font: 12px ui-monospace, monospace; }
   main { padding: 14px; }
-  #frame { width: 100%; max-width: 760px; height: 900px; border: 1px solid #26282c; border-radius: 12px; background: transparent; display: block; margin: 0 auto; }
+  #frame { width: 100%; max-width: 760px; height: 320px; border: 1px solid #26282c; border-radius: 12px; background: transparent; display: block; margin: 0 auto; }
   body[data-theme='light'] #frame { border-color: #d9dbe0; }
   body[data-mode='fullscreen'] #frame { position: fixed; inset: 0; width: 100vw; height: 100vh; max-width: none; border: 0; border-radius: 0; z-index: 10; }
   .hint { max-width: 760px; margin: 0 auto 10px; opacity: 0.7; }

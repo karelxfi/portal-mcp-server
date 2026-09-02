@@ -56,7 +56,7 @@ const TABLE_PAGE_SIZE = 10
 const INLINE_TABLE_ROWS = 5
 const MAX_TIMELINE_ROWS = 40
 const MAX_INLINE_TIMELINE_ROWS = 6
-const MAX_RANKED_ROWS = 16
+const MAX_RANKED_ROWS = 10
 const MAX_INLINE_RANKED_ROWS = 6
 const MAX_STAT_ROWS = 30
 const CHART_COLORS = ['var(--chart-1)', 'var(--chart-2)', 'var(--chart-3)', 'var(--chart-4)', 'var(--chart-5)']
@@ -560,17 +560,6 @@ function masthead(payload: Record<string, unknown>, actions?: ExplorerActions): 
   if (subtitleText && subtitleText !== claim && subtitleText !== answer && subtitleText.length <= 140)
     section.append(element('p', 'sqd-subtitle', subtitleText))
 
-  const heroSpec = primaryMetric(payload)
-  if (heroSpec) {
-    const value = getByPath(payload, text(heroSpec.value_path))
-    if (value !== undefined && value !== null && value !== '') {
-      const figure = element('div', 'sqd-hero-figure')
-      figure.append(element('div', 'sqd-hero-value', formatValue(value, text(heroSpec.format), text(heroSpec.unit))))
-      figure.append(element('div', 'sqd-hero-label', text(heroSpec.label ?? 'Headline value')))
-      section.append(figure)
-    }
-  }
-
   return section
 }
 
@@ -626,11 +615,11 @@ function metricCards(payload: Record<string, unknown>): HTMLElement | null {
       }
     }
   }
-  const heroSpec = specs.length ? primaryMetric(payload) : undefined
-  /* A yes/no flag is state, not a measurement; it stays in the receipt. */
-  const cards = (specs.length ? specs : fallbacks).filter(
-    (spec) => spec !== heroSpec && typeof getByPath(payload, text(spec.value_path)) !== 'boolean',
-  )
+  /* The primary metric leads the row; there is no separate hero figure. A
+     yes/no flag is state, not a measurement; it stays in the receipt. */
+  const cards = (specs.length ? specs : fallbacks)
+    .filter((spec) => typeof getByPath(payload, text(spec.value_path)) !== 'boolean')
+    .sort((left, right) => Number(right.emphasis === 'primary') - Number(left.emphasis === 'primary'))
   if (!cards.length) return null
   const grid = element('section', 'sqd-metrics')
   grid.setAttribute('aria-label', 'Key metrics')
@@ -2013,87 +2002,115 @@ function tablePanel(payload: Record<string, unknown>, panel: Panel, options: Pan
   return root
 }
 
-function panelLimit(label: string, shown: number, available: number, options: PanelOptions): HTMLElement[] {
-  if (shown >= available) return []
+/* Inline points at full screen. Full screen shows a short page with one
+   control that reveals every row already in the result, then folds back. */
+function panelLimit(
+  label: string,
+  shown: number,
+  available: number,
+  options: PanelOptions,
+  toggle?: { expanded: boolean; pageSize: number; onToggle: (expanded: boolean) => void },
+): HTMLElement[] {
+  if (!toggle && shown >= available) return []
   if (options.mode === 'inline') {
     return [element('p', 'sqd-table-more', `${shown} of ${available} ${label} shown. Open full screen for every row.`)]
   }
-  const limitNotice = displayLimitNotice(label, shown, available)
-  return limitNotice ? [limitNotice] : []
+  if (!toggle) {
+    const limitNotice = displayLimitNotice(label, shown, available)
+    return limitNotice ? [limitNotice] : []
+  }
+  if (available <= toggle.pageSize) return []
+  const line = element('p', 'sqd-table-more')
+  line.append(element('span', 'sqd-table-more-copy', `${shown} of ${available} ${label}`))
+  const button = element(
+    'button',
+    'sqd-more-button',
+    toggle.expanded ? `Show ${toggle.pageSize}` : `Show all ${available}`,
+  )
+  button.type = 'button'
+  button.addEventListener('click', () => toggle.onToggle(!toggle.expanded))
+  line.append(button)
+  return [line]
 }
 
 function timelinePanel(payload: Record<string, unknown>, panel: Panel, options: PanelOptions): HTMLElement {
   const sourceRows = numberRows(payload, panel)
-  const rows = sourceRows.slice(0, options.mode === 'inline' ? MAX_INLINE_TIMELINE_ROWS : MAX_TIMELINE_ROWS)
+  const pageSize = options.mode === 'inline' ? MAX_INLINE_TIMELINE_ROWS : MAX_TIMELINE_ROWS
   const { root, body } = card(text(panel.title ?? 'Activity timeline'), text(panel.subtitle))
-  const timeline = element('div', 'sqd-timeline')
-  const valueKey = text(panel.value_key)
-  const directionKey = text(panel.direction_key)
-  for (const row of rows) {
-    const event = element('article', 'sqd-event')
-    const stamp = text(getByPath(row, text(panel.timestamp_key)))
-    const time = element('time', 'sqd-event-time', eventTimeLabel(stamp))
-    if (time.textContent !== stamp) {
-      time.title = stamp
-      time.setAttribute('aria-label', stamp)
-    }
-    event.append(time)
-    const direction = directionKey ? text(getByPath(row, directionKey)).toLowerCase() : ''
-    const dotTone = direction === 'in' ? ' sqd-event-dot--in' : direction === 'out' ? ' sqd-event-dot--out' : ''
-    event.append(element('span', `sqd-event-dot${dotTone}`))
-    const copy = element('div')
-    const rawTitle = text(getByPath(row, text(panel.title_key)) ?? 'Activity')
-    const titleNode = element('div', 'sqd-event-title')
-    const titleLink = identifierLink(payload, text(panel.title_key), rawTitle, options.actions, rawTitle)
-    if (titleLink) titleNode.append(titleLink)
-    else titleNode.textContent = /^[a-z0-9]+(?:_[a-z0-9]+)*$/.test(rawTitle) ? humanize(rawTitle) : rawTitle
-    copy.append(titleNode)
-    const subtitleParts = asArray(panel.subtitle_keys)
-      .map((key) => ({ key: text(key), value: text(getByPath(row, text(key))) }))
-      .filter((part) => part.value)
-    const joiner = directionKey && subtitleParts.length === 2 ? ' → ' : ' · '
-    const subtitleNode = element('div', 'sqd-event-subtitle')
-    subtitleParts.forEach((part, index) => {
-      if (index) subtitleNode.append(joiner)
-      subtitleNode.append(identifierNode(payload, part.key, part.value, options.actions))
-    })
-    /* The row's transaction stays one click away even when the title is a
-       type or an amount. */
-    const txKey = ['tx_hash', 'hash', 'transaction_hash', 'signature'].find((key) => typeof row[key] === 'string')
-    const txValue = txKey ? text(row[txKey]) : ''
-    if (txKey && txValue && rawTitle.split(':')[0] !== txValue && !subtitleParts.some((part) => part.key === txKey)) {
-      if (subtitleParts.length) subtitleNode.append(' · ')
-      subtitleNode.append(identifierNode(payload, txKey, text(row[txKey]), options.actions))
-    }
-    if (subtitleNode.childNodes.length) copy.append(subtitleNode)
-    event.append(copy)
-    if (valueKey) {
-      const rawValue = getByPath(row, valueKey)
-      const amount = numeric(rawValue)
-      if (amount !== undefined) {
-        const tone = direction === 'in' ? 'in' : direction === 'out' ? 'out' : 'flat'
-        const sign = direction === 'in' ? '+' : direction === 'out' ? '-' : ''
-        const unit = panel.unit_key ? text(getByPath(row, text(panel.unit_key))) || text(panel.unit) : text(panel.unit)
-        event.append(
-          element(
-            'span',
-            `sqd-event-value sqd-event-value--${tone}`,
-            `${sign}${formatValue(amount, text(panel.value_format), unit)}`,
-          ),
-        )
+  const render = (expanded: boolean) => {
+    const rows = expanded ? sourceRows : sourceRows.slice(0, pageSize)
+    const timeline = element('div', 'sqd-timeline')
+    const valueKey = text(panel.value_key)
+    const directionKey = text(panel.direction_key)
+    for (const row of rows) {
+      const event = element('article', 'sqd-event')
+      const stamp = text(getByPath(row, text(panel.timestamp_key)))
+      const time = element('time', 'sqd-event-time', eventTimeLabel(stamp))
+      if (time.textContent !== stamp) {
+        time.title = stamp
+        time.setAttribute('aria-label', stamp)
       }
+      event.append(time)
+      const direction = directionKey ? text(getByPath(row, directionKey)).toLowerCase() : ''
+      const dotTone = direction === 'in' ? ' sqd-event-dot--in' : direction === 'out' ? ' sqd-event-dot--out' : ''
+      event.append(element('span', `sqd-event-dot${dotTone}`))
+      const copy = element('div')
+      const rawTitle = text(getByPath(row, text(panel.title_key)) ?? 'Activity')
+      const titleNode = element('div', 'sqd-event-title')
+      const titleLink = identifierLink(payload, text(panel.title_key), rawTitle, options.actions, rawTitle)
+      if (titleLink) titleNode.append(titleLink)
+      else titleNode.textContent = /^[a-z0-9]+(?:_[a-z0-9]+)*$/.test(rawTitle) ? humanize(rawTitle) : rawTitle
+      copy.append(titleNode)
+      const subtitleParts = asArray(panel.subtitle_keys)
+        .map((key) => ({ key: text(key), value: text(getByPath(row, text(key))) }))
+        .filter((part) => part.value)
+      const joiner = directionKey && subtitleParts.length === 2 ? ' → ' : ' · '
+      const subtitleNode = element('div', 'sqd-event-subtitle')
+      subtitleParts.forEach((part, index) => {
+        if (index) subtitleNode.append(joiner)
+        subtitleNode.append(identifierNode(payload, part.key, part.value, options.actions))
+      })
+      /* The row's transaction stays one click away even when the title is a
+         type or an amount. */
+      const txKey = ['tx_hash', 'hash', 'transaction_hash', 'signature'].find((key) => typeof row[key] === 'string')
+      const txValue = txKey ? text(row[txKey]) : ''
+      if (txKey && txValue && rawTitle.split(':')[0] !== txValue && !subtitleParts.some((part) => part.key === txKey)) {
+        if (subtitleParts.length) subtitleNode.append(' · ')
+        subtitleNode.append(identifierNode(payload, txKey, text(row[txKey]), options.actions))
+      }
+      if (subtitleNode.childNodes.length) copy.append(subtitleNode)
+      event.append(copy)
+      if (valueKey) {
+        const rawValue = getByPath(row, valueKey)
+        const amount = numeric(rawValue)
+        if (amount !== undefined) {
+          const tone = direction === 'in' ? 'in' : direction === 'out' ? 'out' : 'flat'
+          const sign = direction === 'in' ? '+' : direction === 'out' ? '-' : ''
+          const unit = panel.unit_key ? text(getByPath(row, text(panel.unit_key))) || text(panel.unit) : text(panel.unit)
+          event.append(
+            element(
+              'span',
+              `sqd-event-value sqd-event-value--${tone}`,
+              `${sign}${formatValue(amount, text(panel.value_format), unit)}`,
+            ),
+          )
+        }
+      }
+      timeline.append(event)
     }
-    timeline.append(event)
+    body.replaceChildren(rows.length ? timeline : element('div', 'sqd-chart-empty', 'No activity rows were returned.'))
+    body.append(...panelLimit('timeline rows', rows.length, sourceRows.length, options, { expanded, pageSize, onToggle: render }))
   }
-  body.append(rows.length ? timeline : element('div', 'sqd-chart-empty', 'No activity rows were returned.'))
-  body.append(...panelLimit('timeline rows', rows.length, sourceRows.length, options))
+  render(false)
   return root
 }
 
 function rankedPanel(payload: Record<string, unknown>, panel: Panel, options: PanelOptions): HTMLElement {
   const sourceRows = numberRows(payload, panel)
-  const rows = sourceRows.slice(0, options.mode === 'inline' ? MAX_INLINE_RANKED_ROWS : MAX_RANKED_ROWS)
-  const values = rows
+  const pageSize = options.mode === 'inline' ? MAX_INLINE_RANKED_ROWS : MAX_RANKED_ROWS
+  /* Bars scale to the largest value in the whole result, so revealing more
+     rows never rescales the ones already on screen. */
+  const values = sourceRows
     .map((row) => numeric(getByPath(row, text(panel.value_key))))
     .filter((value): value is number => value !== undefined)
   const max = Math.max(...values, 1)
@@ -2102,30 +2119,34 @@ function rankedPanel(payload: Record<string, unknown>, panel: Panel, options: Pa
     text(panel.subtitle),
     panel.emphasis === 'primary' ? 'sqd-card--primary' : '',
   )
-  const ranked = element('div', 'sqd-ranked')
-  for (const row of rows) {
-    const value = numeric(getByPath(row, text(panel.value_key))) ?? 0
-    const item = element('div', 'sqd-ranked-row')
-    const rawLabel = text(getByPath(row, text(panel.category_key)) ?? 'Unknown')
-    const label = element(
-      'div',
-      `sqd-ranked-label${isHexIdentifier(rawLabel) ? ' sqd-ranked-label--id' : ''}`,
-      shortIdentifier(rawLabel),
-    )
-    label.title = rawLabel
-    const labelLink = identifierLink(payload, text(panel.category_key), rawLabel, options.actions)
-    if (labelLink) label.replaceChildren(labelLink)
-    item.append(label)
-    const track = element('div', 'sqd-ranked-track')
-    const fill = element('div', 'sqd-ranked-fill')
-    fill.style.width = `${Math.max(2, (value / max) * 100)}%`
-    track.append(fill)
-    item.append(track)
-    item.append(element('div', 'sqd-ranked-value', formatValue(value, text(panel.value_format), text(panel.unit))))
-    ranked.append(item)
+  const render = (expanded: boolean) => {
+    const rows = expanded ? sourceRows : sourceRows.slice(0, pageSize)
+    const ranked = element('div', 'sqd-ranked')
+    for (const row of rows) {
+      const value = numeric(getByPath(row, text(panel.value_key))) ?? 0
+      const item = element('div', 'sqd-ranked-row')
+      const rawLabel = text(getByPath(row, text(panel.category_key)) ?? 'Unknown')
+      const label = element(
+        'div',
+        `sqd-ranked-label${isHexIdentifier(rawLabel) ? ' sqd-ranked-label--id' : ''}`,
+        shortIdentifier(rawLabel),
+      )
+      label.title = rawLabel
+      const labelLink = identifierLink(payload, text(panel.category_key), rawLabel, options.actions)
+      if (labelLink) label.replaceChildren(labelLink)
+      item.append(label)
+      const track = element('div', 'sqd-ranked-track')
+      const fill = element('div', 'sqd-ranked-fill')
+      fill.style.width = `${Math.max(2, (value / max) * 100)}%`
+      track.append(fill)
+      item.append(track)
+      item.append(element('div', 'sqd-ranked-value', formatValue(value, text(panel.value_format), text(panel.unit))))
+      ranked.append(item)
+    }
+    body.replaceChildren(rows.length ? ranked : element('div', 'sqd-chart-empty', 'No ranked values were returned.'))
+    body.append(...panelLimit('ranked rows', rows.length, sourceRows.length, options, { expanded, pageSize, onToggle: render }))
   }
-  body.append(rows.length ? ranked : element('div', 'sqd-chart-empty', 'No ranked values were returned.'))
-  body.append(...panelLimit('ranked rows', rows.length, sourceRows.length, options))
+  render(false)
   return root
 }
 

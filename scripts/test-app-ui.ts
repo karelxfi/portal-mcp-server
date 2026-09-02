@@ -566,6 +566,20 @@ async function validate(page: Page, fixture: string, viewport: (typeof viewports
       'Large tables should disclose the local page size',
     )
     assert((await page.locator('.sqd-display-limit--caution').count()) === 0, 'a complete local page is a caption, not a warning')
+    assert((await page.locator('.sqd-hero-figure').count()) === 0, 'The headline number lives in the metric row, not beside the title')
+    assert(
+      (await page.locator('.sqd-metric').first().innerText()).toLowerCase().includes('transactions'),
+      'The primary metric leads the metric row',
+    )
+    const ranked = page.locator('.sqd-ranked-row')
+    assert((await ranked.count()) === 10, 'Ranked panels show ten rows by default')
+    const more = page.locator('.sqd-more-button')
+    assert((await more.innerText()) === `Show all ${rows.length}`, 'The ranked panel offers every row in one control')
+    await more.click()
+    assert((await ranked.count()) === rows.length, 'Show all reveals every ranked row already in the result')
+    assert((await more.innerText()) === 'Show 10', 'The control folds the panel back')
+    await more.click()
+    assert((await ranked.count()) === 10, 'Folding back returns to the default page')
     assert(
       (await page.locator('.sqd-table-pagination').innerText()).includes(`Page 1 of ${pages}`),
       'Large tables should expose page state',
