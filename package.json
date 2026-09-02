@@ -22,6 +22,7 @@
     "build:app": "node scripts/generate-app-compat-manifest.mjs && node scripts/build-activity-explorer.mjs",
     "build:app-preview": "node scripts/build-activity-explorer-preview.mjs",
     "record:app-fixtures": "tsx scripts/record-app-fixtures.ts",
+    "app:host": "tsx scripts/serve-app-host.ts",
     "build": "npm run clean && npm run build:app && tsc && npm run copy:third-party-licenses",
     "copy:third-party-licenses": "node scripts/copy-third-party-licenses.mjs",
     "start": "node dist/index.js",
