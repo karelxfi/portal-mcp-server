@@ -594,6 +594,12 @@ async function validate(page: Page, fixture: string, viewport: (typeof viewports
       (await page.locator('table.sqd-table').innerText()).includes(String(rows[10]?.address)),
       'The second page should start at the exact next row',
     )
+    await page.locator('th .sqd-sort').first().click()
+    const sortMark = await page
+      .locator('th[aria-sort="ascending"] .sqd-sort, th[aria-sort="descending"] .sqd-sort')
+      .first()
+      .evaluate((node) => getComputedStyle(node, '::after').content)
+    assert(/[↑↓]/.test(sortMark), `The sort indicator must be an arrow glyph, not an escape (${sortMark})`)
     const lastAddress = String(rows.at(-1)?.address)
     await page.locator('.sqd-input').fill(lastAddress)
     assert(

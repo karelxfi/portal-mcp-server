@@ -365,8 +365,8 @@ button.sqd-chart-hit[aria-pressed='true'] { background: var(--accent-subtle); bo
 .sqd-table td[data-signed='negative'] { color: var(--down-text); }
 .sqd-sort, .sqd-row-button { width: 100%; padding: 0; border: 0; background: transparent; color: inherit; text-align: inherit; cursor: pointer; }
 .sqd-sort { display: inline-flex; align-items: center; gap: 5px; }
-.sqd-table th[aria-sort='ascending'] .sqd-sort::after { content: '\\2191'; color: var(--accent); }
-.sqd-table th[aria-sort='descending'] .sqd-sort::after { content: '\\2193'; color: var(--accent); }
+.sqd-table th[aria-sort='ascending'] .sqd-sort::after { content: '↑'; color: var(--accent); }
+.sqd-table th[aria-sort='descending'] .sqd-sort::after { content: '↓'; color: var(--accent); }
 .sqd-row-button { color: var(--fg); font-family: var(--sqd-font-mono); font-size: 12px; letter-spacing: 0; }
 .sqd-row-button:hover { color: var(--accent); }
 .sqd-chain-logo { width: 16px; height: 16px; border-radius: 50%; margin-right: 6px; vertical-align: -4px; object-fit: contain; background: var(--surface-elevated); }
