@@ -144,7 +144,8 @@ export function recordActivityExplorerResult(params: {
 const resourceUiMeta = {
   csp: {
     connectDomains: [] as string[],
-    resourceDomains: [] as string[],
+    /* Chain logos come from SQD's own CDN and site; nothing else loads. */
+    resourceDomains: ['https://cdn.subsquid.io', 'https://sqd.dev'],
   },
   domain: 'https://portal.sqd.dev',
 }

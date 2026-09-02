@@ -370,6 +370,8 @@ button.sqd-chart-hit[aria-pressed='true'] { background: var(--accent-subtle); bo
 .sqd-table th[aria-sort='descending'] .sqd-sort::after { content: '\\2193'; color: var(--accent); }
 .sqd-row-button { color: var(--fg); font-family: var(--sqd-font-mono); font-size: 12px; letter-spacing: 0; }
 .sqd-row-button:hover { color: var(--accent); }
+.sqd-chain-logo { width: 16px; height: 16px; border-radius: 50%; margin-right: 6px; vertical-align: -4px; object-fit: contain; background: var(--surface-elevated); }
+.sqd-query-chain { display: inline-flex; align-items: center; }
 .sqd-link { color: inherit; text-decoration: underline; text-decoration-color: var(--edge-strong); text-decoration-thickness: 1px; text-underline-offset: 3px; border-radius: 2px; }
 .sqd-link:hover { color: var(--accent); text-decoration-color: currentColor; }
 .sqd-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }

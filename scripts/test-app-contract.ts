@@ -359,7 +359,10 @@ async function main() {
       'the app should keep ephemeral history in the active UI instance instead of browser storage',
     )
     assert(content._meta?.ui?.csp?.connectDomains?.length === 0, 'the app must not make external network requests')
-    assert(content._meta?.ui?.csp?.resourceDomains?.length === 0, 'the app must not load external resources')
+    assert(
+      JSON.stringify(content._meta?.ui?.csp?.resourceDomains) === JSON.stringify(['https://cdn.subsquid.io', 'https://sqd.dev']),
+      'the app loads chain logos only from SQD domains',
+    )
     assert(
       content._meta?.['openai/widgetDomain'] === 'https://portal.sqd.dev',
       'ChatGPT compatibility metadata should use the canonical SQD domain',

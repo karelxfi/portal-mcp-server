@@ -9,7 +9,7 @@ import {
   type UTCTimestamp,
 } from 'lightweight-charts'
 
-import { explorerLink, identifierKind } from './explorers.js'
+import { chainFor, chainLogoUrl, explorerLink, identifierKind } from './explorers.js'
 import { ACTIVITY_EXPLORER_CSS } from './styles.js'
 
 export type ExplorerState = {
@@ -361,8 +361,32 @@ function queryChip(payload: Record<string, unknown> | null, currentArgs: Record<
   const chip = element('div', 'sqd-query')
   chip.setAttribute('aria-label', `Query: ${parts.join(', ')}`)
   chip.title = [network, subjectRaw, window].filter(Boolean).join(' · ')
-  for (const part of parts) chip.append(element('span', undefined, part))
+  const badge = chainBadge(network, 'sqd-query-chain')
+  if (badge) chip.append(badge)
+  for (const part of parts.slice(network ? 1 : 0)) chip.append(element('span', undefined, part))
   return chip
+}
+
+/* The chain's own logo and display name from SQD's network metadata. */
+function chainBadge(network: string, className: string): HTMLElement | null {
+  if (!network) return null
+  const chain = chainFor(network)
+  const badge = element('span', className)
+  const logo = chainLogoUrl(chain)
+  if (logo) {
+    const image = element('img', 'sqd-chain-logo') as HTMLImageElement
+    image.src = logo
+    image.alt = ''
+    image.width = 16
+    image.height = 16
+    image.loading = 'lazy'
+    image.referrerPolicy = 'no-referrer'
+    image.addEventListener('error', () => image.remove())
+    badge.append(image)
+  }
+  badge.append(document.createTextNode(chain?.name ?? network))
+  badge.title = network
+  return badge
 }
 
 function canFullscreen(state: ExplorerState, actions: ExplorerActions): boolean {
@@ -491,9 +515,9 @@ function masthead(payload: Record<string, unknown>, actions?: ExplorerActions): 
 
   const eyebrow = element('div', 'sqd-eyebrow')
   if (state.tone) eyebrow.append(element('span', `sqd-dot sqd-dot--${state.tone}`))
-  const overlineParts = [mode.label, text(meta.network ?? meta.dataset ?? payload.network), text(summary.coin)]
-    .filter(Boolean)
-    .join(' · ')
+  const network = text(meta.network ?? meta.dataset ?? payload.network)
+  const chain = chainFor(network)
+  const overlineParts = [mode.label, chain?.name ?? network, text(summary.coin)].filter(Boolean).join(' · ')
   eyebrow.append(document.createTextNode(overlineParts))
   section.append(eyebrow)
 

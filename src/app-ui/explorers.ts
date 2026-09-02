@@ -2,6 +2,8 @@
    person from an exact identifier in the Explorer to the same record on the
    network's usual explorer; the App never fetches anything from them. */
 
+import { CHAINS, type ChainInfo, LOGO_CDN } from './chains.generated.js'
+
 export type ExplorerKind = 'tx' | 'address' | 'block'
 
 export type Explorer = { name: string; tx: string; address: string; block: string }
@@ -84,8 +86,43 @@ const ALIASES: Record<string, string> = {
   'hyperliquid-replica-cmds': 'hyperliquid-mainnet',
 }
 
+const PATHS: Record<string, Pick<Explorer, 'tx' | 'address' | 'block'>> = {
+  evm: { tx: '/tx/{id}', address: '/address/{id}', block: '/block/{id}' },
+  solana: { tx: '/tx/{id}', address: '/address/{id}', block: '/block/{id}' },
+  bitcoin: { tx: '/tx/{id}', address: '/address/{id}', block: '/block-height/{id}' },
+  substrate: { tx: '/extrinsic/{id}', address: '/account/{id}', block: '/block/{id}' },
+  hyperliquidFills: { tx: '/explorer/tx/{id}', address: '/explorer/address/{id}', block: '/explorer/block/{id}' },
+  hyperliquidReplicaCmds: { tx: '/explorer/tx/{id}', address: '/explorer/address/{id}', block: '/explorer/block/{id}' },
+}
+
+export function chainFor(network: string): ChainInfo | undefined {
+  const key = network.trim().toLowerCase()
+  return CHAINS[key] ?? CHAINS[ALIASES[key] ?? '']
+}
+
+export function chainLogoUrl(chain: ChainInfo | undefined): string {
+  if (!chain?.logo) return ''
+  return /^https?:/.test(chain.logo) ? chain.logo : `${LOGO_CDN}${chain.logo}`
+}
+
+/* SQD's chain metadata names the explorer; the record paths follow the
+   chain kind. The hand-written table covers chains without one. */
 export function explorerFor(network: string): Explorer | undefined {
   const key = network.trim().toLowerCase()
+  const chain = chainFor(key)
+  if (chain?.explorer) {
+    const base = chain.explorer.replace(/\/+$/, '')
+    const kind = chain.kind === 'evm' && /hyperliquid/.test(base) ? 'hyperliquidFills' : chain.kind
+    const paths = PATHS[kind] ?? PATHS.evm
+    if (/tronscan/.test(base))
+      return { name: 'Tronscan', tx: `${base}/#/transaction/{id}`, address: `${base}/#/address/{id}`, block: `${base}/#/block/{id}` }
+    return {
+      name: base.replace(/^https?:\/\//, ''),
+      tx: `${base}${paths.tx}`,
+      address: `${base}${paths.address}`,
+      block: `${base}${paths.block}`,
+    }
+  }
   return EXPLORERS[ALIASES[key] ?? key]
 }
 

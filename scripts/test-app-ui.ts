@@ -88,7 +88,10 @@ async function validate(page: Page, fixture: string, viewport: (typeof viewports
   })
   page.on('pageerror', (error) => errors.push(error.message))
   page.on('request', (request) => {
-    if (!request.url().startsWith(baseUrl)) externalRequests.push(request.url())
+    /* Chain logos from SQD's CDN are the one sanctioned external load. */
+    const url = request.url()
+    const chainLogo = url.startsWith('https://cdn.subsquid.io/img/networks/') || url.startsWith('https://sqd.dev/images/')
+    if (!url.startsWith(baseUrl) && !chainLogo) externalRequests.push(url)
   })
   const startedAt = performance.now()
   await page.goto(cellUrl(fixture, viewport), { waitUntil: 'load' })
@@ -503,6 +506,8 @@ async function validate(page: Page, fixture: string, viewport: (typeof viewports
       (await page.locator('table.sqd-table').first().locator('tbody tr').count()) === WALLET_FIXTURE_ROW_COUNT,
       'wallet table should preserve every exact activity row',
     )
+    assert((await page.locator('.sqd-eyebrow').innerText()).toLowerCase().includes('base'), 'the eyebrow names the chain by its display name')
+    assert((await page.locator('.sqd-query .sqd-chain-logo').count()) === 1, 'the query chip carries the chain logo')
     const links = page.locator('a.sqd-link')
     assert((await links.count()) > 0, 'wallet identifiers must link to the public explorer')
     const hrefs = await links.evaluateAll((nodes) => nodes.map((node) => (node as HTMLAnchorElement).href))
