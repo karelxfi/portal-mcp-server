@@ -54,26 +54,19 @@ const READ_ONLY_TOOL_ANNOTATIONS = {
  * tool-specific blockchain data. The catchall is intentional: transaction,
  * log, analytics, and market-data tools expose different primary data keys,
  * while the documented envelope stays stable across the full catalog.
+ *
+ * This schema is serialised once per tool in tools/list, so every token here
+ * is paid 28 times per session. Keep descriptions short and leave free-form
+ * blocks untyped; `npm run test:catalog-tokens` guards the total.
  */
 const PORTAL_TOOL_OUTPUT_SCHEMA = z
   .object({
-    answer: z.string().optional().describe('Concise answer grounded in the returned blockchain data.'),
-    display: z.record(z.string(), z.unknown()).optional().describe('Plain-language labels for presenting the result.'),
-    next_steps: z
-      .object({
-        actions: z.array(z.record(z.string(), z.unknown())),
-        continuation: z.record(z.string(), z.unknown()).optional(),
-        custom_data: z.record(z.string(), z.unknown()).optional(),
-      })
-      .catchall(z.unknown())
-      .optional()
-      .describe('Safe follow-up actions and continuation guidance.'),
-    items: z.array(z.unknown()).optional().describe('Primary result rows when the tool returns a list.'),
-    value: z.unknown().optional().describe('Primary result when the tool returns a scalar value.'),
-    investigation: z
-      .record(z.string(), z.unknown())
-      .optional()
-      .describe('Evidence paths, useful pivots, and result limitations.'),
+    answer: z.string().optional().describe('Answer grounded in the returned data.'),
+    display: z.unknown().optional().describe('Labels for presenting the result.'),
+    next_steps: z.unknown().optional().describe('Safe follow-up actions and continuation guidance.'),
+    items: z.array(z.unknown()).optional().describe('Primary rows for list results.'),
+    value: z.unknown().optional().describe('Primary scalar result.'),
+    investigation: z.unknown().optional().describe('Evidence paths, pivots, and limitations.'),
     error: z
       .object({
         code: z.string(),
@@ -85,30 +78,18 @@ const PORTAL_TOOL_OUTPUT_SCHEMA = z
       })
       .catchall(z.unknown())
       .optional()
-      .describe('Structured failure details when the tool cannot complete the request.'),
-    _meta: z
-      .record(z.string(), z.unknown())
-      .optional()
-      .describe('Network, block range, timing, and row-count metadata.'),
-    _summary: z.string().optional().describe('Human-readable summary of the result.'),
-    _tool_contract: z
-      .record(z.string(), z.unknown())
-      .optional()
-      .describe('Tool identity, intent, and supported blockchain families.'),
-    _pagination: z
-      .record(z.string(), z.unknown())
-      .optional()
-      .describe('Pagination state and an optional continuation cursor.'),
-    _ordering: z.unknown().optional().describe('Ordering guarantees for the returned data.'),
-    _freshness: z.unknown().optional().describe('Freshness and finality information for the returned data.'),
-    _coverage: z.unknown().optional().describe('Completeness of the requested window and result set.'),
-    _evidence: z
-      .record(z.string(), z.unknown())
-      .optional()
-      .describe('Replayable arguments, exact-data digest, row count, and completeness receipt.'),
-    _execution: z.record(z.string(), z.unknown()).optional().describe('Bounded execution and scan details.'),
-    _ui: z.unknown().optional().describe('Optional chart, table, and follow-up presentation metadata.'),
-    _app: z.record(z.string(), z.unknown()).optional().describe('SQD Explorer identity and honest host-render state.'),
+      .describe('Structured failure details.'),
+    _meta: z.unknown().optional().describe('Network, block range, timing, and row counts.'),
+    _summary: z.string().optional().describe('Human-readable summary.'),
+    _tool_contract: z.unknown().optional().describe('Tool identity, intent, and chain families.'),
+    _pagination: z.unknown().optional().describe('Pagination state and next_cursor.'),
+    _ordering: z.unknown().optional().describe('Ordering guarantees.'),
+    _freshness: z.unknown().optional().describe('Freshness and finality.'),
+    _coverage: z.unknown().optional().describe('Window and result completeness.'),
+    _evidence: z.unknown().optional().describe('Replayable arguments, digest, row count, and receipt.'),
+    _execution: z.unknown().optional().describe('Bounded execution and scan details.'),
+    _ui: z.unknown().optional().describe('Chart, table, and follow-up presentation metadata.'),
+    _app: z.unknown().optional().describe('SQD Explorer identity and host-render state.'),
     _server: z
       .object({
         name: z.string(),
@@ -116,11 +97,11 @@ const PORTAL_TOOL_OUTPUT_SCHEMA = z
         commit: z.string(),
       })
       .optional()
-      .describe('Observable SQD server identity, exact release version, and the git commit it was built from.'),
-    pipes_handoff: z.unknown().optional().describe('Optional SQD Pipes guidance for custom data needs.'),
-    _notice: z.string().optional().describe('Important limitation or truncation notice.'),
-    _notices: z.array(z.string()).optional().describe('Important limitations or truncation notices.'),
-    _llm: z.unknown().optional().describe('Hints that help an AI client locate the primary evidence.'),
+      .describe('SQD server name, exact version, and git commit.'),
+    pipes_handoff: z.unknown().optional().describe('SQD Pipes guidance for custom data needs.'),
+    _notice: z.string().optional().describe('Limitation or truncation notice.'),
+    _notices: z.array(z.string()).optional().describe('Limitation or truncation notices.'),
+    _llm: z.unknown().optional().describe('Hints to locate the primary evidence.'),
   })
   .catchall(z.unknown())
 
@@ -159,9 +140,7 @@ export function registerPortalTool<InputShape extends ZodRawShape>(
     name,
     {
       title: getPortalToolTitle(name),
-      description: activityExplorerMeta
-        ? `${description}\n\nMCP APP: A successful result can open in the SQD Explorer with exact charts, tables, timelines, coverage, freshness, and safe follow-ups. A tool result is ready for the App but is not proof that the host rendered it.`
-        : description,
+      description,
       inputSchema: z.object(inputShape),
       outputSchema: PORTAL_TOOL_OUTPUT_SCHEMA,
       annotations: READ_ONLY_TOOL_ANNOTATIONS,

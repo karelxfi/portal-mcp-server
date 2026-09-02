@@ -4,13 +4,17 @@ These scripts all use the shared manifest in `scripts/tool-manifest.ts`, which k
 
 ## Two gates
 
-- `npm run test:offline` is the required pull-request check. It builds, runs `npm run lint` (Biome) and `npm run typecheck`, the `node --test` unit tests in `src/**/*.test.ts`, and every suite that needs no Portal access (lockfiles, workflow pins, lean surface, distribution manifests, fetch reliability, stdio backpressure, performance harness, tool admission, app contract, app UI, evidence receipts, investigation prompts, package contents). It passes with the network disabled.
+- `npm run test:offline` is the required pull-request check. It builds, runs `npm run lint` (Biome) and `npm run typecheck`, the `node --test` unit tests in `src/**/*.test.ts`, and every suite that needs no Portal access (lockfiles, workflow pins, lean surface, distribution manifests, fetch reliability, stdio backpressure, performance harness, tool admission, app contract, catalog tokens, app UI, evidence receipts, investigation prompts, package contents). It passes with the network disabled.
 - `npm run test:live` runs everything that talks to Portal or an installed client. CI runs it on every pull request as a reporting job that does not block, and in full on a `v*` tag.
 - `npm run test:all` (also `test:ci` and `test:release`) runs both.
 
 ## Unit tests
 
 Unit tests sit next to the code as `src/**/*.test.ts` and run with the built-in `node --test` runner through `tsx` (`npm run test:unit`, a few seconds, no network). They are excluded from `tsc` output and never ship in the package. Prefer them for pure helpers: parsing, exact arithmetic, cursors, validation, coverage rules, and characterisation of large modules on recorded responses (`src/app-ui/fixtures.recorded.ts`).
+
+## Catalog token gate
+
+`npm run test:catalog-tokens` (part of the offline gate) starts the server in-process for both surfaces (App disabled and App enabled), lists tools, prompts, and resources, counts tokens per tool component with the `o200k_base` tokenizer, and compares the result with `scripts/catalog-token-baseline.json`. It fails when the catalog total or any single tool grows more than 5% and prints the top ten tools to the job summary. Refresh the baseline deliberately with `npm run baseline:catalog-tokens -- --note "<why the cost changed>"` and record the new totals in `CHANGELOG.md`. With `ANTHROPIC_API_KEY` set, the Anthropic token-count API is queried for the same surfaces and printed beside the local count; the gate always uses the local count.
 
 ## Available scripts
 

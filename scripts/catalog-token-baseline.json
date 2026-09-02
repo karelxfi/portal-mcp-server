@@ -1,0 +1,588 @@
+{
+  "tokenizer": "o200k_base",
+  "max_growth_ratio": 0.05,
+  "generated_at": "2026-09-02T15:32:41.157Z",
+  "note": "v0.8.5 initial baseline after trimming the shared output schema and moving the per-tool App paragraph into the server instructions",
+  "surfaces": {
+    "app_disabled": {
+      "tools_total": 33709,
+      "prompts_total": 393,
+      "resources_total": 446,
+      "instructions_total": 134,
+      "catalog_total": 34682,
+      "tool_count": 28,
+      "tools": [
+        {
+          "name": "portal_evm_query_transactions",
+          "description": 420,
+          "input_schema": 1437,
+          "output_schema": 485,
+          "annotations": 19,
+          "meta": 0,
+          "other": 9,
+          "total": 2422
+        },
+        {
+          "name": "portal_solana_query_instructions",
+          "description": 127,
+          "input_schema": 1387,
+          "output_schema": 485,
+          "annotations": 19,
+          "meta": 0,
+          "other": 9,
+          "total": 2062
+        },
+        {
+          "name": "portal_evm_query_logs",
+          "description": 510,
+          "input_schema": 969,
+          "output_schema": 485,
+          "annotations": 19,
+          "meta": 0,
+          "other": 8,
+          "total": 2048
+        },
+        {
+          "name": "portal_evm_get_ohlc",
+          "description": 371,
+          "input_schema": 873,
+          "output_schema": 485,
+          "annotations": 19,
+          "meta": 0,
+          "other": 8,
+          "total": 1803
+        },
+        {
+          "name": "portal_get_time_series",
+          "description": 219,
+          "input_schema": 481,
+          "output_schema": 485,
+          "annotations": 19,
+          "meta": 0,
+          "other": 7,
+          "total": 1248
+        },
+        {
+          "name": "portal_hyperliquid_query_fills",
+          "description": 122,
+          "input_schema": 564,
+          "output_schema": 485,
+          "annotations": 19,
+          "meta": 0,
+          "other": 9,
+          "total": 1236
+        },
+        {
+          "name": "portal_evm_get_contract_deployment",
+          "description": 287,
+          "input_schema": 386,
+          "output_schema": 485,
+          "annotations": 19,
+          "meta": 0,
+          "other": 8,
+          "total": 1228
+        },
+        {
+          "name": "portal_evm_query_token_transfers",
+          "description": 230,
+          "input_schema": 441,
+          "output_schema": 485,
+          "annotations": 19,
+          "meta": 0,
+          "other": 7,
+          "total": 1228
+        },
+        {
+          "name": "portal_get_wallet_summary",
+          "description": 257,
+          "input_schema": 407,
+          "output_schema": 485,
+          "annotations": 19,
+          "meta": 0,
+          "other": 7,
+          "total": 1212
+        },
+        {
+          "name": "portal_substrate_query_calls",
+          "description": 211,
+          "input_schema": 443,
+          "output_schema": 485,
+          "annotations": 19,
+          "meta": 0,
+          "other": 9,
+          "total": 1209
+        },
+        {
+          "name": "portal_solana_query_transactions",
+          "description": 160,
+          "input_schema": 476,
+          "output_schema": 485,
+          "annotations": 19,
+          "meta": 0,
+          "other": 8,
+          "total": 1184
+        },
+        {
+          "name": "portal_substrate_get_analytics",
+          "description": 276,
+          "input_schema": 316,
+          "output_schema": 485,
+          "annotations": 19,
+          "meta": 0,
+          "other": 9,
+          "total": 1151
+        },
+        {
+          "name": "portal_substrate_query_events",
+          "description": 168,
+          "input_schema": 421,
+          "output_schema": 485,
+          "annotations": 19,
+          "meta": 0,
+          "other": 9,
+          "total": 1139
+        },
+        {
+          "name": "portal_get_recent_activity",
+          "description": 259,
+          "input_schema": 290,
+          "output_schema": 485,
+          "annotations": 19,
+          "meta": 0,
+          "other": 8,
+          "total": 1100
+        },
+        {
+          "name": "portal_solana_get_analytics",
+          "description": 161,
+          "input_schema": 377,
+          "output_schema": 485,
+          "annotations": 19,
+          "meta": 0,
+          "other": 8,
+          "total": 1088
+        },
+        {
+          "name": "portal_resolve_entity",
+          "description": 336,
+          "input_schema": 191,
+          "output_schema": 485,
+          "annotations": 19,
+          "meta": 0,
+          "other": 9,
+          "total": 1082
+        },
+        {
+          "name": "portal_debug_hyperliquid_query_replica_commands",
+          "description": 111,
+          "input_schema": 420,
+          "output_schema": 485,
+          "annotations": 19,
+          "meta": 0,
+          "other": 10,
+          "total": 1081
+        },
+        {
+          "name": "portal_hyperliquid_get_analytics",
+          "description": 155,
+          "input_schema": 342,
+          "output_schema": 485,
+          "annotations": 19,
+          "meta": 0,
+          "other": 9,
+          "total": 1050
+        },
+        {
+          "name": "portal_bitcoin_query_transactions",
+          "description": 129,
+          "input_schema": 346,
+          "output_schema": 485,
+          "annotations": 19,
+          "meta": 0,
+          "other": 7,
+          "total": 1019
+        },
+        {
+          "name": "portal_debug_query_blocks",
+          "description": 110,
+          "input_schema": 360,
+          "output_schema": 485,
+          "annotations": 19,
+          "meta": 0,
+          "other": 7,
+          "total": 1011
+        },
+        {
+          "name": "portal_evm_get_analytics",
+          "description": 139,
+          "input_schema": 319,
+          "output_schema": 485,
+          "annotations": 19,
+          "meta": 0,
+          "other": 9,
+          "total": 1006
+        },
+        {
+          "name": "portal_bitcoin_get_analytics",
+          "description": 124,
+          "input_schema": 334,
+          "output_schema": 485,
+          "annotations": 19,
+          "meta": 0,
+          "other": 7,
+          "total": 1005
+        },
+        {
+          "name": "portal_hyperliquid_get_ohlc",
+          "description": 103,
+          "input_schema": 348,
+          "output_schema": 485,
+          "annotations": 19,
+          "meta": 0,
+          "other": 9,
+          "total": 1000
+        },
+        {
+          "name": "portal_evm_get_contract_activity",
+          "description": 158,
+          "input_schema": 250,
+          "output_schema": 485,
+          "annotations": 19,
+          "meta": 0,
+          "other": 8,
+          "total": 958
+        },
+        {
+          "name": "portal_list_networks",
+          "description": 180,
+          "input_schema": 173,
+          "output_schema": 485,
+          "annotations": 19,
+          "meta": 0,
+          "other": 7,
+          "total": 902
+        },
+        {
+          "name": "portal_debug_resolve_time_to_block",
+          "description": 147,
+          "input_schema": 81,
+          "output_schema": 485,
+          "annotations": 19,
+          "meta": 0,
+          "other": 10,
+          "total": 779
+        },
+        {
+          "name": "portal_get_head",
+          "description": 131,
+          "input_schema": 66,
+          "output_schema": 485,
+          "annotations": 19,
+          "meta": 0,
+          "other": 8,
+          "total": 744
+        },
+        {
+          "name": "portal_get_network_info",
+          "description": 124,
+          "input_schema": 42,
+          "output_schema": 485,
+          "annotations": 19,
+          "meta": 0,
+          "other": 7,
+          "total": 712
+        }
+      ]
+    },
+    "app_enabled": {
+      "tools_total": 35725,
+      "prompts_total": 393,
+      "resources_total": 446,
+      "instructions_total": 260,
+      "catalog_total": 36824,
+      "tool_count": 28,
+      "tools": [
+        {
+          "name": "portal_evm_query_transactions",
+          "description": 420,
+          "input_schema": 1437,
+          "output_schema": 485,
+          "annotations": 19,
+          "meta": 94,
+          "other": 9,
+          "total": 2518
+        },
+        {
+          "name": "portal_solana_query_instructions",
+          "description": 127,
+          "input_schema": 1387,
+          "output_schema": 485,
+          "annotations": 19,
+          "meta": 94,
+          "other": 9,
+          "total": 2158
+        },
+        {
+          "name": "portal_evm_query_logs",
+          "description": 510,
+          "input_schema": 969,
+          "output_schema": 485,
+          "annotations": 19,
+          "meta": 94,
+          "other": 8,
+          "total": 2144
+        },
+        {
+          "name": "portal_evm_get_ohlc",
+          "description": 371,
+          "input_schema": 873,
+          "output_schema": 485,
+          "annotations": 19,
+          "meta": 94,
+          "other": 8,
+          "total": 1899
+        },
+        {
+          "name": "portal_get_time_series",
+          "description": 219,
+          "input_schema": 481,
+          "output_schema": 485,
+          "annotations": 19,
+          "meta": 94,
+          "other": 7,
+          "total": 1344
+        },
+        {
+          "name": "portal_hyperliquid_query_fills",
+          "description": 122,
+          "input_schema": 564,
+          "output_schema": 485,
+          "annotations": 19,
+          "meta": 94,
+          "other": 9,
+          "total": 1332
+        },
+        {
+          "name": "portal_evm_get_contract_deployment",
+          "description": 287,
+          "input_schema": 386,
+          "output_schema": 485,
+          "annotations": 19,
+          "meta": 94,
+          "other": 8,
+          "total": 1324
+        },
+        {
+          "name": "portal_evm_query_token_transfers",
+          "description": 230,
+          "input_schema": 441,
+          "output_schema": 485,
+          "annotations": 19,
+          "meta": 94,
+          "other": 7,
+          "total": 1324
+        },
+        {
+          "name": "portal_get_wallet_summary",
+          "description": 257,
+          "input_schema": 407,
+          "output_schema": 485,
+          "annotations": 19,
+          "meta": 94,
+          "other": 7,
+          "total": 1308
+        },
+        {
+          "name": "portal_substrate_query_calls",
+          "description": 211,
+          "input_schema": 443,
+          "output_schema": 485,
+          "annotations": 19,
+          "meta": 94,
+          "other": 9,
+          "total": 1305
+        },
+        {
+          "name": "portal_solana_query_transactions",
+          "description": 160,
+          "input_schema": 476,
+          "output_schema": 485,
+          "annotations": 19,
+          "meta": 94,
+          "other": 8,
+          "total": 1280
+        },
+        {
+          "name": "portal_substrate_get_analytics",
+          "description": 276,
+          "input_schema": 316,
+          "output_schema": 485,
+          "annotations": 19,
+          "meta": 94,
+          "other": 9,
+          "total": 1247
+        },
+        {
+          "name": "portal_substrate_query_events",
+          "description": 168,
+          "input_schema": 421,
+          "output_schema": 485,
+          "annotations": 19,
+          "meta": 94,
+          "other": 9,
+          "total": 1235
+        },
+        {
+          "name": "portal_get_recent_activity",
+          "description": 259,
+          "input_schema": 290,
+          "output_schema": 485,
+          "annotations": 19,
+          "meta": 94,
+          "other": 8,
+          "total": 1196
+        },
+        {
+          "name": "portal_solana_get_analytics",
+          "description": 161,
+          "input_schema": 377,
+          "output_schema": 485,
+          "annotations": 19,
+          "meta": 94,
+          "other": 8,
+          "total": 1184
+        },
+        {
+          "name": "portal_hyperliquid_get_analytics",
+          "description": 155,
+          "input_schema": 342,
+          "output_schema": 485,
+          "annotations": 19,
+          "meta": 94,
+          "other": 9,
+          "total": 1146
+        },
+        {
+          "name": "portal_bitcoin_query_transactions",
+          "description": 129,
+          "input_schema": 346,
+          "output_schema": 485,
+          "annotations": 19,
+          "meta": 94,
+          "other": 7,
+          "total": 1115
+        },
+        {
+          "name": "portal_evm_get_analytics",
+          "description": 139,
+          "input_schema": 319,
+          "output_schema": 485,
+          "annotations": 19,
+          "meta": 94,
+          "other": 9,
+          "total": 1102
+        },
+        {
+          "name": "portal_bitcoin_get_analytics",
+          "description": 124,
+          "input_schema": 334,
+          "output_schema": 485,
+          "annotations": 19,
+          "meta": 94,
+          "other": 7,
+          "total": 1101
+        },
+        {
+          "name": "portal_hyperliquid_get_ohlc",
+          "description": 103,
+          "input_schema": 348,
+          "output_schema": 485,
+          "annotations": 19,
+          "meta": 94,
+          "other": 9,
+          "total": 1096
+        },
+        {
+          "name": "portal_resolve_entity",
+          "description": 336,
+          "input_schema": 191,
+          "output_schema": 485,
+          "annotations": 19,
+          "meta": 0,
+          "other": 9,
+          "total": 1082
+        },
+        {
+          "name": "portal_debug_hyperliquid_query_replica_commands",
+          "description": 111,
+          "input_schema": 420,
+          "output_schema": 485,
+          "annotations": 19,
+          "meta": 0,
+          "other": 10,
+          "total": 1081
+        },
+        {
+          "name": "portal_evm_get_contract_activity",
+          "description": 158,
+          "input_schema": 250,
+          "output_schema": 485,
+          "annotations": 19,
+          "meta": 94,
+          "other": 8,
+          "total": 1054
+        },
+        {
+          "name": "portal_debug_query_blocks",
+          "description": 110,
+          "input_schema": 360,
+          "output_schema": 485,
+          "annotations": 19,
+          "meta": 0,
+          "other": 7,
+          "total": 1011
+        },
+        {
+          "name": "portal_list_networks",
+          "description": 180,
+          "input_schema": 173,
+          "output_schema": 485,
+          "annotations": 19,
+          "meta": 0,
+          "other": 7,
+          "total": 902
+        },
+        {
+          "name": "portal_debug_resolve_time_to_block",
+          "description": 147,
+          "input_schema": 81,
+          "output_schema": 485,
+          "annotations": 19,
+          "meta": 0,
+          "other": 10,
+          "total": 779
+        },
+        {
+          "name": "portal_get_head",
+          "description": 131,
+          "input_schema": 66,
+          "output_schema": 485,
+          "annotations": 19,
+          "meta": 0,
+          "other": 8,
+          "total": 744
+        },
+        {
+          "name": "portal_get_network_info",
+          "description": 124,
+          "input_schema": 42,
+          "output_schema": 485,
+          "annotations": 19,
+          "meta": 0,
+          "other": 7,
+          "total": 712
+        }
+      ]
+    }
+  }
+}

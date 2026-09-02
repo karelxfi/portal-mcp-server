@@ -260,7 +260,7 @@ function assertListedAppState(tools: Record<string, any>[], enabled: boolean, la
   const meta = visualTool?._meta as Record<string, any> | undefined
   if (enabled) {
     assert(Boolean(meta?.['ui/resourceUri']), `${label} should expose the opted-in App resource URI`)
-    assert(visualTool?.description?.includes('MCP APP:'), `${label} should expose the opted-in App description`)
+    assert(meta?.ui?.resourceUri, `${label} should expose the standard App metadata`)
   } else {
     assert(meta?.ui?.resourceUri === undefined, `${label} must not expose standard App metadata`)
     assert(meta?.['ui/resourceUri'] === undefined, `${label} must not expose the App resource URI alias`)
