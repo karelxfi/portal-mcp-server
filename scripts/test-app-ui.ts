@@ -290,13 +290,27 @@ async function validate(page: Page, fixture: string, viewport: (typeof viewports
     await hit.focus()
     interactionTimings.push(performance.now() - interactionStarted)
     assert(
-      await page.locator('.sqd-chart-tooltip').isVisible(),
-      'Hyperliquid keyboard focus should expose exact candle values',
+      (await page.locator('.sqd-candle-chart .sqd-chart-tooltip').count()) === 0,
+      'The candle chart must not float a tooltip over the candles; the readout is the hover surface',
     )
-    const tooltipText = await page.locator('.sqd-chart-tooltip').innerText()
+    const readoutLines = page.locator('.sqd-candle-readout-line')
+    /* Readout keys render uppercase, so compare case-insensitively. */
+    const focusedText = (await page.locator('.sqd-candle-readout').innerText()).toLowerCase()
     assert(
-      tooltipText.includes('Fills') && tooltipText.includes('VWAP'),
-      'Hyperliquid point inspection should expose every promised field',
+      focusedText.includes('fills') && focusedText.includes('vwap'),
+      'Hyperliquid point inspection should expose every promised field in the readout',
+    )
+    const focusedHeight = await page.locator('.sqd-candle-readout').evaluate((node) => node.getBoundingClientRect().height)
+    const lineCount = await readoutLines.count()
+    await page.locator('.sqd-chart-hit').nth(2).focus()
+    const otherHeight = await page.locator('.sqd-candle-readout').evaluate((node) => node.getBoundingClientRect().height)
+    assert(
+      lineCount === 2 && focusedHeight === otherHeight,
+      `The readout must keep its height across candles (${focusedHeight} vs ${otherHeight}) so the chart never resizes`,
+    )
+    assert(
+      !(await page.locator('.sqd-candle-readout').innerText()).includes('candle, still forming'),
+      'A complete candle must not carry the forming flag',
     )
     const showRaw = page.getByRole('button', { name: 'Show raw candle rows' })
     assert((await showRaw.count()) === 1, 'Hyperliquid should expose its raw candle action')

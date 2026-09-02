@@ -496,6 +496,15 @@ function renderTooltip(node: HTMLElement, title: string, rows: TooltipRow[]) {
   node.append(grid)
 }
 
+/* Keep a tooltip inside its chart: centre it on the anchor, then pull it
+   back from either edge by its own width so the first column is never cut. */
+function placeTooltip(node: HTMLElement, anchorX: number) {
+  const room = node.parentElement?.clientWidth ?? 0
+  const half = node.offsetWidth / 2
+  const left = room > node.offsetWidth + 8 ? Math.min(Math.max(anchorX, half + 4), room - half - 4) : room / 2
+  node.style.left = `${Math.round(left)}px`
+}
+
 function splitTooltipValue(entry: string): TooltipRow {
   if (entry.endsWith('not available')) return { label: entry.slice(0, -'not available'.length).trim(), value: 'not available' }
   const match = /^(.*\S)\s+(\S+)$/.exec(entry)
@@ -525,9 +534,16 @@ function masthead(payload: Record<string, unknown>, actions?: ExplorerActions): 
   /* The heading names the subject (an address, a coin, a network window).
      The tool's narrative answer is for the conversation, not the App. */
   const answer = text(payload.answer)
-  const claim = text(
+  const overview = isRecord(payload.overview) ? payload.overview : {}
+  const subjectId = [payload.contract_address, payload.address, overview.address, overview.contract_address]
+    .map(text)
+    .find((candidate) => isHexIdentifier(candidate))
+  const captioned = text(
     headline.title ?? display.title ?? error?.summary ?? payload._summary ?? payload.answer ?? 'Blockchain activity',
   )
+  /* A result about one address is headed by that address; the caption the
+     tool wrote moves under it. */
+  const claim = subjectId && !captioned.includes(subjectId) ? subjectId : captioned
   const title = element('h1', `sqd-title${isHexIdentifier(claim) ? ' sqd-title--id' : ''}`)
   const titleLink = isHexIdentifier(claim)
     ? identifierLink(payload, claim.length === 66 ? 'tx_hash' : 'address', claim, actions, claim)
@@ -537,7 +553,10 @@ function masthead(payload: Record<string, unknown>, actions?: ExplorerActions): 
   title.id = 'sqd-result-title'
   section.append(title)
 
-  const subtitleText = text(headline.subtitle ?? display.subtitle)
+  const subtitleText =
+    claim === subjectId
+      ? [captioned, text(headline.subtitle ?? display.subtitle)].filter((part) => part && part !== claim).join(' · ')
+      : text(headline.subtitle ?? display.subtitle)
   if (subtitleText && subtitleText !== claim && subtitleText !== answer && subtitleText.length <= 140)
     section.append(element('p', 'sqd-subtitle', subtitleText))
 
@@ -954,7 +973,10 @@ function buildCandleTerminal(
   /* The price unit is named once in the tooltip title; a value repeats a
      unit only when it differs from the price unit. */
   const withUnit = (unit: string) => (unit && unit !== priceUnit ? unit : '')
-  const exactRows = parsed.map((point) => {
+  /* Portal marks both a still-forming last bucket and a bucket cut by the
+     query window as incomplete; only the last one is still changing. */
+  const candleFlag = (index: number) => (index === parsed.length - 1 ? 'Open candle, still forming' : 'Partial bucket')
+  const exactRows = parsed.map((point, index) => {
     const fallback: TooltipRow[] = [
       { label: 'Open', value: formatValue(point.open, priceFormat) },
       { label: 'High', value: formatValue(point.high, priceFormat) },
@@ -973,7 +995,7 @@ function buildCandleTerminal(
           }
         })
       : fallback
-    if (isOpenCandle(point)) rows.push({ label: 'Open candle, still forming', value: '', flag: true })
+    if (isOpenCandle(point)) rows.push({ label: candleFlag(index), value: '', flag: true })
     return rows
   })
   const tooltipTitle = (index: number) => (priceUnit ? `${fullLabels[index]} · ${priceUnit}` : fullLabels[index])
@@ -990,16 +1012,12 @@ function buildCandleTerminal(
   const mount = element('div', 'sqd-candle-canvas')
   mount.setAttribute('aria-hidden', 'true')
   const hits = element('div', 'sqd-chart-hits')
-  const tooltip = element('div', 'sqd-chart-tooltip')
-  tooltip.setAttribute('role', 'status')
-  tooltip.setAttribute('aria-live', 'polite')
-  tooltip.hidden = true
   const pill = element('div', 'sqd-candle-pill')
   pill.hidden = true
   pill.textContent =
     (priceFormat === 'currency_usd' ? '$' : '') +
     (Math.abs(finalClose) >= 1000 ? pillCompact(finalClose) : tickText(finalClose, priceFormat))
-  chartBox.append(mount, hits, pill, tooltip)
+  chartBox.append(mount, hits, pill)
   let volumeCaption: HTMLElement | undefined
   if (hasVolume) {
     volumeCaption = element(
@@ -1125,18 +1143,35 @@ function buildCandleTerminal(
     pair.append(element('span', 'sqd-candle-readout-key', label), valueNode)
     return pair
   }
+  /* The readout is the only hover surface: line one carries time and OHLCV,
+     line two the remaining exact fields plus the forming-candle flag. Line
+     two exists for every candle once any candle needs it, so hovering never
+     changes the readout height and the chart below never resizes. */
+  const CORE_ROW = /^(open|high|low|close|volume|closed candle|open candle)$/i
+  const extraRows = exactRows.map((rows) => rows.filter((row) => !row.flag && !CORE_ROW.test(row.label)))
+  const hasDetailLine = extraRows.some((rows) => rows.length > 0) || parsed.some(isOpenCandle)
+  const readoutUnit = priceUnit && priceFormat !== 'currency_usd' ? priceUnit : ''
   const renderReadout = (index: number) => {
     const point = parsed[index]
     const direction = point.close >= point.open ? 'up' : 'down'
-    readout.replaceChildren(
+    const main = element('div', 'sqd-candle-readout-line')
+    main.append(
       element('span', 'sqd-candle-readout-time', fullLabels[index]),
+      ...(readoutUnit ? [element('span', 'sqd-candle-readout-unit', readoutUnit)] : []),
       readoutPair('O', formatValue(point.open, priceFormat)),
       readoutPair('H', formatValue(point.high, priceFormat)),
       readoutPair('L', formatValue(point.low, priceFormat)),
       readoutPair('C', formatValue(point.close, priceFormat), direction),
       ...(point.volume !== undefined ? [readoutPair('VOL', formatValue(point.volume, volumeFormat))] : []),
-      ...(isOpenCandle(point) ? [element('span', 'sqd-candle-readout-flag', 'Open candle, still forming')] : []),
     )
+    readout.replaceChildren(main)
+    if (!hasDetailLine) return
+    const detail = element('div', 'sqd-candle-readout-line sqd-candle-readout-line--detail')
+    detail.append(
+      ...extraRows[index].map((row) => readoutPair(row.label, row.value)),
+      ...(isOpenCandle(point) ? [element('span', 'sqd-candle-readout-flag', candleFlag(index))] : []),
+    )
+    readout.append(detail)
   }
   renderReadout(parsed.length - 1)
 
@@ -1156,18 +1191,9 @@ function buildCandleTerminal(
     button.style.width = `${100 / parsed.length}%`
     const hover = () => {
       renderReadout(index)
-      renderTooltip(tooltip, tooltipTitle(index), exactRows[index])
-      const boxRect = chartBox.getBoundingClientRect()
-      const buttonRect = button.getBoundingClientRect()
-      const percent = boxRect.width
-        ? ((buttonRect.left - boxRect.left + buttonRect.width / 2) / boxRect.width) * 100
-        : 50
-      tooltip.style.left = `${Math.min(88, Math.max(12, percent))}%`
-      tooltip.hidden = false
       chartApi.setCrosshairPosition(point.close, times[index], candleSeries)
     }
     const unhover = () => {
-      tooltip.hidden = true
       chartApi.clearCrosshairPosition()
       renderReadout(parsed.length - 1)
     }
@@ -1328,8 +1354,8 @@ function chartPanel(payload: Record<string, unknown>, panel: Panel): HTMLElement
   crosshair.style.display = 'none'
   const showTooltip = (cx: number, label: string, values: string[]) => {
     renderTooltip(tooltip, label, values.map(splitTooltipValue))
-    tooltip.style.left = `${Math.min(88, Math.max(12, (cx / CHART_WIDTH) * 100))}%`
     tooltip.hidden = false
+    placeTooltip(tooltip, (cx / CHART_WIDTH) * (tooltip.parentElement?.clientWidth ?? CHART_WIDTH))
     crosshair.setAttribute('x1', String(cx))
     crosshair.setAttribute('x2', String(cx))
     crosshair.style.display = ''
@@ -2283,6 +2309,8 @@ function notices(
     .map(text)
     .filter(Boolean)
     .filter((copy) => !(pagination.has_more && /_pagination\.next_cursor/.test(copy)))
+    /* The candle readout flags a forming or partial bucket on the bar itself. */
+    .filter((copy) => !/still open or covers only part/.test(copy))
     /* Without App-facing notices, keep only what changes how a person reads
        the result; notes about limits, cursors and scan modes stay in JSON. */
     .filter(

@@ -291,7 +291,7 @@ button { color: inherit; }
 .sqd-chart-crosshair { stroke: var(--fg-secondary); stroke-width: 1; stroke-dasharray: 2 3; pointer-events: none; opacity: 0.6; }
 .sqd-chart-hit { fill: transparent; pointer-events: all; outline: none; }
 .sqd-chart-hit:focus-visible { fill: var(--accent-subtle); stroke: var(--accent); stroke-width: 1; }
-.sqd-chart-tooltip { position: absolute; z-index: 2; top: 8px; max-width: min(360px, 80%); transform: translateX(-50%); border: 1px solid var(--edge-strong); border-radius: var(--radius-md); padding: 8px 10px; background: var(--surface); color: var(--fg-value); box-shadow: var(--shadow-pop); font: 400 11px/16px var(--sqd-font-mono); pointer-events: none; }
+.sqd-chart-tooltip { position: absolute; z-index: 2; top: 6px; max-width: min(260px, calc(100% - 8px)); transform: translateX(-50%); border: 1px solid var(--edge-strong); border-radius: var(--radius-sm); padding: 5px 8px; background: var(--surface); color: var(--fg-value); box-shadow: var(--shadow-pop); font: 400 10.5px/14px var(--sqd-font-mono); pointer-events: none; }
 .sqd-chart-legend { display: flex; flex-wrap: wrap; gap: 4px 6px; margin-bottom: 10px; }
 .sqd-chart-legend-item { min-height: 28px; display: inline-flex; align-items: center; gap: 7px; border: 1px solid transparent; border-radius: var(--radius-md); padding: 4px 9px; background: transparent; color: var(--fg); cursor: pointer; font: 400 12px/16px var(--font-sans); letter-spacing: -0.006em; transition: background-color var(--duration-normal) var(--ease-soft); }
 .sqd-chart-legend-item:hover { background: var(--edge-subtle); }
@@ -303,13 +303,16 @@ button { color: inherit; }
 
 /* ── Market terminal · the dominant price chart ─────────────────────────── */
 .sqd-candle-terminal { position: relative; width: 100%; }
-.sqd-candle-readout { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 14px; margin-bottom: 10px; padding: 6px 10px; border: 1px solid var(--edge); border-radius: var(--radius-md); background: var(--surface); font: 500 12px/16px var(--sqd-font-mono); font-variant-numeric: tabular-nums; color: var(--fg-value); }
+.sqd-candle-readout { display: grid; gap: 3px; min-width: 0; margin-bottom: 10px; padding: 6px 10px; border: 1px solid var(--edge); border-radius: var(--radius-md); background: var(--surface); font: 500 11.5px/16px var(--sqd-font-mono); font-variant-numeric: tabular-nums; color: var(--fg-value); overflow: hidden; }
+.sqd-candle-readout-line { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 12px; min-height: 16px; }
+.sqd-candle-readout-line--detail { color: var(--fg-secondary); font-weight: 400; }
 .sqd-candle-readout-time { color: var(--fg); font-weight: 510; }
-.sqd-candle-readout-pair { display: inline-flex; align-items: baseline; gap: 5px; }
+.sqd-candle-readout-unit { color: var(--fg-muted); font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; }
+.sqd-candle-readout-pair { display: inline-flex; align-items: baseline; gap: 5px; white-space: nowrap; }
 .sqd-candle-readout-key { color: var(--fg-muted); font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; }
 .sqd-candle-readout-value[data-direction='up'] { color: var(--up-text); }
 .sqd-candle-readout-value[data-direction='down'] { color: var(--down-text); }
-.sqd-candle-readout-flag { color: var(--warning-text); font-size: 11px; }
+.sqd-candle-readout-flag { color: var(--warning-text); font-size: 10.5px; }
 .sqd-candle-chart { position: relative; width: 100%; height: 260px; }
 .sqd-app[data-mode='fullscreen'] .sqd-candle-chart { height: 420px; }
 .sqd-candle-canvas { position: absolute; inset: 0; }
@@ -319,9 +322,8 @@ button.sqd-chart-hit:focus-visible { background: var(--accent-subtle); box-shado
 button.sqd-chart-hit[aria-pressed='true'] { background: var(--accent-subtle); box-shadow: inset 0 0 0 1px var(--accent-line); }
 .sqd-candle-pill { position: absolute; right: 0; z-index: 3; transform: translateY(-50%); border-radius: 5px; padding: 3px 7px; background: var(--accent); color: var(--accent-on); font: 600 11px/1 var(--sqd-font-mono); font-variant-numeric: tabular-nums; pointer-events: none; }
 .sqd-chart-volume-caption { position: absolute; left: 2px; z-index: 2; color: var(--fg-muted); font: 510 9px/12px var(--font-sans); letter-spacing: 0.1em; pointer-events: none; }
-.sqd-candle-chart .sqd-chart-tooltip { z-index: 4; }
-.sqd-tooltip-title { margin-bottom: 5px; color: var(--fg-muted); white-space: nowrap; }
-.sqd-tooltip-rows { display: grid; grid-template-columns: max-content max-content; gap: 2px 14px; align-items: baseline; }
+.sqd-tooltip-title { margin-bottom: 3px; color: var(--fg-muted); white-space: nowrap; }
+.sqd-tooltip-rows { display: grid; grid-template-columns: max-content max-content; gap: 1px 12px; align-items: baseline; }
 .sqd-tooltip-label { color: var(--fg-secondary); white-space: nowrap; }
 .sqd-tooltip-value { text-align: right; color: var(--fg-value); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .sqd-tooltip-flag { grid-column: 1 / -1; color: var(--warning-text); }
