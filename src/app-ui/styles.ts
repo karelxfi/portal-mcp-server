@@ -200,8 +200,10 @@ button { color: inherit; }
 .sqd-dot { width: 6px; height: 6px; flex: 0 0 6px; border-radius: 50%; background: var(--success-fill); }
 .sqd-dot--warning { background: var(--warning-fill); }
 .sqd-dot--danger { background: var(--danger-fill); }
-.sqd-title { grid-column: 1; margin: 4px 0 0; max-width: 30ch; font-size: clamp(17px, 2.3cqi, 22px); line-height: 1.2; font-weight: 510; letter-spacing: -0.02em; text-wrap: balance; }
-.sqd-app[data-mode='fullscreen'] .sqd-title { font-size: clamp(20px, 2.2cqi, 27px); line-height: 1.16; max-width: 24ch; }
+/* The answer runs the full width of its column: a 100-character claim is two
+   lines at 760px and one at 1440px, never a ragged stack of four. */
+.sqd-title { grid-column: 1; margin: 4px 0 0; max-width: 80ch; font-size: clamp(17px, 2.3cqi, 22px); line-height: 1.22; font-weight: 510; letter-spacing: -0.02em; text-wrap: pretty; }
+.sqd-app[data-mode='fullscreen'] .sqd-title { font-size: clamp(20px, 1.8cqi, 24px); line-height: 1.2; }
 .sqd-subtitle { grid-column: 1; max-width: 74ch; margin: 6px 0 0; color: var(--fg-secondary); font-size: 13px; line-height: 19px; }
 .sqd-hero-figure { grid-column: 2; grid-row: 2 / span 2; justify-self: end; text-align: right; padding-top: 4px; }
 .sqd-hero-value { display: inline-block; padding-bottom: 6px; border-bottom: 1.5px dashed var(--accent-line); color: var(--fg); font: 500 28px/1.05 var(--sqd-font-mono); letter-spacing: -0.01em; font-variant-numeric: tabular-nums; white-space: nowrap; }
