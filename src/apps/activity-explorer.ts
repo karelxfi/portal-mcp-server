@@ -147,7 +147,6 @@ const resourceUiMeta = {
     resourceDomains: [] as string[],
   },
   domain: 'https://portal.sqd.dev',
-  prefersBorder: true,
 }
 
 export function registerActivityExplorerResource(server: McpServer, runtime: RuntimeRequestContext) {
@@ -182,7 +181,6 @@ export function registerActivityExplorerResource(server: McpServer, runtime: Run
                 ui: resourceUiMeta,
                 'openai/widgetDescription':
                   'Explore the exact blockchain evidence returned by SQD with charts, metrics, tables, timelines, coverage, freshness, and continuation controls.',
-                'openai/widgetPrefersBorder': true,
                 'openai/widgetCSP': { connect_domains: [], resource_domains: [] },
                 'openai/widgetDomain': 'https://portal.sqd.dev',
               },

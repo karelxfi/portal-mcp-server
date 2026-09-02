@@ -18,6 +18,7 @@ export type ExplorerState = {
   error: string
   currentArgs: Record<string, unknown>
   displayMode?: string
+  availableDisplayModes?: string[]
   historyIndex?: number
   historyLength?: number
 }
@@ -25,9 +26,16 @@ export type ExplorerState = {
 export type ExplorerActions = {
   runFollowup: (intent: string, target?: string, action?: Record<string, unknown>) => void
   requestFullscreen?: () => void
+  requestInline?: () => void
   goBack?: () => void
   goForward?: () => void
   exportEvidence?: (format: 'json' | 'csv') => void
+}
+
+type DisplayMode = 'inline' | 'fullscreen'
+
+function displayModeOf(state: ExplorerState): DisplayMode {
+  return state.displayMode === 'fullscreen' ? 'fullscreen' : 'inline'
 }
 
 type Column = {
@@ -43,28 +51,55 @@ type Panel = Record<string, unknown>
 
 const ROOT_STYLE_ID = 'sqd-activity-explorer-style'
 const TABLE_PAGE_SIZE = 10
+const INLINE_TABLE_ROWS = 5
 const MAX_TIMELINE_ROWS = 40
+const MAX_INLINE_TIMELINE_ROWS = 6
 const MAX_RANKED_ROWS = 16
+const MAX_INLINE_RANKED_ROWS = 6
 const MAX_STAT_ROWS = 30
 const CHART_COLORS = ['var(--chart-1)', 'var(--chart-2)', 'var(--chart-3)', 'var(--chart-4)', 'var(--chart-5)']
 
-/* Canvas charts need literal colors; these mirror the styles.ts tokens. */
-const TERMINAL_COLORS = {
-  up: '#0891b2',
-  down: '#d97706',
-  upSoft: 'rgba(8, 145, 178, 0.55)',
-  downSoft: 'rgba(217, 119, 6, 0.55)',
-  accent: '#818cf8',
-  accentLine: 'rgba(129, 140, 248, 0.45)',
-  /* Axis ticks read in the muted whisper ink #9898a1 (chart-palette axis_label),
-     matching the SVG chart labels so the canvas and SVG grammars agree. */
-  ink: '#9898a1',
-  grid: 'rgba(255, 255, 255, 0.055)',
-  axis: 'rgba(255, 255, 255, 0.14)',
-  crosshair: 'rgba(255, 255, 255, 0.24)',
-  crosshairLabel: '#1a1a1e',
+/* Canvas charts need literal colors. They are resolved from the live CSS
+   tokens at build time, so the terminal follows the host theme (light or
+   dark, Claude's variables or SQD's fallbacks) exactly like the DOM does. */
+function resolveColor(token: string, fallback: string): string {
+  if (typeof document === 'undefined') return fallback
+  const probe = document.createElement('span')
+  probe.style.color = `var(${token})`
+  probe.style.display = 'none'
+  document.body.append(probe)
+  const value = getComputedStyle(probe).color
+  probe.remove()
+  return value || fallback
 }
-const TERMINAL_MONO = "'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace"
+
+function withAlpha(color: string, alpha: number): string {
+  const match = /^rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)/.exec(color)
+  if (!match) return color
+  return `rgba(${match[1]}, ${match[2]}, ${match[3]}, ${alpha})`
+}
+
+function terminalColors() {
+  const up = resolveColor('--up', '#0891b2')
+  const down = resolveColor('--down', '#d97706')
+  const fg = resolveColor('--fg', '#f7f8f8')
+  return {
+    up,
+    down,
+    upSoft: withAlpha(up, 0.55),
+    downSoft: withAlpha(down, 0.55),
+    accent: resolveColor('--accent', '#818cf8'),
+    accentLine: withAlpha(resolveColor('--accent', '#818cf8'), 0.45),
+    /* Axis ticks read in the muted whisper ink (chart-palette axis_label),
+       matching the SVG chart labels so the canvas and SVG grammars agree. */
+    ink: resolveColor('--fg-muted', '#9898a1'),
+    grid: withAlpha(fg, 0.055),
+    axis: withAlpha(fg, 0.14),
+    crosshair: withAlpha(fg, 0.24),
+    crosshairLabel: resolveColor('--surface-elevated', '#1a1a1e'),
+  }
+}
+const TERMINAL_MONO = "'JetBrains Mono SQD', 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace"
 
 /* Candle terminals hold live lightweight-charts instances; every re-render
    must release the previous ones so canvases and observers do not pile up. */
@@ -89,8 +124,11 @@ function registerChartDisposer(panelRoot: HTMLElement, chart: IChartApi, extra: 
 
 /* The SVG coordinate space shrinks on narrow hosts so type stays near its CSS
    size instead of scaling away with the viewBox. */
+let appRoot: HTMLElement | null = null
+
 function chartGeometry() {
-  const narrow = typeof matchMedia === 'function' && matchMedia('(max-width: 520px)').matches
+  const width = appRoot?.clientWidth || (typeof innerWidth === 'number' ? innerWidth : 900)
+  const narrow = width <= 520
   return narrow
     ? { width: 460, height: 380, pad: { left: 10, right: 58, top: 14, bottom: 30 }, axisTitles: false }
     : { width: 900, height: 320, pad: { left: 26, right: 76, top: 14, bottom: 32 }, axisTitles: true }
@@ -239,7 +277,42 @@ function logoMark(): HTMLElement {
   return mark
 }
 
+/* The query chip says what was asked (network · subject · window) so the
+   header carries the question, not only the brand. */
+function queryChip(payload: Record<string, unknown> | null, currentArgs: Record<string, unknown>): HTMLElement | null {
+  const meta = payload && isRecord(payload._meta) ? payload._meta : {}
+  const summary = payload && isRecord(payload.summary) ? payload.summary : {}
+  const coverage = payload && isRecord(payload._coverage) ? payload._coverage : {}
+  const network = text(meta.network ?? meta.dataset ?? payload?.network ?? currentArgs.network)
+  const subjectRaw = text(
+    summary.coin ?? currentArgs.coin ?? currentArgs.address ?? currentArgs.contract ?? currentArgs.wallet ?? '',
+  )
+  const subject = isHexIdentifier(subjectRaw) ? shortIdentifier(subjectRaw) : subjectRaw
+  const window = text(coverage.requested_window ?? meta.timeframe ?? currentArgs.timeframe ?? currentArgs.duration)
+  const parts = [network, subject, window].filter(Boolean)
+  if (!parts.length) return null
+  const chip = element('div', 'sqd-query')
+  chip.setAttribute('aria-label', `Query: ${parts.join(', ')}`)
+  chip.title = [network, subjectRaw, window].filter(Boolean).join(' · ')
+  for (const part of parts) chip.append(element('span', undefined, part))
+  return chip
+}
+
+function canFullscreen(state: ExplorerState, actions: ExplorerActions): boolean {
+  if (!actions.requestFullscreen) return false
+  if (state.availableDisplayModes && !state.availableDisplayModes.includes('fullscreen')) return false
+  return true
+}
+
+function fullscreenButton(actions: ExplorerActions, modifier = ''): HTMLElement {
+  const button = element('button', `sqd-button${modifier ? ` ${modifier}` : ''}`, 'Open full screen')
+  button.type = 'button'
+  button.addEventListener('click', () => actions.requestFullscreen?.())
+  return button
+}
+
 function appHeader(actions: ExplorerActions, state: ExplorerState): HTMLElement {
+  const mode = displayModeOf(state)
   const topbar = element('div', 'sqd-topbar')
   const brand = element('div', 'sqd-brand')
   brand.append(logoMark())
@@ -247,10 +320,13 @@ function appHeader(actions: ExplorerActions, state: ExplorerState): HTMLElement 
   copy.append(element('div', 'sqd-brand-name', 'SQD'))
   copy.append(element('div', 'sqd-brand-subtitle', 'Explorer'))
   brand.append(copy)
+  const chip = queryChip(state.payload, state.currentArgs)
+  if (chip) brand.append(chip)
   topbar.append(brand)
 
   const actionBar = element('div', 'sqd-actions')
-  if (actions.goBack || actions.goForward) {
+  const hasHistory = (state.historyLength ?? 0) > 1
+  if (mode === 'fullscreen' && hasHistory && (actions.goBack || actions.goForward)) {
     const back = element('button', 'sqd-button', 'Back')
     back.type = 'button'
     back.disabled = (state.historyIndex ?? 0) <= 0
@@ -263,13 +339,15 @@ function appHeader(actions: ExplorerActions, state: ExplorerState): HTMLElement 
     forward.addEventListener('click', () => actions.goForward?.())
     actionBar.append(back, forward)
   }
-  if (actions.requestFullscreen && state.displayMode !== 'fullscreen') {
-    const fullscreen = element('button', 'sqd-button', 'Open full screen')
-    fullscreen.type = 'button'
-    fullscreen.addEventListener('click', () => actions.requestFullscreen?.())
-    actionBar.append(fullscreen)
+  if (mode === 'fullscreen' && actions.requestInline) {
+    const exit = element('button', 'sqd-button sqd-button--quiet', 'Exit full screen')
+    exit.type = 'button'
+    exit.addEventListener('click', () => actions.requestInline?.())
+    actionBar.append(exit)
+  } else if (mode === 'inline' && canFullscreen(state, actions) && !state.payload) {
+    actionBar.append(fullscreenButton(actions, 'sqd-button--quiet'))
   }
-  topbar.append(actionBar)
+  if (actionBar.childElementCount) topbar.append(actionBar)
   return topbar
 }
 
@@ -496,12 +574,14 @@ function card(title: string, subtitle?: string, modifiers = ''): { root: HTMLEle
   return { root, body }
 }
 
+/* A local page is normal state and reads as a neutral caption. Amber appears
+   only when the payload itself holds fewer rows than the server declared. */
 function displayLimitNotice(label: string, shown: number, available: number, declared = available): HTMLElement | null {
   if (shown >= declared) return null
   const completeInPayload = available >= declared
   const notice = element(
     'p',
-    'sqd-display-limit',
+    completeInPayload ? 'sqd-display-limit' : 'sqd-display-limit sqd-display-limit--caution',
     completeInPayload
       ? `${shown} of ${declared} ${label} are shown in this view. Search and exact JSON keep all ${available} rows in this result.`
       : `${shown} of ${declared} declared ${label} are present in this payload. Check coverage and pagination before using totals.`,
@@ -851,6 +931,7 @@ function buildCandleTerminal(
   attribution.rel = 'noopener noreferrer'
   terminal.append(readout, chartBox, attribution)
 
+  const TERMINAL_COLORS = terminalColors()
   const chartApi = createChart(mount, {
     autoSize: true,
     layout: {
@@ -1624,7 +1705,11 @@ function showDetails(title: string, value: unknown, note?: string) {
   close.focus()
 }
 
-function tablePanel(payload: Record<string, unknown>, panel: Panel): HTMLElement {
+type PanelOptions = { mode: DisplayMode; actions?: ExplorerActions; state?: ExplorerState }
+
+function tablePanel(payload: Record<string, unknown>, panel: Panel, options: PanelOptions): HTMLElement {
+  const inline = options.mode === 'inline'
+  const pageSize = inline ? INLINE_TABLE_ROWS : TABLE_PAGE_SIZE
   const descriptor = tableDescriptor(payload, text(panel.table_id)) ?? {}
   const rows = asArray(getByPath(payload, text(descriptor.data_key ?? panel.data_key ?? 'items'))).filter(isRecord)
   const columns = asArray(descriptor.columns).filter(isRecord) as Column[]
@@ -1636,6 +1721,59 @@ function tablePanel(payload: Record<string, unknown>, panel: Panel): HTMLElement
   )
   if (!rows.length || !effectiveColumns.length) {
     body.append(element('div', 'sqd-chart-empty', 'No evidence rows were returned for this section.'))
+    return root
+  }
+  if (inline) {
+    /* The inline card shows the first rows as a preview; filtering, sorting
+       pages, and exact-row dialogs live in fullscreen. */
+    const wrap = element('div', 'sqd-table-wrap')
+    /* The preview has no focusable cells, so the sideways-scrolling region
+       itself takes focus for keyboard users. */
+    wrap.tabIndex = 0
+    wrap.setAttribute('role', 'region')
+    wrap.setAttribute('aria-label', `${text(panel.title ?? 'Evidence')} preview, scroll sideways for more columns`)
+    const table = element('table', 'sqd-table')
+    table.append(element('caption', 'sqd-visually-hidden', text(panel.title ?? 'Blockchain evidence rows')))
+    const thead = element('thead')
+    const headRow = element('tr')
+    for (const column of effectiveColumns) {
+      const th = element('th', undefined, text(column.label ?? humanize(column.key)))
+      th.dataset.align = column.align ?? 'left'
+      headRow.append(th)
+    }
+    thead.append(headRow)
+    table.append(thead)
+    const tbody = element('tbody')
+    for (const row of rows.slice(0, pageSize)) {
+      const tr = element('tr')
+      tr.dataset.evidenceKey = evidenceIdentity(row)
+      tr.dataset.selected = 'false'
+      for (const column of effectiveColumns) {
+        const td = element('td')
+        td.dataset.align = column.align ?? 'left'
+        const rawValue = getByPath(row, column.path ?? column.key)
+        const formatted = formatValue(rawValue, column.format, column.unit)
+        if (isIdentifierColumn(column, rawValue)) td.classList.add('sqd-hash')
+        td.textContent = formatted
+        td.title = formatted
+        tr.append(td)
+      }
+      tbody.append(tr)
+    }
+    table.append(tbody)
+    wrap.append(table)
+    body.append(wrap)
+    const declaredRows = Number(descriptor.row_count)
+    const totalRows = Number.isFinite(declaredRows) ? Math.max(rows.length, declaredRows) : rows.length
+    if (totalRows > pageSize) {
+      body.append(
+        element(
+          'p',
+          'sqd-table-more',
+          `${Math.min(rows.length, pageSize)} of ${totalRows} rows shown. Open full screen to filter, sort, and page through every row.`,
+        ),
+      )
+    }
     return root
   }
   const tools = element('div', 'sqd-table-tools')
@@ -1714,7 +1852,7 @@ function tablePanel(payload: Record<string, unknown>, panel: Panel): HTMLElement
   ;(wrap as EvidencePager).__sqdShowEvidence = (identity: string) => {
     const position = computeMatches().findIndex((row) => evidenceIdentity(row) === identity)
     if (position < 0) return
-    const targetPage = Math.floor(position / TABLE_PAGE_SIZE)
+    const targetPage = Math.floor(position / pageSize)
     if (targetPage !== pageIndex) {
       pageIndex = targetPage
       renderBody()
@@ -1723,15 +1861,15 @@ function tablePanel(payload: Record<string, unknown>, panel: Panel): HTMLElement
 
   function renderBody() {
     const matches = computeMatches()
-    const totalPages = Math.max(1, Math.ceil(matches.length / TABLE_PAGE_SIZE))
+    const totalPages = Math.max(1, Math.ceil(matches.length / pageSize))
     pageIndex = Math.min(pageIndex, totalPages - 1)
-    const pageStart = pageIndex * TABLE_PAGE_SIZE
-    const visible = matches.slice(pageStart, pageStart + TABLE_PAGE_SIZE)
+    const pageStart = pageIndex * pageSize
+    const visible = matches.slice(pageStart, pageStart + pageSize)
     count.textContent = `${matches.length} matching row${matches.length === 1 ? '' : 's'}`
     pageStatus.textContent = `Page ${pageIndex + 1} of ${totalPages}`
     previous.disabled = pageIndex === 0
     next.disabled = pageIndex >= totalPages - 1
-    pagination.hidden = matches.length <= TABLE_PAGE_SIZE
+    pagination.hidden = matches.length <= pageSize
     tbody.replaceChildren()
     for (const [index, row] of visible.entries()) {
       const tr = element('tr')
@@ -1782,7 +1920,7 @@ function tablePanel(payload: Record<string, unknown>, panel: Panel): HTMLElement
   const totalRows = Number.isFinite(declaredRows) ? Math.max(rows.length, declaredRows) : rows.length
   const limitNotice = displayLimitNotice(
     'evidence rows',
-    Math.min(rows.length, TABLE_PAGE_SIZE),
+    Math.min(rows.length, pageSize),
     rows.length,
     totalRows,
   )
@@ -1790,9 +1928,18 @@ function tablePanel(payload: Record<string, unknown>, panel: Panel): HTMLElement
   return root
 }
 
-function timelinePanel(payload: Record<string, unknown>, panel: Panel): HTMLElement {
+function panelLimit(label: string, shown: number, available: number, options: PanelOptions): HTMLElement[] {
+  if (shown >= available) return []
+  if (options.mode === 'inline') {
+    return [element('p', 'sqd-table-more', `${shown} of ${available} ${label} shown. Open full screen for every row.`)]
+  }
+  const limitNotice = displayLimitNotice(label, shown, available)
+  return limitNotice ? [limitNotice] : []
+}
+
+function timelinePanel(payload: Record<string, unknown>, panel: Panel, options: PanelOptions): HTMLElement {
   const sourceRows = numberRows(payload, panel)
-  const rows = sourceRows.slice(0, MAX_TIMELINE_ROWS)
+  const rows = sourceRows.slice(0, options.mode === 'inline' ? MAX_INLINE_TIMELINE_ROWS : MAX_TIMELINE_ROWS)
   const { root, body } = card(text(panel.title ?? 'Activity timeline'), text(panel.subtitle))
   const timeline = element('div', 'sqd-timeline')
   const valueKey = text(panel.value_key)
@@ -1833,14 +1980,13 @@ function timelinePanel(payload: Record<string, unknown>, panel: Panel): HTMLElem
     timeline.append(event)
   }
   body.append(rows.length ? timeline : element('div', 'sqd-chart-empty', 'No activity rows were returned.'))
-  const limitNotice = displayLimitNotice('timeline rows', rows.length, sourceRows.length)
-  if (limitNotice) body.append(limitNotice)
+  body.append(...panelLimit('timeline rows', rows.length, sourceRows.length, options))
   return root
 }
 
-function rankedPanel(payload: Record<string, unknown>, panel: Panel): HTMLElement {
+function rankedPanel(payload: Record<string, unknown>, panel: Panel, options: PanelOptions): HTMLElement {
   const sourceRows = numberRows(payload, panel)
-  const rows = sourceRows.slice(0, MAX_RANKED_ROWS)
+  const rows = sourceRows.slice(0, options.mode === 'inline' ? MAX_INLINE_RANKED_ROWS : MAX_RANKED_ROWS)
   const values = rows
     .map((row) => numeric(getByPath(row, text(panel.value_key))))
     .filter((value): value is number => value !== undefined)
@@ -1871,12 +2017,11 @@ function rankedPanel(payload: Record<string, unknown>, panel: Panel): HTMLElemen
     ranked.append(item)
   }
   body.append(rows.length ? ranked : element('div', 'sqd-chart-empty', 'No ranked values were returned.'))
-  const limitNotice = displayLimitNotice('ranked rows', rows.length, sourceRows.length)
-  if (limitNotice) body.append(limitNotice)
+  body.append(...panelLimit('ranked rows', rows.length, sourceRows.length, options))
   return root
 }
 
-function statPanel(payload: Record<string, unknown>, panel: Panel): HTMLElement {
+function statPanel(payload: Record<string, unknown>, panel: Panel, _options: PanelOptions): HTMLElement {
   const sourceRows = numberRows(payload, panel)
   const rows = sourceRows.slice(0, MAX_STAT_ROWS)
   const { root, body } = card(text(panel.title ?? 'Details'), text(panel.subtitle), 'sqd-card--half')
@@ -1899,7 +2044,7 @@ function statPanel(payload: Record<string, unknown>, panel: Panel): HTMLElement 
   return root
 }
 
-function inferredPanel(payload: Record<string, unknown>): HTMLElement | null {
+function inferredPanel(payload: Record<string, unknown>, options: PanelOptions): HTMLElement | null {
   const keys = [
     'items',
     'transactions',
@@ -1915,27 +2060,27 @@ function inferredPanel(payload: Record<string, unknown>): HTMLElement | null {
   ]
   const key = keys.find((candidate) => asArray(payload[candidate]).some(isRecord))
   if (!key) return null
-  return tablePanel(payload, { title: humanize(key), data_key: key })
+  return tablePanel(payload, { title: humanize(key), data_key: key }, options)
 }
 
-function panels(payload: Record<string, unknown>): HTMLElement | null {
+type PanelSet = { primary: HTMLElement | null; secondary: HTMLElement[]; ledger: HTMLElement[] }
+
+/* One primary instrument per result (the declared primary, else the first
+   chart, else the first non-table panel), secondary panels beside it, and
+   every evidence table in the ledger beneath. Inline shows the primary only. */
+function panels(payload: Record<string, unknown>, options: PanelOptions): PanelSet {
   const ui = isRecord(payload._ui) ? payload._ui : {}
   const specs = asArray(ui.panels).filter(isRecord)
-  const layout = ['dashboard', 'chart_focus', 'split'].includes(text(ui.layout)) ? text(ui.layout) : 'dashboard'
-  const intent = ['market_terminal', 'analytics_dashboard', 'activity_investigator'].includes(text(ui.design_intent))
-    ? text(ui.design_intent)
-    : 'analytics_dashboard'
-  const density = ui.density === 'compact' ? 'compact' : 'comfortable'
-  const grid = element('section', `sqd-grid sqd-grid--${layout} sqd-grid--${intent} sqd-grid--${density}`)
-  grid.setAttribute('aria-label', 'Blockchain evidence views')
-  for (const panel of specs) {
+  const built: Array<{ panel: Panel; node: HTMLElement; table: boolean }> = []
+  const build = (panel: Panel) => {
     const kind = text(panel.kind)
-    if (kind === 'chart_panel') grid.append(chartPanel(payload, panel))
-    else if (kind === 'table_panel') grid.append(tablePanel(payload, panel))
-    else if (kind === 'timeline_panel') grid.append(timelinePanel(payload, panel))
-    else if (kind === 'ranked_bars_panel') grid.append(rankedPanel(payload, panel))
-    else if (kind === 'stat_list_panel') grid.append(statPanel(payload, panel))
+    if (kind === 'chart_panel') built.push({ panel, node: chartPanel(payload, panel), table: false })
+    else if (kind === 'table_panel') built.push({ panel, node: tablePanel(payload, panel, options), table: true })
+    else if (kind === 'timeline_panel') built.push({ panel, node: timelinePanel(payload, panel, options), table: false })
+    else if (kind === 'ranked_bars_panel') built.push({ panel, node: rankedPanel(payload, panel, options), table: false })
+    else if (kind === 'stat_list_panel') built.push({ panel, node: statPanel(payload, panel, options), table: false })
   }
+  for (const panel of specs) build(panel)
   const tableKeys = new Set(
     specs
       .filter((panel) => text(panel.kind) === 'table_panel')
@@ -1953,91 +2098,158 @@ function panels(payload: Record<string, unknown>): HTMLElement | null {
     .filter(Boolean)
   for (const dataKey of new Set(chartKeys)) {
     if (!tableKeys.has(dataKey) && asArray(getByPath(payload, dataKey)).some(isRecord)) {
-      grid.append(tablePanel(payload, { title: `Exact ${humanize(dataKey)} evidence`, data_key: dataKey }))
+      const panel = { title: `Exact ${humanize(dataKey)} evidence`, data_key: dataKey }
+      built.push({ panel, node: tablePanel(payload, panel, options), table: true })
       tableKeys.add(dataKey)
     }
   }
   if (!specs.length) {
     const contract = isRecord(payload._tool_contract) ? payload._tool_contract : {}
     if (contract.name === 'portal_evm_get_contract_activity') {
-      grid.append(
-        rankedPanel(payload, {
-          title: 'Top callers',
-          subtitle: 'Caller frequency inside the exact analyzed window.',
-          data_key: 'interactions.top_callers',
-          category_key: 'address',
-          value_key: 'interaction_count',
-          value_format: 'integer',
-          emphasis: 'primary',
-        }),
-      )
+      build({
+        kind: 'ranked_bars_panel',
+        title: 'Top callers',
+        subtitle: 'Caller frequency inside the exact analyzed window.',
+        data_key: 'interactions.top_callers',
+        category_key: 'address',
+        value_key: 'interaction_count',
+        value_format: 'integer',
+        emphasis: 'primary',
+      })
       if (isRecord(getByPath(payload, 'events.events_by_type'))) {
-        grid.append(
-          rankedPanel(payload, {
-            title: 'Top event types',
-            subtitle: 'Observed event signatures ranked by count.',
-            data_key: 'events.events_by_type',
-            object_map: true,
-            category_key: 'event',
-            value_key: 'count',
-            value_format: 'integer',
-          }),
-        )
+        build({
+          kind: 'ranked_bars_panel',
+          title: 'Top event types',
+          subtitle: 'Observed event signatures ranked by count.',
+          data_key: 'events.events_by_type',
+          object_map: true,
+          category_key: 'event',
+          value_key: 'count',
+          value_format: 'integer',
+        })
       }
     } else {
-      const inferred = inferredPanel(payload)
-      if (inferred) grid.append(inferred)
+      const inferred = inferredPanel(payload, options)
+      if (inferred) built.push({ panel: {}, node: inferred, table: true })
     }
   }
-  if (grid.childElementCount === 1) grid.classList.add('sqd-grid--single')
-  return grid.childElementCount ? grid : null
+  const nonTable = built.filter((entry) => !entry.table)
+  const primaryEntry =
+    nonTable.find((entry) => entry.panel.emphasis === 'primary') ??
+    nonTable.find((entry) => text(entry.panel.kind) === 'chart_panel') ??
+    nonTable[0] ??
+    built.find((entry) => entry.panel.emphasis === 'primary') ??
+    built[0]
+  if (primaryEntry) primaryEntry.node.classList.add('sqd-card--primary')
+  return {
+    primary: primaryEntry?.node ?? null,
+    secondary: nonTable.filter((entry) => entry !== primaryEntry).map((entry) => entry.node),
+    ledger: built.filter((entry) => entry.table && entry !== primaryEntry).map((entry) => entry.node),
+  }
 }
 
-function notices(payload: Record<string, unknown>): HTMLElement | null {
+type NoticeTier = 'info' | 'caution' | 'danger'
+
+/* Server notices are informational unless they say the numbers are less
+   trustworthy: a stale head, sampling, truncation. Those earn amber. */
+function noticeTier(copy: string): NoticeTier {
+  return /behind the chain head|stale|sampled|truncat|capped|incomplete|not (?:been )?included/i.test(copy)
+    ? 'caution'
+    : 'info'
+}
+
+function notice(tier: NoticeTier, copy: string, buttons: HTMLElement[] = []): HTMLElement {
+  const node = element('div', `sqd-notice sqd-notice--${tier}`)
+  node.setAttribute('role', tier === 'danger' ? 'alert' : 'note')
+  node.append(element('span', 'sqd-notice-copy', copy))
+  if (buttons.length) {
+    const bar = element('div', 'sqd-actions')
+    bar.append(...buttons)
+    node.append(bar)
+  }
+  return node
+}
+
+function actionButton(label: string, onClick: () => void, modifier = ''): HTMLButtonElement {
+  const button = element('button', `sqd-button${modifier ? ` ${modifier}` : ''}`, label) as HTMLButtonElement
+  button.type = 'button'
+  button.addEventListener('click', onClick)
+  return button
+}
+
+function notices(
+  payload: Record<string, unknown>,
+  actions: ExplorerActions,
+  state: ExplorerState,
+  tiers: NoticeTier[] = ['danger', 'caution', 'info'],
+): HTMLElement | null {
   const values = [payload._notice, ...asArray(payload._notices)].map(text).filter(Boolean)
-  const error = isRecord(payload.error) ? payload.error : undefined
-  const entries: Array<{ copy: string; tone: string }> = values.map((copy) => ({ copy, tone: '' }))
+  const error = tiers.includes('danger') && isRecord(payload.error) ? payload.error : undefined
+  const entries: HTMLElement[] = []
   if (error) {
     const suggestions = asArray(error.suggestions).map(text).filter(Boolean)
-    const retryable = error.retryable === true ? 'This request is safe to retry.' : ''
-    const guidance = [retryable, ...suggestions].filter(Boolean).join(' · ')
-    if (guidance) entries.unshift({ copy: guidance, tone: 'danger' })
+    const retryable = error.retryable === true
+    const guidance = [retryable ? 'This request is safe to retry.' : '', ...suggestions].filter(Boolean).join(' · ')
+    const buttons: HTMLElement[] = []
+    if (retryable && Object.keys(state.currentArgs).length) {
+      buttons.push(actionButton('Retry', () => actions.runFollowup('retry')))
+    }
+    if (suggestions.some((suggestion) => /smaller|shorter|narrow/i.test(suggestion)) && state.currentArgs.duration) {
+      buttons.push(actionButton('Use a smaller window', () => actions.runFollowup('zoom_in')))
+    }
+    entries.push(notice('danger', guidance || text(error.summary) || 'SQD returned an error.', buttons))
+  }
+  for (const copy of values.slice(0, 5)) {
+    const tier = noticeTier(copy)
+    if (tiers.includes(tier)) entries.push(notice(tier, copy))
   }
   if (!entries.length) return null
-  const wrap = element('section', 'sqd-notices')
+  const wrap = element('section', `sqd-notices${tiers.includes('danger') ? '' : ' sqd-notices--after'}`)
   wrap.setAttribute('aria-label', 'Important result notices')
-  entries
-    .slice(0, 6)
-    .forEach((entry) =>
-      wrap.append(element('div', `sqd-notice${entry.tone ? ` sqd-notice--${entry.tone}` : ''}`, entry.copy)),
-    )
+  wrap.append(...entries)
   return wrap
 }
 
-function followups(payload: Record<string, unknown>, actions: ExplorerActions): HTMLElement | null {
+const EXECUTABLE_INTENTS = ['continue', 'compare_previous', 'drilldown', 'show_raw', 'zoom_in']
+
+function executableFollowups(payload: Record<string, unknown>): Record<string, unknown>[] {
   const ui = isRecord(payload._ui) ? payload._ui : {}
   const specs = asArray(ui.follow_up_actions).filter(isRecord)
   const pagination = isRecord(payload._pagination) ? payload._pagination : {}
   if (pagination.has_more && !specs.some((action) => action.intent === 'continue'))
     specs.unshift({ label: 'Load more evidence', intent: 'continue', target: '_pagination.next_cursor' })
-  const executable = specs.filter(
-    (action) =>
-      action.executable !== false &&
-      ['continue', 'compare_previous', 'drilldown', 'show_raw', 'zoom_in'].includes(text(action.intent)),
+  return specs.filter(
+    (action) => action.executable !== false && EXECUTABLE_INTENTS.includes(text(action.intent)),
   )
-  if (!executable.length) return null
-  const bar = element('div', 'sqd-actions sqd-followups')
-  for (const [index, action] of executable.entries()) {
+}
+
+/* Inline keeps to the host's two-action rule: the primary follow-up and the
+   way into fullscreen. Fullscreen offers every executable follow-up. */
+function followups(
+  payload: Record<string, unknown>,
+  actions: ExplorerActions,
+  state: ExplorerState,
+): HTMLElement | null {
+  const mode = displayModeOf(state)
+  const pagination = isRecord(payload._pagination) ? payload._pagination : {}
+  const executable = executableFollowups(payload)
+  const fullscreen = mode === 'inline' && canFullscreen(state, actions)
+  const limit = mode === 'inline' ? (fullscreen ? 1 : 2) : executable.length
+  const chosen = executable.slice(0, limit)
+  if (!chosen.length && !fullscreen) return null
+  const bar = element('div', `sqd-actions sqd-followups${mode === 'inline' ? ' sqd-followups--inline' : ''}`)
+  for (const [index, action] of chosen.entries()) {
     const button = element(
       'button',
       `sqd-button${index === 0 ? ' sqd-button--primary' : ''}`,
       text(action.label ?? humanize(text(action.intent))),
     )
     button.type = 'button'
-    button.disabled = action.intent === 'continue' && !pagination.next_cursor
+    button.disabled = state.loading || (action.intent === 'continue' && !pagination.next_cursor)
     button.addEventListener('click', () => actions.runFollowup(text(action.intent), text(action.target), action))
     bar.append(button)
   }
+  if (fullscreen) bar.append(fullscreenButton(actions))
   return bar
 }
 
@@ -2052,72 +2264,168 @@ function raw(payload: Record<string, unknown>): HTMLElement {
   return details
 }
 
+/* The skeleton mirrors the inline card it will become: eyebrow, answer,
+   metrics row, one panel. Skeletons, not spinners, for inline content. */
 function loadingState(): HTMLElement {
-  const wrap = element('div', 'sqd-shell')
-  wrap.setAttribute('aria-busy', 'true')
+  const wrap = element('div')
   wrap.setAttribute('aria-label', 'Loading blockchain data')
-  wrap.append(element('div', 'sqd-skeleton'))
+  wrap.style.display = 'grid'
+  wrap.style.gap = '12px'
+  wrap.append(element('div', 'sqd-skeleton sqd-skeleton--line'))
+  wrap.append(element('div', 'sqd-skeleton sqd-skeleton--line'))
   const grid = element('div', 'sqd-metrics')
   for (let i = 0; i < 4; i += 1) grid.append(element('div', 'sqd-skeleton'))
   wrap.append(grid)
-  wrap.append(element('div', 'sqd-skeleton'))
+  wrap.append(element('div', 'sqd-skeleton sqd-skeleton--panel'))
   return wrap
 }
 
-function emptyState(error = ''): HTMLElement {
+function emptyState(state: ExplorerState, actions: ExplorerActions): HTMLElement {
   const empty = element('section', 'sqd-empty')
-  const copy = element('div')
-  copy.append(
+  const error = state.error
+  empty.append(
     element('h2', undefined, error ? 'The explorer could not open this result' : 'Ask SQD about blockchain activity'),
   )
-  copy.append(
+  empty.append(
     element(
       'p',
       undefined,
       error ||
-        'Explore wallets, contracts, token flows, network activity, Bitcoin, Solana, Polkadot, Hyperliquid, and other queryable blockchain datasets. Tron discovery, freshness, and timestamps remain available through SQD metadata tools.',
+        'Explore wallets, contracts, token flows, network activity, Bitcoin, Solana, Polkadot, Hyperliquid, and other queryable blockchain datasets.',
     ),
   )
-  empty.append(copy)
+  if (error && Object.keys(state.currentArgs).length) {
+    const bar = element('div', 'sqd-actions sqd-followups sqd-followups--inline')
+    bar.append(actionButton('Retry', () => actions.runFollowup('retry'), 'sqd-button--primary'))
+    empty.append(bar)
+  }
   return empty
+}
+
+/* A result with nothing in it still answers: it says so, and offers the
+   next window step instead of a blank sheet. */
+function noRowsState(payload: Record<string, unknown>, state: ExplorerState, actions: ExplorerActions): HTMLElement {
+  const meta = isRecord(payload._meta) ? payload._meta : {}
+  const wrap = element('section', 'sqd-empty')
+  wrap.setAttribute('aria-label', 'No matching rows')
+  wrap.append(
+    element(
+      'p',
+      undefined,
+      `Nothing matched in the ${text(meta.timeframe ?? state.currentArgs.duration ?? 'requested')} window on ${text(meta.network ?? 'this network')}. Widen the window, or ask for another network or address.`,
+    ),
+  )
+  const bar = element('div', 'sqd-actions sqd-followups sqd-followups--inline')
+  if (state.currentArgs.duration) {
+    bar.append(actionButton('Widen the window', () => actions.runFollowup('widen'), 'sqd-button--primary'))
+  }
+  if (bar.childElementCount) wrap.append(bar)
+  return wrap
+}
+
+function receiptLine(payload: Record<string, unknown>): HTMLElement | null {
+  const evidence = isRecord(payload._evidence) ? payload._evidence : undefined
+  if (!evidence) return null
+  const result = isRecord(evidence.result) ? evidence.result : {}
+  const rowCount = numeric(result.row_count) ?? 0
+  const digest = text(result.exact_data_sha256)
+  const line = element('p', 'sqd-receipt-line')
+  line.setAttribute('aria-label', 'Evidence receipt')
+  line.append(element('span', undefined, `${rowCount} exact row${rowCount === 1 ? '' : 's'}`))
+  line.append(element('span', undefined, text(result.completeness || 'unknown')))
+  if (digest) line.append(element('span', undefined, `SHA-256 ${digest.slice(0, 12)}`))
+  line.append(element('span', undefined, 'Read-only evidence from SQD Portal'))
+  return line
+}
+
+function footer(): HTMLElement {
+  const node = element('footer', 'sqd-footer')
+  node.append(element('span', undefined, 'Read-only evidence from SQD Portal'))
+  const attribution = element('a', undefined, 'Charts by TradingView') as HTMLAnchorElement
+  attribution.href = 'https://www.tradingview.com/'
+  attribution.target = '_blank'
+  attribution.rel = 'noopener noreferrer'
+  node.append(attribution)
+  node.append(element('span', undefined, 'portal.sqd.dev'))
+  return node
+}
+
+function stack(className: string, children: Array<HTMLElement | null>): HTMLElement | null {
+  const present = children.filter((child): child is HTMLElement => Boolean(child))
+  if (!present.length) return null
+  const node = element('div', className)
+  node.append(...present)
+  return node
 }
 
 export function renderExplorer(root: HTMLElement, state: ExplorerState, actions: ExplorerActions) {
   disposeActiveCharts()
   injectStyle()
+  const mode = displayModeOf(state)
+  appRoot = root
   root.className = 'sqd-app'
+  root.dataset.mode = mode
   root.replaceChildren()
   const shell = element('main', 'sqd-shell')
   shell.append(appHeader(actions, state))
+  const pending = state.loading && Boolean(state.payload)
+  if (pending) {
+    /* A follow-up is in flight: the last result stays on screen, dimmed
+       behind a progress bar, and every follow-up control is held. */
+    shell.setAttribute('aria-busy', 'true')
+    const progress = element('div', 'sqd-progress')
+    progress.setAttribute('role', 'progressbar')
+    progress.setAttribute('aria-label', 'Loading the next result')
+    shell.append(progress)
+  }
   if (state.loading && !state.payload) shell.append(loadingState())
-  else if (!state.payload) shell.append(emptyState(state.error))
+  else if (!state.payload) shell.append(emptyState(state, actions))
   else {
     const payload = state.payload
     shell.append(masthead(payload))
-    const resultNotices = notices(payload)
+    if (state.error) {
+      shell.append(
+        notice('danger', state.error, [actionButton('Retry', () => actions.runFollowup('retry'))]),
+      )
+    }
+    /* Inline, only notices that reduce trust sit above the instrument; the
+       informational ones (a forming candle) follow it as a footnote. */
+    const resultNotices = notices(payload, actions, state, mode === 'inline' ? ['danger', 'caution'] : undefined)
     if (resultNotices) shell.append(resultNotices)
     const metrics = metricCards(payload)
-    /* The compact readout strip sits directly under the answer for every
-       mode, so a market terminal opens with its price summary and an
-       analytics result opens with its headline comparisons, both above the
-       dominant chart or table rather than stranded beneath the evidence. */
-    if (metrics) shell.append(metrics)
-    const views = panels(payload)
-    if (views) shell.append(views)
-    const next = followups(payload, actions)
-    if (next) shell.append(next)
-    const receipt = evidenceReceipt(payload, actions)
-    if (receipt) shell.append(receipt)
-    shell.append(raw(payload))
+    const views = panels(payload, { mode, actions, state })
+    const hasRows = views.primary || views.secondary.length || views.ledger.length
+    if (mode === 'inline') {
+      /* Inline is a summary card: the answer, one metrics row, the primary
+         instrument, and at most two actions. Everything else is fullscreen. */
+      if (metrics) shell.append(metrics)
+      const primary = views.primary ?? views.secondary[0] ?? views.ledger[0] ?? null
+      if (primary) shell.append(primary)
+      else if (!isRecord(payload.error)) shell.append(noRowsState(payload, state, actions))
+      const footnotes = notices(payload, actions, state, ['info'])
+      if (footnotes) shell.append(footnotes)
+      const next = followups(payload, actions, state)
+      if (next) shell.append(next)
+      const line = receiptLine(payload)
+      if (line) shell.append(line)
+    } else {
+      /* Two columns only when there are secondary instruments to fill the
+         side; a metrics row alone sits above the primary at full width. */
+      const split = Boolean(views.primary && views.secondary.length)
+      if (metrics && !split) shell.append(metrics)
+      const side = split ? stack('sqd-workspace-side', [metrics, ...views.secondary]) : null
+      const main = stack('sqd-workspace-main', [views.primary, ...(split ? [] : views.secondary)])
+      const ledger = stack('sqd-workspace-ledger', views.ledger)
+      const workspace = stack(`sqd-workspace${split ? ' sqd-workspace--split' : ''}`, [main, side, ledger])
+      if (workspace) shell.append(workspace)
+      if (!hasRows && !isRecord(payload.error)) shell.append(noRowsState(payload, state, actions))
+      const next = followups(payload, actions, state)
+      if (next) shell.append(next)
+      const receipt = evidenceReceipt(payload, actions)
+      if (receipt) shell.append(receipt)
+      shell.append(raw(payload))
+    }
   }
-  const footer = element('footer', 'sqd-footer')
-  footer.append(element('span', undefined, 'Read-only evidence from SQD Portal'))
-  const attribution = element('a', undefined, 'Charts by TradingView') as HTMLAnchorElement
-  attribution.href = 'https://www.tradingview.com/'
-  attribution.target = '_blank'
-  attribution.rel = 'noopener noreferrer'
-  footer.append(attribution)
-  footer.append(element('span', undefined, 'portal.sqd.dev'))
-  shell.append(footer)
+  if (mode === 'fullscreen') shell.append(footer())
   root.append(shell)
 }

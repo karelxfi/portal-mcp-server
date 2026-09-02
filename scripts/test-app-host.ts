@@ -40,6 +40,13 @@ async function main() {
       },
     },
   )
+  /* A real host answers a display-mode request and then announces the new
+     context, which is how the inline card becomes the fullscreen workspace. */
+  bridge.onrequestdisplaymode = async ({ mode }) => {
+    bridge.setHostContext({ theme: 'dark', displayMode: mode, availableDisplayModes: ['inline', 'fullscreen'] })
+    window.__SQD_HOST_DISPLAY_MODE__ = mode
+    return { mode }
+  }
   bridge.oninitialized = async () => {
     await bridge.sendToolInput({ arguments: toolInput })
     await bridge.sendToolResult(toolResult)
@@ -130,9 +137,23 @@ async function main() {
     )
     assert((await frame.locator('.sqd-timeline .sqd-event').count()) > 0, 'the App must render live recent activity rows')
     assert(await frame.getByText('Read-only evidence from SQD Portal').isVisible(), 'the rendered App must retain SQD provenance')
+    assert(
+      (await frame.locator('.sqd-app[data-mode="inline"]').count()) === 1,
+      'the host opens the App as an inline summary card',
+    )
+    assert((await frame.locator('.sqd-followups button').count()) <= 2, 'the inline card offers at most two actions')
+    assert((await frame.locator('.sqd-raw').count()) === 0, 'the inline card leaves raw evidence to fullscreen')
 
+    const openFullscreen = frame.getByRole('button', { name: 'Open full screen' })
+    assert(await openFullscreen.isVisible(), 'the inline card must offer the way into fullscreen')
+    await openFullscreen.click()
+    await frame.locator('.sqd-app[data-mode="fullscreen"]').waitFor({ state: 'attached', timeout: 10_000 })
+    assert(
+      (await page.evaluate(() => (window as any).__SQD_HOST_DISPLAY_MODE__)) === 'fullscreen',
+      'the App must request fullscreen through the host bridge',
+    )
     const showRaw = frame.getByRole('button', { name: 'Show raw rows' })
-    assert(await showRaw.isVisible(), 'the rendered App must expose its result interaction')
+    assert(await showRaw.isVisible(), 'the rendered App must expose its result interaction in fullscreen')
     await showRaw.click()
     assert(await frame.locator('.sqd-raw[open] pre').isVisible(), 'the App interaction must reveal exact row evidence')
 

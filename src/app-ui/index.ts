@@ -25,7 +25,7 @@ let historyIndex = -1
 
 const app = new App(
   { name: 'sqd-blockchain-activity-explorer', version: __SQD_APP_VERSION__ },
-  {},
+  { availableDisplayModes: ['inline', 'fullscreen'] },
   { strict: true },
 )
 
@@ -70,7 +70,15 @@ function applyHostContext(context: ReturnType<typeof app.getHostContext>) {
   if (context.theme) applyDocumentTheme(context.theme)
   if (context.styles?.variables) applyHostStyleVariables(context.styles.variables)
   if (context.styles?.css?.fonts) applyHostFonts(context.styles.css.fonts)
-  update({ displayMode: context.displayMode })
+  /* The host composer can overlay the bottom of an inline app, and mobile
+     chrome the edges; safe-area insets become root padding. */
+  const insets = context.safeAreaInsets
+  const rootStyle = document.documentElement.style
+  rootStyle.setProperty('--safe-top', `${insets?.top ?? 0}px`)
+  rootStyle.setProperty('--safe-right', `${insets?.right ?? 0}px`)
+  rootStyle.setProperty('--safe-bottom', `${insets?.bottom ?? 0}px`)
+  rootStyle.setProperty('--safe-left', `${insets?.left ?? 0}px`)
+  update({ displayMode: context.displayMode, availableDisplayModes: context.availableDisplayModes })
 }
 
 const actions: ExplorerActions = {
@@ -94,7 +102,7 @@ const actions: ExplorerActions = {
     const toolName =
       typeof action?.tool === 'string' ? action.tool : typeof contract?.name === 'string' ? contract.name : undefined
     if (!toolName) {
-      update({ payload: null, error: 'This result does not include a safe follow-up tool.' })
+      update({ loading: false, error: 'This result does not include a safe follow-up tool.' })
       return
     }
     const pagination = state.payload && isRecord(state.payload._pagination) ? state.payload._pagination : undefined
@@ -105,7 +113,7 @@ const actions: ExplorerActions = {
       actionArguments: action?.arguments,
     })
     if (plan.error || !plan.callArgs || !plan.persistedArgs) {
-      update({ payload: null, error: plan.error ?? 'This follow-up cannot be reconstructed safely.' })
+      update({ loading: false, error: plan.error ?? 'This follow-up cannot be reconstructed safely.' })
       return
     }
     update({ loading: true, error: '' })
@@ -114,13 +122,9 @@ const actions: ExplorerActions = {
       const rawText = extractText(result.content)
       const payload = isRecord(result.structuredContent) ? result.structuredContent : parseText(rawText)
       if (result.isError) {
-        update({
-          payload: null,
-          rawText,
-          currentArgs: plan.persistedArgs,
-          loading: false,
-          error: rawText || 'SQD returned an error.',
-        })
+        /* A failed follow-up keeps the last good result on screen and reports
+           the failure above it, so nothing the user was reading disappears. */
+        update({ loading: false, error: rawText || 'SQD returned an error.' })
         return
       }
       remember({
@@ -130,14 +134,25 @@ const actions: ExplorerActions = {
         error: '',
       })
     } catch (error) {
-      update({ payload: null, loading: false, error: error instanceof Error ? error.message : 'The follow-up request failed.' })
+      update({ loading: false, error: error instanceof Error ? error.message : 'The follow-up request failed.' })
     }
   },
   async requestFullscreen() {
+    const available = app.getHostContext()?.availableDisplayModes
+    if (available && !available.includes('fullscreen')) return
     try {
-      await app.requestDisplayMode({ mode: 'fullscreen' })
+      const result = await app.requestDisplayMode({ mode: 'fullscreen' })
+      update({ displayMode: result.mode })
     } catch {
       /* Host can decline full screen. */
+    }
+  },
+  async requestInline() {
+    try {
+      const result = await app.requestDisplayMode({ mode: 'inline' })
+      update({ displayMode: result.mode })
+    } catch {
+      /* Host can decline. */
     }
   },
   goBack() {
@@ -173,8 +188,7 @@ app.ontoolresult = (result) => {
     error: '',
   })
 }
-app.ontoolcancelled = () =>
-  update({ payload: null, loading: false, error: 'The request was cancelled. You can run it again.' })
+app.ontoolcancelled = () => update({ loading: false, error: 'The request was cancelled. You can run it again.' })
 app.onhostcontextchanged = applyHostContext
 
 renderExplorer(root, state, actions)

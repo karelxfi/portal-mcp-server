@@ -27,7 +27,7 @@ const bundle = result.outputFiles[0]?.text ?? ''
 await mkdir(directory, { recursive: true })
 await writeFile(
   path.join(directory, 'index.html'),
-  `<!doctype html><html lang="en" style="color-scheme:dark"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="dark"><title>SQD Explorer Preview</title></head><body><div id="app"></div><script>${bundle}</script></body></html>`,
+  `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark"><title>SQD Explorer Preview</title></head><body><div id="app"></div><script>${bundle}</script></body></html>`,
   'utf8',
 )
 console.log(`Built preview: ${path.relative(root, path.join(directory, 'index.html'))}`)

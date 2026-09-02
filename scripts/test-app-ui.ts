@@ -27,11 +27,37 @@ const fixtures = [
   'empty',
 ]
 const WALLET_FIXTURE_ROW_COUNT = ((APP_FIXTURES.wallet.activity as Record<string, unknown>).items as unknown[]).length
-const viewports = [
-  { name: 'desktop-light', width: 1280, height: 900, colorScheme: 'light' as const },
-  { name: 'desktop-dark', width: 1280, height: 900, colorScheme: 'dark' as const },
-  { name: 'mobile-light', width: 390, height: 844, colorScheme: 'light' as const },
+/* Fullscreen cells exercise the whole workspace (tables, receipt, history);
+   inline cells check the summary card the host renders in the conversation;
+   the claude cell applies Claude's published style variables to prove the
+   structure is themed by the host. */
+type Cell = {
+  name: string
+  width: number
+  height: number
+  colorScheme: 'light' | 'dark'
+  mode: 'inline' | 'fullscreen'
+  host?: 'claude'
+}
+const viewports: Cell[] = [
+  { name: 'desktop-light', width: 1280, height: 900, colorScheme: 'light', mode: 'fullscreen' },
+  { name: 'desktop-dark', width: 1280, height: 900, colorScheme: 'dark', mode: 'fullscreen' },
+  { name: 'mobile-light', width: 390, height: 844, colorScheme: 'light', mode: 'fullscreen' },
+  { name: 'inline-dark', width: 760, height: 900, colorScheme: 'dark', mode: 'inline' },
+  { name: 'inline-mobile-dark', width: 390, height: 844, colorScheme: 'dark', mode: 'inline' },
+  { name: 'inline-claude-light', width: 760, height: 900, colorScheme: 'light', mode: 'inline', host: 'claude' },
 ]
+const SQD = {
+  dark: { surface: 'rgb(8, 9, 10)', fg: 'rgb(247, 248, 248)', accent: 'rgb(129, 140, 248)', card: 'rgb(19, 19, 22)', series: ['rgb(99, 102, 241)', 'rgb(8, 145, 178)', 'rgb(217, 119, 6)', 'rgb(22, 163, 74)', 'rgb(139, 92, 246)'] },
+  light: { surface: 'rgb(255, 255, 255)', fg: 'rgb(17, 17, 21)', accent: 'rgb(37, 99, 235)', card: 'rgb(255, 255, 255)', series: ['rgb(37, 99, 235)', 'rgb(180, 83, 9)', 'rgb(0, 108, 165)', 'rgb(177, 5, 196)', 'rgb(0, 119, 50)'] },
+}
+const CLAUDE = { light: { surface: 'rgb(255, 255, 255)', fg: 'rgb(20, 20, 19)' }, dark: { surface: 'rgb(48, 48, 46)', fg: 'rgb(250, 249, 245)' } }
+
+function cellUrl(fixture: string, viewport: Cell): string {
+  const query = new URLSearchParams({ fixture, mode: viewport.mode, picker: '0' })
+  if (viewport.host) query.set('host', viewport.host)
+  return `${baseUrl}?${query.toString()}`
+}
 const renderTimings: number[] = []
 const interactionTimings: number[] = []
 
@@ -50,7 +76,7 @@ async function validate(page: Page, fixture: string, viewport: (typeof viewports
     if (!request.url().startsWith(baseUrl)) externalRequests.push(request.url())
   })
   const startedAt = performance.now()
-  await page.goto(`${baseUrl}?fixture=${fixture}`, { waitUntil: 'load' })
+  await page.goto(cellUrl(fixture, viewport), { waitUntil: 'load' })
   await page.waitForSelector('.sqd-shell')
   await page.evaluate(() => document.fonts.ready)
   const renderMs = performance.now() - startedAt
@@ -64,10 +90,21 @@ async function validate(page: Page, fixture: string, viewport: (typeof viewports
     `${fixture} ${viewport.name} made unexpected external requests: ${externalRequests.join(' | ')}`,
   )
   const design = await page.evaluate(() => {
+    /* Resolve tokens through a probe element: light-dark() and host
+       fallbacks only become colours once they are used. (Kept as one map so
+       the tsx transform adds no browser-side name helper.) */
+    const tokens = ['--accent', '--success-fill', '--warning-fill', '--danger-fill', '--chart-1', '--chart-2', '--chart-3', '--chart-4', '--chart-5']
+    const resolved = tokens.map((token) => {
+      const probe = document.createElement('span')
+      probe.style.color = `var(${token})`
+      document.body.append(probe)
+      const value = getComputedStyle(probe).color
+      probe.remove()
+      return value
+    })
     const body = getComputedStyle(document.body)
-    const title = getComputedStyle(document.querySelector('.sqd-title')!)
-    const mono = getComputedStyle(document.querySelector('.sqd-footer')!)
-    const root = getComputedStyle(document.documentElement)
+    const title = document.querySelector('.sqd-title, .sqd-empty h2')
+    const mono = getComputedStyle(document.querySelector('.sqd-eyebrow, .sqd-receipt-line, .sqd-footer, .sqd-query')!)
     const card = document.querySelector('.sqd-card')
     const tableHeader = document.querySelector('.sqd-table th')
     const cardStyle = card ? getComputedStyle(card) : undefined
@@ -76,16 +113,15 @@ async function validate(page: Page, fixture: string, viewport: (typeof viewports
       background: body.backgroundColor,
       foreground: body.color,
       bodyFont: body.fontFamily,
-      titleWeight: title.fontWeight,
+      titleWeight: title ? getComputedStyle(title).fontWeight : '510',
       monoFont: mono.fontFamily,
-      accent: root.getPropertyValue('--accent').trim(),
-      successFill: root.getPropertyValue('--success-fill').trim(),
-      warningFill: root.getPropertyValue('--warning-fill').trim(),
-      dangerFill: root.getPropertyValue('--danger-fill').trim(),
-      chartSeries: ['--chart-1', '--chart-2', '--chart-3', '--chart-4', '--chart-5'].map((token) =>
-        root.getPropertyValue(token).trim(),
-      ),
-      colorScheme: root.colorScheme,
+      accent: resolved[0],
+      successFill: resolved[1],
+      warningFill: resolved[2],
+      dangerFill: resolved[3],
+      chartSeries: resolved.slice(4),
+      prefersDark: matchMedia('(prefers-color-scheme: dark)').matches,
+      mode: document.querySelector<HTMLElement>('.sqd-app[data-mode]')?.dataset.mode,
       cardBackground: cardStyle?.backgroundColor,
       cardRadius: cardStyle?.borderRadius,
       tableHeaderFont: tableHeaderStyle?.fontFamily,
@@ -93,23 +129,38 @@ async function validate(page: Page, fixture: string, viewport: (typeof viewports
       tableHeaderTracking: tableHeaderStyle?.letterSpacing,
     }
   })
-  assert(design.background === 'rgb(8, 9, 10)', `${fixture} should use SQD dark surface #08090a`)
-  assert(design.foreground === 'rgb(247, 248, 248)', `${fixture} should use the SQD foreground token`)
+  const expected = SQD[viewport.colorScheme]
+  const host = viewport.host ? CLAUDE[viewport.colorScheme] : undefined
+  assert(design.prefersDark === (viewport.colorScheme === 'dark'), `${fixture} cell must run in ${viewport.colorScheme}`)
+  assert(design.mode === viewport.mode, `${fixture} should render in ${viewport.mode} mode`)
+  assert(
+    design.background === (host?.surface ?? expected.surface),
+    `${fixture} ${viewport.name} surface should come from ${host ? 'the host variables' : 'the SQD token'} (got ${design.background})`,
+  )
+  assert(
+    design.foreground === (host?.fg ?? expected.fg),
+    `${fixture} ${viewport.name} foreground should come from ${host ? 'the host variables' : 'the SQD token'} (got ${design.foreground})`,
+  )
   assert(design.bodyFont.startsWith('"Inter SQD"'), `${fixture} should render with embedded Inter`)
   assert(design.monoFont.startsWith('"JetBrains Mono SQD"'), `${fixture} evidence metadata should use JetBrains Mono`)
   assert(design.titleWeight === '510', `${fixture} headings should use SQD weight 510`)
-  assert(design.accent === '#818cf8', `${fixture} should use SQD indigo #818cf8`)
-  assert(design.successFill === '#16a34a', `${fixture} should use the SQD success fill token`)
-  assert(design.warningFill === '#f59e0b', `${fixture} should use the SQD warning fill token`)
-  assert(design.dangerFill === '#ef4444', `${fixture} should use the SQD danger fill token`)
+  assert(design.accent === expected.accent, `${fixture} should keep the SQD accent in ${viewport.colorScheme} (got ${design.accent})`)
+  assert(design.successFill === 'rgb(22, 163, 74)', `${fixture} should use the SQD success fill token`)
   assert(
-    JSON.stringify(design.chartSeries) === JSON.stringify(['#6366f1', '#0891b2', '#d97706', '#16a34a', '#8b5cf6']),
-    `${fixture} co-equal series must follow tokens/chart-palette.json line_bar_area order (got ${design.chartSeries.join(', ')})`,
+    design.warningFill === (viewport.colorScheme === 'dark' ? 'rgb(245, 158, 11)' : 'rgb(217, 119, 6)'),
+    `${fixture} should use the SQD warning fill token`,
   )
-  assert(design.colorScheme === 'dark', `${fixture} should remain an intentional dark product surface`)
-  if (design.cardBackground) {
-    assert(design.cardBackground === 'rgb(19, 19, 22)', `${fixture} cards should use SQD raised surface #131316`)
-    assert(design.cardRadius === '12px', `${fixture} cards should use the SQD pane radius`)
+  assert(
+    design.dangerFill === (viewport.colorScheme === 'dark' ? 'rgb(239, 68, 68)' : 'rgb(220, 38, 38)'),
+    `${fixture} should use the SQD danger fill token`,
+  )
+  assert(
+    JSON.stringify(design.chartSeries) === JSON.stringify(expected.series),
+    `${fixture} co-equal series must follow tokens/chart-palette.json for ${viewport.colorScheme} (got ${design.chartSeries.join(', ')})`,
+  )
+  if (design.cardBackground && viewport.mode === 'fullscreen' && !host) {
+    assert(design.cardBackground === expected.card, `${fixture} panels should use the SQD raised surface (got ${design.cardBackground})`)
+    assert(design.cardRadius === '12px', `${fixture} panels should use the SQD pane radius`)
   }
   if (design.tableHeaderFont) {
     assert(design.tableHeaderFont.startsWith('"Inter SQD"'), `${fixture} table headers should use Inter`)
@@ -132,7 +183,7 @@ async function validate(page: Page, fixture: string, viewport: (typeof viewports
     }
   }
   assert((await page.locator('.sqd-mark').count()) === 1, `${fixture} should show one SQD mark`)
-  assert((await page.locator('h1').count()) === 1, `${fixture} should expose one result heading`)
+  assert((await page.locator('h1').count()) <= 1, `${fixture} should expose at most one result heading`)
   const overflow = await page.evaluate(
     () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
   )
@@ -141,8 +192,11 @@ async function validate(page: Page, fixture: string, viewport: (typeof viewports
     .locator('.sqd-card')
     .evaluateAll((cards) => cards.filter((card) => card.getBoundingClientRect().height < 40).length)
   assert(emptyCards === 0, `${fixture} ${viewport.name} has collapsed evidence cards`)
-  await page.locator('.sqd-preview-picker').evaluate((node) => node.setAttribute('hidden', ''))
   await page.screenshot({ path: path.join(screenshots, `${viewport.name}-${fixture}.png`), fullPage: true })
+  if (viewport.mode === 'inline') {
+    await validateInline(page, fixture, viewport)
+    return
+  }
   if (['timeseries', 'grouped', 'sparse', 'mixed'].includes(fixture)) {
     const svg = page.locator('svg.sqd-chart')
     assert((await svg.count()) >= 1, `${fixture} should render an accessible chart workspace`)
@@ -461,6 +515,12 @@ async function validate(page: Page, fixture: string, viewport: (typeof viewports
       'contract workspace should retain four callers and three event types',
     )
   }
+  if (!['partial', 'error'].includes(fixture)) {
+    assert(
+      (await page.locator('.sqd-notice--caution, .sqd-notice--danger, .sqd-display-limit--caution, .sqd-context--warning').count()) === 0,
+      `${fixture} is complete, so nothing on it may read as a warning`,
+    )
+  }
   if (fixture === 'large_table') {
     const rows = APP_FIXTURES.large_table.items as Array<Record<string, unknown>>
     assert((await page.locator('table.sqd-table tbody tr').count()) === 10, 'Large tables should use short local pages')
@@ -468,6 +528,7 @@ async function validate(page: Page, fixture: string, viewport: (typeof viewports
       (await page.locator('.sqd-display-limit').innerText()).includes('10 of 125'),
       'Large tables should disclose the local page size',
     )
+    assert((await page.locator('.sqd-display-limit--caution').count()) === 0, 'a complete local page is a caption, not a warning')
     assert(
       (await page.locator('.sqd-table-pagination').innerText()).includes('Page 1 of 13'),
       'Large tables should expose page state',
@@ -522,9 +583,10 @@ async function validate(page: Page, fixture: string, viewport: (typeof viewports
   }
   if (fixture === 'partial') {
     assert(
-      (await page.locator('.sqd-display-limit').innerText()).includes('8 of 40 declared'),
-      'Partial results must disclose declared against present rows',
+      (await page.locator('.sqd-display-limit--caution').innerText()).includes('8 of 40 declared'),
+      'Partial results must disclose declared against present rows, in amber',
     )
+    assert((await page.locator('.sqd-notice--caution').count()) === 1, 'a stale head reads as a caution notice')
     assert(
       (await page.locator('.sqd-context').innerText()).includes('partial'),
       'Partial results must be labeled partial next to the headline',
@@ -534,6 +596,23 @@ async function validate(page: Page, fixture: string, viewport: (typeof viewports
       (await continueButton.count()) === 1 && (await continueButton.isEnabled()),
       'Partial results should offer an enabled continuation action',
     )
+  }
+  if (fixture === 'hyperliquid' && viewport.name === 'desktop-dark') {
+    await page.goto(`${cellUrl(fixture, viewport)}&busy=1`, { waitUntil: 'load' })
+    await page.waitForSelector('.sqd-shell')
+    assert((await page.locator('.sqd-shell[aria-busy="true"] .sqd-progress').count()) === 1, 'a pending follow-up shows progress over the last result')
+    assert((await page.locator('.sqd-candle-chart canvas').count()) >= 2, 'a pending follow-up keeps the last result on screen')
+    assert(
+      (await page.locator('.sqd-followups button').evaluateAll((nodes) => nodes.every((node) => (node as HTMLButtonElement).disabled))) === true,
+      'a pending follow-up holds every follow-up control',
+    )
+    await page.goto(`${cellUrl(fixture, viewport)}&error=1`, { waitUntil: 'load' })
+    await page.waitForSelector('.sqd-shell')
+    assert((await page.locator('.sqd-notice--danger').count()) === 1, 'a failed follow-up reports above the last result')
+    assert((await page.locator('.sqd-candle-chart canvas').count()) >= 2, 'a failed follow-up keeps the last result on screen')
+    assert((await page.getByRole('button', { name: 'Retry' }).count()) === 1, 'a failed follow-up offers a retry')
+    await page.goto(cellUrl(fixture, viewport), { waitUntil: 'load' })
+    await page.waitForSelector('.sqd-shell')
   }
   const keyboardTarget = page.locator('button:visible, [tabindex="0"]:visible').first()
   if (!['error', 'empty'].includes(fixture)) {
@@ -554,6 +633,58 @@ async function validate(page: Page, fixture: string, viewport: (typeof viewports
     serious.length === 0,
     `${fixture} ${viewport.name} accessibility: ${serious.map((violation) => `${violation.id}: ${violation.nodes.map((node) => node.target.join(' ')).join(' | ')}`).join(', ')}`,
   )
+}
+
+/* The inline card: the host's rules (auto-fit height, at most two actions,
+   no menus, no nested scrolling) plus SQD's (the primary instrument first). */
+async function validateInline(page: Page, fixture: string, viewport: Cell) {
+  const buttons = page.locator('.sqd-followups button')
+  assert((await buttons.count()) <= 2, `${fixture} inline card must offer at most two actions`)
+  assert((await page.locator('.sqd-receipt, .sqd-raw, .sqd-footer, .sqd-table-pagination, .sqd-input').count()) === 0, `${fixture} inline card must leave the ledger apparatus to fullscreen`)
+  assert((await page.locator('.sqd-card').count()) <= 1, `${fixture} inline card shows one primary panel`)
+  assert((await page.locator('table.sqd-table tbody tr').count()) <= 5, `${fixture} inline tables preview at most five rows`)
+  const innerScroll = await page.evaluate(() =>
+    Array.from(document.querySelectorAll<HTMLElement>('.sqd-shell *')).filter((node) => {
+      const style = getComputedStyle(node)
+      return /auto|scroll/.test(style.overflowY) && node.scrollHeight > node.clientHeight + 2
+    }).length,
+  )
+  assert(innerScroll === 0, `${fixture} inline card must not scroll vertically inside itself`)
+  const primary = page.locator('.sqd-card--primary, .sqd-empty, .sqd-notice--danger').first()
+  if ((await primary.count()) > 0) {
+    const box = await primary.boundingBox()
+    /* The instrument is the point of the card: on a 760px host column it
+       starts inside the first 360px; a phone stacks the readouts two by two. */
+    const budget = viewport.width <= 520 ? 480 : 360
+    assert(box && box.y < budget, `${fixture} ${viewport.name} primary panel should start within the first ${budget}px (got ${box?.y.toFixed(0)})`)
+  }
+  if (['hyperliquid', 'ratio'].includes(fixture)) {
+    assert((await page.locator('.sqd-candle-chart canvas').count()) >= 2, `${fixture} inline card should paint the terminal`)
+    assert((await page.locator('.sqd-chart-range').isVisible()) === false, `${fixture} inline card hides range controls`)
+  }
+  if (fixture === 'partial') {
+    assert((await page.getByRole('button', { name: 'Load the next rows' }).count()) === 1, 'partial inline card keeps its continuation action')
+  }
+  if (fixture === 'error') {
+    assert((await page.getByRole('button', { name: 'Retry' }).count()) === 1, 'error inline card offers a retry')
+  }
+  if (fixture === 'empty') {
+    assert((await page.getByRole('button', { name: 'Widen the window' }).count()) === 1, 'empty inline card offers to widen the window')
+  }
+  if (viewport.width <= 520) {
+    const smallTargets = await page.locator('.sqd-followups button').evaluateAll((nodes) =>
+      nodes.filter((node) => node.getBoundingClientRect().height < 44).length,
+    )
+    assert(smallTargets === 0, `${fixture} inline actions on phones must be at least 44px tall`)
+  }
+  const fullscreen = page.getByRole('button', { name: 'Open full screen' })
+  if ((await fullscreen.count()) > 0) {
+    await fullscreen.first().click()
+    assert((await page.locator('body').getAttribute('data-fullscreen-requested')) === 'true', `${fixture} fullscreen action should be wired`)
+  }
+  const accessibility = await new AxeBuilder({ page }).analyze()
+  const serious = accessibility.violations.filter((violation) => ['serious', 'critical'].includes(violation.impact ?? ''))
+  assert(serious.length === 0, `${fixture} ${viewport.name} accessibility: ${serious.map((violation) => violation.id).join(', ')}`)
 }
 
 let baseUrl = ''
@@ -614,7 +745,7 @@ async function main() {
        fixture happens to run first. Every fixture then meets the same budget. */
     const warmup = await browser.newContext({ viewport: { width: 1280, height: 900 } })
     const warmupPage = await warmup.newPage()
-    await warmupPage.goto(`${baseUrl}?fixture=empty`, { waitUntil: 'load' })
+    await warmupPage.goto(`${baseUrl}?fixture=empty&picker=0`, { waitUntil: 'load' })
     await warmupPage.evaluate(() => document.fonts.ready)
     await warmup.close()
     for (const fixture of fixtures) {
