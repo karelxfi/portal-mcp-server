@@ -164,7 +164,7 @@ export function registerActivityExplorerResource(server: McpServer, runtime: Run
         title: 'SQD Explorer',
         description:
           index === 0
-            ? 'Interactive evidence views for blockchain activity, wallets, contracts, token flows, markets, and network analytics.'
+            ? 'Beta. Interactive evidence views for blockchain activity, wallets, contracts, token flows, markets, and network analytics. Opt in per deployment with MCP_APP_ENABLED=true or per connection with ?app=1; ?app=0 opts a connection out.'
             : 'Retained SQD Explorer URI for installed-client compatibility.',
         mimeType: MCP_APP_MIME_TYPE,
         cacheHint: { ttlMs: 86_400_000, cacheScope: 'public' },

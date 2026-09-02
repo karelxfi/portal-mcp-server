@@ -177,6 +177,7 @@ button { color: inherit; }
    so it overrides to Inter. */
 .sqd-brand-subtitle { color: var(--fg-muted); font: 400 11px/16px var(--sqd-font-mono); letter-spacing: 0.02em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .sqd-brand-copy .sqd-brand-subtitle { font-family: var(--font-sans); font-size: 12px; letter-spacing: -0.006em; }
+.sqd-beta { align-self: center; border: 1px solid var(--edge-strong); border-radius: 999px; padding: 0 6px; color: var(--fg-muted); font: 500 9.5px/15px var(--sqd-font-mono); text-transform: uppercase; letter-spacing: 0.08em; white-space: nowrap; }
 .sqd-query { min-width: 0; display: inline-flex; align-items: center; gap: 0; margin-left: 4px; border: 1px solid var(--edge); border-radius: var(--radius-md); padding: 2px 8px; color: var(--fg-secondary); font: 400 11px/16px var(--sqd-font-mono); letter-spacing: 0.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .sqd-query span + span::before { content: '·'; margin: 0 6px; color: var(--fg-disabled); }
 .sqd-actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }

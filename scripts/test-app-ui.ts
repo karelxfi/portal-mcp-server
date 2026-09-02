@@ -566,6 +566,7 @@ async function validate(page: Page, fixture: string, viewport: (typeof viewports
       'Large tables should disclose the local page size',
     )
     assert((await page.locator('.sqd-display-limit--caution').count()) === 0, 'a complete local page is a caption, not a warning')
+    assert((await page.locator('.sqd-beta').innerText()).toLowerCase() === 'beta', 'The Explorer carries its beta tag in the topbar')
     assert((await page.locator('.sqd-hero-figure').count()) === 0, 'The headline number lives in the metric row, not beside the title')
     assert(
       (await page.locator('.sqd-metric').first().innerText()).toLowerCase().includes('transactions'),

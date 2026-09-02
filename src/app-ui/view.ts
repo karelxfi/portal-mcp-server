@@ -410,6 +410,10 @@ function appHeader(actions: ExplorerActions, state: ExplorerState): HTMLElement 
   const copy = element('div', 'sqd-brand-copy')
   copy.append(element('div', 'sqd-brand-name', 'SQD'))
   copy.append(element('div', 'sqd-brand-subtitle', 'Explorer'))
+  /* The Explorer ships as an opt-in beta; the tag says so wherever it renders. */
+  const beta = element('span', 'sqd-beta', 'Beta')
+  beta.title = 'SQD Explorer is in beta. Opt out with ?app=0 on the connection or MCP_APP_ENABLED=false.'
+  copy.append(beta)
   brand.append(copy)
   const chip = queryChip(state.payload, state.currentArgs)
   if (chip) brand.append(chip)

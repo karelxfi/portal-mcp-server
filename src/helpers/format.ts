@@ -1375,6 +1375,7 @@ export function formatResult(
     ) {
       payloadRecord._app = {
         name: 'SQD Explorer',
+        stage: 'beta',
         version: npmVersion,
         resource_uri: ACTIVITY_EXPLORER_RESOURCE_URI,
         server_delivery_state: 'ready',

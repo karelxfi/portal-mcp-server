@@ -55,6 +55,7 @@ async function main() {
   const appResult = buildAppResult()
   assert(
     appResult.structuredContent?._app?.name === 'SQD Explorer' &&
+      appResult.structuredContent?._app?.stage === 'beta' &&
       appResult.structuredContent?._app?.server_delivery_state === 'ready' &&
       appResult.structuredContent?._app?.host_render_state === 'not_observable_from_tool_result' &&
       appResult.structuredContent?._app?.required_host_extension === 'io.modelcontextprotocol/ui' &&
