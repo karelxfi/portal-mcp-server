@@ -16,6 +16,10 @@ Unit tests sit next to the code as `src/**/*.test.ts` and run with the built-in 
 
 `npm run test:catalog-tokens` (part of the offline gate) starts the server in-process for both surfaces (App disabled and App enabled), lists tools, prompts, and resources, counts tokens per tool component with the `o200k_base` tokenizer, and compares the result with `scripts/catalog-token-baseline.json`. It fails when the catalog total or any single tool grows more than 5% and prints the top ten tools to the job summary. Refresh the baseline deliberately with `npm run baseline:catalog-tokens -- --note "<why the cost changed>"` and record the new totals in `CHANGELOG.md`. With `ANTHROPIC_API_KEY` set, the Anthropic token-count API is queried for the same surfaces and printed beside the local count; the gate always uses the local count.
 
+## Model-in-the-loop eval
+
+`npm run eval:model-loop` lets a model answer the pinned questions in `evals/portal-mcp.json` through the real server over stdio with the full tool catalog, and grades the final `ANSWER:` line (exact number, address, or text; the negative cases expect a plain statement that the question cannot be answered). Every positive case names a fixed block, slot, or timestamp window, and its answer was checked against the Portal rows returned by the recorded `reference_calls`. The run prints one line per case, writes `artifacts/model-eval/<model>-<time>.json` plus `latest.md`, appends the table to the GitHub job summary, and fails when the pass rate is under 90% or the median tool-call count rises more than 20% over the previous runs in `EVAL_HISTORY_DIR`. `EVAL_MODEL` (default `claude-sonnet-5`), `EVAL_ENDPOINT`, `EVAL_MAX_TOOL_CALLS` (default 8), `EVAL_MIN_PASS_RATE`, and `EVAL_MAX_TOOL_CALL_GROWTH` override the defaults; `--only <id,id>` runs a subset. `--model mock` replays the reference calls without an API key and checks that every recorded answer still matches live Portal data, which is how the question set itself is verified. `.github/workflows/model-eval.yml` runs the real model nightly with the `ANTHROPIC_API_KEY` secret and keeps 90 days of artifacts; it is a reporting signal, not a merge gate.
+
 ## Generated Explorer bundle
 
 `src/generated/activity-explorer.generated.ts` and `activity-explorer.version.ts` are build outputs and are not tracked in git. `npm run build` always regenerates them. Every entry point that imports the bundle from source runs `scripts/ensure-app-bundle.mjs` first (`predev`, `predev:http`, `pretypecheck`, `pretest:unit`, `pretest:app-contract`, `pretest:app-ui`, `pretest:catalog-tokens`, `preapp:host`), which rebuilds only when the outputs are missing or older than `src/app-ui/**`, the build scripts, or `package.json`. A fresh clone followed by `npm ci && npm run dev` therefore works with no manual step, and `git status` stays clean after a build.
@@ -56,6 +60,7 @@ Unit tests sit next to the code as `src/**/*.test.ts` and run with the built-in 
 | `test:negative` | live | invalid and unsupported requests, injection prompts |
 | `test:quality` | live | per-tool response contract, size, and latency budgets |
 | `test:live-cooldown` | live | a pause between heavy live suites |
+| `eval:model-loop` | nightly | a model answers pinned questions through the server; pass rate and tool-call drift (`--model mock` verifies the question set offline from an API key) |
 
 ## Available scripts
 

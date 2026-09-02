@@ -283,6 +283,8 @@ npm run test:client-journeys
 npm run test:ci
 ```
 
+A nightly model-in-the-loop eval (`npm run eval:model-loop`, [scripts/README.md](scripts/README.md#model-in-the-loop-eval)) has a model answer pinned questions through the server and reports pass rate, tool calls, and tokens; `--model mock` verifies the question set without an API key.
+
 ## License
 
 [MIT](LICENSE)
