@@ -33,7 +33,13 @@ COPY --from=build /app/node_modules ./node_modules
 
 EXPOSE 3000
 
-HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
-  CMD curl -f http://localhost:3000/health || exit 1
+# The container must listen on every interface to be reachable; set MCP_ALLOWED_HOSTS
+# (and MCP_ALLOWED_ORIGINS) for the deployment, or the server logs a startup error and
+# serves without the Host and Origin allowlist. Loopback requests, such as this
+# health check, always pass.
+ENV MCP_BIND=0.0.0.0
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+  CMD curl -f http://localhost:3000/ready || exit 1
 
 CMD ["node", "dist/http.js"]

@@ -2,7 +2,8 @@
 
 import { type ChildProcessWithoutNullStreams, spawn } from 'node:child_process'
 import { readFile } from 'node:fs/promises'
-import { type Server, createServer } from 'node:http'
+import { type Server, createServer, request as httpRequest } from 'node:http'
+import { connect as netConnect } from 'node:net'
 import { setTimeout as sleep } from 'node:timers/promises'
 
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client'
@@ -19,6 +20,9 @@ let cancelledUpstreamRequests = 0
 let appIsolationStreamRequests = 0
 let activeAppIsolationStreams = 0
 let peakAppIsolationStreams = 0
+let catalogAvailable = false
+let catalogRequests = 0
+let probeRequests = 0
 const stderrChunks: string[] = []
 
 function assert(condition: boolean, message: string) {
@@ -43,7 +47,19 @@ async function waitForHealth() {
 
 async function startPortalFixture() {
   portalFixture = createServer((req, res) => {
+    if (req.url === '/datasets') {
+      probeRequests += 1
+      res.writeHead(200, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify([{ dataset: 'base-mainnet' }]))
+      return
+    }
     if (req.url?.startsWith('/datasets?')) {
+      catalogRequests += 1
+      if (!catalogAvailable) {
+        res.writeHead(404, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ error: 'catalog fixture not available yet' }))
+        return
+      }
       res.writeHead(200, { 'Content-Type': 'application/json' })
       res.end(
         JSON.stringify([
@@ -374,6 +390,188 @@ function assertUserContentNotCaptured() {
   assert(!stderrText.includes(OBS_USER_QUERY_SECRET), 'Ignored user-query headers should never enter telemetry')
 }
 
+type RawResponse = { status: number; headers: Record<string, string | string[] | undefined>; body: string }
+
+function rawRequest(options: {
+  method?: string
+  path: string
+  headers?: Record<string, string>
+  body?: string
+  chunked?: boolean
+}): Promise<RawResponse> {
+  return new Promise((resolve, reject) => {
+    const req = httpRequest(
+      {
+        host: '127.0.0.1',
+        port: PORT,
+        method: options.method ?? 'GET',
+        path: options.path,
+        headers: options.headers,
+      },
+      (res) => {
+        const chunks: Buffer[] = []
+        res.on('data', (chunk) => chunks.push(chunk))
+        res.on('end', () =>
+          resolve({ status: res.statusCode ?? 0, headers: res.headers, body: Buffer.concat(chunks).toString() }),
+        )
+      },
+    )
+    req.on('error', reject)
+    if (options.body !== undefined) {
+      if (!options.chunked) req.setHeader('Content-Length', Buffer.byteLength(options.body))
+      req.write(options.body)
+    }
+    req.end()
+  })
+}
+
+async function assertRequestGuard() {
+  for (const path of ['/health', '/ready', '/metrics', '/mcp', '/']) {
+    const rebound = await rawRequest({ path, headers: { Host: 'attacker.example:3197' } })
+    assert(rebound.status === 403, `${path} with a foreign Host should be 403, got ${rebound.status}`)
+    assert(rebound.body.includes('"host_not_allowed"'), `${path} should name the Host rejection reason`)
+  }
+
+  const rpc = JSON.stringify({ jsonrpc: '2.0', id: 901, method: 'tools/list', params: {} })
+  const mcpHeaders = { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream' }
+
+  const foreignOrigin = await rawRequest({
+    method: 'POST',
+    path: '/mcp',
+    headers: { ...mcpHeaders, Origin: 'https://evil.example' },
+    body: rpc,
+  })
+  assert(foreignOrigin.status === 403, `Foreign Origin should be 403, got ${foreignOrigin.status}`)
+  assert(foreignOrigin.body.includes('"origin_not_allowed"'), 'Origin rejection should be named')
+
+  const loopbackOrigin = await rawRequest({
+    method: 'POST',
+    path: '/mcp',
+    headers: { ...mcpHeaders, Origin: 'http://localhost:4174' },
+    body: rpc,
+  })
+  assert(loopbackOrigin.status === 200, `Loopback Origin should pass, got ${loopbackOrigin.status}`)
+
+  const noOrigin = await rawRequest({ method: 'POST', path: '/mcp', headers: mcpHeaders, body: rpc })
+  assert(noOrigin.status === 200, `A request without Origin should pass, got ${noOrigin.status}`)
+
+  const foreignOriginHealth = await rawRequest({ path: '/health', headers: { Origin: 'https://evil.example' } })
+  assert(foreignOriginHealth.status === 403, `Origin check must cover /health too, got ${foreignOriginHealth.status}`)
+}
+
+async function assertRequestLimits() {
+  const mcpHeaders = { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream' }
+  const oversized = await rawRequest({
+    method: 'POST',
+    path: '/mcp',
+    headers: mcpHeaders,
+    body: JSON.stringify({ jsonrpc: '2.0', id: 902, method: 'tools/list', params: { pad: 'x'.repeat(70_000) } }),
+  })
+  assert(oversized.status === 413, `A body above MCP_MAX_BODY_BYTES should be 413, got ${oversized.status}`)
+  assert(oversized.body.includes('"max_body_bytes":65536'), '413 should report the configured cap')
+
+  const chunked = await rawRequest({
+    method: 'POST',
+    path: '/mcp',
+    headers: mcpHeaders,
+    body: JSON.stringify({ jsonrpc: '2.0', id: 903, method: 'tools/list', params: {} }),
+    chunked: true,
+  })
+  assert(chunked.status === 411, `A chunked body without Content-Length should be 411, got ${chunked.status}`)
+
+  const withinLimit = await rawRequest({
+    method: 'POST',
+    path: '/mcp',
+    headers: mcpHeaders,
+    body: JSON.stringify({ jsonrpc: '2.0', id: 904, method: 'tools/list', params: {} }),
+  })
+  assert(withinLimit.status === 200, `A normal body should still be served, got ${withinLimit.status}`)
+
+  const slowHeader = await new Promise<{ closedAfterMs: number; response: string }>((resolve, reject) => {
+    const startedAt = Date.now()
+    let response = ''
+    const socket = netConnect({ host: '127.0.0.1', port: PORT }, () => {
+      socket.write('GET /health HTTP/1.1\r\nHost: localhost\r\nX-Slow: ')
+    })
+    socket.on('data', (chunk) => {
+      response += chunk.toString()
+    })
+    socket.on('close', () => resolve({ closedAfterMs: Date.now() - startedAt, response }))
+    socket.on('error', () => resolve({ closedAfterMs: Date.now() - startedAt, response }))
+    setTimeout(() => {
+      socket.destroy()
+      reject(new Error('Slow-header connection was not closed by the server within 5 s'))
+    }, 5_000).unref()
+  })
+  assert(
+    slowHeader.closedAfterMs >= 500,
+    `Slow-header client should live until headersTimeout, closed after ${slowHeader.closedAfterMs}ms`,
+  )
+  assert(
+    slowHeader.response.startsWith('HTTP/1.1 408'),
+    `Slow-header client should be told 408 before the close, got ${JSON.stringify(slowHeader.response)}`,
+  )
+}
+
+async function assertReadinessBeforeCatalog() {
+  const notReady = await fetch(`${BASE_URL}/ready`)
+  assert(notReady.status === 503, `/ready before the catalog loads should be 503, got ${notReady.status}`)
+  assert(notReady.headers.get('retry-after') === '1', '503 /ready should carry Retry-After')
+  const payload = (await notReady.json()) as Record<string, any>
+  assert(payload.status === 'not_ready' && payload.reason === 'catalog_not_loaded', 'not_ready should name its reason')
+  assert(typeof payload.last_probe_error === 'string', 'not_ready should carry the last probe error')
+  const health = await fetch(`${BASE_URL}/health`)
+  assert(health.status === 200, '/health stays 200 while /ready is 503')
+}
+
+async function assertReadinessAfterCatalog() {
+  catalogAvailable = true
+  const deadline = Date.now() + 10_000
+  let ready: Record<string, any> | undefined
+  while (Date.now() < deadline) {
+    const response = await fetch(`${BASE_URL}/ready`)
+    if (response.status === 200) {
+      ready = (await response.json()) as Record<string, any>
+      break
+    }
+    await sleep(100)
+  }
+  assert(ready !== undefined, '/ready should turn 200 once the catalog loads')
+  assert(ready.status === 'ready' && ready.catalog_datasets === 2, '/ready should report the loaded catalog')
+  assert(typeof ready.last_probe_ok_at === 'string', '/ready should report the last successful probe')
+  const probesBefore = probeRequests
+  await sleep(700)
+  assert(probeRequests > probesBefore, 'the readiness probe should keep polling Portal')
+}
+
+async function assertPublicBindWarning() {
+  const warned = await new Promise<string>((resolve, reject) => {
+    const probe = spawn('node', ['dist/http.js'], {
+      cwd: process.cwd(),
+      env: { ...process.env, PORT: '3198', PORTAL_URL: portalFixtureUrl, MCP_BIND: '0.0.0.0' },
+      stdio: ['pipe', 'pipe', 'pipe'],
+    })
+    let stderr = ''
+    probe.stderr.on('data', (chunk) => {
+      stderr += chunk.toString()
+      if (stderr.includes('MCP_ALLOWED_HOSTS is not set') && stderr.includes('MCP_ALLOWED_ORIGINS is not set')) {
+        probe.kill()
+        resolve(stderr)
+      }
+    })
+    probe.on('exit', () => resolve(stderr))
+    setTimeout(() => {
+      probe.kill()
+      reject(new Error('0.0.0.0 without an allowlist did not log a startup error within 10 s'))
+    }, 10_000).unref()
+  })
+  assert(warned.includes('MCP_ALLOWED_HOSTS is not set'), 'Public bind without MCP_ALLOWED_HOSTS should log an error')
+  assert(
+    !stderrChunks.join('').includes('MCP_ALLOWED_HOSTS is not set'),
+    'Loopback bind should need no allowlist configuration',
+  )
+}
+
 async function main() {
   console.log('Starting HTTP runtime QA...\n')
 
@@ -388,6 +586,10 @@ async function main() {
       METRICS_BEARER_TOKEN: METRICS_TOKEN,
       OBS_LOG_JSON: 'true',
       MCP_APP_ENABLED: 'false',
+      MCP_MAX_BODY_BYTES: '65536',
+      MCP_HEADERS_TIMEOUT_MS: '1000',
+      MCP_READY_PROBE_INTERVAL_MS: '200',
+      MCP_READY_MAX_AGE_MS: '2000',
     },
     stdio: ['pipe', 'pipe', 'pipe'],
   })
@@ -400,6 +602,11 @@ async function main() {
   })
 
   await waitForHealth()
+  await assertReadinessBeforeCatalog()
+  await assertReadinessAfterCatalog()
+  await assertRequestGuard()
+  await assertRequestLimits()
+  await assertPublicBindWarning()
   await assertPublicHttpSurface()
   await assertModernHttpProtocol()
   await assertHttpAppIsolation()
@@ -488,6 +695,10 @@ async function main() {
   console.log('PASS  /metrics blocks anonymous access and accepts bearer auth')
   console.log('PASS  /metrics emits canonical outcome, client, Portal, dataset, and token-list series')
   console.log('PASS  Grafana dashboard Prometheus metric names match emitted metrics')
+  console.log('PASS  /ready is 503 with Retry-After until the catalog loads, then 200 while Portal probes succeed')
+  console.log('PASS  foreign Host and Origin are 403 on every route; loopback and missing Origin pass')
+  console.log('PASS  oversized bodies are 413, chunked bodies 411, slow-header clients are disconnected')
+  console.log('PASS  binding 0.0.0.0 without an allowlist logs a startup error; loopback needs no configuration')
   console.log('\nHTTP runtime QA passed')
 }
 

@@ -222,16 +222,25 @@ Add an entry like this to `claude_desktop_config.json`:
 
 ## HTTP Deployment Notes
 
-HTTP mode exposes MCP at `/` and `/mcp`, with local health state at `/health`. The hosted service exposes the same versioned health response at `https://portal.sqd.dev/mcp/health`.
+HTTP mode exposes MCP at `/` and `/mcp`, liveness at `/health`, and readiness at `/ready`. The hosted service exposes the same versioned health response at `https://portal.sqd.dev/mcp/health`.
 
 - MCP and health are public in v0.8.x. User authentication is deferred to a unified `auth.sqd.dev` flow in v0.9.0.
 - Tool and resource discovery use the MCP protocol; retired `/tools` and `/tools.json` routes return `404`.
 - Set `MCP_CURSOR_SECRET` in production so pagination cursors are signed with a deployment-specific secret. Local development uses a deterministic fallback for convenience.
 - `/health` reports `version` and `commit`, the git commit the image was built from, and every tool result repeats both in `_server`. Docker Hub tags: `latest`, `X.Y.Z`, and `X.Y` come only from a `v*` release tag; `edge` and `sha-<commit>` come from every `main` push. Pin a version tag in production.
+- `/ready` is `200` only after the dataset catalog has loaded once and the latest Portal probe succeeded within `MCP_READY_MAX_AGE_MS`; otherwise it is `503` with a `reason` and `Retry-After`. Point orchestrator readiness checks at `/ready` and liveness checks at `/health`. The Docker image's `HEALTHCHECK` uses `/ready`.
+- The server binds `127.0.0.1` unless `MCP_BIND` says otherwise, and every route checks the `Host` header (and `Origin`, when a browser sends one) against an allowlist, so a DNS-rebound page cannot reach a local instance. Loopback hosts and origins always pass; requests without `Origin` always pass the origin check. A non-loopback bind must set `MCP_ALLOWED_HOSTS` and `MCP_ALLOWED_ORIGINS`; if either is missing the server logs a startup error and serves without that check. The Docker image sets `MCP_BIND=0.0.0.0`, so set both variables in the deployment, or `*` behind a proxy that already validates them.
+- Every request is bounded: headers within `MCP_HEADERS_TIMEOUT_MS`, the whole request within `MCP_REQUEST_TIMEOUT_MS`, idle keep-alive within `MCP_KEEP_ALIVE_TIMEOUT_MS`, and MCP bodies above `MCP_MAX_BODY_BYTES` are refused with `413` before parsing (`411` for a chunked body with no length).
 
 Useful environment variables:
 
 - `MCP_CURSOR_SECRET` to sign pagination cursors
+- `MCP_BIND` interface to listen on, default `127.0.0.1` (`0.0.0.0` in the Docker image)
+- `MCP_ALLOWED_HOSTS` comma-separated hostnames accepted in `Host` (port ignored) on top of loopback; `*` disables the check. Required for a non-loopback bind.
+- `MCP_ALLOWED_ORIGINS` comma-separated hostnames accepted in `Origin` on top of loopback; `*` disables the check. Required for a non-loopback bind.
+- `MCP_REQUEST_TIMEOUT_MS`, `MCP_HEADERS_TIMEOUT_MS`, `MCP_KEEP_ALIVE_TIMEOUT_MS` request timing bounds, defaults `120000`, `30000`, `65000`
+- `MCP_MAX_BODY_BYTES` MCP request body cap, default `1048576`
+- `MCP_READY_PROBE_INTERVAL_MS` and `MCP_READY_MAX_AGE_MS` readiness probe cadence and freshness, defaults `30000` and `90000`
 - `MCP_APP_ENABLED` to offer the beta SQD Explorer to compatible hosts, default off. Accepts `true` or `1`. Per-connection `?app=1` and `?app=0` override it.
 - `MCP_TOOL_WEIGHT_BUDGET` to bound the combined cost of active tool calls, default `32`. Measured profiles allow up to 32 lookups, 4 raw or summary calls, or 2 analytics calls at once while queued work remains cancellation-aware.
 - `MCP_TOOL_MAX_QUEUE` to bound queued tool calls, default `64`
