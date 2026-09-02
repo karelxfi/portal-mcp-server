@@ -86,8 +86,8 @@ function terminalColors() {
   return {
     up,
     down,
-    upSoft: withAlpha(up, 0.55),
-    downSoft: withAlpha(down, 0.55),
+    upSoft: withAlpha(up, 0.4),
+    downSoft: withAlpha(down, 0.4),
     accent: resolveColor('--accent', '#818cf8'),
     accentLine: withAlpha(resolveColor('--accent', '#818cf8'), 0.45),
     /* Axis ticks read in the muted whisper ink (chart-palette axis_label),
@@ -129,9 +129,12 @@ let appRoot: HTMLElement | null = null
 function chartGeometry() {
   const width = appRoot?.clientWidth || (typeof innerWidth === 'number' ? innerWidth : 900)
   const narrow = width <= 520
-  return narrow
-    ? { width: 460, height: 380, pad: { left: 10, right: 58, top: 14, bottom: 30 }, axisTitles: false }
-    : { width: 900, height: 320, pad: { left: 26, right: 76, top: 14, bottom: 32 }, axisTitles: true }
+  if (narrow) return { width: 460, height: 380, pad: { left: 10, right: 58, top: 14, bottom: 30 }, axisTitles: false }
+  /* Wide hosts get a coordinate space close to the rendered width, so axis
+     labels paint at their 11px CSS size instead of scaling with the card. */
+  const chrome = appRoot?.dataset.mode === 'fullscreen' ? 66 : 32
+  const plotWidth = Math.min(1400, Math.max(640, width - chrome))
+  return { width: plotWidth, height: 320, pad: { left: 26, right: 76, top: 14, bottom: 32 }, axisTitles: true }
 }
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
@@ -1733,6 +1736,7 @@ function tablePanel(payload: Record<string, unknown>, panel: Panel, options: Pan
     wrap.setAttribute('role', 'region')
     wrap.setAttribute('aria-label', `${text(panel.title ?? 'Evidence')} preview, scroll sideways for more columns`)
     const table = element('table', 'sqd-table')
+    table.dataset.cols = String(effectiveColumns.length)
     table.append(element('caption', 'sqd-visually-hidden', text(panel.title ?? 'Blockchain evidence rows')))
     const thead = element('thead')
     const headRow = element('tr')
@@ -1787,6 +1791,7 @@ function tablePanel(payload: Record<string, unknown>, panel: Panel, options: Pan
   body.append(tools)
   const wrap = element('div', 'sqd-table-wrap')
   const table = element('table', 'sqd-table')
+  table.dataset.cols = String(effectiveColumns.length)
   const caption = element('caption', 'sqd-visually-hidden', text(panel.title ?? 'Blockchain evidence rows'))
   table.append(caption)
   const thead = element('thead')

@@ -75,11 +75,14 @@ export const ACTIVITY_EXPLORER_CSS = String.raw`
   --accent-line: light-dark(rgb(59 130 246 / 0.55), rgb(129 140 248 / 0.45));
   --accent-ring: light-dark(rgb(59 130 246 / 0.30), rgb(99 102 241 / 0.30));
 
-  /* Direction · cool up / warm down from the diverging palette. Status
-     green/red stay reserved for status, so price direction never borrows
-     them, and never rides on colour alone. */
-  --up: light-dark(#006ca5, #0891b2);
-  --down: light-dark(#b45309, #d97706);
+  /* Direction · up/down is a status encoding, so it reads the status
+     tokens (tokens/chart-palette.json: "a chart that encodes STATUS uses the
+     status tokens"). Fills carry marks; the -text steps carry labels. Direction
+     never rides on colour alone: a sign, an arrow, or a column says it too. */
+  --up: light-dark(#16a34a, #16a34a);
+  --down: light-dark(#dc2626, #ef4444);
+  --up-text: light-dark(#15803d, #4ade80);
+  --down-text: light-dark(#b91c1c, #f87171);
 
   /* Status · -text is the on-surface foreground, -fill clears AA under a
      near-black label, -muted and -edge are tints. Host status colours win. */
@@ -303,8 +306,8 @@ button { color: inherit; }
 .sqd-candle-readout-time { color: var(--fg); font-weight: 510; }
 .sqd-candle-readout-pair { display: inline-flex; align-items: baseline; gap: 5px; }
 .sqd-candle-readout-key { color: var(--fg-muted); font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; }
-.sqd-candle-readout-value[data-direction='up'] { color: var(--up); }
-.sqd-candle-readout-value[data-direction='down'] { color: var(--down); }
+.sqd-candle-readout-value[data-direction='up'] { color: var(--up-text); }
+.sqd-candle-readout-value[data-direction='down'] { color: var(--down-text); }
 .sqd-candle-readout-flag { color: var(--warning-text); font-size: 11px; }
 .sqd-candle-chart { position: relative; width: 100%; height: 260px; }
 .sqd-app[data-mode='fullscreen'] .sqd-candle-chart { height: 420px; }
@@ -339,7 +342,11 @@ button.sqd-chart-hit[aria-pressed='true'] { background: var(--accent-subtle); bo
 .sqd-table-wrap { width: 100%; overflow: auto; }
 .sqd-table-wrap:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--radius-sm); }
 .sqd-table { width: 100%; min-width: 640px; border-collapse: collapse; font-size: 12.5px; line-height: 18px; }
-.sqd-table th, .sqd-table td { min-width: 96px; max-width: 260px; height: 34px; padding: 7px 14px 7px 0; border-bottom: 1px solid var(--edge); text-align: left; vertical-align: middle; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sqd-table th, .sqd-table td { min-width: 72px; max-width: 320px; height: 34px; padding: 7px 14px 7px 0; border-bottom: 1px solid var(--edge); text-align: left; vertical-align: middle; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sqd-table th[data-align='right'], .sqd-table td[data-align='right'] { width: 1%; }
+.sqd-table[data-cols='1'], .sqd-table[data-cols='2'], .sqd-table[data-cols='3'] { width: auto; min-width: min(100%, 520px); }
+.sqd-table[data-cols='1'] [data-align='right'], .sqd-table[data-cols='2'] [data-align='right'], .sqd-table[data-cols='3'] [data-align='right'] { width: auto; }
+.sqd-table th:last-child, .sqd-table td:last-child { padding-right: 0; }
 .sqd-table th { position: sticky; top: 0; z-index: 1; background: var(--surface); color: var(--fg-muted); border-bottom: 1px solid var(--edge-strong); font: 510 12px/16px var(--font-sans); letter-spacing: normal; }
 .sqd-app[data-mode='fullscreen'] .sqd-table th { background: var(--surface-raised); }
 .sqd-table tr:last-child td { border-bottom: 0; }
@@ -349,8 +356,8 @@ button.sqd-chart-hit[aria-pressed='true'] { background: var(--accent-subtle); bo
 .sqd-table td { color: var(--fg-secondary); }
 .sqd-table td[data-align='right'] { text-align: right; font-family: var(--sqd-font-mono); font-variant-numeric: tabular-nums; color: var(--fg-value); font-size: 12px; }
 .sqd-table th[data-align='right'] { text-align: right; }
-.sqd-table td[data-signed='positive'] { color: var(--up); }
-.sqd-table td[data-signed='negative'] { color: var(--down); }
+.sqd-table td[data-signed='positive'] { color: var(--up-text); }
+.sqd-table td[data-signed='negative'] { color: var(--down-text); }
 .sqd-sort, .sqd-row-button { width: 100%; padding: 0; border: 0; background: transparent; color: inherit; text-align: inherit; cursor: pointer; }
 .sqd-sort { display: inline-flex; align-items: center; gap: 5px; }
 .sqd-table th[aria-sort='ascending'] .sqd-sort::after { content: '\\2191'; color: var(--accent); }
@@ -373,8 +380,8 @@ button.sqd-chart-hit[aria-pressed='true'] { background: var(--accent-subtle); bo
 .sqd-event-title { font-size: 12.5px; line-height: 18px; font-weight: 510; letter-spacing: -0.006em; }
 .sqd-event-subtitle { color: var(--fg-muted); font: 400 11.5px/16px var(--sqd-font-mono); letter-spacing: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .sqd-event-value { text-align: right; font: 500 12px/18px var(--sqd-font-mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
-.sqd-event-value--in { color: var(--up); }
-.sqd-event-value--out { color: var(--down); }
+.sqd-event-value--in { color: var(--up-text); }
+.sqd-event-value--out { color: var(--down-text); }
 .sqd-event-value--flat { color: var(--fg-value); font-weight: 400; }
 
 /* ── Detail lists ──────────────────────────────────────────────────────── */
