@@ -2342,7 +2342,9 @@ function notices(
       (copy) =>
         Array.isArray(ui.notices) ||
         noticeTier(copy) === 'caution' ||
-        !/limit=|_pagination|cursor|installed-client|the caller|tool again|\bmode\b|timeframe|add filters|Scanning \d/i.test(copy),
+        !/limit=|_pagination|cursor|installed-client|the caller|tool again|\bmode\b|timeframe|add filters|Scanning \d|Long-window note|interactive window/i.test(
+          copy,
+        ),
     )
   const error = tiers.includes('danger') && isRecord(payload.error) ? payload.error : undefined
   const entries: HTMLElement[] = []
