@@ -231,6 +231,7 @@ button { color: inherit; }
 .sqd-metric-label { color: var(--fg-muted); font: 500 10.5px/15px var(--sqd-font-mono); text-transform: uppercase; letter-spacing: 0.06em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .sqd-metric-value { margin-top: 3px; color: var(--fg-value); font: 500 17px/24px var(--sqd-font-mono); letter-spacing: -0.01em; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .sqd-app[data-mode='fullscreen'] .sqd-metric-value { font-size: 20px; line-height: 26px; }
+.sqd-metric-unit { color: var(--fg-muted); font: 400 11px/14px var(--sqd-font-mono); letter-spacing: 0.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .sqd-metric--primary .sqd-metric-value { color: var(--fg); }
 .sqd-metric-subtitle { margin-top: 2px; color: var(--fg-muted); font-size: 11px; line-height: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
@@ -271,12 +272,9 @@ button { color: inherit; }
    as an accent pill on a dashed reference line. Gaps stay gaps; the forming
    candle stays hollow and labelled. */
 .sqd-chart-wrap { position: relative; width: 100%; }
-.sqd-chart-range { display: grid; grid-template-columns: minmax(150px, 1fr) minmax(84px, 0.7fr) minmax(84px, 0.7fr) auto auto; align-items: center; gap: 8px; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--edge); }
-.sqd-chart-range-copy { color: var(--fg-muted); font: 400 11px/16px var(--sqd-font-mono); }
 .sqd-range { width: 100%; accent-color: var(--accent); }
 .sqd-chart { display: block; width: 100%; height: auto; overflow: visible; }
-.sqd-app[data-mode='inline'] .sqd-chart-range { display: none; }
-.sqd-chart-grid { stroke: var(--grid); stroke-width: 1; }
+.sqd-app[data-mode='inline'] .sqd-chart-grid { stroke: var(--grid); stroke-width: 1; }
 .sqd-chart-axis { stroke: var(--axis); stroke-width: 1; }
 .sqd-chart-zero { stroke: var(--fg-disabled); stroke-width: 1; }
 .sqd-chart-line { fill: none; stroke: var(--accent); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
@@ -322,6 +320,11 @@ button.sqd-chart-hit[aria-pressed='true'] { background: var(--accent-subtle); bo
 .sqd-candle-pill { position: absolute; right: 0; z-index: 3; transform: translateY(-50%); border-radius: 5px; padding: 3px 7px; background: var(--accent); color: var(--accent-on); font: 600 11px/1 var(--sqd-font-mono); font-variant-numeric: tabular-nums; pointer-events: none; }
 .sqd-chart-volume-caption { position: absolute; left: 2px; z-index: 2; color: var(--fg-muted); font: 510 9px/12px var(--font-sans); letter-spacing: 0.1em; pointer-events: none; }
 .sqd-candle-chart .sqd-chart-tooltip { z-index: 4; }
+.sqd-tooltip-title { margin-bottom: 5px; color: var(--fg-muted); white-space: nowrap; }
+.sqd-tooltip-rows { display: grid; grid-template-columns: max-content max-content; gap: 2px 14px; align-items: baseline; }
+.sqd-tooltip-label { color: var(--fg-secondary); white-space: nowrap; }
+.sqd-tooltip-value { text-align: right; color: var(--fg-value); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.sqd-tooltip-flag { grid-column: 1 / -1; color: var(--warning-text); }
 .sqd-chart-attribution { display: block; width: fit-content; margin: 6px 2px 0 auto; color: var(--fg-muted); font: 400 10px/14px var(--font-sans); text-decoration: none; }
 .sqd-chart-attribution:hover { color: var(--fg-secondary); text-decoration: underline; }
 .sqd-chart-attribution:focus-visible { border-radius: 2px; outline: 2px solid var(--accent); outline-offset: 2px; }
@@ -472,9 +475,7 @@ button.sqd-chart-hit[aria-pressed='true'] { background: var(--accent-subtle); bo
   .sqd-grid .sqd-card--half { grid-column: span 12; }
   .sqd-grid--dashboard .sqd-card:not(.sqd-card--primary), .sqd-grid--split .sqd-card:not(.sqd-card--primary) { grid-column: span 12; }
   .sqd-stat-list { grid-template-columns: 1fr; }
-  .sqd-chart-range { grid-template-columns: 1fr 1fr; }
-  .sqd-chart-range-copy { grid-column: 1 / -1; }
-}
+    }
 @container sqd (max-width: 520px) {
   .sqd-topbar { min-height: 30px; flex-wrap: wrap; }
   /* A phone inline card is a summary: the answer, the readout, any warning,

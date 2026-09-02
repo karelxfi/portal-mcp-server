@@ -320,7 +320,12 @@ async function validate(page: Page, fixture: string, viewport: (typeof viewports
     await page.getByRole('button', { name: 'Previous rows' }).click()
     const receipt = page.locator('.sqd-receipt')
     assert((await receipt.count()) === 1, 'Successful results should show one factual evidence receipt')
-    assert((await receipt.innerText()).includes('SHA-256'), 'Evidence receipt should expose a short exact-data digest')
+    await page.getByRole('button', { name: 'Full receipt' }).click()
+    assert(
+      (await page.locator('.sqd-dialog[open]').innerText()).includes('exact_data_sha256'),
+      'Full receipt should expose the exact-data digest',
+    )
+    await page.locator('.sqd-dialog[open]').evaluate((node) => (node as HTMLDialogElement).close())
     await page.getByRole('button', { name: 'Download JSON' }).click()
     assert(
       (await page.locator('body').getAttribute('data-export-format')) === 'json',
@@ -359,27 +364,6 @@ async function validate(page: Page, fixture: string, viewport: (typeof viewports
       Number(await page.locator('[data-final-value]').getAttribute('data-final-value')) === expected.at(-1)?.value,
       'Time-series final value should match structured content',
     )
-    const ranges = page.locator('.sqd-range')
-    assert((await ranges.count()) === 2, 'long charts should expose an exact start and end range')
-    await ranges.nth(0).fill('6')
-    await ranges.nth(1).fill('11')
-    await page.getByRole('button', { name: 'Focus range' }).click()
-    assert(
-      (await page.locator('.sqd-chart-hit').count()) === 6,
-      'range focus should redraw only the selected six points',
-    )
-    assert(
-      (await page.locator('table.sqd-table tbody tr').count()) === Math.min(10, expected.length),
-      'range focus must keep the current exact evidence page',
-    )
-    if (expected.length > 10) {
-      assert(
-        await page.locator('.sqd-table-pagination').isVisible(),
-        'long chart evidence must remain reachable through table pages',
-      )
-    }
-    await page.getByRole('button', { name: 'Reset range' }).click()
-    assert((await page.locator('.sqd-chart-hit').count()) === expected.length, 'reset range should restore every point')
   }
   if (fixture === 'grouped') {
     const rows = APP_FIXTURES.grouped.time_series as Array<{ contract_address: string; value: number }>
@@ -617,8 +601,8 @@ async function validate(page: Page, fixture: string, viewport: (typeof viewports
   }
   if (fixture === 'partial') {
     assert(
-      (await page.locator('.sqd-context').innerText()).includes('partial'),
-      'Partial results must be labeled partial next to the headline',
+      (await page.locator('.sqd-eyebrow .sqd-dot').count()) === 1,
+      'Partial results must carry a state dot next to the headline',
     )
     const continueButton = page.getByRole('button', { name: CONTINUE_LABEL })
     assert(
@@ -689,7 +673,6 @@ async function validateInline(page: Page, fixture: string, viewport: Cell) {
   }
   if (['hyperliquid', 'ratio'].includes(fixture)) {
     assert((await page.locator('.sqd-candle-chart canvas').count()) >= 2, `${fixture} inline card should paint the terminal`)
-    assert((await page.locator('.sqd-chart-range').isVisible()) === false, `${fixture} inline card hides range controls`)
   }
   if (fixture === 'partial') {
     assert((await page.getByRole('button', { name: CONTINUE_LABEL }).count()) === 1, 'partial inline card keeps its continuation action')

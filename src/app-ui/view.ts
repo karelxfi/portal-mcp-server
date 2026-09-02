@@ -199,9 +199,12 @@ function formatValue(value: unknown, format?: string, unit?: string): string {
     case 'compact_number':
       formatted = compact(numberValue)
       break
-    case 'percent':
-      formatted = `${Intl.NumberFormat('en-US', { maximumFractionDigits: 2 }).format(numberValue)}%`
+    case 'percent': {
+      const percent = Object.is(numberValue, -0) ? 0 : numberValue
+      const digits = percent !== 0 && Math.abs(percent) < 0.01 ? 4 : 2
+      formatted = `${Intl.NumberFormat('en-US', { maximumFractionDigits: digits }).format(percent)}%`
       break
+    }
     case 'currency_usd':
       formatted = Intl.NumberFormat('en-US', {
         style: 'currency',
@@ -452,6 +455,29 @@ function primaryMetric(payload: Record<string, unknown>): Record<string, unknown
     .find((spec) => spec.emphasis === 'primary')
 }
 
+type TooltipRow = { label: string; value: string; flag?: boolean }
+
+/* Tooltips read as a title plus aligned label/value rows, never a sentence. */
+function renderTooltip(node: HTMLElement, title: string, rows: TooltipRow[]) {
+  node.replaceChildren()
+  node.append(element('div', 'sqd-tooltip-title', title))
+  const grid = element('div', 'sqd-tooltip-rows')
+  for (const row of rows) {
+    if (row.flag) {
+      grid.append(element('span', 'sqd-tooltip-flag', row.label))
+      continue
+    }
+    grid.append(element('span', 'sqd-tooltip-label', row.label), element('span', 'sqd-tooltip-value', row.value))
+  }
+  node.append(grid)
+}
+
+function splitTooltipValue(entry: string): TooltipRow {
+  if (entry.endsWith('not available')) return { label: entry.slice(0, -'not available'.length).trim(), value: 'not available' }
+  const match = /^(.*\S)\s+(\S+)$/.exec(entry)
+  return match ? { label: match[1], value: match[2] } : { label: entry, value: '' }
+}
+
 function masthead(payload: Record<string, unknown>, actions?: ExplorerActions): HTMLElement {
   const ui = isRecord(payload._ui) ? payload._ui : {}
   const headline = isRecord(ui.headline) ? ui.headline : {}
@@ -502,70 +528,14 @@ function masthead(payload: Record<string, unknown>, actions?: ExplorerActions): 
     }
   }
 
-  section.append(contextLine(payload, state))
   return section
-}
-
-function contextLine(
-  payload: Record<string, unknown>,
-  state: { label: string; tone: string; partial: boolean },
-): HTMLElement {
-  const meta = isRecord(payload._meta) ? payload._meta : {}
-  const freshness = isRecord(payload._freshness) ? payload._freshness : {}
-  const coverage = isRecord(payload._coverage) ? payload._coverage : {}
-  const pagination = isRecord(payload._pagination) ? payload._pagination : {}
-  const row = element('div', 'sqd-context')
-  const push = (value: string, tone?: string) => {
-    if (!value) return
-    row.append(element('span', tone ? `sqd-context--${tone}` : undefined, value))
-  }
-  const window = text(coverage.requested_window ?? coverage.window ?? meta.timeframe)
-  if (window) push(`window ${window}`)
-  const rowCount = meta.row_count ?? meta.result_count ?? (asArray(payload.items).length || undefined)
-  if (rowCount !== undefined && rowCount !== null && !isRecord(rowCount)) {
-    push(`${text(rowCount)} row${text(rowCount) === '1' ? '' : 's'}`)
-  }
-  const blocks = text(meta.queried_blocks)
-  if (blocks) push(`blocks ${blocks}`)
-  const finality = text(freshness.finality ?? freshness.kind)
-  if (finality) push(finality)
-  const head = text(freshness.indexed_head_block)
-  if (head) push(`head ${head}`)
-  if (state.partial && state.tone === 'warning') push('partial: check coverage before using totals', 'warning')
-  if (state.tone === 'danger') push('needs attention', 'danger')
-  if (pagination.has_more === true && pagination.continuation_scope === 'adjacent_window') {
-    push('older adjacent window available')
-  }
-  return row
 }
 
 function evidenceReceipt(payload: Record<string, unknown>, actions: ExplorerActions): HTMLElement | null {
   const evidence = isRecord(payload._evidence) ? payload._evidence : undefined
   if (!evidence) return null
-  const result = isRecord(evidence.result) ? evidence.result : {}
-  const source = isRecord(evidence.source) ? evidence.source : {}
-  const request = isRecord(evidence.request) ? evidence.request : {}
-  const analyzed = isRecord(request.analyzed_window) ? request.analyzed_window : {}
-  const completeness = text(result.completeness || 'unknown')
-  const rowCount = numeric(result.row_count) ?? 0
-  const digest = text(result.exact_data_sha256)
-
   const section = element('section', 'sqd-receipt')
   section.setAttribute('aria-label', 'Evidence receipt')
-  const copy = element('div', 'sqd-receipt-copy')
-  copy.append(
-    element('span', 'sqd-receipt-title', `${rowCount} exact row${rowCount === 1 ? '' : 's'} · ${completeness}`),
-  )
-  const metaParts = [
-    text(source.network ?? source.dataset),
-    digest ? `SHA-256 ${digest.slice(0, 12)}` : '',
-    analyzed.window_from_block !== undefined && analyzed.window_to_block !== undefined
-      ? `blocks ${text(analyzed.window_from_block)} to ${text(analyzed.window_to_block)}`
-      : '',
-  ].filter(Boolean)
-  copy.append(element('span', 'sqd-receipt-meta', metaParts.join(' · ')))
-  section.append(copy)
-
   const actionBar = element('div', 'sqd-actions')
   if (actions.exportEvidence) {
     for (const format of ['json', 'csv'] as const) {
@@ -614,7 +584,10 @@ function metricCards(payload: Record<string, unknown>): HTMLElement | null {
     }
   }
   const heroSpec = specs.length ? primaryMetric(payload) : undefined
-  const cards = (specs.length ? specs : fallbacks).filter((spec) => spec !== heroSpec)
+  /* A yes/no flag is state, not a measurement; it stays in the receipt. */
+  const cards = (specs.length ? specs : fallbacks).filter(
+    (spec) => spec !== heroSpec && typeof getByPath(payload, text(spec.value_path)) !== 'boolean',
+  )
   if (!cards.length) return null
   const grid = element('section', 'sqd-metrics')
   grid.setAttribute('aria-label', 'Key metrics')
@@ -625,10 +598,10 @@ function metricCards(payload: Record<string, unknown>): HTMLElement | null {
        would only crowd the value. */
     const label = text(spec.label ?? 'Metric')
     const unit = text(spec.unit)
-    const cardUnit = unit && label.toLowerCase().includes(unit.toLowerCase()) ? '' : unit
-    card.append(
-      element('div', 'sqd-metric-value', formatValue(getByPath(payload, text(spec.value_path)), text(spec.format), cardUnit)),
-    )
+    const format = text(spec.format)
+    const showUnit = unit && !label.toLowerCase().includes(unit.toLowerCase()) && format !== 'currency_usd'
+    card.append(element('div', 'sqd-metric-value', formatValue(getByPath(payload, text(spec.value_path)), format)))
+    if (showUnit) card.append(element('div', 'sqd-metric-unit', unit))
     if (spec.subtitle) card.append(element('div', 'sqd-metric-subtitle', text(spec.subtitle)))
     grid.append(card)
   }
@@ -954,23 +927,32 @@ function buildCandleTerminal(
   const prices = parsed.flatMap((point) => [point.low, point.high])
   const priceSpan = Math.max(Math.max(...prices) - Math.min(...prices), Math.abs(finalClose) * 0.001, 1e-9)
   const minMove = 10 ** Math.min(0, Math.max(-8, Math.floor(Math.log10(priceSpan)) - 3))
-  const exactValues = parsed.map((point) => {
-    const fallback = [
-      `O ${formatValue(point.open, priceFormat, priceUnit)}`,
-      `H ${formatValue(point.high, priceFormat, priceUnit)}`,
-      `L ${formatValue(point.low, priceFormat, priceUnit)}`,
-      `C ${formatValue(point.close, priceFormat, priceUnit)}`,
-      ...(point.volume !== undefined ? [`Volume ${formatValue(point.volume, volumeFormat, volumeUnit)}`] : []),
+  /* The price unit is named once in the tooltip title; a value repeats a
+     unit only when it differs from the price unit. */
+  const withUnit = (unit: string) => (unit && unit !== priceUnit ? unit : '')
+  const exactRows = parsed.map((point) => {
+    const fallback: TooltipRow[] = [
+      { label: 'Open', value: formatValue(point.open, priceFormat) },
+      { label: 'High', value: formatValue(point.high, priceFormat) },
+      { label: 'Low', value: formatValue(point.low, priceFormat) },
+      { label: 'Close', value: formatValue(point.close, priceFormat) },
+      ...(point.volume !== undefined
+        ? [{ label: 'Volume', value: formatValue(point.volume, volumeFormat, withUnit(volumeUnit)) }]
+        : []),
     ]
-    const values = tooltipFields.length
+    const rows: TooltipRow[] = tooltipFields.length
       ? tooltipFields.map((field) => {
           const key = text(field.path ?? field.key)
-          return `${text(field.label ?? humanize(key))} ${formatValue(getByPath(point.row, key), text(field.format), text(field.unit))}`
+          return {
+            label: text(field.label ?? humanize(key)),
+            value: formatValue(getByPath(point.row, key), text(field.format), withUnit(text(field.unit))),
+          }
         })
       : fallback
-    if (isOpenCandle(point)) values.push('Open candle, still forming')
-    return values
+    if (isOpenCandle(point)) rows.push({ label: 'Open candle, still forming', value: '', flag: true })
+    return rows
   })
+  const tooltipTitle = (index: number) => (priceUnit ? `${fullLabels[index]} · ${priceUnit}` : fullLabels[index])
 
   const terminal = element('div', 'sqd-candle-terminal')
   const readout = element('div', 'sqd-candle-readout')
@@ -1144,13 +1126,13 @@ function buildCandleTerminal(
     button.setAttribute('data-low', String(point.low))
     button.setAttribute('data-close', String(point.close))
     if (point.volume !== undefined) button.setAttribute('data-volume', String(point.volume))
-    button.setAttribute('aria-label', `${fullLabels[index]}. ${exactValues[index].join('. ')}.`)
+    button.setAttribute('aria-label', `${tooltipTitle(index)}. ${exactRows[index].map((row) => `${row.label} ${row.value}`.trim()).join('. ')}.`)
     button.setAttribute('aria-pressed', 'false')
     button.style.left = `${(index / parsed.length) * 100}%`
     button.style.width = `${100 / parsed.length}%`
     const hover = () => {
       renderReadout(index)
-      tooltip.textContent = `${fullLabels[index]}: ${exactValues[index].join(', ')}`
+      renderTooltip(tooltip, tooltipTitle(index), exactRows[index])
       const boxRect = chartBox.getBoundingClientRect()
       const buttonRect = button.getBoundingClientRect()
       const percent = boxRect.width
@@ -1235,48 +1217,10 @@ function chartPanel(payload: Record<string, unknown>, panel: Panel): HTMLElement
     ? Math.max(rangeStart, Math.min(requestedEnd, allRows.length - 1))
     : Math.max(0, allRows.length - 1)
   const rows = allRows.slice(rangeStart, rangeEnd + 1)
-  let rangeControls: HTMLElement | undefined
   if (!rows.length) {
     wrap.append(element('div', 'sqd-chart-empty', 'No chart points were returned for this window.'))
     body.append(wrap)
     return root
-  }
-  if (allRows.length > 8) {
-    const rangeTools = element('div', 'sqd-chart-range')
-    const rangeCopy = element(
-      'span',
-      'sqd-chart-range-copy',
-      `Viewing ${rangeStart + 1} to ${rangeEnd + 1} of ${allRows.length} exact points`,
-    )
-    const start = element('input', 'sqd-range')
-    start.type = 'range'
-    start.min = '0'
-    start.max = String(allRows.length - 1)
-    start.value = String(rangeStart)
-    start.setAttribute('aria-label', 'First visible chart point')
-    const end = element('input', 'sqd-range')
-    end.type = 'range'
-    end.min = '0'
-    end.max = String(allRows.length - 1)
-    end.value = String(rangeEnd)
-    end.setAttribute('aria-label', 'Last visible chart point')
-    const focus = element('button', 'sqd-button', 'Focus range')
-    focus.type = 'button'
-    focus.addEventListener('click', () => {
-      const nextStart = Math.min(Number(start.value), Number(end.value))
-      const nextEnd = Math.max(Number(start.value), Number(end.value))
-      panelChartDisposers.get(root)?.()
-      root.replaceWith(chartPanel(payload, { ...panel, __range_start: nextStart, __range_end: nextEnd }))
-    })
-    const reset = element('button', 'sqd-button', 'Reset range')
-    reset.type = 'button'
-    reset.disabled = rangeStart === 0 && rangeEnd === allRows.length - 1
-    reset.addEventListener('click', () => {
-      panelChartDisposers.get(root)?.()
-      root.replaceWith(chartPanel(payload, { ...panel, __range_start: 0, __range_end: allRows.length - 1 }))
-    })
-    rangeTools.append(rangeCopy, start, end, focus, reset)
-    rangeControls = rangeTools
   }
   if (chart.kind === 'candlestick') {
     const terminal = buildCandleTerminal(
@@ -1292,7 +1236,6 @@ function chartPanel(payload: Record<string, unknown>, panel: Panel): HTMLElement
     }
     wrap.append(terminal)
     body.append(wrap)
-    if (rangeControls) body.append(rangeControls)
     const declaredCandles = Number(chart.total_points ?? chart.total_candles)
     const candleNotice = Number.isFinite(declaredCandles)
       ? displayLimitNotice('chart points', rows.length, rows.length, declaredCandles)
@@ -1360,7 +1303,7 @@ function chartPanel(payload: Record<string, unknown>, panel: Panel): HTMLElement
   }) as SVGLineElement
   crosshair.style.display = 'none'
   const showTooltip = (cx: number, label: string, values: string[]) => {
-    tooltip.textContent = `${label}: ${values.join(', ')}`
+    renderTooltip(tooltip, label, values.map(splitTooltipValue))
     tooltip.style.left = `${Math.min(88, Math.max(12, (cx / CHART_WIDTH) * 100))}%`
     tooltip.hidden = false
     crosshair.setAttribute('x1', String(cx))
@@ -1665,7 +1608,6 @@ function chartPanel(payload: Record<string, unknown>, panel: Panel): HTMLElement
   wrap.append(svg)
   wrap.append(tooltip)
   body.append(wrap)
-  if (rangeControls) body.append(rangeControls)
   const declaredPoints = Number(chart.total_points ?? chart.total_candles)
   const pointNotice = Number.isFinite(declaredPoints)
     ? displayLimitNotice('chart points', rows.length, rows.length, declaredPoints)
@@ -2317,6 +2259,14 @@ function notices(
     .map(text)
     .filter(Boolean)
     .filter((copy) => !(pagination.has_more && /_pagination\.next_cursor/.test(copy)))
+    /* Without App-facing notices, keep only what changes how a person reads
+       the result; notes about limits, cursors and scan modes stay in JSON. */
+    .filter(
+      (copy) =>
+        Array.isArray(ui.notices) ||
+        noticeTier(copy) === 'caution' ||
+        !/limit=|_pagination|cursor|installed-client|the caller|tool again|\bmode\b|timeframe|add filters|Scanning \d/i.test(copy),
+    )
   const error = tiers.includes('danger') && isRecord(payload.error) ? payload.error : undefined
   const entries: HTMLElement[] = []
   if (error) {
@@ -2456,33 +2406,6 @@ function noRowsState(payload: Record<string, unknown>, state: ExplorerState, act
   return wrap
 }
 
-function receiptLine(payload: Record<string, unknown>): HTMLElement | null {
-  const evidence = isRecord(payload._evidence) ? payload._evidence : undefined
-  if (!evidence) return null
-  const result = isRecord(evidence.result) ? evidence.result : {}
-  const rowCount = numeric(result.row_count) ?? 0
-  const digest = text(result.exact_data_sha256)
-  const line = element('p', 'sqd-receipt-line')
-  line.setAttribute('aria-label', 'Evidence receipt')
-  line.append(element('span', undefined, `${rowCount} exact row${rowCount === 1 ? '' : 's'}`))
-  line.append(element('span', undefined, text(result.completeness || 'unknown')))
-  if (digest) line.append(element('span', undefined, `SHA-256 ${digest.slice(0, 12)}`))
-  line.append(element('span', undefined, 'Read-only evidence from SQD Portal'))
-  return line
-}
-
-function footer(): HTMLElement {
-  const node = element('footer', 'sqd-footer')
-  node.append(element('span', undefined, 'Read-only evidence from SQD Portal'))
-  const attribution = element('a', undefined, 'Charts by TradingView') as HTMLAnchorElement
-  attribution.href = 'https://www.tradingview.com/'
-  attribution.target = '_blank'
-  attribution.rel = 'noopener noreferrer'
-  node.append(attribution)
-  node.append(element('span', undefined, 'portal.sqd.dev'))
-  return node
-}
-
 function stack(className: string, children: Array<HTMLElement | null>): HTMLElement | null {
   const present = children.filter((child): child is HTMLElement => Boolean(child))
   if (!present.length) return null
@@ -2549,8 +2472,6 @@ export function renderExplorer(root: HTMLElement, state: ExplorerState, actions:
           ? stack('sqd-actions sqd-followups sqd-followups--inline', [fullscreenButton(actions)])
           : null
       if (next) shell.append(next)
-      const line = receiptLine(payload)
-      if (line) shell.append(line)
     } else {
       /* Two columns only when there are secondary instruments to fill the
          side; a metrics row alone sits above the primary at full width. */
@@ -2569,6 +2490,5 @@ export function renderExplorer(root: HTMLElement, state: ExplorerState, actions:
       shell.append(raw(payload))
     }
   }
-  if (mode === 'fullscreen') shell.append(footer())
   root.append(shell)
 }

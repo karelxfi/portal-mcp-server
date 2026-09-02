@@ -159,7 +159,7 @@ async function main() {
       'the App heading must preserve the live result claim exactly',
     )
     assert((await frame.locator('.sqd-timeline .sqd-event').count()) > 0, 'the App must render live recent activity rows')
-    assert(await frame.getByText('Read-only evidence from SQD Portal').isVisible(), 'the rendered App must retain SQD provenance')
+    assert(await frame.locator('.sqd-mark').first().isVisible(), 'the rendered App must retain the SQD mark')
     assert(
       (await frame.locator('.sqd-app[data-mode="inline"]').count()) === 1,
       'the host opens the App as an inline summary card',
