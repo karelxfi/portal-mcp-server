@@ -8,5 +8,6 @@ scripts/*
 !scripts/clean-dist.mjs
 !scripts/generate-app-compat-manifest.mjs
 !scripts/build-activity-explorer.mjs
+!scripts/compact-stylesheet-plugin.mjs
 !scripts/copy-third-party-licenses.mjs
 src/generated

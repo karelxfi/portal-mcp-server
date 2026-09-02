@@ -271,7 +271,7 @@ Both come back in Portal's structured envelope (see Error Handling below):
 
 ## MCP Tools Quick Reference
 
-If Portal MCP tools are available, prefer them for bounded interactive work. The current Portal MCP server exposes 25 public tools plus 3 advanced/debug tools. Legacy aliases are not exposed. Public query params use `network`; discovery filters use `vm`.
+If Portal MCP tools are available, prefer them for bounded interactive work. The current Portal MCP server exposes 28 public tools plus 3 advanced/debug tools. Legacy aliases are not exposed. Public query params use `network`; discovery filters use `vm`.
 
 Use `tools/list`, `sqd://tools`, and `sqd://tools/{tool_name}` for the live catalog and exact schemas. The duplicate HTTP `/tools` endpoint is retired. The table below is a compact orientation, not the source of truth.
 
@@ -343,7 +343,7 @@ Current hosted-server behaviors worth relying on:
 
 ### Tron Queries
 
-No Tron-specific MCP tools yet. Dataset-agnostic tools (`portal_list_networks`, `portal_get_network_info`, `portal_get_head`, `portal_debug_resolve_time_to_block`) accept `tron-mainnet`. For Tron data queries, use the raw Portal Stream API with `"type": "tron"` and see `references/tron.md`.
+Use `portal_tron_query_transactions` for native TRX transfers, TRC-10 transfers, and smart-contract calls, and `portal_tron_query_logs` for TVM event logs. Addresses may be given as Base58, 41-prefixed hex, or 20-byte hex. Dataset-agnostic tools (`portal_list_networks`, `portal_get_network_info`, `portal_get_head`, `portal_debug_resolve_time_to_block`) also accept `tron-mainnet`. For query shapes the tools do not cover, see `references/tron.md`.
 
 ### Cross-Chain Analytics
 

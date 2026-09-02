@@ -83,7 +83,15 @@ export const FULL_TOOL_SELECTION: ToolSelection = { toolsets: ALL_TOOLSETS, labe
  * `MCP_TOOLS`. Unknown names are ignored and reported; an empty result falls
  * back to the full surface so a typo cannot publish an empty catalog.
  */
-export function resolveDeploymentToolSelection(env: { MCP_TOOLSETS?: string; MCP_TOOLS?: string }): ToolSelection {
+// Reads from an environment bag. Typed with an index signature so it accepts
+// NodeJS.ProcessEnv directly: an all-optional shape triggers TypeScript's weak
+// type check against ProcessEnv on some @types/node versions, which broke the
+// Docker build while CI stayed green.
+export function resolveDeploymentToolSelection(env: {
+  MCP_TOOLSETS?: string | undefined
+  MCP_TOOLS?: string | undefined
+  [key: string]: string | undefined
+}): ToolSelection {
   const warnings: string[] = []
   if (env.MCP_TOOLSETS?.trim()) {
     const parsed = parseToolsetList(env.MCP_TOOLSETS)

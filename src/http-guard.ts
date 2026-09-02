@@ -104,9 +104,13 @@ export function evaluateRequestGuard(
  * deployment keeps serving while the operator adds the list. `'*'` is the deliberate opt-out.
  */
 export function resolveRequestGuardPolicy(env: {
-  MCP_BIND?: string
-  MCP_ALLOWED_HOSTS?: string
-  MCP_ALLOWED_ORIGINS?: string
+  MCP_BIND?: string | undefined
+  MCP_ALLOWED_HOSTS?: string | undefined
+  MCP_ALLOWED_ORIGINS?: string | undefined
+  // Index signature so NodeJS.ProcessEnv is assignable here. Without it an
+  // all-optional shape trips TypeScript's weak type check against ProcessEnv on
+  // some @types/node versions, which broke the Docker build while CI was green.
+  [key: string]: string | undefined
 }): RequestGuardPolicy {
   const bind = env.MCP_BIND?.trim() || '127.0.0.1'
   const loopback = isLoopbackBind(bind)

@@ -14,7 +14,7 @@ v0.8.5 ships the SQD Explorer as an opt-in beta that fits its host: the inline c
 
 ## Current public surface
 
-- `25` public tools
+- `28` public tools
 - `3` advanced/debug tools
 - public params use `network`
 - discovery filters use `vm`
