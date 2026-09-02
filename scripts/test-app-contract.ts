@@ -349,7 +349,7 @@ async function main() {
     assert(
       appBridgeSource.includes("from '@modelcontextprotocol/ext-apps'") &&
         appBridgeSource.includes('new App(') &&
-        appBridgeSource.includes('{ strict: true }') &&
+        appBridgeSource.includes('{ strict: true, autoResize: true }') &&
         appBridgeSource.includes('app.callServerTool') &&
         appBridgeSource.includes('app.requestDisplayMode'),
       'the app should use the strict portable MCP Apps bridge for results, follow-ups, and display mode',

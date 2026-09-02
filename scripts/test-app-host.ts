@@ -67,6 +67,9 @@ async function main() {
     ;(window.__SQD_DOWNLOADS__ ||= []).push(contents)
     return {}
   }
+  bridge.onsizechange = ({ height }) => {
+    ;(window.__SQD_SIZES__ ||= []).push(height)
+  }
   bridge.oninitialized = async () => {
     await bridge.sendToolInput({ arguments: toolInput })
     await bridge.sendToolResult(toolResult)
@@ -291,6 +294,17 @@ async function main() {
       'Exit full screen must hand the display mode back to the host',
     )
     console.log('PASS  Exit full screen returns to the inline card through the host')
+
+    /* A chat host sizes the inline card from the app's size report; without
+       it the card falls back to a host default and shows blank space. */
+    const contentHeight = await frame.locator('.sqd-app').evaluate((node) => node.getBoundingClientRect().height)
+    const sizes = () => page.evaluate(() => ((window as any).__SQD_SIZES__ ?? []) as number[])
+    await until(
+      async () => Math.abs(((await sizes()).at(-1) ?? -1) - contentHeight) <= 2,
+      `the app must report its content height to the host (reported ${(await sizes()).join(', ')}; content ${contentHeight})`,
+      5_000,
+    )
+    console.log('PASS  the inline card reports its exact content height through size-changed')
 
     const hostError = await page.evaluate(() => (window as any).__SQD_HOST_ERROR__)
     assert(hostError === undefined, `the MCP Apps host bridge must stay error-free: ${hostError}`)

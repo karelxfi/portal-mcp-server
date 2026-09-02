@@ -26,7 +26,9 @@ let historyIndex = -1
 const app = new App(
   { name: 'sqd-blockchain-activity-explorer', version: __SQD_APP_VERSION__ },
   { availableDisplayModes: ['inline', 'fullscreen'] },
-  { strict: true },
+  /* The options object replaces the SDK default, so autoResize has to be
+     restated: it is what tells the host how tall the inline card should be. */
+  { strict: true, autoResize: true },
 )
 
 function update(next: Partial<ExplorerState>) {
