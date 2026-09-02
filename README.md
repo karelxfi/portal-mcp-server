@@ -200,7 +200,9 @@ In a workspace with custom MCP apps enabled, open **Settings → Apps → Create
 
 ## Claude Desktop
 
-Add an entry like this to `claude_desktop_config.json`:
+Download `sqd.mcpb` from the [latest release](https://github.com/subsquid-labs/portal-mcp-server/releases/latest) and open it: Claude Desktop installs the bundle with one click and lists the 28 tools. The bundle carries the server, its production dependencies, and one optional setting, "SQD Explorer (beta)", which is off by default. It needs Node 22 or newer on the machine.
+
+Manual fallback, from a local clone after `npm run build`, add an entry like this to `claude_desktop_config.json`:
 
 ```json
 {

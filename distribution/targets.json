@@ -50,6 +50,14 @@
       "liveCheck": "gemini-gallery"
     },
     {
+      "id": "claude-desktop-bundle",
+      "name": "Claude Desktop MCP Bundle",
+      "listingUrl": "https://github.com/subsquid-labs/portal-mcp-server/releases/latest",
+      "updateMode": "release-asset",
+      "required": true,
+      "liveCheck": "github-release-asset"
+    },
+    {
       "id": "glama",
       "name": "Glama",
       "listingUrl": "https://glama.ai/mcp/servers/subsquid-labs/portal-mcp-server",

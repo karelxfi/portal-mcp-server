@@ -90,6 +90,7 @@ function validateMetadata() {
     'cursor-marketplace',
     'official-mcp-registry',
     'gemini-cli',
+    'claude-desktop-bundle',
     'glama',
     'awesome-mcp-servers',
     'smithery',
@@ -192,6 +193,18 @@ async function checkGeminiPrerequisites(version) {
   return result('Gemini discovery prerequisites', 'pass', `topic and v${version} release archive are present`)
 }
 
+async function checkMcpbAsset(version) {
+  const release = JSON.parse(
+    await fetchText(`https://api.github.com/repos/subsquid-labs/portal-mcp-server/releases/tags/v${version}`),
+  )
+  const asset = release.assets?.find((entry) => entry.name === 'sqd.mcpb')
+  if (!asset) return result('Claude Desktop MCP Bundle', 'fail', `release v${version} is missing sqd.mcpb`)
+  if (asset.size > 15 * 1024 * 1024) {
+    return result('Claude Desktop MCP Bundle', 'fail', `sqd.mcpb is ${asset.size} bytes, above the 15 MB budget`)
+  }
+  return result('Claude Desktop MCP Bundle', 'pass', `v${version} release carries sqd.mcpb (${asset.size} bytes)`)
+}
+
 async function checkGlama(version) {
   const body = await fetchText('https://glama.ai/mcp/servers/subsquid-labs/portal-mcp-server')
   if (body.includes('Unclaimed servers have limited discoverability.')) {
@@ -255,6 +268,7 @@ async function runLiveChecks(version) {
     ['Official MCP Registry', () => checkRegistry(version)],
     ['Gemini discovery prerequisites', () => checkGeminiPrerequisites(version)],
     ['Gemini CLI Extension Gallery', () => checkGemini(version)],
+    ['Claude Desktop MCP Bundle', () => checkMcpbAsset(version)],
     ['Glama', () => checkGlama(version)],
     ['Awesome MCP Servers', checkAwesomeList],
     ['Smithery', checkSmithery],
