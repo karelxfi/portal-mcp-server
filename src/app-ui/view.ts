@@ -181,13 +181,38 @@ function numeric(value: unknown): number | undefined {
 
 const NUMERIC_FORMATS = new Set(['integer', 'compact_number', 'percent', 'currency_usd', 'gwei', 'bytes', 'btc', 'decimal', 'timestamp'])
 
-function formatValue(value: unknown, format?: string, unit?: string): string {
+/* An exact decimal string keeps every digit when a double would drop some
+   (more than 15 significant digits) or when the readable summary would round
+   its fraction away (more than four fraction digits): the integer part is
+   grouped, the fraction stays as Portal sent it. Compact and currency
+   summaries are approximations by contract and keep Number(). */
+const EXACT_STRING_FORMATS = new Set(['integer', 'percent', 'gwei', 'btc', 'decimal'])
+const FORMAT_SUFFIX: Record<string, string> = { percent: '%', gwei: ' gwei', btc: ' BTC' }
+
+function groupExactDecimal(value: string): string | undefined {
+  const match = /^(-?)(\d+)(?:\.(\d+))?$/.exec(value)
+  if (!match) return undefined
+  const [, sign, integer, fraction = ''] = match
+  const significant = `${integer}${fraction}`.replace(/^0+/, '').length
+  if (significant <= 15 && fraction.length <= 4) return undefined
+  const grouped = integer.replace(/\B(?=(\d{3})+(?!\d))/g, ',')
+  return `${sign}${grouped}${fraction ? `.${fraction}` : ''}`
+}
+
+export function formatValue(value: unknown, format?: string, unit?: string): string {
   if (value === null || value === undefined || value === '') return 'Not available'
   if (typeof value === 'boolean') return value ? 'Yes' : 'No'
   /* Portal sends large decimals as strings to stay exact; a declared numeric
      format is the tool asking for a readable summary of that number. */
   if (typeof value === 'string' && !(format && NUMERIC_FORMATS.has(format) && Number.isFinite(Number(value)))) {
     return unit && !value.toLowerCase().includes(unit.toLowerCase()) ? `${value} ${unit}` : value
+  }
+  if (typeof value === 'string' && format && EXACT_STRING_FORMATS.has(format)) {
+    const exact = groupExactDecimal(value.trim())
+    if (exact) {
+      const withSuffix = `${exact}${FORMAT_SUFFIX[format] ?? ''}`
+      return unit && !withSuffix.toLowerCase().includes(unit.toLowerCase()) ? `${withSuffix} ${unit}` : withSuffix
+    }
   }
   const numberValue = typeof value === 'number' ? value : Number(value)
   if (!Number.isFinite(numberValue)) return text(value)
@@ -234,9 +259,11 @@ function formatValue(value: unknown, format?: string, unit?: string): string {
       formatted = `${new Date(numberValue * (numberValue > 1e12 ? 1 : 1000)).toISOString().slice(0, 19).replace('T', ' ')} UTC`
       break
     default:
+      /* Six significant digits without exponent notation, so 9e-9 reads as
+         0.000000009. */
       formatted =
         numberValue !== 0 && Math.abs(numberValue) < 1
-          ? Number(numberValue.toPrecision(6)).toString()
+          ? Intl.NumberFormat('en-US', { maximumSignificantDigits: 6 }).format(numberValue)
           : Intl.NumberFormat('en-US', { maximumFractionDigits: 4 }).format(numberValue)
   }
   return unit && !formatted.toLowerCase().includes(unit.toLowerCase()) ? `${formatted} ${unit}` : formatted
@@ -908,11 +935,27 @@ function normalizeSeries(
    candles, crosshair, and right price scale, while a transparent hit-button
    overlay keeps every candle keyboard-reachable, screen-readable, and linked
    to its exact evidence row. */
+/* Portal marks both a still-forming last bucket and a bucket cut by the
+   query window as incomplete. The bucket is still forming only when the
+   indexed evidence ends before the requested window does; a historical
+   window that ends mid-bucket is fixed and merely partial. */
+function finalCandleStillForming(payload: Record<string, unknown>): boolean {
+  const freshness = isRecord(payload._freshness) ? payload._freshness : {}
+  const windowTo = numeric(freshness.window_to_block)
+  const head = numeric(freshness.indexed_head_block)
+  /* A window that reaches the indexed head is live; one that stops short of
+     it is history. */
+  if (windowTo !== undefined && head !== undefined) return windowTo >= head
+  const summary = isRecord(payload.summary) ? payload.summary : {}
+  return summary.window_anchor === 'indexed_head' || summary.window_anchor === 'latest_fill'
+}
+
 function buildCandleTerminal(
   panelRoot: HTMLElement,
   chart: Record<string, unknown>,
   rows: Record<string, unknown>[],
   chartTitle: string,
+  finalBucketForming: boolean,
 ): HTMLElement | null {
   const candleFields = isRecord(chart.candle_fields) ? chart.candle_fields : {}
   const openField = text(candleFields.open || 'open')
@@ -966,9 +1009,8 @@ function buildCandleTerminal(
   /* The price unit is named once in the tooltip title; a value repeats a
      unit only when it differs from the price unit. */
   const withUnit = (unit: string) => (unit && unit !== priceUnit ? unit : '')
-  /* Portal marks both a still-forming last bucket and a bucket cut by the
-     query window as incomplete; only the last one is still changing. */
-  const candleFlag = (index: number) => (index === parsed.length - 1 ? 'Open candle, still forming' : 'Partial bucket')
+  const candleFlag = (index: number) =>
+    index === parsed.length - 1 && finalBucketForming ? 'Open candle, still forming' : 'Partial bucket'
   const exactRows = parsed.map((point, index) => {
     const fallback: TooltipRow[] = [
       { label: 'Open', value: formatValue(point.open, priceFormat) },
@@ -1271,6 +1313,7 @@ function chartPanel(payload: Record<string, unknown>, panel: Panel): HTMLElement
       chart,
       rows,
       text(panel.title ?? chart.title ?? 'Blockchain activity chart'),
+      rangeEnd === allRows.length - 1 && finalCandleStillForming(payload),
     )
     if (!terminal) {
       wrap.append(element('div', 'sqd-chart-empty', 'The result did not include numeric candle values.'))
@@ -2478,7 +2521,7 @@ function noRowsState(payload: Record<string, unknown>, state: ExplorerState, act
     ),
   )
   const bar = element('div', 'sqd-actions sqd-followups sqd-followups--inline')
-  if (state.currentArgs.duration) {
+  if (state.currentArgs.duration || state.currentArgs.timeframe) {
     bar.append(actionButton('Widen the window', () => actions.runFollowup('widen'), 'sqd-button--primary'))
   }
   if (bar.childElementCount) wrap.append(bar)

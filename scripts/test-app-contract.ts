@@ -15,7 +15,10 @@ import {
   resolveActivityExplorerSurface,
 } from '../src/apps/activity-explorer.js'
 import { ACTIVITY_EXPLORER_BYTES, ACTIVITY_EXPLORER_HASH } from '../src/generated/activity-explorer.version.js'
+import { CHAINS, LOGO_CDN, LOGO_ORIGINS } from '../src/app-ui/chains.generated.js'
+import { chainLogoUrl, explorerLink } from '../src/app-ui/explorers.js'
 import { evidenceArguments, planFollowup, shorterDuration } from '../src/app-ui/followup-state.js'
+import { formatValue } from '../src/app-ui/view.js'
 import { buildEvidenceExport } from '../src/app-ui/export.js'
 import { APP_FIXTURES } from '../src/app-ui/fixtures.js'
 import { buildCandlestickChart, buildTimeSeriesChart } from '../src/helpers/chart-metadata.js'
@@ -361,8 +364,80 @@ async function main() {
     )
     assert(content._meta?.ui?.csp?.connectDomains?.length === 0, 'the app must not make external network requests')
     assert(
-      JSON.stringify(content._meta?.ui?.csp?.resourceDomains) === JSON.stringify(['https://cdn.subsquid.io', 'https://sqd.dev']),
+      JSON.stringify(content._meta?.ui?.csp?.resourceDomains) ===
+        JSON.stringify(['https://cdn.subsquid.io', 'https://sqd.dev']),
       'the app loads chain logos only from SQD domains',
+    )
+    assert(
+      JSON.stringify(content._meta?.['openai/widgetCSP']?.resource_domains) ===
+        JSON.stringify(content._meta?.ui?.csp?.resourceDomains),
+      'the ChatGPT CSP alias must allow the same logo origins as the standard declaration',
+    )
+    const cspOrigins: string[] = content._meta?.ui?.csp?.resourceDomains ?? []
+    assert(
+      LOGO_ORIGINS.every((origin) => cspOrigins.includes(origin)) && LOGO_CDN.startsWith(`${LOGO_ORIGINS[0]}/`),
+      'the generated chain map must only name origins the CSP allows',
+    )
+    const logoUrls = Object.values(CHAINS)
+      .map((chain) => chainLogoUrl(chain))
+      .filter(Boolean)
+    assert(
+      logoUrls.length > 100 && logoUrls.every((url) => cspOrigins.some((origin) => url.startsWith(`${origin}/`))),
+      'every chain logo must load from an origin the App CSP allows',
+    )
+    const testnetsWithExplorer = Object.entries(CHAINS).filter(
+      ([dataset, chain]) =>
+        chain.explorer && /testnet|sepolia|devnet|holesky|hoodi|amoy|alfajores|moonbase|cardona/.test(dataset),
+    )
+    assert(
+      testnetsWithExplorer.length === 0,
+      `testnet datasets must not link to a mainnet explorer: ${testnetsWithExplorer.map(([d]) => d).join(', ')}`,
+    )
+    assert(
+      explorerLink('ethereum-sepolia', 'address', '0x1111111111111111111111111111111111111111') === undefined,
+      'testnets have no explorer link',
+    )
+    const hash = `0x${'ab'.repeat(32)}`
+    assert(
+      explorerLink('ethereum-mainnet', 'tx', `${hash}:12`)?.url === `https://etherscan.io/tx/${hash}`,
+      'a hash:logIndex composite links to its transaction',
+    )
+    assert(
+      explorerLink('polkadot', 'tx', '23456789:3') === undefined,
+      'a Substrate block:eventIndex id is not a transaction',
+    )
+    assert(
+      explorerLink('hyperliquid-mainnet', 'tx', '812345678:4') === undefined,
+      'a replica block:actionIndex id is not a transaction',
+    )
+    assert(
+      explorerLink('polkadot', 'block', '23456789')?.url === 'https://polkadot.subscan.io/block/23456789',
+      'block links stay numeric',
+    )
+    const signature = '5VERv8NMvzbJMEkV8xnrLkEaWRtSz9CosKDYjCJjBRnbJLgp8uirBgmQpjKhoR4tjF3ZpRzrFmBV6UjKdiSZkQUW'
+    assert(
+      explorerLink('solana-mainnet', 'tx', signature)?.url.endsWith(`/tx/${signature}`) === true,
+      'a base58 Solana signature links as a transaction',
+    )
+    assert(
+      formatValue('9007199254740993', 'integer') === '9,007,199,254,740,993' &&
+        formatValue('43841943497649594000.000000000000000001', 'decimal', 'USDC') ===
+          '43,841,943,497,649,594,000.000000000000000001 USDC' &&
+        formatValue('0.30000003', 'btc') === '0.30000003 BTC' &&
+        formatValue('0.000000009', 'decimal') === '0.000000009' &&
+        formatValue(9e-9, 'decimal') === '0.000000009' &&
+        formatValue('1234.5', 'decimal') === '1,234.5',
+      'App cells must keep exact decimal strings and never show exponent notation',
+    )
+    assert(
+      planFollowup({ intent: 'widen', currentArgs: { network: 'base-mainnet', timeframe: '1h' } }).callArgs
+        ?.timeframe === '2h',
+      'widen must double a timeframe window with the same argument key',
+    )
+    assert(
+      planFollowup({ intent: 'zoom_in', currentArgs: { network: 'base-mainnet', duration: '24h' } }).callArgs
+        ?.duration === '12h',
+      'zoom_in must halve a duration window with the same argument key',
     )
     assert(
       content._meta?.['openai/widgetDomain'] === 'https://portal.sqd.dev',

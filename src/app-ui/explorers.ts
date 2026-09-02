@@ -115,7 +115,12 @@ export function explorerFor(network: string): Explorer | undefined {
     const kind = chain.kind === 'evm' && /hyperliquid/.test(base) ? 'hyperliquidFills' : chain.kind
     const paths = PATHS[kind] ?? PATHS.evm
     if (/tronscan/.test(base))
-      return { name: 'Tronscan', tx: `${base}/#/transaction/{id}`, address: `${base}/#/address/{id}`, block: `${base}/#/block/{id}` }
+      return {
+        name: 'Tronscan',
+        tx: `${base}/#/transaction/{id}`,
+        address: `${base}/#/address/{id}`,
+        block: `${base}/#/block/{id}`,
+      }
     return {
       name: base.replace(/^https?:\/\//, ''),
       tx: `${base}${paths.tx}`,
@@ -132,10 +137,20 @@ export function identifierKind(key: string): ExplorerKind | undefined {
   const name = key.toLowerCase()
   if (/^(tx_hash|hash|transaction_hash|signature|txid|extrinsic_hash)$/.test(name)) return 'tx'
   if (/^(block_number|block|height|slot)$/.test(name)) return 'block'
-  if (/(^|_)(address|sender|recipient|from|to|counterparty|user|owner|account|contract|token_address|coin_address)(_|$)/.test(name))
+  if (
+    /(^|_)(address|sender|recipient|from|to|counterparty|user|owner|account|contract|token_address|coin_address)(_|$)/.test(
+      name,
+    )
+  )
     return 'address'
   if (name === 'primary_id') return 'tx'
   return undefined
+}
+
+/* 0x-prefixed or bare 32-byte hex (EVM, Substrate, Bitcoin, Hyperliquid) or
+   a base58 Solana signature. */
+export function isTransactionHash(value: string): boolean {
+  return /^(0x)?[0-9a-fA-F]{64}$/.test(value) || /^[1-9A-HJ-NP-Za-km-z]{64,88}$/.test(value)
 }
 
 export function explorerLink(
@@ -145,10 +160,13 @@ export function explorerLink(
 ): { url: string; name: string; id: string } | undefined {
   const explorer = explorerFor(network)
   if (!explorer) return undefined
-  /* A composite id like "hash:logIndex" points at its transaction. */
+  /* A composite id like "hash:logIndex" points at its transaction, but a
+     record-local composite such as a Substrate "block:eventIndex" or a
+     replica "block:actionIndex" names no transaction and stays unlinked. */
   const id = kind === 'tx' ? rawId.split(':')[0] : rawId
   if (!/^[0-9a-zA-Z]{1,128}$/.test(id)) return undefined
   if (kind === 'block' && !/^\d+$/.test(id)) return undefined
+  if (kind === 'tx' && !isTransactionHash(id)) return undefined
   if (kind !== 'block' && id.length < 8) return undefined
   return { url: explorer[kind].replace('{id}', id), name: explorer.name, id }
 }

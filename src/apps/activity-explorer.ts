@@ -2,6 +2,7 @@ import { AsyncLocalStorage } from 'node:async_hooks'
 
 import { CLIENT_CAPABILITIES_META_KEY, type McpServer } from '@modelcontextprotocol/server'
 
+import { LOGO_ORIGINS } from '../app-ui/chains.generated.js'
 import { ACTIVITY_EXPLORER_HTML } from '../generated/activity-explorer.generated.js'
 import { ACTIVITY_EXPLORER_BYTES, ACTIVITY_EXPLORER_HASH } from '../generated/activity-explorer.version.js'
 import { appRenderPayloadBytes, appResourceReadsTotal, appResourceSizeBytes, appToolResultsTotal } from '../metrics.js'
@@ -141,11 +142,13 @@ export function recordActivityExplorerResult(params: {
   appRenderPayloadBytes.observe({ tool: params.toolName, transport: params.transport }, bytes)
 }
 
+/* Chain logos come from SQD's own CDN and site; nothing else loads. The
+   generated chain map is filtered to these origins, and both CSP
+   declarations name the same list. */
 const resourceUiMeta = {
   csp: {
     connectDomains: [] as string[],
-    /* Chain logos come from SQD's own CDN and site; nothing else loads. */
-    resourceDomains: ['https://cdn.subsquid.io', 'https://sqd.dev'],
+    resourceDomains: [...LOGO_ORIGINS],
   },
   domain: 'https://portal.sqd.dev',
 }
@@ -182,7 +185,7 @@ export function registerActivityExplorerResource(server: McpServer, runtime: Run
                 ui: resourceUiMeta,
                 'openai/widgetDescription':
                   'Explore the exact blockchain evidence returned by SQD with charts, metrics, tables, timelines, coverage, freshness, and continuation controls.',
-                'openai/widgetCSP': { connect_domains: [], resource_domains: [] },
+                'openai/widgetCSP': { connect_domains: [], resource_domains: [...LOGO_ORIGINS] },
                 'openai/widgetDomain': 'https://portal.sqd.dev',
               },
             },

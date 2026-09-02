@@ -54,20 +54,24 @@ export function planFollowup(params: {
   let callArgs = isRecord(params.actionArguments) ? params.actionArguments : { ...baseArgs }
 
   if (params.intent === 'continue') {
-    if (typeof params.nextCursor !== 'string') return { error: 'This result does not include a valid continuation cursor.' }
+    if (typeof params.nextCursor !== 'string')
+      return { error: 'This result does not include a valid continuation cursor.' }
     return { callArgs: { cursor: params.nextCursor }, persistedArgs: { ...baseArgs } }
   }
   if (params.intent === 'retry') callArgs = { ...baseArgs }
+  /* Tools name their window either duration or timeframe; the follow-up
+     keeps whichever key the original call used. */
+  const windowKey = typeof baseArgs.duration === 'string' ? 'duration' : 'timeframe'
   if (params.intent === 'widen') {
-    const duration = longerDuration(baseArgs.duration)
-    if (!duration) return { error: 'This result does not include a duration that can be widened safely.' }
-    callArgs = { ...baseArgs, duration }
+    const duration = longerDuration(baseArgs[windowKey])
+    if (!duration) return { error: 'This result does not include a window that can be widened safely.' }
+    callArgs = { ...baseArgs, [windowKey]: duration }
   }
   if (params.intent === 'compare_previous') callArgs = { ...baseArgs, compare_previous: true }
   if (params.intent === 'zoom_in') {
-    const duration = shorterDuration(baseArgs.duration)
-    if (!duration) return { error: 'This result does not include a duration that can be narrowed safely.' }
-    callArgs = { ...baseArgs, duration }
+    const duration = shorterDuration(baseArgs[windowKey])
+    if (!duration) return { error: 'This result does not include a window that can be narrowed safely.' }
+    callArgs = { ...baseArgs, [windowKey]: duration }
   }
   return { callArgs, persistedArgs: callArgs }
 }

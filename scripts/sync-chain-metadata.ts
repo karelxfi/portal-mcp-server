@@ -25,6 +25,10 @@ type PortalDataset = {
 export type ChainInfo = { name: string; kind: string; logo?: string; explorer?: string }
 
 const LOGO_CDN = 'https://cdn.subsquid.io/img/networks/'
+/* The App resource CSP allows images from these origins only, so a logo
+   hosted anywhere else is dropped rather than shipped as a broken image. */
+const LOGO_ORIGINS = ['https://cdn.subsquid.io', 'https://sqd.dev']
+const TESTNET_ID = /testnet|sepolia|devnet|holesky|hoodi|amoy|alfajores|moonbase|cardona|paseo|westend|rococo/
 
 function decodeAstro(value: unknown): unknown {
   if (Array.isArray(value) && value.length === 2 && typeof value[0] === 'number') {
@@ -66,9 +70,13 @@ async function main() {
   for (const chain of chains) {
     const explorer = typeof chain.explorer === 'string' ? chain.explorer.replace(/\/+$/, '') : ''
     const logo = typeof chain.logoUrl === 'string' ? chain.logoUrl : ''
-    for (const network of (chain.networks as Array<{ id?: string }> | undefined) ?? []) {
+    for (const network of (chain.networks as Array<{ id?: string; type?: string }> | undefined) ?? []) {
       if (!network.id) continue
-      if (explorer) explorerByNetwork.set(network.id, explorer)
+      /* The chain-level explorer is the mainnet explorer; a testnet record
+         cannot be found there, so testnets get no link. The id check covers
+         networks the site lists without an environment. */
+      if (explorer && network.type === 'mainnet' && !TESTNET_ID.test(network.id))
+        explorerByNetwork.set(network.id, explorer)
       if (logo) logoByNetwork.set(network.id, logo)
     }
   }
@@ -77,7 +85,9 @@ async function main() {
   for (const entry of datasets) {
     const meta = entry.metadata ?? {}
     const rawLogo = meta.logo_url ?? logoByNetwork.get(entry.dataset)
-    const logoUrl = rawLogo?.startsWith('/') ? `https://sqd.dev${rawLogo}` : rawLogo
+    const absoluteLogo = rawLogo?.startsWith('/') ? `https://sqd.dev${rawLogo}` : rawLogo
+    const logoUrl =
+      absoluteLogo && LOGO_ORIGINS.some((origin) => absoluteLogo.startsWith(`${origin}/`)) ? absoluteLogo : undefined
     const info: ChainInfo = {
       name: meta.display_name ?? entry.dataset,
       kind: meta.kind ?? 'unknown',
@@ -97,6 +107,9 @@ async function main() {
     'export type ChainInfo = { name: string; kind: string; logo?: string; explorer?: string }',
     '',
     `export const LOGO_CDN = ${JSON.stringify(LOGO_CDN)}`,
+    '',
+    '/* Every logo URL lives under one of these origins; the App resource CSP allows exactly them. */',
+    `export const LOGO_ORIGINS = ${JSON.stringify(LOGO_ORIGINS)}`,
     '',
     `export const CHAINS: Record<string, ChainInfo> = ${JSON.stringify(sorted)}`,
     '',
