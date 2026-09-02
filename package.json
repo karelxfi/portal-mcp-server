@@ -65,6 +65,7 @@
     "test:tool-admission": "tsx scripts/test-tool-admission.ts",
     "test:catalog-tokens": "tsx scripts/measure-catalog-tokens.ts",
     "baseline:catalog-tokens": "tsx scripts/measure-catalog-tokens.ts --write",
+    "baseline:quality": "tsx scripts/test-quality.ts --write",
     "eval:model-loop": "tsx scripts/eval-model-loop.ts",
     "test:app-contract": "tsx scripts/test-app-contract.ts",
     "test:app-host": "tsx scripts/test-app-host.ts",

@@ -1,6 +1,6 @@
 #!/usr/bin/env tsx
 
-import { readFileSync } from 'node:fs'
+import { readFileSync, writeFileSync } from 'node:fs'
 
 import type { Client } from '@modelcontextprotocol/client'
 
@@ -32,7 +32,9 @@ type ResponseSizeSample = {
 type QualityBaseline = {
   version: string
   captured_at: string
+  note?: string
   passes: Array<'cold' | 'warm'>
+  sample_count?: number
   aggregate?: {
     median_chars: number
     p90_chars: number
@@ -76,7 +78,17 @@ const TOOL_LATENCY_BUDGET_MS: Record<string, { soft: number; hard: number }> = {
   portal_evm_get_analytics: { soft: 3_000, hard: 8_000 },
 }
 
-const QUALITY_BASELINE_PATH = new URL('./quality-baseline-v0.7.9.json', import.meta.url)
+const QUALITY_BASELINE_PATH = new URL('./quality-baseline.json', import.meta.url)
+/** Headroom over the measured size before a tool counts as regressed. */
+const SIZE_BUDGET_HEADROOM = 1.1
+const packageVersion = String(JSON.parse(readFileSync('package.json', 'utf8')).version)
+
+const cliArgs = process.argv.slice(2)
+const writeBaseline = cliArgs.includes('--write')
+const baselineNote = (() => {
+  const index = cliArgs.indexOf('--note')
+  return index === -1 ? '' : (cliArgs[index + 1] ?? '').trim()
+})()
 
 function getIntent(data: any): string {
   return typeof data?._tool_contract?.intent === 'string' ? data._tool_contract.intent : 'query'
@@ -112,6 +124,41 @@ function percentile(values: number[], p: number) {
   const sorted = [...values].sort((a, b) => a - b)
   const index = Math.min(sorted.length - 1, Math.max(0, Math.ceil((p / 100) * sorted.length) - 1))
   return sorted[index]
+}
+
+function writeQualityBaseline(responseSizes: ResponseSizeSample[], note: string) {
+  const observed = summarizeResponseSizes(responseSizes)
+  const sizes = responseSizes.map((sample) => sample.chars)
+  const aggregateMedian = percentile(sizes, 50)
+  const aggregateP90 = percentile(sizes, 90)
+  const withHeadroom = (value: number) => Math.round(value * SIZE_BUDGET_HEADROOM)
+  const next: QualityBaseline = {
+    version: packageVersion,
+    captured_at: new Date().toISOString(),
+    note,
+    passes: ['cold', 'warm'],
+    sample_count: responseSizes.length,
+    aggregate: {
+      median_chars: aggregateMedian,
+      p90_chars: aggregateP90,
+      max_median_chars: withHeadroom(aggregateMedian),
+      max_p90_chars: withHeadroom(aggregateP90),
+    },
+    tools: Object.fromEntries(
+      observed.map((entry) => [
+        entry.tool,
+        {
+          median_chars: entry.median,
+          p95_chars: entry.p95,
+          max_median_chars: withHeadroom(entry.median),
+          max_p95_chars: withHeadroom(entry.p95),
+        },
+      ]),
+    ),
+  }
+  writeFileSync(QUALITY_BASELINE_PATH, `${JSON.stringify(next, null, 2)}\n`)
+  console.log(`\nQuality baseline written to ${QUALITY_BASELINE_PATH.pathname} for v${packageVersion}`)
+  console.log(`Note: ${note}`)
 }
 
 function loadQualityBaseline(): QualityBaseline {
@@ -474,6 +521,9 @@ async function runQualityPass(params: {
 }
 
 async function main() {
+  if (writeBaseline && !baselineNote) {
+    throw new Error('Refreshing the baseline needs --note "<why the measured sizes changed>" and a CHANGELOG entry')
+  }
   const baseline = loadQualityBaseline()
   const connected = await connectTestClient('quality-test')
   const { client } = connected
@@ -493,7 +543,11 @@ async function main() {
     await runQualityPass({ client, context, pass: 'warm', warnings, failures, responseSizes })
     await validateContractActivityFastModeCoverage({ client, context, failures })
 
-    validateResponseSizeBaseline(responseSizes, baseline, failures)
+    if (writeBaseline) {
+      writeQualityBaseline(responseSizes, baselineNote)
+    } else {
+      validateResponseSizeBaseline(responseSizes, baseline, failures)
+    }
 
     printSection('Quality audit summary')
     const sizes = responseSizes.map((sample) => sample.chars)

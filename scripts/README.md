@@ -58,7 +58,7 @@ Unit tests sit next to the code as `src/**/*.test.ts` and run with the built-in 
 | `test:investigation-journeys`, `test:client-journeys`, `test:conversations`, `test:realistic-prompts` | live | guided investigations and declared-client journeys |
 | `test:plugin`, `test:claude-plugin`, `test:grok-plugin`, `test:gemini-extension`, `test:cursor-plugin` | live | distribution packages |
 | `test:negative` | live | invalid and unsupported requests, injection prompts |
-| `test:quality` | live | per-tool response contract, size, and latency budgets |
+| `test:quality` | live | per-tool response contract, size, and latency budgets against `scripts/quality-baseline.json`; refresh with `npm run baseline:quality -- --note "<why>"` |
 | `test:live-cooldown` | live | a pause between heavy live suites |
 | `eval:model-loop` | nightly | a model answers pinned questions through the server; pass rate and tool-call drift (`--model mock` verifies the question set offline from an API key) |
 
@@ -93,7 +93,7 @@ Runs multi-step user journeys that behave more like an AI chat session than isol
 - catches places where a tool works technically but still feels awkward in chat
 
 ### `npm run test:realistic-prompts`
-Runs skeptical, user-style prompts for the v0.7.9 investigation features. It:
+Runs skeptical, user-style prompts for the investigation features. It:
 
 - maps messy incident-response prompts to the intended existing tool
 - calls the live MCP server and validates the returned artifact, not only routing rank
@@ -114,6 +114,7 @@ Runs an automated response-quality audit over the full manifest. It:
 - verifies every successful tool result emits `structuredContent` matching the compact JSON text fallback
 - checks executable versus descriptive follow-up actions and safe pagination continuation metadata
 - runs cold and warm passes, then enforces hard latency budgets and per-tool median/p95 response-size baselines so regressions fail CI
+- reads `scripts/quality-baseline.json`, which records the package version, the capture time, and why it was taken; refresh it deliberately with `npm run baseline:quality -- --note "<why the measured sizes changed>"` and a CHANGELOG entry, never by hand
 - flags truncation, legacy wording, default raw-query bloat, and non-humanized labels
 - warns when a tool is drifting toward the hard budgets before it actually fails
 
@@ -256,7 +257,7 @@ When tool names or recommended arguments change:
 4. Re-run `npm run test:conversations`
 5. Re-run `npm run test:realistic-prompts`
 6. Re-run `npm run test:negative`
-7. Re-run `npm run test:quality`
+7. Re-run `npm run test:quality`, and refresh its baseline with `npm run baseline:quality -- --note "<why>"` when a new tool or a real data change moves the measured sizes
 8. Re-run `npm run test:plugin`
 9. Re-run `npm run test:package`
 10. Re-run `npx tsx scripts/data-quality-test.ts` for a quick qualitative review

@@ -81,7 +81,7 @@ Every workflow pins its actions by commit SHA, drops checkout credentials, and s
 | In-session evidence workspace | Linked overview, chart, evidence, and investigation sections, range-focused follow-ups, session history, and JSON or CSV export without persistent browser storage | `test:app-contract`, `test:app-ui` |
 | Registry and schema discovery | 31/31 tools | `test:protocol`, `test:tools`, `test:lean` |
 | Representative live success | 31/31 tools | `test:tools` |
-| Shared response contract, size, and latency budgets | 31/31 tools, cold and warm | `test:quality` |
+| Shared response contract, size, and latency budgets | 31/31 tools, cold and warm, against a baseline captured for the release under test and carrying the reason it was taken | `test:quality`, refreshed with `baseline:quality` |
 | Tool-selection routing | 70/70 declared prompt cases | `test:routing` |
 | Controlled timeout and cancellation paths | Every shared Portal fetch mode | `test:fetch-reliability` |
 | Malformed and prematurely ended response bodies | JSON and NDJSON paths | `test:fetch-reliability` |

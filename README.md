@@ -8,7 +8,7 @@ The server does not index chains itself. It validates input, plans bounded Porta
 
 The current v0.8.5 release supports the stateless MCP `2026-07-28` protocol over HTTP and stdio, while retaining the SDK-managed legacy negotiation path for clients still rolling out the revision. No SQD account, API key, or client credential is required.
 
-v0.8.4 makes factual completeness a release gate. It verifies requested and actual time bounds, stable row identities, exact page continuation, wallet membership, Bitcoin units, transaction and candle totals, input validation, and response budgets against direct Portal evidence across EVM, Solana, Bitcoin, Substrate, Hyperliquid, and applicable Tron metadata paths. Tool results expose the exact `_server.version`. The SQD Explorer uses the current SQD Design System, retains cached App URIs from supported releases, preserves exact hashes and tiny decimal amounts across every display and export surface, and adds honest App identity, explicit open-bucket state, safe failed-follow-up states, and client-side paging for large evidence tables.
+Factual completeness is a release gate, carried forward from v0.8.4. It verifies requested and actual time bounds, stable row identities, exact page continuation, wallet membership, Bitcoin units, transaction and candle totals, input validation, and response budgets against direct Portal evidence across EVM, Solana, Bitcoin, Substrate, Hyperliquid, and applicable Tron metadata paths. Tool results expose the exact `_server.version`. The SQD Explorer uses the current SQD Design System, retains cached App URIs from supported releases, preserves exact hashes and tiny decimal amounts across every display and export surface, and adds honest App identity, explicit open-bucket state, safe failed-follow-up states, and client-side paging for large evidence tables.
 
 v0.8.5 ships the SQD Explorer as an opt-in beta that fits its host: the inline card reports its exact height, results lead with their subject and primary number, identifiers link to public explorers, network chips carry SQD chain logos, and every control is verified through the official MCP Apps bridge.
 
@@ -197,7 +197,7 @@ Grok Build reads Claude Code plugins directly, so it uses the same package rathe
 grok plugin install --trust subsquid-labs/portal-mcp-server#plugins/portal
 ```
 
-The v0.8.4 release gate validates the Codex, Claude Code, Grok Build, Gemini CLI, and Cursor packages, then runs the same discovery, prompt, resource, fallback, evidence, continuation, concurrency, and recovery journeys for all five declared client families. It also compares material results with direct Portal evidence and rejects missing or duplicate normalized identities. Real installed-client calls are recorded separately so package validation is never presented as runtime proof.
+The release gate validates the Codex, Claude Code, Grok Build, Gemini CLI, and Cursor packages, then runs the same discovery, prompt, resource, fallback, evidence, continuation, concurrency, and recovery journeys for all five declared client families. It also compares material results with direct Portal evidence and rejects missing or duplicate normalized identities. Real installed-client calls are recorded separately so package validation is never presented as runtime proof.
 
 ## ChatGPT
 
@@ -263,7 +263,7 @@ Useful environment variables:
 
 ## Tests
 
-The [release-assurance contract](RELEASE_ASSURANCE.md) defines the complete v0.8.2 baseline and the additional v0.8.3 and v0.8.4 gates. “100%” refers to every applicable cell in the declared matrix, not a claim that upstream networks can never fail.
+The [release-assurance contract](RELEASE_ASSURANCE.md) defines the complete v0.8.2 baseline and every gate added since, through v0.8.5. “100%” refers to every applicable cell in the declared matrix, not a claim that upstream networks can never fail.
 
 ```bash
 npm test

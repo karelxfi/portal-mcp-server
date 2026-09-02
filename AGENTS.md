@@ -20,6 +20,7 @@ An MCP server that answers blockchain questions from SQD Portal data across EVM,
 | Required gate, no network | `npm run test:offline` |
 | Portal-backed suites | `npm run test:live` |
 | Catalog token gate | `npm run test:catalog-tokens`; refresh with `npm run baseline:catalog-tokens -- --note "<why>"` |
+| Response size and latency gate | `npm run test:quality`; refresh with `npm run baseline:quality -- --note "<why>"` |
 | Explorer in a local host | `npm run app:host` |
 | Release (maintainers, on `main`) | `npm run release:patch`, then push the branch and the tag |
 
