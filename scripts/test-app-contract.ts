@@ -183,7 +183,7 @@ async function main() {
   await defaultClient.connect(defaultClientTransport)
   try {
     const listedTools = await defaultClient.listTools()
-    assert(listedTools.tools.length === 30, 'opting out of the beta app must not change the 30-tool catalog')
+    assert(listedTools.tools.length === 31, 'opting out of the beta app must not change the 31-tool catalog')
     for (const tool of listedTools.tools) {
       const meta = tool._meta as Record<string, any> | undefined
       assert(
@@ -259,7 +259,7 @@ async function main() {
   await client.connect(clientTransport)
   try {
     const listedTools = await client.listTools()
-    assert(listedTools.tools.length === 30, 'the MCP App must not change the 30-tool catalog')
+    assert(listedTools.tools.length === 31, 'the MCP App must not change the 31-tool catalog')
     const advertisedAppTools = listedTools.tools
       .filter((tool) => Boolean((tool._meta as Record<string, any> | undefined)?.['ui/resourceUri']))
       .map((tool) => tool.name)

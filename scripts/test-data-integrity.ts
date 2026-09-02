@@ -9,6 +9,7 @@ import {
   multiplyExactDecimals,
   parseExactDecimal,
 } from '../src/helpers/exact-decimal.ts'
+import { getTraceFields } from '../src/helpers/field-presets.js'
 import {
   buildBitcoinBlockFields,
   buildBitcoinTransactionFields,
@@ -30,6 +31,7 @@ const ERC20_TRANSFER = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a
 const BASE_FIXTURE_BLOCK = 50_343_299
 const ETH_TYPE_ONE_BLOCK = 12_244_145
 const ETH_TYPE_ONE_HASH = '0x851bad0415758075a1eb86776749c829b866d43179c57c3e4a4b9359a0358231'
+const ETH_TYPE_ONE_TX_INDEX = 14
 const POLKADOT_FROM = 30_736_840
 const POLKADOT_TO = 30_736_842
 const TRON_BLOCK = 84_000_000
@@ -432,6 +434,81 @@ async function main() {
     assertComplete(tronLogs, 'Tron USDT transfer logs', directTronLogs.length)
     console.log(
       `PASS  Tron block ${TRON_BLOCK}: all ${directTronLogs.length} USDT transfer logs match Portal with joined hashes`,
+    )
+
+    const directTraces = flatten(
+      await fetchNdjson('ethereum-mainnet', {
+        type: 'evm',
+        fromBlock: ETH_TYPE_ONE_BLOCK,
+        toBlock: ETH_TYPE_ONE_BLOCK,
+        fields: {
+          block: buildEvmBlockFields(),
+          trace: { ...getTraceFields('standard').trace, transactionIndex: true },
+          transaction: { transactionIndex: true, hash: true },
+        },
+        traces: [{ transaction: true }],
+      }),
+      'traces',
+    ).filter((trace) => trace.transactionIndex === ETH_TYPE_ONE_TX_INDEX)
+    assert(directTraces.length > 1, 'Portal should return the internal calls of the pinned transaction')
+    const traceRows: JsonRecord[] = []
+    let traceCursor: string | undefined
+    let tracePage = 0
+    let finalTracePage: JsonRecord | undefined
+    do {
+      const page = await call(
+        'portal_evm_query_traces',
+        traceCursor
+          ? { cursor: traceCursor }
+          : {
+              network: 'ethereum-mainnet',
+              from_block: ETH_TYPE_ONE_BLOCK,
+              to_block: ETH_TYPE_ONE_BLOCK,
+              transaction_hash: ETH_TYPE_ONE_HASH,
+              response_format: 'full',
+              limit: 10,
+            },
+      )
+      assertChatSurface(page, `EVM traces page ${tracePage + 1}`)
+      traceRows.push(...page.items)
+      finalTracePage = page
+      traceCursor = page._pagination?.has_more ? page._pagination.next_cursor : undefined
+      tracePage += 1
+      assert(tracePage <= 25, 'EVM trace pagination should terminate')
+    } while (traceCursor)
+    assertEqualSet(
+      traceRows.map((item) => String(item.trace_address)),
+      directTraces.map((item) => (item.traceAddress as number[]).join('.') || 'root'),
+      'EVM traces of one transaction',
+    )
+    for (const item of traceRows) {
+      const source = directTraces.find(
+        (row) => ((row.traceAddress as number[]).join('.') || 'root') === String(item.trace_address),
+      )
+      assert(source !== undefined, 'Every returned trace should exist in the direct Portal rows')
+      assert(item.tx_hash === ETH_TYPE_ONE_HASH, 'Every trace row should carry the parent transaction hash')
+      assert(item.type === source?.type, 'Trace type should match Portal')
+      assert(item.subtraces === source?.subtraces, 'Subtrace count should match Portal')
+      assert(item.action === undefined && item.result === undefined, 'Trace rows should not repeat the nested objects')
+      if (source?.action?.from !== undefined) {
+        assert(item.call_from === source.action.from, 'call_from should flatten action.from')
+        assert(item.call_to === (source.action.to ?? undefined), 'call_to should flatten action.to')
+        assert(
+          item.call_sighash === (source.action.sighash ?? undefined),
+          'call_sighash should flatten action.sighash, and an absent selector should be omitted',
+        )
+      }
+      if (source?.result?.gasUsed !== undefined) {
+        assert(item.gas_used === source.result.gasUsed, 'gas_used should flatten result.gasUsed')
+      }
+      assert(
+        item.primary_id === `${ETH_TYPE_ONE_HASH}:${item.trace_address}`,
+        'Trace primary_id should be the hash plus the trace address',
+      )
+    }
+    assert(finalTracePage?._pagination?.has_more === false, 'The last trace page should not hide another page')
+    console.log(
+      `PASS  Ethereum block ${ETH_TYPE_ONE_BLOCK}: all ${directTraces.length} traces of the pinned transaction match Portal with flattened action and result fields`,
     )
 
     const directEvents = flatten(

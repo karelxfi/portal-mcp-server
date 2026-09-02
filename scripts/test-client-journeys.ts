@@ -65,7 +65,7 @@ async function runClientJourney(clientIdentity: (typeof CLIENTS)[number]) {
 
   try {
     const { tools } = await connected.client.listTools()
-    assert(tools.length === 30, `${clientIdentity.family} should discover 30 tools`)
+    assert(tools.length === 31, `${clientIdentity.family} should discover 31 tools`)
     const prompts = await connected.client.listPrompts()
     assert(
       ['investigate-wallet', 'investigate-contract', 'investigate-market'].every((name) =>

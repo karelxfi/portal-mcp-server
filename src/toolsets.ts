@@ -14,7 +14,7 @@
 //                                a connection narrows the deployment set; it
 //                                can never widen it
 //
-// The default, with nothing configured, is the full 30-tool surface.
+// The default, with nothing configured, is the full 31-tool surface.
 
 import { AsyncLocalStorage } from 'node:async_hooks'
 

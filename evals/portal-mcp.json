@@ -561,6 +561,31 @@
         }
       ],
       "verified": "2026-09-02, error: requested timestamp is after the latest indexed block"
+    },
+    {
+      "id": "ethereum-transaction-trace-count",
+      "family": "evm",
+      "question": "How many execution traces, including the top-level call, does transaction 0x851bad0415758075a1eb86776749c829b866d43179c57c3e4a4b9359a0358231 have? It is in block 12244145 on Ethereum mainnet.",
+      "expected": {
+        "type": "number",
+        "value": "22"
+      },
+      "min_tool_calls": 1,
+      "reference_calls": [
+        {
+          "tool": "portal_evm_query_traces",
+          "arguments": {
+            "network": "ethereum-mainnet",
+            "from_block": 12244145,
+            "to_block": 12244145,
+            "transaction_hash": "0x851bad0415758075a1eb86776749c829b866d43179c57c3e4a4b9359a0358231",
+            "response_format": "summary",
+            "limit": 25
+          }
+        }
+      ],
+      "answer_path": "total_traces",
+      "verified": "2026-09-02, 22 traces returned for the pinned transaction and checked against direct Portal rows by test:data-integrity"
     }
   ]
 }

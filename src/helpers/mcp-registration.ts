@@ -26,6 +26,7 @@ const PORTAL_TOOL_TITLES: Record<string, string> = {
   portal_substrate_get_analytics: 'Analyze Polkadot activity',
   portal_evm_query_transactions: 'Find Ethereum and Base transactions',
   portal_evm_query_logs: 'Find smart contract events',
+  portal_evm_query_traces: 'Find internal calls and contract creations',
   portal_evm_query_token_transfers: 'Find token transfers',
   portal_evm_get_contract_deployment: 'Find a contract deployment',
   portal_evm_get_contract_activity: 'Review smart contract activity',
@@ -62,7 +63,7 @@ const READ_ONLY_TOOL_ANNOTATIONS = {
  * while the documented envelope stays stable across the full catalog.
  *
  * This schema is serialised once per tool in tools/list, so every token here
- * is paid 30 times per session. Keep descriptions short and leave free-form
+ * is paid 31 times per session. Keep descriptions short and leave free-form
  * blocks untyped; `npm run test:catalog-tokens` guards the total.
  */
 const PORTAL_TOOL_OUTPUT_SCHEMA = z

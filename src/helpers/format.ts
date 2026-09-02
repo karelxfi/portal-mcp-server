@@ -89,6 +89,7 @@ const DISPLAY_NAME_OVERRIDES: Record<string, string> = {
   portal_get_time_series: 'Time Series',
   portal_evm_query_transactions: 'EVM Transactions',
   portal_evm_query_logs: 'EVM Logs',
+  portal_evm_query_traces: 'EVM Traces',
   portal_evm_query_token_transfers: 'Token Transfers',
   portal_evm_get_contract_deployment: 'Contract Deployment',
   portal_evm_get_contract_activity: 'Contract Activity',

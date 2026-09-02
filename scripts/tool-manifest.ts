@@ -7,6 +7,8 @@ const POLKADOT_SAMPLE_FROM_BLOCK = 30_736_840
 const POLKADOT_SAMPLE_TO_BLOCK = 30_736_842
 const TRON_SAMPLE_BLOCK = 84_000_000
 const TRON_USDT_BASE58 = 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t'
+const TRACE_SAMPLE_BLOCK = 12_244_145
+const TRACE_SAMPLE_TX = '0x851bad0415758075a1eb86776749c829b866d43179c57c3e4a4b9359a0358231'
 const BASE_RPC_URL = 'https://mainnet.base.org'
 const PORTAL_API_URL = 'https://portal.sqd.dev'
 const BASE_UNISWAP_V4_POOL_MANAGER = '0x498581ff718922c3f8e6a244956af099b2652b2b'
@@ -1021,6 +1023,80 @@ export const TOOL_SPECS: ToolSpec[] = [
       })
       const tokenSymbolItems = getItems(tokenSymbolResult.data)
       assert(tokenSymbolItems.length === 1, 'Expected token_symbols to resolve USDC log filters')
+    },
+  },
+  {
+    name: 'portal_evm_query_traces',
+    prompt: 'what did this Ethereum transaction call internally',
+    args: () => ({
+      network: 'ethereum-mainnet',
+      from_block: TRACE_SAMPLE_BLOCK,
+      to_block: TRACE_SAMPLE_BLOCK,
+      transaction_hash: TRACE_SAMPLE_TX,
+      limit: 25,
+    }),
+    validate: (text) => {
+      const data = extractJson(text)
+      const items = getItems(data)
+      assert(items.length > 1, 'Expected the internal calls of the pinned transaction')
+      assert(
+        items.every((item: any) => item.tx_hash === TRACE_SAMPLE_TX),
+        'Expected every trace row to carry the requested transaction hash',
+      )
+      assert(
+        items.every((item: any) => typeof item.primary_id === 'string' && item.primary_id.includes(':')),
+        'Expected a deterministic trace id built from the hash and the trace address',
+      )
+      assert(
+        items.every((item: any) => item.action === undefined && item.result === undefined),
+        'Expected flattened trace fields rather than nested action and result objects',
+      )
+      assert(
+        items.some((item: any) => item.call_sighash !== undefined || item.created_contract_address !== undefined),
+        'Expected the flattened selector or created contract address on trace rows',
+      )
+      assert(
+        items.every((item: any) => item.sender !== undefined || item.type !== 'call'),
+        'Expected every call trace to carry its caller',
+      )
+      expectCompactDefault(data, 'portal_evm_query_traces')
+      expectWindowMetadata(data, 'portal_evm_query_traces')
+      expectOrdering(data, 'portal_evm_query_traces')
+    },
+    validateFollowUp: async (_text, client, context) => {
+      const methodResult = await callToolWithRetry(client, 'portal_evm_query_traces', {
+        network: 'base',
+        from_block: context.baseHead - 200,
+        to_block: context.baseHead,
+        type: ['call'],
+        call_to: [context.usdcBase],
+        method: 'transfer',
+        limit: 3,
+      })
+      const methodItems = getItems(methodResult.data)
+      assert(methodItems.length > 0, 'Expected USDC transfer call traces on Base')
+      assert(
+        methodItems.every((item: any) => String(item.recipient || '').toLowerCase() === context.usdcBase),
+        'Expected the call_to filter to hold on the normalized recipient',
+      )
+      assert(
+        methodItems.every((item: any) => item.call_sighash === '0xa9059cbb'),
+        'Expected the transfer method alias to resolve to its selector',
+      )
+      expectWindowMetadata(methodResult.data, 'portal_evm_query_traces method')
+
+      const summaryResult = await callToolWithRetry(client, 'portal_evm_query_traces', {
+        network: 'ethereum-mainnet',
+        from_block: TRACE_SAMPLE_BLOCK,
+        to_block: TRACE_SAMPLE_BLOCK,
+        response_format: 'summary',
+        limit: 25,
+      })
+      const summary = summaryResult.data
+      assert(summary.error === undefined, 'Trace summaries should not fail')
+      assert(typeof summary.total_traces === 'number' && summary.total_traces > 0, 'Expected a trace count')
+      assert(typeof summary.type_breakdown === 'object' && summary.type_breakdown !== null, 'Expected a type breakdown')
+      expectWindowMetadata(summary, 'portal_evm_query_traces summary')
     },
   },
   {

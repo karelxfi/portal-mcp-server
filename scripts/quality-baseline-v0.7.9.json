@@ -64,6 +64,12 @@
       "max_median_chars": 11621,
       "max_p95_chars": 11621
     },
+    "portal_evm_query_traces": {
+      "median_chars": 19463,
+      "p95_chars": 19463,
+      "max_median_chars": 21409,
+      "max_p95_chars": 21409
+    },
     "portal_evm_query_token_transfers": {
       "median_chars": 11009,
       "p95_chars": 11010,

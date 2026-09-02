@@ -300,6 +300,7 @@ Current hosted-server behaviors worth relying on:
 |------|----------|
 | `portal_evm_query_logs` | Query event logs with address/topic filters |
 | `portal_evm_query_transactions` | Query transactions by sender/recipient/sighash |
+| `portal_evm_query_traces` | Internal calls, contract creations, self-destructs, and rewards |
 | `portal_evm_query_token_transfers` | ERC20/ERC721/ERC1155 transfers with optional token info |
 | `portal_evm_get_contract_activity` | Contract interaction stats |
 | `portal_evm_get_contract_deployment` | Look up deployment block/tx for a contract address |

@@ -22,6 +22,7 @@ import { registerEvmOhlcTool } from './evm/ohlc.js'
 import { registerQueryBlocksTool } from './evm/query-blocks.js'
 // EVM
 import { registerQueryLogsTool } from './evm/query-logs.js'
+import { registerQueryTracesTool } from './evm/query-traces.js'
 import { registerQueryTransactionsTool } from './evm/query-transactions.js'
 // Hyperliquid
 import {
@@ -54,9 +55,10 @@ export function registerAllTools(server: McpServer) {
   registerGetWalletSummaryTool(server)
   registerGetTimeSeriesDataTool(server)
 
-  // Public EVM (7)
+  // Public EVM (8)
   registerQueryLogsTool(server)
   registerQueryTransactionsTool(server)
+  registerQueryTracesTool(server)
   registerGetErc20TransfersTool(server)
   registerContractDeploymentTool(server)
   registerGetContractActivityTool(server)

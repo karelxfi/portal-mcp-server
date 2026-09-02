@@ -89,6 +89,42 @@ const CASES: NegativeCase[] = [
     },
   },
   {
+    name: 'Trace selector that is not a 4-byte value',
+    tool: 'portal_evm_query_traces',
+    expectedCode: 'invalid_request',
+    args: { network: 'base', timeframe: '5m', call_sighash: ['0xa9059c'], limit: 1 },
+    expect: (text) => {
+      assert(/Invalid call_sighash/i.test(text), 'A malformed selector should be named')
+      assert(/4-byte/i.test(text), 'The selector error should say what a valid value looks like')
+    },
+  },
+  {
+    name: 'Trace transaction_hash without a bounded window',
+    tool: 'portal_evm_query_traces',
+    expectedCode: 'invalid_request',
+    args: {
+      network: 'base',
+      from_block: 40000000,
+      to_block: 50000000,
+      transaction_hash: '0x851bad0415758075a1eb86776749c829b866d43179c57c3e4a4b9359a0358231',
+      limit: 1,
+    },
+    expect: (text) => {
+      assert(/transaction_hash/i.test(text), 'The window error should name the filter that requires it')
+      assert(/blocks/i.test(text), 'The window error should state the allowed window')
+    },
+  },
+  {
+    name: 'Trace tool on a non-EVM network',
+    tool: 'portal_evm_query_traces',
+    expectedCode: 'unsupported_operation',
+    args: { network: 'solana-mainnet', timeframe: '5m', limit: 1 },
+    expect: (text) => {
+      assert(/does not support network 'solana-mainnet'/i.test(text), 'Trace queries should refuse non-EVM networks')
+      assert(/portal_solana_query_instructions/i.test(text), 'The refusal should point at the Solana tool')
+    },
+  },
+  {
     name: 'Tron address with a wrong checksum',
     tool: 'portal_tron_query_logs',
     expectedCode: 'invalid_request',

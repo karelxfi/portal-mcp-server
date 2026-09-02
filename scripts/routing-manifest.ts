@@ -199,6 +199,18 @@ const EXTRA_ROUTING_CASES: RoutingEvalCase[] = [
     source: 'extra',
   },
   {
+    prompt: 'what did this ethereum transaction call internally',
+    expected: 'portal_evm_query_traces',
+    max_rank: 1,
+    source: 'extra',
+  },
+  {
+    prompt: 'which contracts did this deployer create',
+    expected: 'portal_evm_query_traces',
+    max_rank: 2,
+    source: 'extra',
+  },
+  {
     prompt: 'recent usdt trc20 transfer events on tron',
     expected: 'portal_tron_query_logs',
     max_rank: 1,

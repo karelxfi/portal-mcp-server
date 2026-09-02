@@ -86,6 +86,7 @@ function buildDeveloperToolGuide() {
         then_use: [
           'portal_evm_query_transactions',
           'portal_evm_query_token_transfers',
+          'portal_evm_query_traces',
           'portal_solana_query_transactions',
           'portal_hyperliquid_query_fills',
         ],
@@ -109,8 +110,15 @@ function buildDeveloperToolGuide() {
       {
         ask: 'What did this contract do recently?',
         start_with: 'portal_evm_get_contract_activity',
-        then_use: ['portal_evm_query_logs', 'portal_evm_query_transactions'],
-        reason: 'Contract activity gives the overview; raw logs and transactions provide exact evidence rows.',
+        then_use: ['portal_evm_query_logs', 'portal_evm_query_transactions', 'portal_evm_query_traces'],
+        reason: 'Contract activity gives the overview; raw logs, transactions, and traces provide exact evidence rows.',
+      },
+      {
+        ask: 'What did this transaction call internally?',
+        start_with: 'portal_evm_query_traces',
+        then_use: ['portal_evm_query_logs', 'portal_evm_get_contract_deployment'],
+        reason:
+          'Traces filtered by transaction_hash return every internal call, creation, and value move with a deterministic id; logs and deployment lookups add the emitted events and creation context.',
       },
     ],
     integration_notes: [

@@ -85,6 +85,12 @@ export const INVESTIGATIONS: InvestigationDefinition[] = [
         use: 'chain-specific transaction, transfer, instruction, or fill tools',
         purpose: 'Verify material findings with exact records.',
       },
+      {
+        step: 5,
+        use: 'portal_evm_query_traces',
+        purpose:
+          'Pivot from a suspicious transaction hash to its internal calls, created contracts, and value moved below the top-level transaction.',
+      },
     ],
     completion_contract: [
       'Do not call a bounded page complete when _evidence.result.completeness is partial or unknown.',
@@ -115,6 +121,12 @@ export const INVESTIGATIONS: InvestigationDefinition[] = [
         step: 5,
         use: 'portal_evm_query_logs, portal_evm_query_transactions, or portal_evm_query_token_transfers',
         purpose: 'Verify the explanation with exact records.',
+      },
+      {
+        step: 6,
+        use: 'portal_evm_query_traces',
+        purpose:
+          'Follow one transaction into its internal calls and contract creations when logs alone do not explain it.',
       },
     ],
     completion_contract: [

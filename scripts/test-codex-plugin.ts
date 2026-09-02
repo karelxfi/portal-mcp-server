@@ -31,6 +31,7 @@ const EXPECTED_PUBLIC_TOOL_NAMES = [
   'portal_get_time_series',
   'portal_evm_query_logs',
   'portal_evm_query_transactions',
+  'portal_evm_query_traces',
   'portal_evm_query_token_transfers',
   'portal_evm_get_contract_deployment',
   'portal_evm_get_contract_activity',
@@ -374,7 +375,7 @@ function assertChatgptSubmission() {
   assertRecord(submission.tools, 'ChatGPT submission tools must be an object')
   assert(
     JSON.stringify(Object.keys(submission.tools).sort()) === JSON.stringify([...EXPECTED_PUBLIC_TOOL_NAMES].sort()),
-    'ChatGPT submission should cover exactly the 30 public tools',
+    'ChatGPT submission should cover exactly the 31 public tools',
   )
   for (const toolName of EXPECTED_PUBLIC_TOOL_NAMES) {
     const tool = submission.tools[toolName]

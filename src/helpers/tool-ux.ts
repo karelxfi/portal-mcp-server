@@ -542,6 +542,69 @@ const TOOL_DEFINITIONS: Record<string, ToolDefinition> = {
       decode: true,
     },
   },
+  portal_evm_query_traces: {
+    name: 'portal_evm_query_traces',
+    audience: 'public',
+    category: 'evm',
+    intent: 'query',
+    vm: ['evm'],
+    result_kind: 'list',
+    normalized_output: true,
+    first_choice_for: [
+      'what a transaction called internally, including value moved by internal calls',
+      'contracts deployed by an address, or the internal call tree behind an incident',
+    ],
+    summary:
+      'Query raw EVM traces: internal calls, contract creations, self-destructs, and block rewards, filtered by caller, callee, method, deployer, or one transaction, with the parent transaction hash on every row.',
+    when_to_use: [
+      'You need the internal calls of a transaction: which contracts it called, with what selector and value, and which calls failed.',
+      'You want contracts created by a deployer or the creation trace of a contract.',
+      'You are tracing an exploit or incident below the top-level transaction and log surface.',
+      'You want internal ETH transfers between contracts that emit no event.',
+    ],
+    avoid_when: [
+      'You only need top-level transactions or event logs; those tools are cheaper.',
+      'You need storage changes; state diffs are not exposed by this tool.',
+    ],
+    examples: [
+      {
+        label: 'Internal calls of one transaction',
+        input: {
+          network: 'ethereum-mainnet',
+          from_block: 12244145,
+          to_block: 12244145,
+          transaction_hash: '0x851bad0415758075a1eb86776749c829b866d43179c57c3e4a4b9359a0358231',
+          limit: 25,
+        },
+      },
+      {
+        label: 'Recent internal calls into a contract',
+        input: {
+          network: 'base-mainnet',
+          timeframe: '10m',
+          type: ['call'],
+          call_to: ['0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913'],
+          method: 'transfer',
+          limit: 20,
+        },
+      },
+      {
+        label: 'Contracts deployed by an address',
+        input: {
+          network: 'base-mainnet',
+          timeframe: '24h',
+          type: ['create'],
+          create_from: ['0x4200000000000000000000000000000000000006'],
+          limit: 10,
+        },
+      },
+    ],
+    supports: {
+      pagination: true,
+      response_formats: ['full', 'compact', 'summary'],
+      time_inputs: ['blocks', 'timeframe', 'timestamps'],
+    },
+  },
   portal_evm_query_token_transfers: {
     name: 'portal_evm_query_token_transfers',
     audience: 'public',

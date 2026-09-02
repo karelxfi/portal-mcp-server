@@ -322,7 +322,7 @@ async function postMessages(endpoint: string, apiKey: string, body: Record<strin
 async function runAnthropicModel(
   connected: ConnectedTestClient,
   evalCase: EvalCase,
-  toolDefinitions: Array<Record<string, unknown>>,
+  toolDefinitions: Record<string, unknown>[],
   options: { model: string; endpoint: string; apiKey: string; maxToolCalls: number },
 ): Promise<ModelRun> {
   const records: ToolCallRecord[] = []
@@ -466,7 +466,7 @@ async function main() {
   const startedAt = new Date()
   const results: CaseResult[] = []
   let serverVersion = 'unknown'
-  let toolDefinitions: Array<Record<string, unknown>> = []
+  let toolDefinitions: Record<string, unknown>[] = []
   try {
     const listed = await connected.client.listTools()
     toolDefinitions = listed.tools.map((tool) => ({

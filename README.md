@@ -44,6 +44,7 @@ Cross-chain convenience:
 EVM:
 - `portal_evm_query_transactions`
 - `portal_evm_query_logs`
+- `portal_evm_query_traces`
 - `portal_evm_query_token_transfers`
 - `portal_evm_get_contract_deployment`
 - `portal_evm_get_contract_activity`
@@ -78,7 +79,7 @@ Advanced/debug:
 - `portal_debug_resolve_time_to_block`
 - `portal_debug_hyperliquid_query_replica_commands`
 
-These groups are also the toolsets (`discovery`, `convenience`, `evm`, `solana`, `bitcoin`, `substrate`, `hyperliquid`, `tron`, `debug`). A deployment can trim the catalog with `MCP_TOOLSETS` or `MCP_TOOLS`, and an HTTP connection can narrow it further with `?toolsets=` or an `X-MCP-Toolsets` header; see the HTTP deployment notes. With nothing configured the full 30-tool surface is served, and the hosted endpoint keeps that default.
+These groups are also the toolsets (`discovery`, `convenience`, `evm`, `solana`, `bitcoin`, `substrate`, `hyperliquid`, `tron`, `debug`). A deployment can trim the catalog with `MCP_TOOLSETS` or `MCP_TOOLS`, and an HTTP connection can narrow it further with `?toolsets=` or an `X-MCP-Toolsets` header; see the HTTP deployment notes. With nothing configured the full 31-tool surface is served, and the hosted endpoint keeps that default.
 
 ## Supported data
 
@@ -204,7 +205,7 @@ In a workspace with custom MCP apps enabled, open **Settings → Apps → Create
 
 ## Claude Desktop
 
-Download `sqd.mcpb` from the [latest release](https://github.com/subsquid-labs/portal-mcp-server/releases/latest) and open it: Claude Desktop installs the bundle with one click and lists the 30 tools. The bundle carries the server, its production dependencies, and one optional setting, "SQD Explorer (beta)", which is off by default. It needs Node 22 or newer on the machine.
+Download `sqd.mcpb` from the [latest release](https://github.com/subsquid-labs/portal-mcp-server/releases/latest) and open it: Claude Desktop installs the bundle with one click and lists the 31 tools. The bundle carries the server, its production dependencies, and one optional setting, "SQD Explorer (beta)", which is off by default. It needs Node 22 or newer on the machine.
 
 Manual fallback, from a local clone after `npm run build`, add an entry like this to `claude_desktop_config.json`:
 
@@ -243,7 +244,7 @@ HTTP mode exposes MCP at `/` and `/mcp`, liveness at `/health`, and readiness at
 Useful environment variables:
 
 - `MCP_CURSOR_SECRET` to sign pagination cursors
-- `MCP_TOOLSETS` comma-separated toolsets to serve (`discovery`, `convenience`, `evm`, `solana`, `bitcoin`, `substrate`, `hyperliquid`, `tron`, `debug`; `all` or `default` for everything). Unknown names are ignored with a startup error. Wins over `MCP_TOOLS`. Default: all nine, the full 30-tool catalog.
+- `MCP_TOOLSETS` comma-separated toolsets to serve (`discovery`, `convenience`, `evm`, `solana`, `bitcoin`, `substrate`, `hyperliquid`, `tron`, `debug`; `all` or `default` for everything). Unknown names are ignored with a startup error. Wins over `MCP_TOOLS`. Default: all nine, the full 31-tool catalog.
 - `MCP_TOOLS` comma-separated exact tool names to serve when `MCP_TOOLSETS` is unset.
 - Per connection, `?toolsets=evm` on the endpoint URL or an `X-MCP-Toolsets: evm` header narrows the deployment's set for that connection only; it can never add a toolset. Prompts that reference a tool outside the active set are not offered. The active set is a bounded label (`all`, one toolset name, or `custom`) on `mcp_tool_client_calls_total`.
 - `MCP_BIND` interface to listen on, default `127.0.0.1` (`0.0.0.0` in the Docker image)

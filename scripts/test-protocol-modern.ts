@@ -49,7 +49,7 @@ async function listCatalogWithEnv(env: Record<string, string>) {
 
 async function assertToolsetSelection() {
   const trimmed = await listCatalogWithEnv({ MCP_TOOLSETS: 'discovery,convenience,evm' })
-  assert(trimmed.tools.length === 14, `discovery+convenience+evm should list 14 tools, got ${trimmed.tools.length}`)
+  assert(trimmed.tools.length === 15, `discovery+convenience+evm should list 15 tools, got ${trimmed.tools.length}`)
   assert(
     trimmed.tools.includes('portal_evm_query_logs') && !trimmed.tools.includes('portal_debug_query_blocks'),
     'MCP_TOOLSETS should keep evm tools and drop debug tools',
@@ -85,8 +85,8 @@ async function assertToolsetSelection() {
 
   const defaults = await listCatalogWithEnv({})
   assert(
-    defaults.tools.length === 30 && defaults.prompts.length === 3,
-    'the default run still lists all 30 tools and 3 prompts',
+    defaults.tools.length === 31 && defaults.prompts.length === 3,
+    'the default run still lists all 31 tools and 3 prompts',
   )
   assert(!defaults.stderr.includes('[mcp:toolsets]'), 'the default run logs no toolset warning')
 }
@@ -130,7 +130,7 @@ async function main() {
     const toolList = await client.listTools()
     const { tools } = toolList
     assertCacheHint(toolList, 'tools/list')
-    assert(tools.length === 30, `expected 30 tools, got ${tools.length}`)
+    assert(tools.length === 31, `expected 31 tools, got ${tools.length}`)
     assert(
       tools.every((tool) => tool.inputSchema?.type === 'object'),
       'every tool should expose an object input schema',
@@ -179,10 +179,10 @@ async function main() {
     console.log('PASS  server/discover negotiates MCP 2026-07-28 over stdio')
     console.log('PASS  server instructions are self-contained for Codex discovery')
     console.log('PASS  every cacheable complete MCP operation exposes a valid cache hint')
-    console.log('PASS  modern tools/resources discovery exposes the complete 30-tool surface with structured outputs')
+    console.log('PASS  modern tools/resources discovery exposes the complete 31-tool surface with structured outputs')
     console.log('PASS  modern tools/call reaches SQD Portal successfully')
     console.log(
-      'PASS  MCP_TOOLSETS and MCP_TOOLS trim the catalog and its prompts; unknown names warn; the default stays 30 tools',
+      'PASS  MCP_TOOLSETS and MCP_TOOLS trim the catalog and its prompts; unknown names warn; the default stays 31 tools',
     )
     console.log('\nMCP 2026 protocol QA passed')
   } finally {

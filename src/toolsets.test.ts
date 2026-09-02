@@ -15,7 +15,7 @@ import {
 
 describe('toolset coverage', () => {
   it('gives every registered tool exactly one known toolset, matching the README groups', () => {
-    assert.equal(PORTAL_TOOL_NAMES.length, 30)
+    assert.equal(PORTAL_TOOL_NAMES.length, 31)
     const counts = new Map<string, number>()
     for (const name of PORTAL_TOOL_NAMES) {
       const toolset = toolsetOf(name)
@@ -27,7 +27,7 @@ describe('toolset coverage', () => {
       convenience: 3,
       debug: 3,
       discovery: 4,
-      evm: 7,
+      evm: 8,
       hyperliquid: 3,
       solana: 3,
       substrate: 3,

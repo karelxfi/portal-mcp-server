@@ -35,7 +35,7 @@ async function main() {
     assert(manifest.version === packageVersion, `manifest version ${manifest.version} must match ${packageVersion}`)
     assert(manifest.server?.type === 'node' && manifest.server.entry_point === 'dist/index.js', 'manifest entry point')
     assert(manifest.user_config?.app_enabled?.type === 'boolean', 'manifest must expose MCP_APP_ENABLED as a boolean')
-    assert(Array.isArray(manifest.tools) && manifest.tools.length === 30, 'manifest must list the 30 tools')
+    assert(Array.isArray(manifest.tools) && manifest.tools.length === 31, 'manifest must list the 31 tools')
     assert(statSync(path.join(unpacked, 'icon.png')).size > 0, 'bundle must carry the icon')
     assert(statSync(path.join(unpacked, 'LICENSE')).size > 0, 'bundle must carry the licence')
     for (const forbidden of ['dist/index.js.map', 'dist/index.d.ts']) {
@@ -61,7 +61,7 @@ async function main() {
       const serverVersion = client.getServerVersion()
       assert(serverVersion?.version === packageVersion, `bundle server reports ${serverVersion?.version}`)
       const tools = await client.listTools()
-      assert(tools.tools.length === 30, `bundle should list 30 tools, got ${tools.tools.length}`)
+      assert(tools.tools.length === 31, `bundle should list 31 tools, got ${tools.tools.length}`)
       const prompts = await client.listPrompts()
       assert(prompts.prompts.length === 3, `bundle should list 3 prompts, got ${prompts.prompts.length}`)
       assert(
@@ -76,7 +76,7 @@ async function main() {
   }
 
   console.log(
-    `PASS  sqd.mcpb (${(bytes / 1024 / 1024).toFixed(2)} MB) unpacks, starts over stdio, and lists 30 tools at v${packageVersion}`,
+    `PASS  sqd.mcpb (${(bytes / 1024 / 1024).toFixed(2)} MB) unpacks, starts over stdio, and lists 31 tools at v${packageVersion}`,
   )
   console.log('\nMCPB QA passed')
 }

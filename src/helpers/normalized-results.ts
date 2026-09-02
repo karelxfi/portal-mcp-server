@@ -653,3 +653,127 @@ export function normalizeTronInternalTransactionResult(item: RecordLike): Record
     },
   )
 }
+
+// ============================================================================
+// EVM traces
+// ============================================================================
+
+function hexToEth(value: unknown): string | undefined {
+  if (typeof value !== 'string' || !/^0x[0-9a-fA-F]+$/.test(value)) return undefined
+  const wei = BigInt(value)
+  const whole = wei / 1_000_000_000_000_000_000n
+  const fraction = (wei % 1_000_000_000_000_000_000n).toString().padStart(18, '0').replace(/0+$/, '')
+  return `${whole}${fraction ? `.${fraction}` : ''}`
+}
+
+function nestedString(value: unknown, key: string): string | undefined {
+  if (!value || typeof value !== 'object') return undefined
+  const entry = (value as RecordLike)[key]
+  return typeof entry === 'string' ? entry : undefined
+}
+
+export function traceAddressLabel(value: unknown): string | undefined {
+  if (!Array.isArray(value)) return undefined
+  return value.length === 0 ? 'root' : value.map((part) => String(part)).join('.')
+}
+
+/**
+ * Portal returns trace inputs under `action` and outputs under `result`, with
+ * the field set depending on the trace type. Flatten the common ones into
+ * stable names, keep the raw shape, and give every row an id made of the
+ * transaction hash plus the trace address.
+ */
+export function normalizeEvmTraceResult(item: RecordLike): RecordLike {
+  const type = typeof item.type === 'string' ? item.type : undefined
+  const action = (item.action ?? {}) as RecordLike
+  const result = (item.result ?? {}) as RecordLike
+  const txHash = typeof item.tx_hash === 'string' ? item.tx_hash : undefined
+  const blockNumber = typeof item.block_number === 'number' ? item.block_number : undefined
+  const timestamp = typeof item.timestamp === 'number' ? item.timestamp : undefined
+  const transactionIndex = typeof item.transactionIndex === 'number' ? item.transactionIndex : undefined
+  const traceAddress = traceAddressLabel(item.traceAddress)
+  const idBase =
+    txHash ??
+    (blockNumber !== undefined && transactionIndex !== undefined ? `${blockNumber}:tx:${transactionIndex}` : undefined)
+  const error = item.error === null || typeof item.error === 'string' ? (item.error as string | null) : undefined
+
+  const flattened: RecordLike = {
+    ...(traceAddress !== undefined ? { trace_address: traceAddress } : {}),
+    ...(error !== undefined ? { success: error === null } : {}),
+  }
+  let sender: string | undefined
+  let recipient: string | undefined
+  if (type === 'call') {
+    sender = nestedString(action, 'from')
+    recipient = nestedString(action, 'to')
+    const value = nestedString(action, 'value')
+    const valueEth = hexToEth(value)
+    Object.assign(flattened, {
+      ...(sender ? { call_from: sender } : {}),
+      ...(recipient ? { call_to: recipient } : {}),
+      ...(value ? { call_value: value } : {}),
+      ...(valueEth !== undefined ? { value_eth: valueEth } : {}),
+      ...(nestedString(action, 'sighash') ? { call_sighash: nestedString(action, 'sighash') } : {}),
+      ...((nestedString(action, 'callType') ?? nestedString(action, 'type'))
+        ? { call_type: nestedString(action, 'callType') ?? nestedString(action, 'type') }
+        : {}),
+      ...(nestedString(action, 'gas') ? { call_gas: nestedString(action, 'gas') } : {}),
+      ...(nestedString(action, 'input') ? { call_input: nestedString(action, 'input') } : {}),
+      ...(nestedString(result, 'gasUsed') ? { gas_used: nestedString(result, 'gasUsed') } : {}),
+      ...(nestedString(result, 'output') ? { call_output: nestedString(result, 'output') } : {}),
+    })
+  } else if (type === 'create') {
+    sender = nestedString(action, 'from')
+    recipient = nestedString(result, 'address')
+    const value = nestedString(action, 'value')
+    const valueEth = hexToEth(value)
+    Object.assign(flattened, {
+      ...(sender ? { create_from: sender } : {}),
+      ...(recipient ? { created_contract_address: recipient } : {}),
+      ...(value ? { create_value: value } : {}),
+      ...(valueEth !== undefined ? { value_eth: valueEth } : {}),
+      ...(nestedString(action, 'gas') ? { create_gas: nestedString(action, 'gas') } : {}),
+      ...(nestedString(result, 'gasUsed') ? { gas_used: nestedString(result, 'gasUsed') } : {}),
+      ...(nestedString(result, 'code') ? { created_code: nestedString(result, 'code') } : {}),
+      ...(nestedString(action, 'init') ? { create_init: nestedString(action, 'init') } : {}),
+    })
+  } else if (type === 'suicide') {
+    sender = nestedString(action, 'address')
+    recipient = nestedString(action, 'refundAddress')
+    const balance = nestedString(action, 'balance')
+    const balanceEth = hexToEth(balance)
+    Object.assign(flattened, {
+      ...(sender ? { suicide_address: sender } : {}),
+      ...(recipient ? { refund_address: recipient } : {}),
+      ...(balance ? { suicide_balance: balance } : {}),
+      ...(balanceEth !== undefined ? { value_eth: balanceEth } : {}),
+    })
+  } else if (type === 'reward') {
+    recipient = nestedString(action, 'author')
+    const value = nestedString(action, 'value')
+    const valueEth = hexToEth(value)
+    Object.assign(flattened, {
+      ...(recipient ? { reward_author: recipient } : {}),
+      ...(value ? { reward_value: value } : {}),
+      ...(valueEth !== undefined ? { value_eth: valueEth } : {}),
+      ...(nestedString(action, 'type') ? { reward_type: nestedString(action, 'type') } : {}),
+    })
+  }
+
+  // The nested action and result objects are dropped: every value they carry is
+  // flattened above, and keeping both doubles the size of a trace page.
+  const { action: _action, result: _result, ...rest } = item
+  return withCommonAliases(
+    { ...rest, ...flattened },
+    {
+      chain_kind: 'evm',
+      record_type: 'trace',
+      primary_id: idBase && traceAddress !== undefined ? `${idBase}:${traceAddress}` : idBase,
+      tx_hash: txHash,
+      sender,
+      recipient,
+      block_number: blockNumber,
+      timestamp,
+    },
+  )
+}

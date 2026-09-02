@@ -1,16 +1,16 @@
 {
   "tokenizer": "o200k_base",
   "max_growth_ratio": 0.05,
-  "generated_at": "2026-09-02T16:44:45.574Z",
-  "note": "Two native Tron tools (portal_tron_query_transactions, portal_tron_query_logs) join the catalog for SDKTL-631.",
+  "generated_at": "2026-09-02T18:32:03.115Z",
+  "note": "portal_evm_query_traces added to the catalog (SDKTL-632)",
   "surfaces": {
     "app_disabled": {
-      "tools_total": 36960,
+      "tools_total": 38779,
       "prompts_total": 393,
       "resources_total": 446,
       "instructions_total": 148,
-      "catalog_total": 37947,
-      "tool_count": 30,
+      "catalog_total": 39766,
+      "tool_count": 31,
       "tools": [
         {
           "name": "portal_evm_query_transactions",
@@ -43,6 +43,16 @@
           "total": 2048
         },
         {
+          "name": "portal_evm_query_traces",
+          "description": 413,
+          "input_schema": 836,
+          "output_schema": 485,
+          "annotations": 19,
+          "meta": 0,
+          "other": 10,
+          "total": 1816
+        },
+        {
           "name": "portal_evm_get_ohlc",
           "description": 371,
           "input_schema": 873,
@@ -64,13 +74,13 @@
         },
         {
           "name": "portal_tron_query_logs",
-          "description": 338,
+          "description": 341,
           "input_schema": 643,
           "output_schema": 485,
           "annotations": 19,
           "meta": 0,
           "other": 8,
-          "total": 1539
+          "total": 1542
         },
         {
           "name": "portal_get_time_series",
@@ -315,12 +325,12 @@
       ]
     },
     "app_enabled": {
-      "tools_total": 38976,
+      "tools_total": 40795,
       "prompts_total": 393,
       "resources_total": 446,
       "instructions_total": 274,
-      "catalog_total": 40089,
-      "tool_count": 30,
+      "catalog_total": 41908,
+      "tool_count": 31,
       "tools": [
         {
           "name": "portal_evm_query_transactions",
@@ -363,6 +373,16 @@
           "total": 1899
         },
         {
+          "name": "portal_evm_query_traces",
+          "description": 413,
+          "input_schema": 836,
+          "output_schema": 485,
+          "annotations": 19,
+          "meta": 0,
+          "other": 10,
+          "total": 1816
+        },
+        {
           "name": "portal_tron_query_transactions",
           "description": 393,
           "input_schema": 762,
@@ -374,13 +394,13 @@
         },
         {
           "name": "portal_tron_query_logs",
-          "description": 338,
+          "description": 341,
           "input_schema": 643,
           "output_schema": 485,
           "annotations": 19,
           "meta": 0,
           "other": 8,
-          "total": 1539
+          "total": 1542
         },
         {
           "name": "portal_get_time_series",
