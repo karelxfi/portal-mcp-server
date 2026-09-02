@@ -3,12 +3,15 @@ import path from 'node:path'
 
 import { build } from 'esbuild'
 
+import { compactStylesheet } from './compact-stylesheet-plugin.mjs'
+
 const root = process.cwd()
 const directory = path.join(root, 'output', 'activity-explorer')
 const interFont = await readFile(path.join(root, 'src/app-ui/assets/inter-latin.woff2'))
 const monoFont = await readFile(path.join(root, 'src/app-ui/assets/jetbrains-mono-latin.woff2'))
 const fontDataUrl = (mime, bytes) => `data:${mime};base64,${bytes.toString('base64')}`
 const result = await build({
+  plugins: [compactStylesheet],
   entryPoints: [path.join(root, 'src/app-ui/preview.ts')],
   bundle: true,
   format: 'iife',

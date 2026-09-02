@@ -177,9 +177,14 @@ function numeric(value: unknown): number | undefined {
   return Number.isFinite(parsed) ? parsed : undefined
 }
 
+const NUMERIC_FORMATS = new Set(['integer', 'compact_number', 'percent', 'currency_usd', 'gwei', 'bytes', 'btc', 'decimal', 'timestamp'])
+
 function formatValue(value: unknown, format?: string, unit?: string): string {
   if (value === null || value === undefined || value === '') return 'Not available'
-  if (typeof value === 'string' && format !== 'timestamp') {
+  if (typeof value === 'boolean') return value ? 'Yes' : 'No'
+  /* Portal sends large decimals as strings to stay exact; a declared numeric
+     format is the tool asking for a readable summary of that number. */
+  if (typeof value === 'string' && !(format && NUMERIC_FORMATS.has(format) && Number.isFinite(Number(value)))) {
     return unit && !value.toLowerCase().includes(unit.toLowerCase()) ? `${value} ${unit}` : value
   }
   const numberValue = typeof value === 'number' ? value : Number(value)
@@ -221,7 +226,7 @@ function formatValue(value: unknown, format?: string, unit?: string): string {
       formatted = `${Intl.NumberFormat('en-US', { maximumFractionDigits: 8 }).format(numberValue)} BTC`
       break
     case 'timestamp':
-      formatted = new Date(numberValue * (numberValue > 1e12 ? 1 : 1000)).toLocaleString()
+      formatted = `${new Date(numberValue * (numberValue > 1e12 ? 1 : 1000)).toISOString().slice(0, 19).replace('T', ' ')} UTC`
       break
     default:
       formatted =
@@ -245,6 +250,13 @@ function isHexIdentifier(value: string): boolean {
 
 function shortIdentifier(value: string): string {
   return isHexIdentifier(value) && value.length > 14 ? `${value.slice(0, 6)}…${value.slice(-4)}` : value
+}
+
+/* Portal stamps rows as "2026-09-02 09:47:05 UTC". The timeline column keeps
+   the clock and carries the full stamp as a title; exact tables keep it all. */
+function eventTimeLabel(value: string): string {
+  const full = /^\d{4}-\d{2}-\d{2}[ T](\d{2}:\d{2}(?::\d{2})?)(?:\s*UTC|Z)?$/.exec(value.trim())
+  return full ? full[1] : value
 }
 
 function shortTimeLabel(value: string): string {
@@ -870,8 +882,13 @@ function buildCandleTerminal(
   times.forEach((time, index) =>
     timeToLabel.set(time as number, shortTimeLabel(fullLabels[index]) || fullLabels[index]),
   )
+  /* Portal marks a still-forming bucket with bucket_complete/bucket_state;
+     older payloads used is_closed or open_candle. Honor all of them. */
   const isOpenCandle = (point: (typeof parsed)[number]) =>
-    point.row.is_closed === false || point.row.open_candle === true
+    point.row.is_closed === false ||
+    point.row.open_candle === true ||
+    point.row.bucket_complete === false ||
+    point.row.bucket_state === 'open_or_partial'
   const hasVolume = chart.volume_panel !== false && parsed.some((point) => point.volume !== undefined)
   const volumeMax = hasVolume ? Math.max(...parsed.map((point) => point.volume ?? 0)) : 0
   const finalClose = parsed[parsed.length - 1].close
@@ -1334,7 +1351,7 @@ function chartPanel(payload: Record<string, unknown>, panel: Panel): HTMLElement
       return Boolean(xValues && xValues[currentIndex] - xValues[previousIndex] > expectedStep * 1.5)
     }
     const lastPointValue = normalized.points.at(-1)?.values[0] ?? null
-    const showPill = !isBar && !stacked && normalized.series.length === 1 && lastPointValue !== null
+    const showPill = !stacked && normalized.series.length === 1 && lastPointValue !== null
     const finalValue = showPill ? lastPointValue : undefined
     const pillY = finalValue === undefined ? undefined : y(finalValue)
     for (const tick of scale.ticks) {
@@ -1951,7 +1968,13 @@ function timelinePanel(payload: Record<string, unknown>, panel: Panel, options: 
   const directionKey = text(panel.direction_key)
   for (const row of rows) {
     const event = element('article', 'sqd-event')
-    event.append(element('time', 'sqd-event-time', text(getByPath(row, text(panel.timestamp_key)))))
+    const stamp = text(getByPath(row, text(panel.timestamp_key)))
+    const time = element('time', 'sqd-event-time', eventTimeLabel(stamp))
+    if (time.textContent !== stamp) {
+      time.title = stamp
+      time.setAttribute('aria-label', stamp)
+    }
+    event.append(time)
     const direction = directionKey ? text(getByPath(row, directionKey)).toLowerCase() : ''
     const dotTone = direction === 'in' ? ' sqd-event-dot--in' : direction === 'out' ? ' sqd-event-dot--out' : ''
     event.append(element('span', `sqd-event-dot${dotTone}`))
@@ -2095,13 +2118,20 @@ function panels(payload: Record<string, unknown>, options: PanelOptions): PanelS
       })
       .filter(Boolean),
   )
+  /* Charts and timelines summarize a row list; fullscreen always keeps the
+     exact rows behind them as a filterable table, even when the tool only
+     declared the summary panel. */
   const chartKeys = specs
     .filter((panel) => text(panel.kind) === 'chart_panel')
     .map((panel) => getByPath(payload, text(panel.chart_key)))
     .filter(isRecord)
     .map((chart) => text(chart.data_key))
     .filter(Boolean)
-  for (const dataKey of new Set(chartKeys)) {
+  const timelineKeys = specs
+    .filter((panel) => text(panel.kind) === 'timeline_panel')
+    .map((panel) => text(panel.data_key))
+    .filter(Boolean)
+  for (const dataKey of new Set([...chartKeys, ...timelineKeys])) {
     if (!tableKeys.has(dataKey) && asArray(getByPath(payload, dataKey)).some(isRecord)) {
       const panel = { title: `Exact ${humanize(dataKey)} evidence`, data_key: dataKey }
       built.push({ panel, node: tablePanel(payload, panel, options), table: true })
@@ -2399,17 +2429,27 @@ export function renderExplorer(root: HTMLElement, state: ExplorerState, actions:
     if (resultNotices) shell.append(resultNotices)
     const metrics = metricCards(payload)
     const views = panels(payload, { mode, actions, state })
-    const hasRows = views.primary || views.secondary.length || views.ledger.length
+    /* A tool can declare panels for a window that returned nothing; the
+       evidence receipt is the authority on whether any rows exist. */
+    const evidence = isRecord(payload._evidence) && isRecord(payload._evidence.result) ? payload._evidence.result : {}
+    const zeroRows = evidence.row_count === 0
+    const hasRows = !zeroRows && Boolean(views.primary || views.secondary.length || views.ledger.length)
     if (mode === 'inline') {
       /* Inline is a summary card: the answer, one metrics row, the primary
          instrument, and at most two actions. Everything else is fullscreen. */
       if (metrics) shell.append(metrics)
-      const primary = views.primary ?? views.secondary[0] ?? views.ledger[0] ?? null
+      const primary = hasRows ? (views.primary ?? views.secondary[0] ?? views.ledger[0] ?? null) : null
       if (primary) shell.append(primary)
       else if (!isRecord(payload.error)) shell.append(noRowsState(payload, state, actions))
       const footnotes = notices(payload, actions, state, ['info'])
       if (footnotes) shell.append(footnotes)
-      const next = followups(payload, actions, state)
+      /* With no rows the tool's own follow-ups (raw rows, continue) have
+         nothing to act on; the widen action lives in the empty state. */
+      const next = hasRows
+        ? followups(payload, actions, state)
+        : canFullscreen(state, actions)
+          ? stack('sqd-actions sqd-followups sqd-followups--inline', [fullscreenButton(actions)])
+          : null
       if (next) shell.append(next)
       const line = receiptLine(payload)
       if (line) shell.append(line)
@@ -2422,7 +2462,7 @@ export function renderExplorer(root: HTMLElement, state: ExplorerState, actions:
       const main = stack('sqd-workspace-main', [views.primary, ...(split ? [] : views.secondary)])
       const ledger = stack('sqd-workspace-ledger', views.ledger)
       const workspace = stack(`sqd-workspace${split ? ' sqd-workspace--split' : ''}`, [main, side, ledger])
-      if (workspace) shell.append(workspace)
+      if (workspace && hasRows) shell.append(workspace)
       if (!hasRows && !isRecord(payload.error)) shell.append(noRowsState(payload, state, actions))
       const next = followups(payload, actions, state)
       if (next) shell.append(next)

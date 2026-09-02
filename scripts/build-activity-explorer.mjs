@@ -4,6 +4,8 @@ import path from 'node:path'
 
 import { build } from 'esbuild'
 
+import { compactStylesheet } from './compact-stylesheet-plugin.mjs'
+
 const root = process.cwd()
 const output = path.join(root, 'src/generated/activity-explorer.generated.ts')
 const versionOutput = path.join(root, 'src/generated/activity-explorer.version.ts')
@@ -15,6 +17,7 @@ const monoFont = await readFile(path.join(root, 'src/app-ui/assets/jetbrains-mon
 const fontDataUrl = (mime, bytes) => `data:${mime};base64,${bytes.toString('base64')}`
 
 const result = await build({
+  plugins: [compactStylesheet],
   entryPoints: [path.join(root, 'src/app-ui/index.ts')],
   bundle: true,
   format: 'iife',

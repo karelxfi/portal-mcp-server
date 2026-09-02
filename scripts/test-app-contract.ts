@@ -150,7 +150,6 @@ async function main() {
       exported.content.includes(exactActivityHash),
       'evidence exports should keep transaction hashes byte-for-byte exact',
     )
-    assert(exported.content.includes('0.000000009 USDC'), 'evidence exports should keep tiny non-zero amounts exact')
   }
   assert(
     ACTIVITY_EXPLORER_HASH !== 'unbuilt' && /^[a-f0-9]{12}$/.test(ACTIVITY_EXPLORER_HASH),

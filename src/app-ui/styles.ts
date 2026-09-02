@@ -159,7 +159,8 @@ button { color: inherit; }
    same rules. Safe-area insets keep controls clear of the host composer. */
 .sqd-app { container: sqd / inline-size; width: 100%; margin: 0 auto; padding: calc(10px + var(--safe-top)) calc(16px + var(--safe-right)) calc(16px + var(--safe-bottom)) calc(16px + var(--safe-left)); }
 .sqd-app[data-mode='fullscreen'] { max-width: 1440px; padding-top: calc(14px + var(--safe-top)); padding-bottom: calc(28px + var(--safe-bottom)); }
-.sqd-shell { display: grid; gap: 14px; }
+.sqd-shell { display: grid; gap: 14px; min-width: 0; }
+.sqd-shell > * { min-width: 0; }
 .sqd-app[data-mode='fullscreen'] .sqd-shell { gap: 18px; }
 
 /* ── Chrome ─────────────────────────────────────────────────────────────
@@ -205,9 +206,9 @@ button { color: inherit; }
 .sqd-dot--danger { background: var(--danger-fill); }
 /* The answer runs the full width of its column: a 100-character claim is two
    lines at 760px and one at 1440px, never a ragged stack of four. */
-.sqd-title { grid-column: 1; margin: 4px 0 0; max-width: 80ch; font-size: clamp(17px, 2.3cqi, 22px); line-height: 1.22; font-weight: 510; letter-spacing: -0.02em; text-wrap: pretty; }
+.sqd-title { grid-column: 1; margin: 4px 0 0; max-width: 80ch; overflow-wrap: anywhere; font-size: clamp(17px, 2.3cqi, 22px); line-height: 1.22; font-weight: 510; letter-spacing: -0.02em; text-wrap: pretty; }
 .sqd-app[data-mode='fullscreen'] .sqd-title { font-size: clamp(20px, 1.8cqi, 24px); line-height: 1.2; }
-.sqd-subtitle { grid-column: 1; max-width: 74ch; margin: 6px 0 0; color: var(--fg-secondary); font-size: 13px; line-height: 19px; }
+.sqd-subtitle { grid-column: 1; max-width: 74ch; overflow-wrap: anywhere; margin: 6px 0 0; color: var(--fg-secondary); font-size: 13px; line-height: 19px; }
 .sqd-hero-figure { grid-column: 2; grid-row: 2 / span 2; justify-self: end; text-align: right; padding-top: 4px; }
 .sqd-hero-value { display: inline-block; padding-bottom: 6px; border-bottom: 1.5px dashed var(--accent-line); color: var(--fg); font: 500 28px/1.05 var(--sqd-font-mono); letter-spacing: -0.01em; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .sqd-hero-label { margin-top: 6px; color: var(--fg-muted); font: 500 10.5px/15px var(--sqd-font-mono); text-transform: uppercase; letter-spacing: 0.08em; }
@@ -371,13 +372,13 @@ button.sqd-chart-hit[aria-pressed='true'] { background: var(--accent-subtle); bo
 
 /* ── Activity timeline · direction shown by dot, sign, and column ───────── */
 .sqd-timeline { display: grid; }
-.sqd-event { min-height: 40px; display: grid; grid-template-columns: 64px 8px minmax(0, 1fr) auto; gap: 10px; align-items: start; padding: 7px 0; border-bottom: 1px solid var(--edge); }
+.sqd-event { min-height: 40px; display: grid; grid-template-columns: minmax(64px, auto) 8px minmax(0, 1fr) auto; gap: 10px; align-items: start; padding: 7px 0; border-bottom: 1px solid var(--edge); }
 .sqd-event:last-child { border-bottom: 0; }
 .sqd-event-time { order: -1; color: var(--fg-muted); font: 400 11.5px/18px var(--sqd-font-mono); letter-spacing: 0; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .sqd-event-dot { width: 6px; height: 6px; margin-top: 6px; border-radius: 50%; background: var(--edge-hover); }
 .sqd-event-dot--in { background: var(--up); }
 .sqd-event-dot--out { background: var(--down); }
-.sqd-event-title { font-size: 12.5px; line-height: 18px; font-weight: 510; letter-spacing: -0.006em; }
+.sqd-event-title { min-width: 0; font-size: 12.5px; line-height: 18px; font-weight: 510; letter-spacing: -0.006em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .sqd-event-subtitle { color: var(--fg-muted); font: 400 11.5px/16px var(--sqd-font-mono); letter-spacing: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .sqd-event-value { text-align: right; font: 500 12px/18px var(--sqd-font-mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .sqd-event-value--in { color: var(--up-text); }
@@ -398,7 +399,7 @@ button.sqd-chart-hit[aria-pressed='true'] { background: var(--accent-subtle); bo
 .sqd-notice { display: flex; align-items: flex-start; gap: 10px; border-left: 2px solid var(--edge-strong); border-radius: 0 var(--radius-md) var(--radius-md) 0; padding: 7px 12px; background: var(--surface-elevated); color: var(--fg-secondary); font-size: 12px; line-height: 18px; }
 .sqd-notice--caution { border-left-color: var(--warning-fill); background: var(--warning-muted); color: var(--warning-text); }
 .sqd-notice--danger { border-left-color: var(--danger-fill); background: var(--danger-muted); color: var(--danger-text); }
-.sqd-notice-copy { flex: 1 1 auto; min-width: 0; }
+.sqd-notice-copy { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
 .sqd-notice .sqd-actions { flex: 0 0 auto; }
 .sqd-notice .sqd-button { min-height: 26px; padding: 2px 9px; font-size: 11.5px; color: inherit; border-color: currentColor; }
 .sqd-display-limit { margin: 10px 0 0; color: var(--fg-muted); font: 400 11px/16px var(--sqd-font-mono); }
@@ -455,9 +456,11 @@ button.sqd-chart-hit[aria-pressed='true'] { background: var(--accent-subtle); bo
 @container sqd (min-width: 1100px) {
   .sqd-app[data-mode='fullscreen'] .sqd-workspace--split { grid-template-columns: minmax(0, 8fr) minmax(0, 4fr); }
 }
-@container sqd (max-width: 820px) {
+@container sqd (max-width: 600px) {
   .sqd-hero { grid-template-columns: 1fr; gap: 4px 0; }
   .sqd-hero-figure { grid-column: 1; grid-row: auto; justify-self: start; text-align: left; padding-top: 8px; }
+}
+@container sqd (max-width: 820px) {
   .sqd-title { max-width: none; }
   .sqd-grid .sqd-card--half { grid-column: span 12; }
   .sqd-grid--dashboard .sqd-card:not(.sqd-card--primary), .sqd-grid--split .sqd-card:not(.sqd-card--primary) { grid-column: span 12; }
@@ -467,6 +470,11 @@ button.sqd-chart-hit[aria-pressed='true'] { background: var(--accent-subtle); bo
 }
 @container sqd (max-width: 520px) {
   .sqd-topbar { min-height: 30px; flex-wrap: wrap; }
+  /* A phone inline card is a summary: the answer, the readout, any warning,
+     two metrics, and the instrument. Fullscreen keeps every chip and card. */
+  .sqd-app[data-mode='inline'] .sqd-metrics .sqd-metric:nth-child(n+3) { display: none; }
+  .sqd-app[data-mode='inline'] .sqd-context span:not(.sqd-context--warning):not(.sqd-context--danger) { display: none; }
+  .sqd-app[data-mode='inline'] .sqd-context:not(:has(.sqd-context--warning, .sqd-context--danger)) { display: none; }
   /* Hide the secondary product label rather than truncate it to a broken
      word; the SQD name and official mark stay. */
   .sqd-brand-copy .sqd-brand-subtitle { display: none; }
