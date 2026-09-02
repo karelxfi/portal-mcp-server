@@ -117,7 +117,7 @@ async function main() {
   const stillExposed = tools.map((tool: any) => tool.name).filter((name: string) => legacyNames.includes(name))
   console.log(`Tools registered: ${toolCount} (${publicToolCount} public, ${advancedToolCount} advanced)`)
   if (toolCount !== 30) fail(`Expected exactly 30 tools, got ${toolCount}`)
-  if (publicToolCount !== 25) fail(`Expected exactly 25 public tools, got ${publicToolCount}`)
+  if (publicToolCount !== 27) fail(`Expected exactly 27 public tools, got ${publicToolCount}`)
   if (advancedToolCount !== 3) fail(`Expected exactly 3 advanced tools, got ${advancedToolCount}`)
   if (stillExposed.length > 0) fail(`Legacy tool names are still exposed: ${stillExposed.join(', ')}`)
 
