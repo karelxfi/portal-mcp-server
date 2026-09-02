@@ -1,7 +1,7 @@
 import { App, applyDocumentTheme, applyHostFonts, applyHostStyleVariables } from '@modelcontextprotocol/ext-apps'
 
 import { evidenceArguments, planFollowup } from './followup-state.js'
-import { downloadEvidence } from './export.js'
+import { buildEvidenceExport, downloadEvidence } from './export.js'
 import { type ExplorerActions, type ExplorerState, isRecord, renderExplorer } from './view.js'
 
 declare const __SQD_APP_VERSION__: string
@@ -162,7 +162,31 @@ const actions: ExplorerActions = {
     showSnapshot(historyIndex + 1)
   },
   exportEvidence(format) {
-    if (state.payload) downloadEvidence(state.payload, format)
+    if (!state.payload) return
+    /* Hosts that offer file downloads deliver the file themselves; a
+       sandboxed iframe cannot save one on its own. */
+    if (app.getHostCapabilities()?.downloadFile) {
+      const exported = buildEvidenceExport(state.payload, format)
+      app
+        .downloadFile({
+          contents: [
+            {
+              type: 'resource',
+              resource: { uri: `file:///${exported.filename}`, mimeType: exported.mimeType, text: exported.content },
+            },
+          ],
+        })
+        .catch(() => downloadEvidence(state.payload!, format))
+      return
+    }
+    downloadEvidence(state.payload, format)
+  },
+  openLink(url) {
+    if (app.getHostCapabilities()?.openLinks) {
+      app.openLink({ url }).catch(() => window.open(url, '_blank', 'noopener'))
+      return
+    }
+    window.open(url, '_blank', 'noopener')
   },
 }
 

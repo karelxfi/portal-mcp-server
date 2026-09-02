@@ -367,6 +367,11 @@ button.sqd-chart-hit[aria-pressed='true'] { background: var(--accent-subtle); bo
 .sqd-table th[aria-sort='descending'] .sqd-sort::after { content: '\\2193'; color: var(--accent); }
 .sqd-row-button { color: var(--fg); font-family: var(--sqd-font-mono); font-size: 12px; letter-spacing: 0; }
 .sqd-row-button:hover { color: var(--accent); }
+.sqd-link { color: inherit; text-decoration: underline; text-decoration-color: var(--edge-strong); text-decoration-thickness: 1px; text-underline-offset: 3px; border-radius: 2px; }
+.sqd-link:hover { color: var(--accent); text-decoration-color: currentColor; }
+.sqd-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.sqd-title .sqd-link { text-decoration-color: transparent; }
+.sqd-title .sqd-link:hover { text-decoration-color: currentColor; }
 .sqd-hash { font-family: var(--sqd-font-mono); font-size: 12px; font-variant-numeric: tabular-nums slashed-zero; font-variant-ligatures: none; letter-spacing: 0; overflow-wrap: anywhere; }
 .sqd-table-pagination { display: flex; align-items: center; justify-content: flex-end; gap: 10px; padding-top: 10px; }
 .sqd-table-pagination .sqd-brand-subtitle { font-family: var(--sqd-font-mono); text-transform: none; letter-spacing: 0.01em; }

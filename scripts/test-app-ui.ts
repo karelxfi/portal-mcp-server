@@ -519,6 +519,15 @@ async function validate(page: Page, fixture: string, viewport: (typeof viewports
       (await page.locator('table.sqd-table').first().locator('tbody tr').count()) === WALLET_FIXTURE_ROW_COUNT,
       'wallet table should preserve every exact activity row',
     )
+    const links = page.locator('a.sqd-link')
+    assert((await links.count()) > 0, 'wallet identifiers must link to the public explorer')
+    const hrefs = await links.evaluateAll((nodes) => nodes.map((node) => (node as HTMLAnchorElement).href))
+    assert(hrefs.every((href) => href.startsWith('https://basescan.org/')), 'wallet links must point at Basescan')
+    await page.locator('.sqd-timeline a.sqd-link').first().click()
+    assert(
+      (await page.evaluate(() => document.body.dataset.openedLink))?.startsWith('https://basescan.org/'),
+      'clicking an identifier must hand the explorer link to the host',
+    )
     const counterparties = ((APP_FIXTURES.wallet.fund_flow as Record<string, unknown>).movement_counterparties as unknown[]).length
     assert(
       (await page.locator('.sqd-ranked-row').count()) === counterparties,

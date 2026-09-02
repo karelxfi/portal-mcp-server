@@ -9,6 +9,7 @@ import {
   type UTCTimestamp,
 } from 'lightweight-charts'
 
+import { explorerLink, identifierKind } from './explorers.js'
 import { ACTIVITY_EXPLORER_CSS } from './styles.js'
 
 export type ExplorerState = {
@@ -30,6 +31,7 @@ export type ExplorerActions = {
   goBack?: () => void
   goForward?: () => void
   exportEvidence?: (format: 'json' | 'csv') => void
+  openLink?: (url: string) => void
 }
 
 type DisplayMode = 'inline' | 'fullscreen'
@@ -252,6 +254,53 @@ function shortIdentifier(value: string): string {
   return isHexIdentifier(value) && value.length > 14 ? `${value.slice(0, 6)}…${value.slice(-4)}` : value
 }
 
+function networkOf(payload: Record<string, unknown>): string {
+  const meta = isRecord(payload._meta) ? payload._meta : {}
+  const evidence = isRecord(payload._evidence) ? payload._evidence : {}
+  const source = isRecord(evidence.source) ? evidence.source : {}
+  return text(meta.network ?? meta.dataset ?? source.network ?? source.dataset ?? payload.network)
+}
+
+/* An identifier becomes a link to the same record on the network's public
+   explorer. The host opens it; the App itself never navigates. */
+function identifierLink(
+  payload: Record<string, unknown>,
+  key: string,
+  value: string,
+  actions: ExplorerActions | undefined,
+  label = shortIdentifier(value),
+): HTMLAnchorElement | null {
+  const kind = identifierKind(key)
+  if (!kind) return null
+  const link = explorerLink(networkOf(payload), kind, value)
+  if (!link) return null
+  const anchor = element('a', 'sqd-link', label) as HTMLAnchorElement
+  anchor.href = link.url
+  anchor.target = '_blank'
+  anchor.rel = 'noopener noreferrer'
+  anchor.title = `${value} · open on ${link.name}`
+  anchor.addEventListener('click', (event) => {
+    event.preventDefault()
+    event.stopPropagation()
+    if (actions?.openLink) actions.openLink(link.url)
+    else window.open(link.url, '_blank', 'noopener')
+  })
+  return anchor
+}
+
+function identifierNode(
+  payload: Record<string, unknown>,
+  key: string,
+  value: string,
+  actions: ExplorerActions | undefined,
+): HTMLElement {
+  const link = identifierLink(payload, key, value, actions)
+  if (link) return link
+  const node = element('span', undefined, shortIdentifier(value))
+  node.title = value
+  return node
+}
+
 /* Portal stamps rows as "2026-09-02 09:47:05 UTC". The timeline column keeps
    the clock and carries the full stamp as a title; exact tables keep it all. */
 function eventTimeLabel(value: string): string {
@@ -403,7 +452,7 @@ function primaryMetric(payload: Record<string, unknown>): Record<string, unknown
     .find((spec) => spec.emphasis === 'primary')
 }
 
-function masthead(payload: Record<string, unknown>): HTMLElement {
+function masthead(payload: Record<string, unknown>, actions?: ExplorerActions): HTMLElement {
   const ui = isRecord(payload._ui) ? payload._ui : {}
   const headline = isRecord(ui.headline) ? ui.headline : {}
   const display = isRecord(payload.display) ? payload.display : {}
@@ -429,7 +478,12 @@ function masthead(payload: Record<string, unknown>): HTMLElement {
   const claim = text(
     headline.title ?? display.title ?? error?.summary ?? payload._summary ?? payload.answer ?? 'Blockchain activity',
   )
-  const title = element('h1', `sqd-title${isHexIdentifier(claim) ? ' sqd-title--id' : ''}`, claim)
+  const title = element('h1', `sqd-title${isHexIdentifier(claim) ? ' sqd-title--id' : ''}`)
+  const titleLink = isHexIdentifier(claim)
+    ? identifierLink(payload, claim.length === 66 ? 'tx_hash' : 'address', claim, actions, claim)
+    : null
+  if (titleLink) title.append(titleLink)
+  else title.textContent = claim
   title.id = 'sqd-result-title'
   section.append(title)
 
@@ -1782,8 +1836,12 @@ function tablePanel(payload: Record<string, unknown>, panel: Panel, options: Pan
         const formatted = missing ? '' : formatValue(rawValue, column.format, column.unit)
         if (missing) td.setAttribute('aria-label', 'Not available')
         if (isIdentifierColumn(column, rawValue)) td.classList.add('sqd-hash')
-        td.textContent = formatted
-        td.title = formatted
+        const cellLink = missing ? null : identifierLink(payload, column.key, text(rawValue), options.actions, formatted)
+        if (cellLink) td.append(cellLink)
+        else {
+          td.textContent = formatted
+          td.title = formatted
+        }
         tr.append(td)
       }
       tbody.append(tr)
@@ -1925,8 +1983,12 @@ function tablePanel(payload: Record<string, unknown>, panel: Panel, options: Pan
           button.addEventListener('click', () => showDetails(`Evidence row ${pageStart + index + 1}`, row))
           td.append(button)
         } else {
-          td.textContent = formatted
-          td.title = formatted
+          const cellLink = missing ? null : identifierLink(payload, column.key, text(rawValue), options.actions, formatted)
+          if (cellLink) td.append(cellLink)
+          else {
+            td.textContent = formatted
+            td.title = formatted
+          }
         }
         tr.append(td)
       }
@@ -1989,16 +2051,29 @@ function timelinePanel(payload: Record<string, unknown>, panel: Panel, options: 
     event.append(element('span', `sqd-event-dot${dotTone}`))
     const copy = element('div')
     const rawTitle = text(getByPath(row, text(panel.title_key)) ?? 'Activity')
-    copy.append(element('div', 'sqd-event-title', /^[a-z0-9]+(?:_[a-z0-9]+)*$/.test(rawTitle) ? humanize(rawTitle) : rawTitle))
+    const titleNode = element('div', 'sqd-event-title')
+    const titleLink = identifierLink(payload, text(panel.title_key), rawTitle, options.actions, rawTitle)
+    if (titleLink) titleNode.append(titleLink)
+    else titleNode.textContent = /^[a-z0-9]+(?:_[a-z0-9]+)*$/.test(rawTitle) ? humanize(rawTitle) : rawTitle
+    copy.append(titleNode)
     const subtitleParts = asArray(panel.subtitle_keys)
-      .map((key) => text(getByPath(row, text(key))))
-      .filter(Boolean)
+      .map((key) => ({ key: text(key), value: text(getByPath(row, text(key))) }))
+      .filter((part) => part.value)
     const joiner = directionKey && subtitleParts.length === 2 ? ' → ' : ' · '
-    if (subtitleParts.length) {
-      const subtitleNode = element('div', 'sqd-event-subtitle', subtitleParts.map(shortIdentifier).join(joiner))
-      subtitleNode.title = subtitleParts.join(joiner)
-      copy.append(subtitleNode)
+    const subtitleNode = element('div', 'sqd-event-subtitle')
+    subtitleParts.forEach((part, index) => {
+      if (index) subtitleNode.append(joiner)
+      subtitleNode.append(identifierNode(payload, part.key, part.value, options.actions))
+    })
+    /* The row's transaction stays one click away even when the title is a
+       type or an amount. */
+    const txKey = ['tx_hash', 'hash', 'transaction_hash', 'signature'].find((key) => typeof row[key] === 'string')
+    const txValue = txKey ? text(row[txKey]) : ''
+    if (txKey && txValue && rawTitle.split(':')[0] !== txValue && !subtitleParts.some((part) => part.key === txKey)) {
+      if (subtitleParts.length) subtitleNode.append(' · ')
+      subtitleNode.append(identifierNode(payload, txKey, text(row[txKey]), options.actions))
     }
+    if (subtitleNode.childNodes.length) copy.append(subtitleNode)
     event.append(copy)
     if (valueKey) {
       const rawValue = getByPath(row, valueKey)
@@ -2046,6 +2121,8 @@ function rankedPanel(payload: Record<string, unknown>, panel: Panel, options: Pa
       shortIdentifier(rawLabel),
     )
     label.title = rawLabel
+    const labelLink = identifierLink(payload, text(panel.category_key), rawLabel, options.actions)
+    if (labelLink) label.replaceChildren(labelLink)
     item.append(label)
     const track = element('div', 'sqd-ranked-track')
     const fill = element('div', 'sqd-ranked-fill')
@@ -2438,7 +2515,7 @@ export function renderExplorer(root: HTMLElement, state: ExplorerState, actions:
   else if (!state.payload) shell.append(emptyState(state, actions))
   else {
     const payload = state.payload
-    shell.append(masthead(payload))
+    shell.append(masthead(payload, actions))
     if (state.error) {
       shell.append(
         notice('danger', state.error, [actionButton('Retry', () => actions.runFollowup('retry'))]),

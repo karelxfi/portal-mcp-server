@@ -95,6 +95,9 @@ function show(name: string) {
     exportEvidence(format) {
       document.body.dataset.exportFormat = format
     },
+    openLink(url) {
+      document.body.dataset.openedLink = url
+    },
   })
   document.body.dataset.fixture = name
   document.body.dataset.mode = mode

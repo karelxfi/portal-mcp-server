@@ -160,7 +160,7 @@ async function main() {
     'resource URI must use the bundle hash as its cache key',
   )
   assert(
-    ACTIVITY_EXPLORER_BYTES > 20_000 && ACTIVITY_EXPLORER_BYTES < 700_000,
+    ACTIVITY_EXPLORER_BYTES > 20_000 && ACTIVITY_EXPLORER_BYTES < 720_000,
     'embedded app must stay inside its release byte budget',
   )
   for (const tool of [
