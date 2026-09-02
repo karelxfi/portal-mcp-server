@@ -639,7 +639,7 @@ function buildBitcoinInputsTable(title: string, rowCount: number) {
 }
 
 function buildTopCounterparties(
-  items: Array<Record<string, unknown>>,
+  items: Record<string, unknown>[],
   walletAddress: string,
   limit: number = 5,
 ): WalletCounterpartyRow[] {
@@ -1222,7 +1222,7 @@ function buildWalletUi(params: {
   primaryLabel?: string
   primaryFormat?: 'integer' | 'decimal' | 'currency_usd' | 'btc'
   primaryUnit?: string
-  secondaryCards?: Array<ReturnType<typeof buildMetricCard>>
+  secondaryCards?: ReturnType<typeof buildMetricCard>[]
   panels?: Array<
     | ReturnType<typeof buildTablePanel>
     | ReturnType<typeof buildTimelinePanel>
@@ -1732,7 +1732,7 @@ export function registerGetWalletSummaryTool(server: McpServer) {
                 number?: number
                 timestamp?: number
                 header?: { number?: number; timestamp?: number }
-                transactions?: Array<Record<string, unknown>>
+                transactions?: Record<string, unknown>[]
               }
               const blockNumber = typedBlock.number ?? typedBlock.header?.number
               const timestamp = typedBlock.timestamp ?? typedBlock.header?.timestamp

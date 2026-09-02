@@ -245,7 +245,7 @@ export function registerQuerySolanaTransactionsTool(server: McpServer) {
       for (const [label, values] of [
         ['fee_payer', fee_payer],
         ['mentions_account', mentions_account],
-      ] as Array<[string, string[] | undefined]>) {
+      ] as [string, string[] | undefined][]) {
         const invalid = values?.find((value) => !isValidSolanaAddress(value))
         if (invalid) {
           throw new ActionableError(
@@ -360,9 +360,9 @@ export function registerQuerySolanaTransactionsTool(server: McpServer) {
             number?: number
             timestamp?: number
             header?: { number?: number; timestamp?: number }
-            transactions?: Array<Record<string, unknown>>
-            balances?: Array<Record<string, unknown>>
-            tokenBalances?: Array<Record<string, unknown>>
+            transactions?: Record<string, unknown>[]
+            balances?: Record<string, unknown>[]
+            tokenBalances?: Record<string, unknown>[]
           }
           const blockNumber = typedBlock.number ?? typedBlock.header?.number
           const timestamp = typedBlock.timestamp ?? typedBlock.header?.timestamp

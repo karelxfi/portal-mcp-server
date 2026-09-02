@@ -38,7 +38,7 @@ const PARTIAL_FIXTURES = new Set(
     .map(([name]) => name),
 )
 const CONTINUE_LABEL = String(
-  ((APP_FIXTURES.partial._ui as Record<string, any>).follow_up_actions as Array<Record<string, unknown>>).find(
+  ((APP_FIXTURES.partial._ui as Record<string, any>).follow_up_actions as Record<string, unknown>[]).find(
     (action) => action.intent === 'continue',
   )?.label,
 )
@@ -305,7 +305,7 @@ async function validate(page: Page, fixture: string, viewport: (typeof viewports
     )
   }
   if (fixture === 'hyperliquid') {
-    const expected = APP_FIXTURES.hyperliquid.ohlc as Array<Record<string, number>>
+    const expected = APP_FIXTURES.hyperliquid.ohlc as Record<string, number>[]
     assert(
       (await page.locator('[data-candle-index]').count()) === expected.length,
       'Hyperliquid should keep every candle individually inspectable',
@@ -407,7 +407,7 @@ async function validate(page: Page, fixture: string, viewport: (typeof viewports
     )
   }
   if (fixture === 'timeseries') {
-    const expected = APP_FIXTURES.timeseries.time_series as Array<Record<string, number>>
+    const expected = APP_FIXTURES.timeseries.time_series as Record<string, number>[]
     assert(
       (await page.locator('.sqd-chart-hit').count()) === expected.length,
       'Time series should render every source point',
@@ -540,12 +540,12 @@ async function validate(page: Page, fixture: string, viewport: (typeof viewports
     await page.locator('.sqd-dialog[open]').evaluate((node) => (node as HTMLDialogElement).close())
   }
   if (fixture === 'activity') {
-    const expectedHash = String((APP_FIXTURES.activity.items as Array<Record<string, unknown>>)[0].tx_hash)
+    const expectedHash = String((APP_FIXTURES.activity.items as Record<string, unknown>[])[0].tx_hash)
     assert(
       (await page.locator('table.sqd-table').innerText()).includes(expectedHash),
       'Activity tables should keep exact transaction hashes',
     )
-    const firstBlock = Number((APP_FIXTURES.activity.items as Array<Record<string, unknown>>)[0].block_number)
+    const firstBlock = Number((APP_FIXTURES.activity.items as Record<string, unknown>[])[0].block_number)
     assert(
       (await page.locator('table.sqd-table').innerText()).includes(firstBlock.toLocaleString('en-US')),
       'Activity tables should keep exact block numbers',
@@ -612,7 +612,7 @@ async function validate(page: Page, fixture: string, viewport: (typeof viewports
     )
   }
   if (fixture === 'large_table') {
-    const rows = APP_FIXTURES.large_table.top_contracts as Array<Record<string, unknown>>
+    const rows = APP_FIXTURES.large_table.top_contracts as Record<string, unknown>[]
     const pages = Math.ceil(rows.length / 10)
     assert((await page.locator('table.sqd-table tbody tr').count()) === 10, 'Large tables should use short local pages')
     assert(
@@ -852,7 +852,7 @@ let baseUrl = ''
 
 async function main() {
   const wallet = APP_FIXTURES.wallet as Record<string, any>
-  const walletRows = wallet.activity.items as Array<Record<string, any>>
+  const walletRows = wallet.activity.items as Record<string, any>[]
   assert(wallet.activity.count === walletRows.length, 'Wallet activity count must reconcile with exact rows')
   assert(
     walletRows.every((row) => typeof row.tx_hash === 'string' && row.tx_hash.length === 66),

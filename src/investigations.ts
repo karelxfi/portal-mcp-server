@@ -20,11 +20,7 @@ const MARKET_NETWORKS = [...CONTRACT_NETWORKS, 'hyperliquid-fills']
 
 const TIMEFRAMES = ['1h', '6h', '24h', '7d', '30d']
 
-function networkArgument(
-  networks: string[],
-  supported: Array<ReturnType<typeof detectChainType>>,
-  description: string,
-) {
+function networkArgument(networks: string[], supported: ReturnType<typeof detectChainType>[], description: string) {
   return completable(
     z
       .string()

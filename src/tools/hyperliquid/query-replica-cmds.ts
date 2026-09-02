@@ -222,7 +222,7 @@ export function registerQueryHyperliquidReplicaCmdsTool(server: McpServer) {
         results.flatMap((block: unknown) => {
           const b = block as {
             header?: { number: number; timestamp: number }
-            actions?: Array<Record<string, unknown>>
+            actions?: Record<string, unknown>[]
           }
           return (b.actions || []).map((action) =>
             normalizeHyperliquidReplicaCmdResult({

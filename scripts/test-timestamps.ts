@@ -216,7 +216,7 @@ async function assertFutureWindowFailsClosed() {
 
 function assertNaturalLanguageTimeInputs() {
   const now = 1_778_923_600
-  const cases: Array<[string, number]> = [
+  const cases: [string, number][] = [
     ['30m', 1_800],
     ['past 30 minutes', 1_800],
     ['in the past 1h', 3_600],

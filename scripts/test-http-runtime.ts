@@ -238,7 +238,7 @@ async function assertModernHttpProtocol() {
   }
 }
 
-function assertListedAppState(tools: Array<Record<string, any>>, enabled: boolean, label: string) {
+function assertListedAppState(tools: Record<string, any>[], enabled: boolean, label: string) {
   const visualTool = tools.find((tool) => tool.name === 'portal_evm_query_transactions')
   assert(Boolean(visualTool), `${label} should list portal_evm_query_transactions`)
   const meta = visualTool?._meta as Record<string, any> | undefined
@@ -280,7 +280,7 @@ async function assertHttpAppIsolation() {
     const initialTools = await Promise.all(clients.map(({ client }) => client.listTools()))
     initialTools.forEach(({ tools }, index) => {
       const expected = clients[index]
-      assertListedAppState(tools as Array<Record<string, any>>, expected.enabled, expected.label)
+      assertListedAppState(tools as Record<string, any>[], expected.enabled, expected.label)
       const instructions = expected.client.getInstructions() ?? ''
       assert(
         instructions.includes('SQD Explorer') === expected.enabled,
@@ -316,7 +316,7 @@ async function assertHttpAppIsolation() {
     const afterInterleave = await Promise.all(clients.map(({ client }) => client.listTools()))
     afterInterleave.forEach(({ tools }, index) =>
       assertListedAppState(
-        tools as Array<Record<string, any>>,
+        tools as Record<string, any>[],
         clients[index].enabled,
         `${clients[index].label} after concurrent awaited calls`,
       ),

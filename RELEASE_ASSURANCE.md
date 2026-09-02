@@ -12,6 +12,8 @@ v0.8.5 keeps every earlier gate and adds Explorer gates for the host-fit beta.
 | Chain identity and links | Network logo and display name from SQD metadata, one explorer link per identifier kind, CSP limited to the two logo origins | `test:app-ui`, `test:app-contract` |
 | Beta labelling and opt-in | Beta tag in the widget, `_app.stage`, deployment and per-connection gate | `test:app-contract`, `test:app-ui` |
 | Bundle budget | Self-contained resource under 720,000 bytes | `test:app-contract` |
+| Two CI gates | `npm run test:offline` (build, lint, typecheck, unit tests, and every suite that needs no Portal access) is the required pull-request check and finishes in minutes; `npm run test:live` runs the Portal-dependent suites and reports without blocking; a `v*` tag runs both in full before the image is published | `.github/workflows/ci.yml`, `docker-build.yml` |
+| Style, types, and units | `biome check` and `tsc --noEmit` pass on every pull request; `node --test` unit tests cover timeframe parsing, exact decimals, signed cursors and same-block offsets, address validation, coverage rules, Bitcoin fee accounting, and a wallet-summary characterisation on a recorded response | `lint`, `typecheck`, `test:unit` |
 | Traceable runtime identity | `/health` and every tool result's `_server` carry the git commit the image was built from; `latest` on Docker Hub is only produced by a `v*` tag, main pushes produce `edge` and `sha-*` | `test:http-runtime`, `test:distribution` |
 | Workflow supply chain | Every third-party action pinned to a full commit SHA with a version comment, `persist-credentials: false` on every checkout, `permissions: {}` at workflow level with per-job grants, no shared layer cache between edge and release images, Renovate keeps the pins current | `test:workflow-pins` |
 | Release automation | A `v*` tag creates the GitHub release from the dated `CHANGELOG.md` section, publishes the registry entry and the Docker image, and uploads the Gemini archive; re-running on an existing tag is a no-op | `github-release.yml`, `scripts/extract-changelog-section.mjs` |
@@ -24,6 +26,8 @@ v0.8.5 keeps every earlier gate and adds Explorer gates for the host-fit beta.
 2. On `main`, `npm run release:patch` (or `minor`, `major`) dates the changelog entry, bumps `package.json`, `package-lock.json`, `server.json`, and every plugin manifest, commits, and creates the annotated `vX.Y.Z` tag. It refuses to run without the changelog entry or with a dirty tree.
 3. `git push origin HEAD && git push origin vX.Y.Z`. The tag runs three workflows: GitHub Release (release body is the changelog section, then the Gemini archive is packaged and uploaded), Publish MCP Registry, and Build Docker Image (`latest`, `X.Y.Z`, `X.Y`, `sha-<commit>`, with the commit in the image labels, in `/health`, and in every tool result). Re-running any of them on the same tag is safe.
 4. npm publication is a separate manual step. The hosted deployment should pin a version tag rather than `latest`.
+
+The pull-request check is `npm run test:offline`; `npm run test:live` runs the same tree against Portal and reports without blocking. A `main` push publishes `edge` from a green offline gate; a `v*` tag runs the full matrix first.
 
 Every workflow pins its actions by commit SHA, drops checkout credentials, and starts from an empty permission set; `npm run test:workflow-pins` fails a pull request that regresses this. Node 22 is the one runtime across `.nvmrc`, `.mise.toml`, the Dockerfile, the workflows, and the `engines` field.
 

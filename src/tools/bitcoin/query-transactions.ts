@@ -243,7 +243,7 @@ export function registerQueryBitcoinTransactionsTool(server: McpServer) {
             number?: number
             timestamp?: number
             header?: { number?: number; timestamp?: number }
-            transactions?: Array<Record<string, unknown>>
+            transactions?: Record<string, unknown>[]
           }
           const blockNumber = typedBlock.number ?? typedBlock.header?.number
           const timestamp = typedBlock.timestamp ?? typedBlock.header?.timestamp
@@ -337,7 +337,7 @@ export function registerQueryBitcoinTransactionsTool(server: McpServer) {
         ).flat()
 
         const inputsByTx = new Map<string, Record<string, unknown>[]>()
-        for (const block of inlineBlocks as Array<any>) {
+        for (const block of inlineBlocks as any[]) {
           const blockNumber =
             typeof block.number === 'number'
               ? block.number
@@ -364,7 +364,7 @@ export function registerQueryBitcoinTransactionsTool(server: McpServer) {
           }
         }
         const outputsByTx = new Map<string, Record<string, unknown>[]>()
-        for (const block of inlineBlocks as Array<any>) {
+        for (const block of inlineBlocks as any[]) {
           const blockNumber =
             typeof block.number === 'number'
               ? block.number

@@ -148,7 +148,7 @@ async function main() {
   )
   const activityJson = buildEvidenceExport(APP_FIXTURES.activity, 'json')
   const activityCsv = buildEvidenceExport(APP_FIXTURES.activity, 'csv')
-  const exactActivityHash = String((APP_FIXTURES.activity.items as Array<Record<string, unknown>>)[0]?.tx_hash)
+  const exactActivityHash = String((APP_FIXTURES.activity.items as Record<string, unknown>[])[0]?.tx_hash)
   for (const exported of [activityJson, activityCsv]) {
     assert(
       exported.content.includes(exactActivityHash),

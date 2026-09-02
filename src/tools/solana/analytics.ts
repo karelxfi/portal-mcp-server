@@ -661,7 +661,7 @@ export function registerSolanaAnalyticsTool(server: McpServer) {
                 range.to,
                 MIN_SOLANA_ANALYTICS_CHUNK_SIZE,
                 (record) => {
-                  const typedBlock = record as { transactions?: Array<Record<string, unknown>> }
+                  const typedBlock = record as { transactions?: Record<string, unknown>[] }
                   const txs = typedBlock.transactions || []
                   totalTxs += txs.length
 

@@ -10,7 +10,8 @@ async function collectTypeScriptFiles(directory) {
     const details = await stat(path)
     if (details.isDirectory()) {
       files.push(...(await collectTypeScriptFiles(path)))
-    } else if (name.endsWith('.ts')) {
+    } else if (name.endsWith('.ts') && !name.endsWith('.test.ts')) {
+      /* Unit tests sit next to the code and are not runtime modules. */
       files.push(path)
     }
   }

@@ -44,13 +44,13 @@ function decodeAstro(value: unknown): unknown {
   return value
 }
 
-function findChains(node: unknown): Array<Record<string, unknown>> | undefined {
+function findChains(node: unknown): Record<string, unknown>[] | undefined {
   if (
     Array.isArray(node) &&
     node.length &&
     node.every((entry) => entry && typeof entry === 'object' && 'logoUrl' in entry)
   )
-    return node as Array<Record<string, unknown>>
+    return node as Record<string, unknown>[]
   if (Array.isArray(node))
     for (const entry of node) {
       const found = findChains(entry)

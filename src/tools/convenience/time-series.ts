@@ -127,7 +127,7 @@ const TIME_SERIES_CACHE_TTL_MS = 30_000
 const TIME_SERIES_CACHE_MAX_ENTRIES = 16
 
 const timeSeriesCache = createQueryCache<{
-  timeSeries: Array<Record<string, unknown>>
+  timeSeries: Record<string, unknown>[]
   gapDiagnostics: ReturnType<typeof buildBucketGapDiagnostics>
   summary: Record<string, unknown>
   filledBuckets: number
@@ -375,7 +375,7 @@ function buildTimeSeriesAnswer(params: {
   metric: TimeSeriesMetric
   interval: string
   duration: string
-  timeSeries: Array<Record<string, unknown>>
+  timeSeries: Record<string, unknown>[]
   fromBlock?: number
   toBlock?: number
   observedSpanSeconds?: number

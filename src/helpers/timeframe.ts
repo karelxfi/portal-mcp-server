@@ -275,7 +275,7 @@ function parseDurationValue(valueText: string): number {
 }
 
 function formatCanonicalDuration(seconds: number, fallbackUnit: DurationUnitInfo['canonical']): string {
-  const units: Array<[DurationUnitInfo['canonical'], number]> = [
+  const units: [DurationUnitInfo['canonical'], number][] = [
     ['y', 31536000],
     ['mo', 2592000],
     ['w', 604800],

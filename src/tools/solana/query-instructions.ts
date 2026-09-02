@@ -331,7 +331,7 @@ export function registerQuerySolanaInstructionsTool(server: McpServer) {
         ['a15', a15],
         ['mentions_account', mentions_account],
         ['transaction_fee_payer', transaction_fee_payer],
-      ] as Array<[string, string[] | undefined]>) {
+      ] as [string, string[] | undefined][]) {
         const invalid = values?.find((value) => !isValidSolanaAddress(value))
         if (invalid) {
           throw new ActionableError(
@@ -350,7 +350,7 @@ export function registerQuerySolanaInstructionsTool(server: McpServer) {
         ['d2', d2, 2],
         ['d4', d4, 4],
         ['d8', d8, 8],
-      ] as Array<[string, string[] | undefined, number]>) {
+      ] as [string, string[] | undefined, number][]) {
         const invalid = values?.find((value) => !new RegExp(`^0x[0-9a-fA-F]{${bytes * 2}}$`).test(value))
         if (invalid) {
           throw new ActionableError(
@@ -487,7 +487,7 @@ export function registerQuerySolanaInstructionsTool(server: McpServer) {
             number?: number
             timestamp?: number
             header?: { number?: number; timestamp?: number }
-            instructions?: Array<Record<string, unknown>>
+            instructions?: Record<string, unknown>[]
           }
           const blockNumber = typedBlock.number ?? typedBlock.header?.number
           const timestamp = typedBlock.timestamp ?? typedBlock.header?.timestamp

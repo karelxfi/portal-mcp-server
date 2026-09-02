@@ -175,7 +175,7 @@ async function portalStream(dataset: string, body: Record<string, unknown>) {
     .map((line) => JSON.parse(line) as Record<string, unknown>)
 }
 
-function pickCreateTrace(records: Array<Record<string, unknown>>) {
+function pickCreateTrace(records: Record<string, unknown>[]) {
   for (const block of [...records].reverse()) {
     const blockNumber =
       typeof block.number === 'number'
@@ -183,7 +183,7 @@ function pickCreateTrace(records: Array<Record<string, unknown>>) {
         : typeof (block.header as Record<string, unknown> | undefined)?.number === 'number'
           ? ((block.header as Record<string, unknown>).number as number)
           : undefined
-    const traces = Array.isArray(block.traces) ? (block.traces as Array<Record<string, unknown>>) : []
+    const traces = Array.isArray(block.traces) ? (block.traces as Record<string, unknown>[]) : []
     for (const trace of [...traces].reverse()) {
       const contractAddress =
         typeof trace.createResultAddress === 'string'

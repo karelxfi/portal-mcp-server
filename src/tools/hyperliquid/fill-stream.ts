@@ -6,7 +6,7 @@ export type HyperliquidFillBlock = {
     number?: number
     timestamp?: number
   }
-  fills?: Array<Record<string, any>>
+  fills?: Record<string, any>[]
 }
 
 interface VisitHyperliquidFillBlocksOptions {

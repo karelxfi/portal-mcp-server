@@ -244,8 +244,7 @@ async function main() {
     assert((await timelineText()) === secondPage, 'Forward must return to the loaded page exactly')
     console.log('PASS  Load older, Back and Forward round-trip live pages through the host bridge')
 
-    const downloads = () =>
-      page.evaluate(() => ((window as any).__SQD_DOWNLOADS__ ?? []) as Array<Array<Record<string, any>>>)
+    const downloads = () => page.evaluate(() => ((window as any).__SQD_DOWNLOADS__ ?? []) as Record<string, any>[][])
     await frame.getByRole('button', { name: 'Download JSON' }).click()
     await until(async () => (await downloads()).length >= 1, 'Download JSON must reach the host as a download request')
     await frame.getByRole('button', { name: 'Download CSV' }).click()

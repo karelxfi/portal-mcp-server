@@ -63,8 +63,8 @@ function flattenCreateTraces(records: unknown[], targetAddress: string): Deploym
       number?: number
       timestamp?: number
       header?: { number?: number; timestamp?: number }
-      transactions?: Array<Record<string, unknown>>
-      traces?: Array<Record<string, unknown>>
+      transactions?: Record<string, unknown>[]
+      traces?: Record<string, unknown>[]
     }
     const blockNumber = typedBlock.number ?? typedBlock.header?.number
     const timestamp = typedBlock.timestamp ?? typedBlock.header?.timestamp

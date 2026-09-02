@@ -59,7 +59,7 @@ function flattenTransactionsWithBlockContext(
         number?: number
         timestamp?: number
       }
-      transactions?: Array<Record<string, unknown>>
+      transactions?: Record<string, unknown>[]
     }
 
     const blockNumber = typedBlock.number ?? typedBlock.header?.number
@@ -967,7 +967,7 @@ async function queryHyperliquidRecent(params: {
         number?: number
         timestamp?: number
         header?: { number?: number; timestamp?: number }
-        fills?: Array<Record<string, unknown>>
+        fills?: Record<string, unknown>[]
       }
       const blockNumber = typedBlock.number ?? typedBlock.header?.number
       const timestamp = typedBlock.timestamp ?? typedBlock.header?.timestamp

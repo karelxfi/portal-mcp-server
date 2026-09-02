@@ -379,7 +379,7 @@ export function registerQueryHyperliquidFillsTool(server: McpServer) {
         results.flatMap((block: unknown) => {
           const b = block as {
             header?: { number: number; timestamp: number }
-            fills?: Array<Record<string, unknown>>
+            fills?: Record<string, unknown>[]
           }
           return (b.fills || []).map((fill) =>
             normalizeHyperliquidFillResult({

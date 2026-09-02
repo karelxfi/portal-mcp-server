@@ -350,7 +350,7 @@ function buildToolProfiles(tools: ListedTool[]): ToolProfile[] {
   })
 }
 
-function buildIdfMap(values: Array<Set<string>>): Map<string, number> {
+function buildIdfMap(values: Set<string>[]): Map<string, number> {
   const documentFrequency = new Map<string, number>()
 
   for (const valueSet of values) {
