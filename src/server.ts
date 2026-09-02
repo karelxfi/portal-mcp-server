@@ -17,8 +17,11 @@ import { registerInvestigationPromptsAndResources } from './investigations.js'
 import { toolCallDuration, toolCallsActive, toolCallsTotal } from './metrics.js'
 import {
   type RuntimeRequestContext,
+  type ToolEventStatus,
+  classifyClientFamily,
   classifyToolOutcome,
   createInvocationId,
+  recordSlowToolCall,
   recordToolOutcome,
 } from './observability.js'
 import { registerSchemaResource } from './resources/schema.js'
@@ -123,9 +126,33 @@ function buildPortalServer(runtimeContext: RuntimeRequestContext, appEnabled: bo
         protocolVersion: server.server.getNegotiatedProtocolVersion(),
       }
       const uiCapability = classifyUiCapability(envelope, server.server.getClientCapabilities())
+      const clientFamily = classifyClientFamily(effectiveRuntime.clientName)
+      /* stdio has exactly one caller, so it is counted but never share-limited;
+         the fair share protects the hosted HTTP endpoint. */
+      const caller = {
+        key: `${clientFamily}:${runtimeContext.connectionKey ?? runtimeContext.transport}`,
+        family: clientFamily,
+        exempt: runtimeContext.transport === 'stdio',
+      }
+      let admissionWaitMs = 0
+      const noteSlowCall = (status: ToolEventStatus) =>
+        recordSlowToolCall({
+          toolName,
+          durationMs: Date.now() - startedAt,
+          admissionWaitMs,
+          status,
+          runtime: effectiveRuntime,
+          invocationId,
+        })
 
       try {
-        const lease = await toolAdmission.acquire(getToolWorkProfile(toolName), runtimeContext.transport, requestSignal)
+        const lease = await toolAdmission.acquire(
+          getToolWorkProfile(toolName),
+          runtimeContext.transport,
+          requestSignal,
+          caller,
+        )
+        admissionWaitMs = lease.waitMs
         releaseAdmission = lease.release
         admitted = true
         toolCallsActive.inc({ tool: toolName, transport: runtimeContext.transport })
@@ -158,10 +185,12 @@ function buildPortalServer(runtimeContext: RuntimeRequestContext, appEnabled: bo
           uiCapability,
           resultState: status,
         })
+        noteSlowCall(status)
         return result
       } catch (error) {
         const cancelled = requestSignal?.aborted || error instanceof RequestCancelledError
         const status = cancelled ? 'cancelled' : 'tool_error'
+        noteSlowCall(status)
         const toolErrorResult = cancelled ? undefined : formatToolError(error, toolName)
         toolCallsTotal.inc({ tool: toolName, status, transport: runtimeContext.transport, server_version: npmVersion })
         recordToolOutcome({

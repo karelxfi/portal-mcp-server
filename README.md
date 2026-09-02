@@ -252,6 +252,9 @@ Useful environment variables:
 - `MCP_TOOL_WEIGHT_BUDGET` to bound the combined cost of active tool calls, default `32`. Measured profiles allow up to 32 lookups, 4 raw or summary calls, or 2 analytics calls at once while queued work remains cancellation-aware.
 - `MCP_TOOL_MAX_QUEUE` to bound queued tool calls, default `64`
 - `MCP_TOOL_QUEUE_TIMEOUT_MS` to bound tool admission wait time, default `5000`
+- `MCP_TOOL_CLIENT_WEIGHT_SHARE` percent of the weight budget one caller (bounded client family plus connection) may hold at once, default `50`; never below the heaviest single tool so every tool stays schedulable. `MCP_TOOL_CLIENT_MAX_QUEUE` bounds one caller's queued calls, default `16`. A caller over its share gets the retryable `overloaded` result with `reason: client_share` while others keep flowing.
+- `MCP_TRUST_PROXY` set to `1` to key fairness on the first `X-Forwarded-For` hop instead of the socket address; the address is hashed and never stored or labelled.
+- `MCP_SLOW_REQUEST_MS` threshold for one JSON line on stderr per slow tool call with admission wait and execution timings and the bounded client family, default `5000`.
 
 ## Tests
 

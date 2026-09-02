@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
 import {
+  connectionKeyFromRequest,
   evaluateBodyLimit,
   evaluateRequestGuard,
   hostnameFromHostHeader,
@@ -122,6 +123,26 @@ describe('resolveRequestGuardPolicy', () => {
     assert.deepEqual(policy.warnings, [])
     assert.deepEqual(policy.allowedHosts, ['portal.sqd.dev'])
     assert.deepEqual(policy.allowedOrigins, ['*'])
+  })
+})
+
+describe('connectionKeyFromRequest', () => {
+  it('hashes the socket address, or the first proxy hop only when trusted', () => {
+    const direct = connectionKeyFromRequest(
+      { remoteAddress: '203.0.113.9', forwardedFor: '198.51.100.7, 10.0.0.1' },
+      false,
+    )
+    const trusted = connectionKeyFromRequest(
+      { remoteAddress: '203.0.113.9', forwardedFor: '198.51.100.7, 10.0.0.1' },
+      true,
+    )
+    const hop = connectionKeyFromRequest({ remoteAddress: '203.0.113.9', forwardedFor: '198.51.100.7' }, true)
+    assert.equal(direct, connectionKeyFromRequest({ remoteAddress: '203.0.113.9' }, false))
+    assert.notEqual(direct, trusted)
+    assert.equal(trusted, hop)
+    assert.match(direct, /^[0-9a-f]{16}$/)
+    assert.equal(direct.includes('203'), false)
+    assert.equal(connectionKeyFromRequest({}, false), connectionKeyFromRequest({ remoteAddress: undefined }, true))
   })
 })
 

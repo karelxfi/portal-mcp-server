@@ -1,6 +1,7 @@
 #!/usr/bin/env tsx
 
 import { RequestCancelledError } from '../src/helpers/errors.js'
+import { ActionableError } from '../src/helpers/errors.ts'
 import {
   getPortalRequestSignal,
   runAsSharedPortalWork,
@@ -155,10 +156,81 @@ async function main() {
   assert(finalCancelled, 'the final cancelled caller should stop waiting for shared work')
   assert(sharedAbortObserved, 'shared upstream work should abort when its last caller leaves')
 
+  /* Two callers: one floods raw queries, one keeps doing cheap lookups. The
+     flooder is bounded to its share; the quiet caller never waits. */
+  const fair = new WeightedToolAdmissionController(32, 16, 2_000, false, { clientWeightShare: 0.5, maxClientQueued: 2 })
+  assert(fair.maxClientWeight === 16 && fair.maxClientQueued === 2, 'client share should derive from the global budget')
+  const flooder = { key: 'openai:flood', family: 'openai' }
+  const quiet = { key: 'claude:quiet', family: 'claude' }
+  const floodFirst = await fair.acquire(raw, 'http', undefined, flooder)
+  const floodSecond = fair.acquire(raw, 'http', undefined, flooder)
+  const floodThird = fair.acquire(raw, 'http', undefined, flooder)
+  await sleep(5)
+  assert(
+    fair.snapshot().activeWeight === 12 && fair.snapshot().queuedCalls === 2,
+    'the flooder holds one raw call and queues two',
+  )
+  let shareRejection: unknown
+  try {
+    await fair.acquire(raw, 'http', undefined, flooder)
+  } catch (error) {
+    shareRejection = error
+  }
+  assert(
+    shareRejection instanceof ActionableError &&
+      shareRejection.code === 'overloaded' &&
+      shareRejection.retryable &&
+      (shareRejection.context as Record<string, unknown>)?.reason === 'client_share',
+    'a caller over its queue share gets the structured overloaded result with reason client_share',
+  )
+  const quietStarted = Date.now()
+  const quietLookup = await fair.acquire(lookup, 'http', undefined, quiet)
+  const quietSummary = await fair.acquire(getToolWorkProfile('portal_get_recent_activity'), 'http', undefined, quiet)
+  assert(
+    Date.now() - quietStarted < 50 && quietLookup.waitMs < 50,
+    'the quiet caller is admitted immediately while the flooder is queued',
+  )
+  assert(fair.snapshot().activeWeight === 21, 'global capacity serves both callers inside their shares')
+  assert(
+    fair.snapshot().activeCallsByFamily.openai === 1 && fair.snapshot().activeCallsByFamily.claude === 2,
+    'active calls are tracked per bounded family',
+  )
+  floodFirst.release()
+  const floodSecondLease = await floodSecond
+  assert(fair.snapshot().queuedCalls === 1, 'releasing the flooder promotes its next call and keeps the third queued')
+  floodSecondLease.release()
+  const floodThirdLease = await floodThird
+  floodThirdLease.release()
+  quietLookup.release()
+  quietSummary.release()
+  assert(
+    fair.snapshot().activeWeight === 0 &&
+      fair.snapshot().queuedCalls === 0 &&
+      Object.keys(fair.snapshot().activeCallsByFamily).length === 0,
+    'fairness accounting returns to zero',
+  )
+  const solo = { key: 'unknown:stdio', family: 'unknown', exempt: true }
+  const soloFirst = await fair.acquire(analytics, 'stdio', undefined, solo)
+  const soloSecond = await fair.acquire(analytics, 'stdio', undefined, solo)
+  assert(
+    fair.snapshot().activeWeight === 32 && fair.snapshot().activeCallsByFamily.unknown === 2,
+    'an exempt stdio caller may use the whole budget and is still counted',
+  )
+  soloFirst.release()
+  soloSecond.release()
+  const floored = new WeightedToolAdmissionController(32, 4, 100, false, { clientWeightShare: 0.1 })
+  assert(
+    floored.maxClientWeight === 16,
+    'a share below the heaviest profile is floored so every tool stays schedulable',
+  )
+
   console.log('PASS  weighted profiles preserve capacity for low-cost discovery')
   console.log('PASS  fair promotion avoids head-of-line blocking without starving analytics')
   console.log('PASS  queued cancellation, timeout, and overload release all scheduler state')
   console.log('PASS  shared analytics work stays live for active callers and aborts when abandoned')
+  console.log(
+    'PASS  a flooding caller is bounded to its share with reason client_share while a quiet caller never waits',
+  )
 }
 
 main().catch((error) => {

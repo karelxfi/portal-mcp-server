@@ -5,7 +5,13 @@ import { toNodeHandler } from '@modelcontextprotocol/node'
 import { type McpRequestContext, createMcpHandler } from '@modelcontextprotocol/server'
 
 import { resolveActivityExplorerSurface } from './apps/activity-explorer.js'
-import { evaluateBodyLimit, evaluateRequestGuard, readPositiveInt, resolveRequestGuardPolicy } from './http-guard.js'
+import {
+  connectionKeyFromRequest,
+  evaluateBodyLimit,
+  evaluateRequestGuard,
+  readPositiveInt,
+  resolveRequestGuardPolicy,
+} from './http-guard.js'
 import { register } from './metrics.js'
 import { type RuntimeRequestContext, getObservabilityStatus } from './observability.js'
 import { createReadinessTracker } from './readiness.js'
@@ -29,6 +35,10 @@ const KEEP_ALIVE_TIMEOUT_MS = readPositiveInt(process.env.MCP_KEEP_ALIVE_TIMEOUT
 const MAX_BODY_BYTES = readPositiveInt(process.env.MCP_MAX_BODY_BYTES, 1024 * 1024)
 const READY_PROBE_INTERVAL_MS = readPositiveInt(process.env.MCP_READY_PROBE_INTERVAL_MS, 30_000)
 const READY_MAX_AGE_MS = readPositiveInt(process.env.MCP_READY_MAX_AGE_MS, 90_000)
+const TRUST_PROXY = process.env.MCP_TRUST_PROXY === '1' || process.env.MCP_TRUST_PROXY === 'true'
+// Internal header carrying the hashed connection key from the Node layer to the
+// MCP handler; any client-supplied value is overwritten.
+const CONNECTION_KEY_HEADER = 'x-sqd-connection-key'
 
 const guardPolicy = resolveRequestGuardPolicy(process.env)
 for (const warning of guardPolicy.warnings) {
@@ -76,6 +86,7 @@ function runtimeContextFromRequest(ctx: McpRequestContext): RuntimeRequestContex
     protocolVersion: ctx.era === 'modern' ? '2026-07-28' : undefined,
     appEnabled: resolveActivityExplorerSurface(ctx.requestInfo),
     toolsets: requestedToolsetsFromRequest(ctx.requestInfo),
+    connectionKey: headers?.get(CONNECTION_KEY_HEADER) || undefined,
   }
 }
 
@@ -104,6 +115,10 @@ const server = createServer(
     const requestId = readHeader(req, 'x-request-id') || randomUUID()
     req.headers['x-request-id'] = requestId
     res.setHeader('x-request-id', requestId)
+    req.headers[CONNECTION_KEY_HEADER] = connectionKeyFromRequest(
+      { remoteAddress: req.socket.remoteAddress, forwardedFor: readHeader(req, 'x-forwarded-for') },
+      TRUST_PROXY,
+    )
 
     // Host and Origin allowlist first, on every route, so a DNS-rebound browser page
     // cannot reach health, readiness, metrics, or MCP.

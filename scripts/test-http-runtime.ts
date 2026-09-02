@@ -274,19 +274,25 @@ async function assertHttpAppIsolation() {
     {
       label: 'default connection',
       enabled: false,
-      transport: new StreamableHTTPClientTransport(new URL(`${BASE_URL}/mcp`)),
+      transport: new StreamableHTTPClientTransport(new URL(`${BASE_URL}/mcp`), {
+        requestInit: { headers: { 'X-Forwarded-For': '198.51.100.1' } },
+      }),
       client: new Client({ name: 'sqd-app-default-http', version: '1.0.0' }),
     },
     {
       label: 'explicit app=0 connection',
       enabled: false,
-      transport: new StreamableHTTPClientTransport(new URL(`${BASE_URL}/mcp?app=0`)),
+      transport: new StreamableHTTPClientTransport(new URL(`${BASE_URL}/mcp?app=0`), {
+        requestInit: { headers: { 'X-Forwarded-For': '198.51.100.2' } },
+      }),
       client: new Client({ name: 'sqd-app-disabled-http', version: '1.0.0' }),
     },
     {
       label: 'explicit app=1 connection',
       enabled: true,
-      transport: new StreamableHTTPClientTransport(new URL(`${BASE_URL}/mcp?app=1`)),
+      transport: new StreamableHTTPClientTransport(new URL(`${BASE_URL}/mcp?app=1`), {
+        requestInit: { headers: { 'X-Forwarded-For': '198.51.100.3' } },
+      }),
       client: new Client({ name: 'sqd-app-enabled-http', version: '1.0.0' }),
     },
   ]
@@ -653,13 +659,17 @@ async function main() {
       MCP_HEADERS_TIMEOUT_MS: '1000',
       MCP_READY_PROBE_INTERVAL_MS: '200',
       MCP_READY_MAX_AGE_MS: '2000',
+      MCP_SLOW_REQUEST_MS: '1',
+      /* The isolation clients emulate three callers behind a trusted proxy so
+         per-caller fairness does not serialise them. */
+      MCP_TRUST_PROXY: '1',
     },
     stdio: ['pipe', 'pipe', 'pipe'],
   })
   child.stderr.on('data', (chunk) => {
     const text = chunk.toString()
     stderrChunks.push(text)
-    if (!text.includes('"event":"mcp_tool_call"')) {
+    if (!text.includes('"event":"mcp_tool_call"') && !text.includes('"event":"mcp_slow_tool_call"')) {
       process.stderr.write(chunk)
     }
   })
@@ -747,6 +757,29 @@ async function main() {
     'Metrics should expose token-list cache events',
   )
 
+  assert(
+    metricsText.includes('mcp_tool_admission_active_by_family{client_family="openai"} 0'),
+    'Metrics should expose the per-family active admission gauge and return it to zero',
+  )
+  const slowLines = stderrChunks
+    .join('')
+    .split('\n')
+    .filter((line) => line.includes('"event":"mcp_slow_tool_call"'))
+  assert(slowLines.length > 0, 'a call above MCP_SLOW_REQUEST_MS should log a slow-call line')
+  const slow = JSON.parse(slowLines[0]) as Record<string, unknown>
+  assert(
+    typeof slow.duration_ms === 'number' &&
+      typeof slow.admission_wait_ms === 'number' &&
+      typeof slow.execution_ms === 'number',
+    'the slow-call line should carry phase timings',
+  )
+  assert(
+    ['claude', 'openai', 'grok', 'gemini', 'cursor', 'unknown'].includes(String(slow.client_family)) &&
+      !/127\.0\.0\.1|::1|[0-9a-f]{16}/.test(
+        JSON.stringify({ ...slow, invocation_id: '', request_id: '', timestamp: '' }),
+      ),
+    'the slow-call line should carry a bounded client family and never an address or connection key',
+  )
   assertUserContentNotCaptured()
   await assertDashboardMetricNames(metricsText)
 
@@ -764,6 +797,7 @@ async function main() {
   console.log('PASS  oversized bodies are 413, chunked bodies 411, slow-header clients are disconnected')
   console.log('PASS  binding 0.0.0.0 without an allowlist logs a startup error; loopback needs no configuration')
   console.log('PASS  ?toolsets= and X-MCP-Toolsets narrow a connection and never widen the deployment set')
+  console.log('PASS  slow tool calls log bounded phase timings; per-family admission gauge returns to zero')
   console.log('\nHTTP runtime QA passed')
 }
 

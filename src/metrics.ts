@@ -85,6 +85,13 @@ export const toolAdmissionQueued = new Gauge({
   registers: [register],
 })
 
+export const toolAdmissionActiveByFamily = new Gauge({
+  name: 'mcp_tool_admission_active_by_family',
+  help: 'Complete MCP tool calls currently admitted per bounded client family',
+  labelNames: ['client_family'] as const,
+  registers: [register],
+})
+
 export const toolAdmissionRejectedTotal = new Counter({
   name: 'mcp_tool_admission_rejected_total',
   help: 'Complete MCP tool calls rejected by the bounded weighted scheduler',

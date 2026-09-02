@@ -33,6 +33,8 @@ export type RuntimeRequestContext = {
   toolsets?: string[]
   /** Bounded label of the active selection: `all`, one toolset name, or `custom`. */
   toolsetLabel?: string
+  /** Hashed connection identifier used only as a fairness key; never logged or labelled. */
+  connectionKey?: string
 }
 
 export type ToolEventStatus = 'success' | 'partial' | 'tool_error' | 'request_error' | 'cancelled'
@@ -291,6 +293,49 @@ function extractNetwork(payload?: Record<string, unknown>): string | undefined {
 function extractExecutionField(payload: Record<string, unknown> | undefined, key: string): string | undefined {
   const execution = asRecord(payload?._execution)
   return typeof execution?.[key] === 'string' ? String(execution[key]) : undefined
+}
+
+/** Bounded client family for a declared client name: claude, openai, grok, gemini, cursor, or unknown. */
+export function classifyClientFamily(name?: string): string {
+  return normalizeClientIdentity(name).family
+}
+
+const SLOW_REQUEST_MS = (() => {
+  const parsed = Number(process.env.MCP_SLOW_REQUEST_MS)
+  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : 5_000
+})()
+
+/**
+ * One JSON line on stderr for a tool call slower than MCP_SLOW_REQUEST_MS, with
+ * phase timings and bounded client identity only.
+ */
+export function recordSlowToolCall(params: {
+  toolName: string
+  durationMs: number
+  admissionWaitMs: number
+  status: ToolEventStatus
+  runtime: RuntimeRequestContext
+  invocationId: string
+}) {
+  if (params.durationMs < SLOW_REQUEST_MS) return
+  const client = normalizeClientIdentity(params.runtime.clientName, params.runtime.clientVersion)
+  console.error(
+    JSON.stringify({
+      event: 'mcp_slow_tool_call',
+      timestamp: new Date().toISOString(),
+      invocation_id: params.invocationId,
+      ...(params.runtime.requestId ? { request_id: params.runtime.requestId } : {}),
+      tool: params.toolName,
+      transport: params.runtime.transport,
+      client_family: client.family,
+      client_major: client.major,
+      status: params.status,
+      duration_ms: params.durationMs,
+      admission_wait_ms: params.admissionWaitMs,
+      execution_ms: Math.max(0, params.durationMs - params.admissionWaitMs),
+      threshold_ms: SLOW_REQUEST_MS,
+    }),
+  )
 }
 
 function normalizeClientIdentity(name?: string, version?: string): { family: string; major: string } {

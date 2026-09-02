@@ -5,6 +5,8 @@
 // Pure functions so the policy is unit-testable without opening a socket.
 // `src/http.ts` applies them to every route before any handler runs.
 
+import { createHash } from 'node:crypto'
+
 const LOOPBACK_HOSTNAMES = ['localhost', '127.0.0.1', '[::1]', '0.0.0.0', '[::]']
 
 export type AllowlistDecision =
@@ -152,6 +154,21 @@ export function evaluateBodyLimit(
   if (!Number.isFinite(length) || length < 0) return { ok: false, status: 411, reason: 'length_required' }
   if (length > maxBodyBytes) return { ok: false, status: 413, reason: 'body_too_large', declared: length }
   return { ok: true }
+}
+
+/**
+ * A stable, non-reversible key for the connection behind a request, used only
+ * to give each caller a fair share of tool admission. With `trustProxy` the
+ * first hop of `X-Forwarded-For` is used, otherwise the socket address. The
+ * raw address is hashed and never stored, logged, or labelled.
+ */
+export function connectionKeyFromRequest(
+  source: { remoteAddress?: string; forwardedFor?: string },
+  trustProxy: boolean,
+): string {
+  const forwarded = trustProxy ? source.forwardedFor?.split(',')[0]?.trim() : undefined
+  const address = (forwarded || source.remoteAddress || 'unknown').toLowerCase()
+  return createHash('sha256').update(address).digest('hex').slice(0, 16)
 }
 
 export function readPositiveInt(raw: string | undefined, fallback: number): number {
