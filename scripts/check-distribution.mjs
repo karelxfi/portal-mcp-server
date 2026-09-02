@@ -47,7 +47,10 @@ function validateMetadata() {
     server.remotes?.some((remote) => remote.url === SERVER_URL),
     'server.json must publish the hosted MCP URL',
   )
-  assert(/130\+ SQD Portal datasets/.test(server.description), 'server.json description must state the conservative dataset coverage')
+  assert(
+    /130\+ SQD Portal datasets/.test(server.description),
+    'server.json description must state the conservative dataset coverage',
+  )
   assert(/Tron/.test(server.description), 'server.json description must include Tron')
   assert(/heads and timestamps/.test(server.description), 'server.json must describe the bounded Tron MCP capability')
   assert(!/[\u2013\u2014]/.test(server.description), 'server.json description must not use en or em dashes')
@@ -110,7 +113,9 @@ function validateMetadata() {
     assert(/Hyperliquid/.test(packet?.description ?? ''), `${targetId} submission must mention Hyperliquid`)
     assert(/Tron/.test(packet?.description ?? ''), `${targetId} submission must mention Tron`)
     assert(
-      /Tron dataset heads and timestamps|Tron datasets and resolve their heads and timestamps/.test(packet?.description ?? ''),
+      /Tron dataset heads and timestamps|Tron datasets and resolve their heads and timestamps/.test(
+        packet?.description ?? '',
+      ),
       `${targetId} submission must describe the bounded Tron MCP capability`,
     )
     assert(
@@ -226,7 +231,11 @@ async function checkSmithery() {
   const remote = listing.remote === true && (listing.connections ?? []).some((connection) => connection.type === 'http')
   if (!remote) return result('Smithery', 'fail', 'hosted MCP connection is missing')
   if (!Array.isArray(listing.tools) || listing.tools.length < 20) {
-    return result('Smithery', 'fail', `listing exposes ${listing.tools?.length ?? 0} tools, expected the public catalog`)
+    return result(
+      'Smithery',
+      'fail',
+      `listing exposes ${listing.tools?.length ?? 0} tools, expected the public catalog`,
+    )
   }
   return result('Smithery', 'pass', `official sqd/sqd listing is live with ${listing.tools.length} tools`)
 }

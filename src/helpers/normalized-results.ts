@@ -67,16 +67,14 @@ export function normalizeEvmTransactionResult(item: RecordLike): RecordLike {
 }
 
 export function normalizeEvmLogResult(item: RecordLike): RecordLike {
-  const txHash = typeof item.transactionHash === 'string'
-    ? item.transactionHash
-    : typeof item.tx_hash === 'string'
-      ? item.tx_hash
-      : undefined
-  const logIndex = typeof item.logIndex === 'number'
-    ? item.logIndex
-    : typeof item.log_index === 'number'
-      ? item.log_index
-      : undefined
+  const txHash =
+    typeof item.transactionHash === 'string'
+      ? item.transactionHash
+      : typeof item.tx_hash === 'string'
+        ? item.tx_hash
+        : undefined
+  const logIndex =
+    typeof item.logIndex === 'number' ? item.logIndex : typeof item.log_index === 'number' ? item.log_index : undefined
   const blockNumber = typeof item.block_number === 'number' ? item.block_number : undefined
   const timestamp = typeof item.timestamp === 'number' ? item.timestamp : undefined
   const contractAddress = typeof item.address === 'string' ? item.address : undefined
@@ -119,17 +117,19 @@ export function normalizeErc20TransferResult(item: RecordLike): RecordLike {
 
 export function normalizeSolanaTransactionResult(item: RecordLike): RecordLike {
   const signatures = Array.isArray(item.signatures) ? item.signatures : undefined
-  const txHash = typeof item.signature === 'string'
-    ? item.signature
-    : typeof signatures?.[0] === 'string'
-      ? signatures[0]
-      : undefined
+  const txHash =
+    typeof item.signature === 'string'
+      ? item.signature
+      : typeof signatures?.[0] === 'string'
+        ? signatures[0]
+        : undefined
   const sender = typeof item.feePayer === 'string' ? item.feePayer : undefined
-  const slotNumber = typeof item.slot_number === 'number'
-    ? item.slot_number
-    : typeof item.block_number === 'number'
-      ? item.block_number
-      : undefined
+  const slotNumber =
+    typeof item.slot_number === 'number'
+      ? item.slot_number
+      : typeof item.block_number === 'number'
+        ? item.block_number
+        : undefined
   const timestamp = typeof item.timestamp === 'number' ? item.timestamp : undefined
   const feeLamports = exactDecimalText(item.fee)
   const computeUnits = exactDecimalText(item.computeUnitsConsumed)
@@ -162,11 +162,12 @@ export function normalizeSolanaTransactionResult(item: RecordLike): RecordLike {
 
 export function normalizeSolanaInstructionResult(item: RecordLike): RecordLike {
   const txHash = typeof item.tx_hash === 'string' ? item.tx_hash : undefined
-  const programId = typeof item.programId === 'string'
-    ? item.programId
-    : typeof item.program_id === 'string'
-      ? item.program_id
-      : undefined
+  const programId =
+    typeof item.programId === 'string'
+      ? item.programId
+      : typeof item.program_id === 'string'
+        ? item.program_id
+        : undefined
   const instructionPath = Array.isArray(item.instructionAddress)
     ? item.instructionAddress.join('.')
     : typeof item.instructionAddress === 'string'
@@ -174,17 +175,19 @@ export function normalizeSolanaInstructionResult(item: RecordLike): RecordLike {
       : typeof item.instruction_address === 'string'
         ? item.instruction_address
         : undefined
-  const slotNumber = typeof item.slot_number === 'number'
-    ? item.slot_number
-    : typeof item.block_number === 'number'
-      ? item.block_number
-      : undefined
+  const slotNumber =
+    typeof item.slot_number === 'number'
+      ? item.slot_number
+      : typeof item.block_number === 'number'
+        ? item.block_number
+        : undefined
   const timestamp = typeof item.timestamp === 'number' ? item.timestamp : undefined
-  const transactionIndex = typeof item.transactionIndex === 'number'
-    ? item.transactionIndex
-    : typeof item.transaction_index === 'number'
-      ? item.transaction_index
-      : undefined
+  const transactionIndex =
+    typeof item.transactionIndex === 'number'
+      ? item.transactionIndex
+      : typeof item.transaction_index === 'number'
+        ? item.transaction_index
+        : undefined
   const primaryId = txHash
     ? instructionPath
       ? `${txHash}:${instructionPath}`
@@ -212,11 +215,7 @@ export function normalizeSolanaInstructionResult(item: RecordLike): RecordLike {
 }
 
 export function normalizeBitcoinTransactionResult(item: RecordLike): RecordLike {
-  const txHash = typeof item.txid === 'string'
-    ? item.txid
-    : typeof item.hash === 'string'
-      ? item.hash
-      : undefined
+  const txHash = typeof item.txid === 'string' ? item.txid : typeof item.hash === 'string' ? item.hash : undefined
   const blockNumber = typeof item.block_number === 'number' ? item.block_number : undefined
   const timestamp = typeof item.timestamp === 'number' ? item.timestamp : undefined
 
@@ -232,111 +231,121 @@ export function normalizeBitcoinTransactionResult(item: RecordLike): RecordLike 
 
 export function normalizeBitcoinInputResult(item: RecordLike): RecordLike {
   const txHash = typeof item.txid === 'string' ? item.txid : undefined
-  const inputIndex = typeof item.inputIndex === 'number'
-    ? item.inputIndex
-    : typeof item.input_index === 'number'
-      ? item.input_index
-      : undefined
-  const sender = typeof item.prevoutScriptPubKeyAddress === 'string'
-    ? item.prevoutScriptPubKeyAddress
-    : typeof item.sender === 'string'
-      ? item.sender
-      : undefined
+  const inputIndex =
+    typeof item.inputIndex === 'number'
+      ? item.inputIndex
+      : typeof item.input_index === 'number'
+        ? item.input_index
+        : undefined
+  const sender =
+    typeof item.prevoutScriptPubKeyAddress === 'string'
+      ? item.prevoutScriptPubKeyAddress
+      : typeof item.sender === 'string'
+        ? item.sender
+        : undefined
   const blockNumber = typeof item.block_number === 'number' ? item.block_number : undefined
   const timestamp = typeof item.timestamp === 'number' ? item.timestamp : undefined
-  const transactionIndex = typeof item.transactionIndex === 'number'
-    ? item.transactionIndex
-    : typeof item.transactionIndex === 'string'
-      ? Number(item.transactionIndex)
-      : undefined
-  const fallbackPrimaryId = blockNumber !== undefined
-    ? `${blockNumber}:${transactionIndex ?? 'tx'}:${inputIndex ?? 'input'}`
-    : undefined
+  const transactionIndex =
+    typeof item.transactionIndex === 'number'
+      ? item.transactionIndex
+      : typeof item.transactionIndex === 'string'
+        ? Number(item.transactionIndex)
+        : undefined
+  const fallbackPrimaryId =
+    blockNumber !== undefined ? `${blockNumber}:${transactionIndex ?? 'tx'}:${inputIndex ?? 'input'}` : undefined
   const prevoutValueBtc = exactDecimalText(item.prevoutValue)
 
-  return withCommonAliases({
-    ...item,
-    ...(prevoutValueBtc
-      ? {
-          prevoutValue: prevoutValueBtc,
-          prevout_value_btc: prevoutValueBtc,
-          prevout_value_unit: 'BTC',
-        }
-      : {}),
-  }, {
-    chain_kind: 'bitcoin',
-    record_type: 'input',
-    primary_id: txHash && inputIndex !== undefined
-      ? `${txHash}:input:${inputIndex}`
-      : txHash
-        ? `${txHash}:input`
-        : fallbackPrimaryId
-          ? `bitcoin:input:${fallbackPrimaryId}`
-          : undefined,
-    tx_hash: txHash,
-    sender,
-    block_number: blockNumber,
-    timestamp,
-  })
+  return withCommonAliases(
+    {
+      ...item,
+      ...(prevoutValueBtc
+        ? {
+            prevoutValue: prevoutValueBtc,
+            prevout_value_btc: prevoutValueBtc,
+            prevout_value_unit: 'BTC',
+          }
+        : {}),
+    },
+    {
+      chain_kind: 'bitcoin',
+      record_type: 'input',
+      primary_id:
+        txHash && inputIndex !== undefined
+          ? `${txHash}:input:${inputIndex}`
+          : txHash
+            ? `${txHash}:input`
+            : fallbackPrimaryId
+              ? `bitcoin:input:${fallbackPrimaryId}`
+              : undefined,
+      tx_hash: txHash,
+      sender,
+      block_number: blockNumber,
+      timestamp,
+    },
+  )
 }
 
 export function normalizeBitcoinOutputResult(item: RecordLike): RecordLike {
   const txHash = typeof item.txid === 'string' ? item.txid : undefined
-  const outputIndex = typeof item.outputIndex === 'number'
-    ? item.outputIndex
-    : typeof item.output_index === 'number'
-      ? item.output_index
-      : undefined
-  const recipient = typeof item.scriptPubKeyAddress === 'string'
-    ? item.scriptPubKeyAddress
-    : typeof item.recipient === 'string'
-      ? item.recipient
-      : undefined
+  const outputIndex =
+    typeof item.outputIndex === 'number'
+      ? item.outputIndex
+      : typeof item.output_index === 'number'
+        ? item.output_index
+        : undefined
+  const recipient =
+    typeof item.scriptPubKeyAddress === 'string'
+      ? item.scriptPubKeyAddress
+      : typeof item.recipient === 'string'
+        ? item.recipient
+        : undefined
   const blockNumber = typeof item.block_number === 'number' ? item.block_number : undefined
   const timestamp = typeof item.timestamp === 'number' ? item.timestamp : undefined
-  const transactionIndex = typeof item.transactionIndex === 'number'
-    ? item.transactionIndex
-    : typeof item.transactionIndex === 'string'
-      ? Number(item.transactionIndex)
-      : undefined
-  const fallbackPrimaryId = blockNumber !== undefined
-    ? `${blockNumber}:${transactionIndex ?? 'tx'}:${outputIndex ?? 'output'}`
-    : undefined
+  const transactionIndex =
+    typeof item.transactionIndex === 'number'
+      ? item.transactionIndex
+      : typeof item.transactionIndex === 'string'
+        ? Number(item.transactionIndex)
+        : undefined
+  const fallbackPrimaryId =
+    blockNumber !== undefined ? `${blockNumber}:${transactionIndex ?? 'tx'}:${outputIndex ?? 'output'}` : undefined
   const valueBtc = exactDecimalText(item.value)
 
-  return withCommonAliases({
-    ...item,
-    ...(valueBtc ? { value: valueBtc, value_btc: valueBtc, value_unit: 'BTC' } : {}),
-  }, {
-    chain_kind: 'bitcoin',
-    record_type: 'output',
-    primary_id: txHash && outputIndex !== undefined
-      ? `${txHash}:output:${outputIndex}`
-      : txHash
-        ? `${txHash}:output`
-        : fallbackPrimaryId
-          ? `bitcoin:output:${fallbackPrimaryId}`
-          : undefined,
-    tx_hash: txHash,
-    recipient,
-    block_number: blockNumber,
-    timestamp,
-  })
+  return withCommonAliases(
+    {
+      ...item,
+      ...(valueBtc ? { value: valueBtc, value_btc: valueBtc, value_unit: 'BTC' } : {}),
+    },
+    {
+      chain_kind: 'bitcoin',
+      record_type: 'output',
+      primary_id:
+        txHash && outputIndex !== undefined
+          ? `${txHash}:output:${outputIndex}`
+          : txHash
+            ? `${txHash}:output`
+            : fallbackPrimaryId
+              ? `bitcoin:output:${fallbackPrimaryId}`
+              : undefined,
+      tx_hash: txHash,
+      recipient,
+      block_number: blockNumber,
+      timestamp,
+    },
+  )
 }
 
 export function normalizeSubstrateEventResult(item: RecordLike): RecordLike {
   const blockNumber = typeof item.block_number === 'number' ? item.block_number : undefined
-  const eventIndex = typeof item.index === 'number'
-    ? item.index
-    : typeof item.event_index === 'number'
-      ? item.event_index
-      : undefined
+  const eventIndex =
+    typeof item.index === 'number' ? item.index : typeof item.event_index === 'number' ? item.event_index : undefined
   const eventName = typeof item.name === 'string' ? item.name : undefined
-  const extrinsicIndex = typeof item.extrinsicIndex === 'number'
-    ? item.extrinsicIndex
-    : typeof item.extrinsic_index === 'number'
-      ? item.extrinsic_index
-      : undefined
+  const extrinsicIndex =
+    typeof item.extrinsicIndex === 'number'
+      ? item.extrinsicIndex
+      : typeof item.extrinsic_index === 'number'
+        ? item.extrinsic_index
+        : undefined
   const callAddress = Array.isArray(item.callAddress)
     ? item.callAddress.join('.')
     : typeof item.call_address === 'string'
@@ -344,11 +353,12 @@ export function normalizeSubstrateEventResult(item: RecordLike): RecordLike {
       : undefined
   const txHash = typeof item.extrinsic_hash === 'string' ? item.extrinsic_hash : undefined
   const timestamp = normalizeUnixTimestamp(item.timestamp)
-  const primaryId = blockNumber !== undefined
-    ? eventIndex !== undefined
-      ? `${blockNumber}:${eventIndex}`
-      : `${blockNumber}:extrinsic:${extrinsicIndex ?? 'unknown'}:call:${callAddress ?? 'unknown'}:event:${eventName ?? 'unknown'}`
-    : txHash
+  const primaryId =
+    blockNumber !== undefined
+      ? eventIndex !== undefined
+        ? `${blockNumber}:${eventIndex}`
+        : `${blockNumber}:extrinsic:${extrinsicIndex ?? 'unknown'}:call:${callAddress ?? 'unknown'}:event:${eventName ?? 'unknown'}`
+      : txHash
 
   return withCommonAliases(
     {
@@ -375,15 +385,17 @@ export function normalizeSubstrateCallResult(item: RecordLike): RecordLike {
       ? item.call_address
       : undefined
   const txHash = typeof item.extrinsic_hash === 'string' ? item.extrinsic_hash : undefined
-  const extrinsicIndex = typeof item.extrinsicIndex === 'number'
-    ? item.extrinsicIndex
-    : typeof item.extrinsic_index === 'number'
-      ? item.extrinsic_index
-      : undefined
+  const extrinsicIndex =
+    typeof item.extrinsicIndex === 'number'
+      ? item.extrinsicIndex
+      : typeof item.extrinsic_index === 'number'
+        ? item.extrinsic_index
+        : undefined
   const timestamp = normalizeUnixTimestamp(item.timestamp)
-  const primaryId = blockNumber !== undefined
-    ? `${blockNumber}:extrinsic:${extrinsicIndex ?? 'unknown'}:call:${callAddress || callName || 'root'}`
-    : txHash
+  const primaryId =
+    blockNumber !== undefined
+      ? `${blockNumber}:extrinsic:${extrinsicIndex ?? 'unknown'}:call:${callAddress || callName || 'root'}`
+      : txHash
 
   const inheritedContext = {
     ...(blockNumber !== undefined ? { block_number: blockNumber } : {}),
@@ -391,18 +403,19 @@ export function normalizeSubstrateCallResult(item: RecordLike): RecordLike {
     ...(txHash ? { extrinsic_hash: txHash } : {}),
   }
   const normalizedEvents = Array.isArray(item.events)
-    ? item.events.map((event) => normalizeSubstrateEventResult({
-        ...(event as RecordLike),
-        ...inheritedContext,
-      }))
+    ? item.events.map((event) =>
+        normalizeSubstrateEventResult({
+          ...(event as RecordLike),
+          ...inheritedContext,
+        }),
+      )
     : undefined
-  const normalizeRelatedCall = (call: unknown) => normalizeSubstrateCallResult({
-    ...(call as RecordLike),
-    ...inheritedContext,
-    ...(extrinsicIndex !== undefined && (call as RecordLike)?.extrinsicIndex === undefined
-      ? { extrinsicIndex }
-      : {}),
-  })
+  const normalizeRelatedCall = (call: unknown) =>
+    normalizeSubstrateCallResult({
+      ...(call as RecordLike),
+      ...inheritedContext,
+      ...(extrinsicIndex !== undefined && (call as RecordLike)?.extrinsicIndex === undefined ? { extrinsicIndex } : {}),
+    })
   const normalizedSubcalls = Array.isArray(item.subcalls) ? item.subcalls.map(normalizeRelatedCall) : undefined
   const normalizedCallStack = Array.isArray(item.call_stack) ? item.call_stack.map(normalizeRelatedCall) : undefined
 
@@ -428,22 +441,24 @@ export function normalizeSubstrateCallResult(item: RecordLike): RecordLike {
 
 export function normalizeHyperliquidFillResult(item: RecordLike): RecordLike {
   const txHash = usableHash(item.hash)
-  const fillIndex = typeof item.fillIndex === 'number'
-    ? item.fillIndex
-    : typeof item.fillIndex === 'string'
-      ? Number(item.fillIndex)
-      : undefined
+  const fillIndex =
+    typeof item.fillIndex === 'number'
+      ? item.fillIndex
+      : typeof item.fillIndex === 'string'
+        ? Number(item.fillIndex)
+        : undefined
   const sender = typeof item.user === 'string' ? item.user : undefined
   const blockNumber = typeof item.block_number === 'number' ? item.block_number : undefined
   const timestampValue = item.time ?? item.block_timestamp ?? item.timestamp
   const timestamp = normalizeUnixTimestamp(timestampValue)
-  const primaryId = txHash && fillIndex !== undefined
-    ? `${txHash}:${fillIndex}`
-    : blockNumber !== undefined && fillIndex !== undefined
-      ? `hyperliquid:${blockNumber}:fill:${fillIndex}`
-      : blockNumber !== undefined
-        ? `hyperliquid:${blockNumber}:fill:${timestamp ?? 'unknown'}:${sender ?? 'unknown'}`
-        : txHash
+  const primaryId =
+    txHash && fillIndex !== undefined
+      ? `${txHash}:${fillIndex}`
+      : blockNumber !== undefined && fillIndex !== undefined
+        ? `hyperliquid:${blockNumber}:fill:${fillIndex}`
+        : blockNumber !== undefined
+          ? `hyperliquid:${blockNumber}:fill:${timestamp ?? 'unknown'}:${sender ?? 'unknown'}`
+          : txHash
 
   const price = exactDecimalText(item.px)
   const size = exactDecimalText(item.sz)
@@ -454,40 +469,45 @@ export function normalizeHyperliquidFillResult(item: RecordLike): RecordLike {
   const coin = typeof item.coin === 'string' ? item.coin : undefined
   const feeToken = typeof item.feeToken === 'string' ? item.feeToken : undefined
 
-  return withCommonAliases({
-    ...item,
-    ...(price ? { px: price, price_unit: 'USD per base asset' } : {}),
-    ...(size ? { sz: size, size_unit: coin ?? 'base asset' } : {}),
-    ...(fee ? { fee, fee_unit: feeToken ?? 'quote asset' } : {}),
-    ...(closedPnl ? { closedPnl, closed_pnl_unit: feeToken ?? 'quote asset' } : {}),
-    ...(startPosition ? { startPosition, start_position_unit: coin ?? 'base asset' } : {}),
-    ...(builderFee ? { builderFee, builder_fee_unit: feeToken ?? 'quote asset' } : {}),
-  }, {
-    chain_kind: 'hyperliquid',
-    record_type: 'fill',
-    primary_id: primaryId,
-    tx_hash: txHash,
-    sender,
-    block_number: blockNumber,
-    timestamp,
-  })
+  return withCommonAliases(
+    {
+      ...item,
+      ...(price ? { px: price, price_unit: 'USD per base asset' } : {}),
+      ...(size ? { sz: size, size_unit: coin ?? 'base asset' } : {}),
+      ...(fee ? { fee, fee_unit: feeToken ?? 'quote asset' } : {}),
+      ...(closedPnl ? { closedPnl, closed_pnl_unit: feeToken ?? 'quote asset' } : {}),
+      ...(startPosition ? { startPosition, start_position_unit: coin ?? 'base asset' } : {}),
+      ...(builderFee ? { builderFee, builder_fee_unit: feeToken ?? 'quote asset' } : {}),
+    },
+    {
+      chain_kind: 'hyperliquid',
+      record_type: 'fill',
+      primary_id: primaryId,
+      tx_hash: txHash,
+      sender,
+      block_number: blockNumber,
+      timestamp,
+    },
+  )
 }
 
 export function normalizeHyperliquidReplicaCmdResult(item: RecordLike): RecordLike {
   const blockNumber = typeof item.block_number === 'number' ? item.block_number : undefined
-  const actionIndex = typeof item.actionIndex === 'number'
-    ? item.actionIndex
-    : typeof item.actionIndex === 'string'
-      ? Number(item.actionIndex)
-      : undefined
+  const actionIndex =
+    typeof item.actionIndex === 'number'
+      ? item.actionIndex
+      : typeof item.actionIndex === 'string'
+        ? Number(item.actionIndex)
+        : undefined
   const sender = typeof item.user === 'string' ? item.user : undefined
   const timestampValue = item.timestamp ?? item.block_timestamp ?? item.time
   const timestamp = normalizeUnixTimestamp(timestampValue)
-  const primaryId = blockNumber !== undefined && actionIndex !== undefined
-    ? `${blockNumber}:${actionIndex}`
-    : blockNumber !== undefined
-      ? `${blockNumber}:action`
-      : undefined
+  const primaryId =
+    blockNumber !== undefined && actionIndex !== undefined
+      ? `${blockNumber}:${actionIndex}`
+      : blockNumber !== undefined
+        ? `${blockNumber}:action`
+        : undefined
 
   return withCommonAliases(item, {
     chain_kind: 'hyperliquid',

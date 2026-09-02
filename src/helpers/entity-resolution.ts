@@ -5,12 +5,12 @@ import { ActionableError, RequestCancelledError } from './errors.js'
 import {
   type CoinGeckoToken,
   type CoinGeckoTokenListResult,
-  type DexScreenerPair,
   type DefiLlamaProtocol,
+  type DexScreenerPair,
   getCoinGeckoTokenListWithStatus,
+  getDefiLlamaProtocols,
   getDexScreenerPair,
   getDexScreenerTokenPairs,
-  getDefiLlamaProtocols,
 } from './external-apis.js'
 import { isValidEvmAddress, normalizeEvmAddress } from './validation.js'
 
@@ -608,8 +608,19 @@ function parsePoolQuery(query: string): { symbols: string[]; dexHint?: string; v
           : undefined
   const versionHint = normalized.match(/\bv([234])\b/)?.[0]
   const ignored = new Set([
-    'POOL', 'PAIR', 'UNISWAP', 'AERODROME', 'PANCAKE', 'PANCAKESWAP', 'SUSHI', 'SUSHISWAP',
-    'SWAP', 'DEX', 'V2', 'V3', 'V4',
+    'POOL',
+    'PAIR',
+    'UNISWAP',
+    'AERODROME',
+    'PANCAKE',
+    'PANCAKESWAP',
+    'SUSHI',
+    'SUSHISWAP',
+    'SWAP',
+    'DEX',
+    'V2',
+    'V3',
+    'V4',
   ])
   const symbols = Array.from(
     new Set((query.toUpperCase().match(/[A-Z][A-Z0-9._-]{1,14}/g) ?? []).filter((value) => !ignored.has(value))),
@@ -642,9 +653,9 @@ export async function resolvePoolQuery({
   const trimmed = query.trim()
   const lower = trimmed.toLowerCase()
   const identifierType = /^0x[0-9a-f]{40}$/.test(lower)
-    ? 'evm_address' as const
+    ? ('evm_address' as const)
     : /^0x[0-9a-f]{64}$/.test(lower)
-      ? 'evm_bytes32_pool_id' as const
+      ? ('evm_bytes32_pool_id' as const)
       : undefined
   const dexChain = getDexScreenerChainForDataset(dataset)
 
@@ -668,14 +679,16 @@ export async function resolvePoolQuery({
     return {
       dataset,
       query: trimmed,
-      matches: [{
-        kind: 'pool',
-        network: dataset,
-        identifier: lower,
-        identifier_type: identifierType,
-        validation_status: 'format_only',
-        source: 'user_input_format',
-      }],
+      matches: [
+        {
+          kind: 'pool',
+          network: dataset,
+          identifier: lower,
+          identifier_type: identifierType,
+          validation_status: 'format_only',
+          source: 'user_input_format',
+        },
+      ],
       source: 'user_input_format',
     }
   }
@@ -706,7 +719,7 @@ export async function resolvePoolQuery({
   const candidates: DexScreenerPair[] = []
   for (const address of firstAddresses.slice(0, 3)) {
     try {
-      candidates.push(...await getDexScreenerTokenPairs(dexChain, address))
+      candidates.push(...(await getDexScreenerTokenPairs(dexChain, address)))
     } catch (error) {
       if (error instanceof RequestCancelledError) throw error
     }
@@ -745,13 +758,11 @@ export async function resolvePoolQuery({
   }
 }
 
-export function resolveHyperliquidCoinQuery({
-  query,
-  limit = 10,
-}: {
+export function resolveHyperliquidCoinQuery({ query, limit = 10 }: { query: string; limit?: number }): {
   query: string
-  limit?: number
-}): { query: string; matches: ResolvedHyperliquidCoinEntity[]; source: EntityResolverSource } {
+  matches: ResolvedHyperliquidCoinEntity[]
+  source: EntityResolverSource
+} {
   const trimmed = query.trim()
   if (!trimmed) {
     throw new ActionableError('Hyperliquid coin query cannot be empty.', [

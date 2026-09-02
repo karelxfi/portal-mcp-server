@@ -1,19 +1,17 @@
 import type { McpServer } from '@modelcontextprotocol/server'
-
-import { registerPortalTool } from '../../helpers/mcp-registration.js'
 import { z } from 'zod'
 
 import { getDatasets } from '../../cache/datasets.js'
 import { detectChainType } from '../../helpers/chain.js'
 import { formatResult } from '../../helpers/format.js'
+import { registerPortalTool } from '../../helpers/mcp-registration.js'
 import {
   buildPaginationInfo,
   decodeOffsetPageCursor,
   encodeOffsetPageCursor,
   paginateOffsetItems,
 } from '../../helpers/pagination.js'
-import { buildExecutionMetadata } from '../../helpers/tool-ux.js'
-import { buildToolDescription } from '../../helpers/tool-ux.js'
+import { buildExecutionMetadata, buildToolDescription } from '../../helpers/tool-ux.js'
 
 // ============================================================================
 // Tool: List Datasets
@@ -28,11 +26,15 @@ type ListNetworksCursorRequest = {
 }
 
 export function registerListDatasetsTool(server: McpServer) {
-  registerPortalTool(server,
+  registerPortalTool(
+    server,
     'portal_list_networks',
     buildToolDescription('portal_list_networks'),
     {
-      vm: z.enum(['evm', 'tron', 'solana', 'bitcoin', 'substrate', 'hyperliquid']).optional().describe('Filter by VM family'),
+      vm: z
+        .enum(['evm', 'tron', 'solana', 'bitcoin', 'substrate', 'hyperliquid'])
+        .optional()
+        .describe('Filter by VM family'),
       network_type: z.enum(['mainnet', 'testnet', 'devnet']).optional().describe('Filter by network type'),
       query: z.string().optional().describe('Search by name, alias, or chain ID'),
       real_time_only: z.boolean().optional().describe('Only show networks with a real-time indexed head'),
@@ -81,10 +83,22 @@ export function registerListDatasetsTool(server: McpServer) {
           // Heuristic: infer from dataset name
           const name = d.dataset.toLowerCase()
           if (network_type === 'mainnet') {
-            return name.includes('mainnet') || (!name.includes('testnet') && !name.includes('devnet') && !name.includes('sepolia') && !name.includes('holesky') && !name.includes('goerli'))
+            return (
+              name.includes('mainnet') ||
+              (!name.includes('testnet') &&
+                !name.includes('devnet') &&
+                !name.includes('sepolia') &&
+                !name.includes('holesky') &&
+                !name.includes('goerli'))
+            )
           }
           if (network_type === 'testnet') {
-            return name.includes('testnet') || name.includes('sepolia') || name.includes('holesky') || name.includes('goerli')
+            return (
+              name.includes('testnet') ||
+              name.includes('sepolia') ||
+              name.includes('holesky') ||
+              name.includes('goerli')
+            )
           }
           if (network_type === 'devnet') {
             return name.includes('devnet')
@@ -118,12 +132,21 @@ export function registerListDatasetsTool(server: McpServer) {
         // Infer correct network type (Portal metadata has bugs)
         const name = d.dataset.toLowerCase()
         let inferredType = d.metadata?.type
-        if (name.includes('testnet') || name.includes('sepolia') || name.includes('holesky') || name.includes('goerli')) {
+        if (
+          name.includes('testnet') ||
+          name.includes('sepolia') ||
+          name.includes('holesky') ||
+          name.includes('goerli')
+        ) {
           inferredType = 'testnet'
         } else if (name.includes('devnet')) {
           inferredType = 'devnet'
-        } else if (name.includes('mainnet') || name.includes('-fills') || name.includes('-replica-cmds') ||
-          (!name.includes('testnet') && !name.includes('devnet'))) {
+        } else if (
+          name.includes('mainnet') ||
+          name.includes('-fills') ||
+          name.includes('-replica-cmds') ||
+          (!name.includes('testnet') && !name.includes('devnet'))
+        ) {
           // If name doesn't contain testnet/devnet keywords, assume mainnet
           // This catches datasets like "arbitrum-one", "arbitrum-nova", etc.
           inferredType = 'mainnet'
@@ -131,10 +154,7 @@ export function registerListDatasetsTool(server: McpServer) {
         return {
           network: d.dataset,
           aliases: d.aliases.length > 0 ? d.aliases : undefined,
-          vm:
-            kind === 'hyperliquidFills' || kind === 'hyperliquidReplicaCmds'
-              ? 'hyperliquid'
-              : kind,
+          vm: kind === 'hyperliquidFills' || kind === 'hyperliquidReplicaCmds' ? 'hyperliquid' : kind,
           type: inferredType,
           chain_id: d.metadata?.evm?.chain_id,
           display_name: d.metadata?.display_name,
@@ -160,31 +180,35 @@ export function registerListDatasetsTool(server: McpServer) {
           ? `Found ${totalAvailable} matching networks (showing ${pageStart}-${pageEnd}).${hasMore ? ' Continue with _pagination.next_cursor to see more.' : ''}`
           : `Found ${pageItems.length} network${pageItems.length === 1 ? '' : 's'}.`
 
-      return formatResult({
-        items: pageItems,
-        total_matching: totalAvailable,
-        page_offset: currentOffset,
-      }, message, {
-        toolName: 'portal_list_networks',
-        pagination: buildPaginationInfo(limit, pageItems.length, nextCursor),
-        ordering: {
-          kind: 'catalog',
-          page_order: 'portal_catalog_order',
-          sorted_by: 'portal_catalog',
-          direction: 'asc',
-          continuation: nextCursor ? 'next_page' : 'none',
-        },
-        coverage: {
-          kind: 'catalog_page',
-          result_complete: !hasMore,
-          continuation: hasMore ? 'cursor' : 'none',
-          returned_items: pageItems.length,
+      return formatResult(
+        {
+          items: pageItems,
           total_matching: totalAvailable,
+          page_offset: currentOffset,
         },
-        execution: buildExecutionMetadata({
-          limit,
-        }),
-      })
+        message,
+        {
+          toolName: 'portal_list_networks',
+          pagination: buildPaginationInfo(limit, pageItems.length, nextCursor),
+          ordering: {
+            kind: 'catalog',
+            page_order: 'portal_catalog_order',
+            sorted_by: 'portal_catalog',
+            direction: 'asc',
+            continuation: nextCursor ? 'next_page' : 'none',
+          },
+          coverage: {
+            kind: 'catalog_page',
+            result_complete: !hasMore,
+            continuation: hasMore ? 'cursor' : 'none',
+            returned_items: pageItems.length,
+            total_matching: totalAvailable,
+          },
+          execution: buildExecutionMetadata({
+            limit,
+          }),
+        },
+      )
     },
   )
 }

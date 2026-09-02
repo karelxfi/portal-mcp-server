@@ -56,7 +56,10 @@ function show(name: string) {
     payload: APP_FIXTURES[name] ?? null,
     rawText: '',
     loading: params.get('busy') === '1',
-    error: params.get('error') === '1' ? 'SQD is busy and could not start this follow-up inside the bounded wait budget.' : '',
+    error:
+      params.get('error') === '1'
+        ? 'SQD is busy and could not start this follow-up inside the bounded wait budget.'
+        : '',
     currentArgs: { duration: '24h' },
     displayMode: mode,
     availableDisplayModes: ['inline', 'fullscreen'],
@@ -69,9 +72,13 @@ function show(name: string) {
       if (intent === 'show_raw' && target) {
         const value = target
           .split('.')
-          .reduce<unknown>((current, key) => current && typeof current === 'object' && !Array.isArray(current)
-            ? (current as Record<string, unknown>)[key]
-            : undefined, state.payload)
+          .reduce<unknown>(
+            (current, key) =>
+              current && typeof current === 'object' && !Array.isArray(current)
+                ? (current as Record<string, unknown>)[key]
+                : undefined,
+            state.payload,
+          )
         const pre = document.querySelector<HTMLPreElement>('.sqd-raw pre')
         const details = document.querySelector<HTMLDetailsElement>('.sqd-raw')
         if (pre && details) {

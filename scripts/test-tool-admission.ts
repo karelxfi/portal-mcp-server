@@ -136,10 +136,14 @@ async function main() {
       new Promise<string>((_resolve, reject) => {
         const signal = getPortalRequestSignal()
         assert(signal !== undefined, 'shared work should expose its cancellation signal upstream')
-        signal.addEventListener('abort', () => {
-          sharedAbortObserved = true
-          reject(new RequestCancelledError())
-        }, { once: true })
+        signal.addEventListener(
+          'abort',
+          () => {
+            sharedAbortObserved = true
+            reject(new RequestCancelledError())
+          },
+          { once: true },
+        )
       }),
   )
   const abandonedWait = waitForSharedPortalWork(abandoned, finalCaller.signal)

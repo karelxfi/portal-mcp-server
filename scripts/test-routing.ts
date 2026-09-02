@@ -437,14 +437,28 @@ function scoreTool(
     !chartPrompt &&
     !summaryPrompt
   const investigationPrompt = promptTokens.some((token) =>
-    ['crime', 'evidence', 'exploit', 'forensic', 'hack', 'incident', 'investigate', 'investigation', 'stolen', 'suspicious', 'trace'].includes(token),
+    [
+      'crime',
+      'evidence',
+      'exploit',
+      'forensic',
+      'hack',
+      'incident',
+      'investigate',
+      'investigation',
+      'stolen',
+      'suspicious',
+      'trace',
+    ].includes(token),
   )
   const walletInvestigationPrompt =
     investigationPrompt && promptTokens.some((token) => ['account', 'address', 'wallet'].includes(token))
   const tokenTraceInvestigationPrompt =
-    investigationPrompt && promptTokens.some((token) => ['asset', 'movement', 'token', 'transfer', 'transfers', 'usdc'].includes(token))
+    investigationPrompt &&
+    promptTokens.some((token) => ['asset', 'movement', 'token', 'transfer', 'transfers', 'usdc'].includes(token))
   const rawTransactionInvestigationPrompt =
-    investigationPrompt && promptTokens.some((token) => ['exact', 'raw', 'transaction', 'transactions', 'tx', 'txs'].includes(token))
+    investigationPrompt &&
+    promptTokens.some((token) => ['exact', 'raw', 'transaction', 'transactions', 'tx', 'txs'].includes(token))
   const gasRankedTransactionPrompt =
     promptTokens.includes('gas') &&
     promptTokens.some((token) => ['biggest', 'largest', 'rank', 'ranked', 'top', 'used'].includes(token)) &&
@@ -476,8 +490,26 @@ function scoreTool(
       /\busdc transfers?\b/.test(promptLower) ||
       /\bnot all logs?\b/.test(promptLower))
   const entityResolvePrompt =
-    promptTokens.some((token) => ['address', 'coin', 'contract', 'identifier', 'mean', 'protocol', 'resolve', 'slug', 'symbol', 'ticker', 'token'].includes(token)) &&
-    promptTokens.some((token) => ['apes', 'bayc', 'bitcoin', 'bored', 'btc', 'dai', 'hyperliquid', 'pool', 'uniswap', 'usdc', 'weth'].includes(token)) &&
+    promptTokens.some((token) =>
+      [
+        'address',
+        'coin',
+        'contract',
+        'identifier',
+        'mean',
+        'protocol',
+        'resolve',
+        'slug',
+        'symbol',
+        'ticker',
+        'token',
+      ].includes(token),
+    ) &&
+    promptTokens.some((token) =>
+      ['apes', 'bayc', 'bitcoin', 'bored', 'btc', 'dai', 'hyperliquid', 'pool', 'uniswap', 'usdc', 'weth'].includes(
+        token,
+      ),
+    ) &&
     !promptTokens.some((token) =>
       [
         'event',

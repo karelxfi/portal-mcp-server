@@ -1,6 +1,4 @@
 import type { McpServer } from '@modelcontextprotocol/server'
-
-import { registerPortalTool } from '../../helpers/mcp-registration.js'
 import { z } from 'zod'
 
 import {
@@ -13,10 +11,12 @@ import {
 } from '../../helpers/entity-resolution.js'
 import { ActionableError } from '../../helpers/errors.js'
 import { formatResult } from '../../helpers/format.js'
+import { registerPortalTool } from '../../helpers/mcp-registration.js'
 import { buildExecutionMetadata, buildToolDescription } from '../../helpers/tool-ux.js'
 
 export function registerResolveEntityTool(server: McpServer) {
-  registerPortalTool(server,
+  registerPortalTool(
+    server,
     'portal_resolve_entity',
     buildToolDescription('portal_resolve_entity'),
     {
@@ -33,9 +33,7 @@ export function registerResolveEntityTool(server: McpServer) {
         .describe(
           'Entity kind to resolve: token, contract alias/address, pool identifier, protocol name, or Hyperliquid coin/ticker.',
         ),
-      query: z
-        .string()
-        .describe('Entity string to resolve, e.g. "USDC", "bayc", "uniswap", "BTC", or "0x...".'),
+      query: z.string().describe('Entity string to resolve, e.g. "USDC", "bayc", "uniswap", "BTC", or "0x...".'),
       limit: z.number().min(1).max(50).optional().default(10).describe('Maximum matches to return.'),
     },
     async ({ network, kind, query, limit }) => {
@@ -73,39 +71,29 @@ export function registerResolveEntityTool(server: McpServer) {
 
       const matches = result.matches
       const tokenAddresses =
-        effectiveKind === 'token'
-          ? matches.flatMap((match) => ('address' in match ? [match.address] : []))
-          : []
+        effectiveKind === 'token' ? matches.flatMap((match) => ('address' in match ? [match.address] : [])) : []
       const contractAddresses =
-        effectiveKind === 'contract'
-          ? matches.flatMap((match) => ('address' in match ? [match.address] : []))
-          : []
+        effectiveKind === 'contract' ? matches.flatMap((match) => ('address' in match ? [match.address] : [])) : []
       const poolIdentifiers =
-        effectiveKind === 'pool'
-          ? matches.flatMap((match) => ('identifier' in match ? [match.identifier] : []))
-          : []
+        effectiveKind === 'pool' ? matches.flatMap((match) => ('identifier' in match ? [match.identifier] : [])) : []
       const firstPoolMatch =
-        effectiveKind === 'pool' && matches[0] && 'identifier' in matches[0]
-          ? matches[0]
-          : undefined
-      const poolTokens = firstPoolMatch?.base_token && firstPoolMatch?.quote_token
-        ? [firstPoolMatch.base_token, firstPoolMatch.quote_token].sort((left, right) =>
-            left.address.toLowerCase().localeCompare(right.address.toLowerCase()),
-          )
-        : []
-      const inferredPoolSource = firstPoolMatch?.dex_id === 'uniswap' && firstPoolMatch.labels?.some((label) => label.toLowerCase() === 'v3')
-        ? 'uniswap_v3_swap'
-        : firstPoolMatch?.dex_id === 'uniswap' && firstPoolMatch.labels?.some((label) => label.toLowerCase() === 'v2')
-          ? 'uniswap_v2_swap'
-          : undefined
+        effectiveKind === 'pool' && matches[0] && 'identifier' in matches[0] ? matches[0] : undefined
+      const poolTokens =
+        firstPoolMatch?.base_token && firstPoolMatch?.quote_token
+          ? [firstPoolMatch.base_token, firstPoolMatch.quote_token].sort((left, right) =>
+              left.address.toLowerCase().localeCompare(right.address.toLowerCase()),
+            )
+          : []
+      const inferredPoolSource =
+        firstPoolMatch?.dex_id === 'uniswap' && firstPoolMatch.labels?.some((label) => label.toLowerCase() === 'v3')
+          ? 'uniswap_v3_swap'
+          : firstPoolMatch?.dex_id === 'uniswap' && firstPoolMatch.labels?.some((label) => label.toLowerCase() === 'v2')
+            ? 'uniswap_v2_swap'
+            : undefined
       const hyperliquidCoins =
-        effectiveKind === 'hyperliquid_coin'
-          ? matches.flatMap((match) => ('coin' in match ? [match.coin] : []))
-          : []
+        effectiveKind === 'hyperliquid_coin' ? matches.flatMap((match) => ('coin' in match ? [match.coin] : [])) : []
       const protocolSlugs =
-        effectiveKind === 'protocol'
-          ? matches.flatMap((match) => ('slug' in match ? [match.slug] : []))
-          : []
+        effectiveKind === 'protocol' ? matches.flatMap((match) => ('slug' in match ? [match.slug] : [])) : []
 
       const suggestedArguments =
         matches.length > 0
@@ -125,18 +113,23 @@ export function registerResolveEntityTool(server: McpServer) {
                 ? {
                     pool_address: poolIdentifiers.find((value) => value.length === 42),
                     pool_id: poolIdentifiers.find((value) => value.length === 66),
-                    ...(poolTokens[0] ? {
-                      token0_address: poolTokens[0].address,
-                      token0_symbol: poolTokens[0].symbol,
-                    } : {}),
-                    ...(poolTokens[1] ? {
-                      token1_address: poolTokens[1].address,
-                      token1_symbol: poolTokens[1].symbol,
-                    } : {}),
+                    ...(poolTokens[0]
+                      ? {
+                          token0_address: poolTokens[0].address,
+                          token0_symbol: poolTokens[0].symbol,
+                        }
+                      : {}),
+                    ...(poolTokens[1]
+                      ? {
+                          token1_address: poolTokens[1].address,
+                          token1_symbol: poolTokens[1].symbol,
+                        }
+                      : {}),
                     ...(inferredPoolSource ? { source: inferredPoolSource } : {}),
-                    note: firstPoolMatch?.validation_status === 'external_indexer_match'
-                      ? 'Use these pool and token arguments on portal_evm_get_ohlc. Token decimals are resolved from open token-list metadata.'
-                      : 'This identifier passed format validation only. Use the matching pool_address or pool_id field on pool-aware tools.',
+                    note:
+                      firstPoolMatch?.validation_status === 'external_indexer_match'
+                        ? 'Use these pool and token arguments on portal_evm_get_ohlc. Token decimals are resolved from open token-list metadata.'
+                        : 'This identifier passed format validation only. Use the matching pool_address or pool_id field on pool-aware tools.',
                   }
                 : effectiveKind === 'hyperliquid_coin'
                   ? {
@@ -178,7 +171,9 @@ export function registerResolveEntityTool(server: McpServer) {
         }
       }
       if (effectiveKind === 'hyperliquid_coin' && matches.length > 0) {
-        notices.push('Hyperliquid coin resolution normalizes ticker/name input but does not validate current market listing.')
+        notices.push(
+          'Hyperliquid coin resolution normalizes ticker/name input but does not validate current market listing.',
+        )
       }
 
       return formatResult(

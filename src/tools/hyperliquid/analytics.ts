@@ -1,29 +1,27 @@
 import type { McpServer } from '@modelcontextprotocol/server'
-
-import { registerPortalTool } from '../../helpers/mcp-registration.js'
 import { z } from 'zod'
 
 import { resolveDataset, validateBlockRange } from '../../cache/datasets.js'
 import { buildTableDescriptor } from '../../helpers/chart-metadata.js'
 import { ActionableError } from '../../helpers/errors.js'
-import { formatResult } from '../../helpers/format.js'
-import { formatUSD, formatNumber, formatPct, shortenAddress } from '../../helpers/format.js'
+import { formatNumber, formatPct, formatResult, formatUSD, shortenAddress } from '../../helpers/format.js'
 import { hashString53 } from '../../helpers/hash.js'
+import { registerPortalTool } from '../../helpers/mcp-registration.js'
 import { buildPaginationInfo, decodeCursor, encodeCursor } from '../../helpers/pagination.js'
 import {
+  type SharedPortalWork,
   getPortalRequestSignal,
   runAsSharedPortalWork,
-  type SharedPortalWork,
   waitForSharedPortalWork,
 } from '../../helpers/request-context.js'
-import { buildAnalysisCoverage, buildQueryFreshness } from '../../helpers/result-metadata.js'
 import type { ResponseFormat } from '../../helpers/response-modes.js'
+import { buildAnalysisCoverage, buildQueryFreshness } from '../../helpers/result-metadata.js'
 import { buildPercentileSummary } from '../../helpers/statistics.js'
 import {
-  resolveTimeframeOrBlocks,
   type BlockAtTimestampResult,
   type EstimatedTimeframeResolution,
   type TimestampInput,
+  resolveTimeframeOrBlocks,
 } from '../../helpers/timeframe.js'
 import { buildExecutionMetadata, buildToolDescription } from '../../helpers/tool-ux.js'
 import { buildMetricCard, buildPortalUi, buildRankedBarsPanel, buildTablePanel } from '../../helpers/ui-metadata.js'
@@ -125,13 +123,12 @@ function setCachedHyperliquidAnalyticsResult(
   })
 
   if (hyperliquidAnalyticsCache.size > HYPERLIQUID_ANALYTICS_CACHE_MAX_ENTRIES) {
-    const oldestEntry = Array.from(hyperliquidAnalyticsCache.entries()).reduce<[string, CachedHyperliquidAnalyticsResult] | undefined>(
-      (oldest, entry) => {
-        if (!oldest || entry[1].cachedAt < oldest[1].cachedAt) return entry
-        return oldest
-      },
-      undefined,
-    )
+    const oldestEntry = Array.from(hyperliquidAnalyticsCache.entries()).reduce<
+      [string, CachedHyperliquidAnalyticsResult] | undefined
+    >((oldest, entry) => {
+      if (!oldest || entry[1].cachedAt < oldest[1].cachedAt) return entry
+      return oldest
+    }, undefined)
     if (oldestEntry) hyperliquidAnalyticsCache.delete(oldestEntry[0])
   }
 }
@@ -237,81 +234,110 @@ function decorateHyperliquidAnalyticsPresentation(response: Record<string, any>)
   const tables = []
 
   if (Array.isArray(response.volume_by_coin)) {
-    tables.push(buildTableDescriptor({
-      id: 'volume_by_coin',
-      dataKey: 'volume_by_coin',
-      rowCount: response.volume_by_coin.length,
-      title: 'Volume by coin',
-      subtitle: 'Ranked by notional USD volume',
-      keyField: 'coin',
-      defaultSort: { key: 'rank', direction: 'asc' },
-      dense: true,
-      columns: [
-        { key: 'rank', label: 'Rank', kind: 'rank', format: 'integer', align: 'right' },
-        { key: 'coin', label: 'Coin', kind: 'dimension' },
-        { key: 'volume_usd', label: 'Volume', kind: 'metric', format: 'currency_usd', unit: 'USD', align: 'right' },
-        { key: 'fill_count', label: 'Fills', kind: 'metric', format: 'integer', align: 'right' },
-        { key: 'unique_traders', label: 'Traders', kind: 'metric', format: 'integer', align: 'right' },
-      ],
-    }))
+    tables.push(
+      buildTableDescriptor({
+        id: 'volume_by_coin',
+        dataKey: 'volume_by_coin',
+        rowCount: response.volume_by_coin.length,
+        title: 'Volume by coin',
+        subtitle: 'Ranked by notional USD volume',
+        keyField: 'coin',
+        defaultSort: { key: 'rank', direction: 'asc' },
+        dense: true,
+        columns: [
+          { key: 'rank', label: 'Rank', kind: 'rank', format: 'integer', align: 'right' },
+          { key: 'coin', label: 'Coin', kind: 'dimension' },
+          { key: 'volume_usd', label: 'Volume', kind: 'metric', format: 'currency_usd', unit: 'USD', align: 'right' },
+          { key: 'fill_count', label: 'Fills', kind: 'metric', format: 'integer', align: 'right' },
+          { key: 'unique_traders', label: 'Traders', kind: 'metric', format: 'integer', align: 'right' },
+        ],
+      }),
+    )
   }
 
   if (Array.isArray(response.top_traders_by_volume)) {
-    tables.push(buildTableDescriptor({
-      id: 'top_traders_by_volume',
-      dataKey: 'top_traders_by_volume',
-      rowCount: response.top_traders_by_volume.length,
-      title: 'Top traders by volume',
-      subtitle: 'Ranked by notional USD volume',
-      keyField: 'user',
-      defaultSort: { key: 'rank', direction: 'asc' },
-      dense: true,
-      columns: [
-        { key: 'rank', label: 'Rank', kind: 'rank', format: 'integer', align: 'right' },
-        { key: 'user_short', label: 'Trader', kind: 'dimension' },
-        { key: 'volume_usd', label: 'Volume', kind: 'metric', format: 'currency_usd', unit: 'USD', align: 'right' },
-        { key: 'fill_count', label: 'Fills', kind: 'metric', format: 'integer', align: 'right' },
-        { key: 'realized_pnl', label: 'Realized PnL', kind: 'metric', format: 'currency_usd', unit: 'USD', align: 'right' },
-      ],
-    }))
+    tables.push(
+      buildTableDescriptor({
+        id: 'top_traders_by_volume',
+        dataKey: 'top_traders_by_volume',
+        rowCount: response.top_traders_by_volume.length,
+        title: 'Top traders by volume',
+        subtitle: 'Ranked by notional USD volume',
+        keyField: 'user',
+        defaultSort: { key: 'rank', direction: 'asc' },
+        dense: true,
+        columns: [
+          { key: 'rank', label: 'Rank', kind: 'rank', format: 'integer', align: 'right' },
+          { key: 'user_short', label: 'Trader', kind: 'dimension' },
+          { key: 'volume_usd', label: 'Volume', kind: 'metric', format: 'currency_usd', unit: 'USD', align: 'right' },
+          { key: 'fill_count', label: 'Fills', kind: 'metric', format: 'integer', align: 'right' },
+          {
+            key: 'realized_pnl',
+            label: 'Realized PnL',
+            kind: 'metric',
+            format: 'currency_usd',
+            unit: 'USD',
+            align: 'right',
+          },
+        ],
+      }),
+    )
   }
 
   if (Array.isArray(response.top_pnl_winners)) {
-    tables.push(buildTableDescriptor({
-      id: 'top_pnl_winners',
-      dataKey: 'top_pnl_winners',
-      rowCount: response.top_pnl_winners.length,
-      title: 'Top PnL winners',
-      subtitle: 'Highest realized PnL over the selected window',
-      keyField: 'user',
-      defaultSort: { key: 'rank', direction: 'asc' },
-      dense: true,
-      columns: [
-        { key: 'rank', label: 'Rank', kind: 'rank', format: 'integer', align: 'right' },
-        { key: 'user_short', label: 'Trader', kind: 'dimension' },
-        { key: 'realized_pnl', label: 'Realized PnL', kind: 'metric', format: 'currency_usd', unit: 'USD', align: 'right' },
-        { key: 'volume_usd', label: 'Volume', kind: 'metric', format: 'currency_usd', unit: 'USD', align: 'right' },
-      ],
-    }))
+    tables.push(
+      buildTableDescriptor({
+        id: 'top_pnl_winners',
+        dataKey: 'top_pnl_winners',
+        rowCount: response.top_pnl_winners.length,
+        title: 'Top PnL winners',
+        subtitle: 'Highest realized PnL over the selected window',
+        keyField: 'user',
+        defaultSort: { key: 'rank', direction: 'asc' },
+        dense: true,
+        columns: [
+          { key: 'rank', label: 'Rank', kind: 'rank', format: 'integer', align: 'right' },
+          { key: 'user_short', label: 'Trader', kind: 'dimension' },
+          {
+            key: 'realized_pnl',
+            label: 'Realized PnL',
+            kind: 'metric',
+            format: 'currency_usd',
+            unit: 'USD',
+            align: 'right',
+          },
+          { key: 'volume_usd', label: 'Volume', kind: 'metric', format: 'currency_usd', unit: 'USD', align: 'right' },
+        ],
+      }),
+    )
   }
 
   if (Array.isArray(response.top_pnl_losers)) {
-    tables.push(buildTableDescriptor({
-      id: 'top_pnl_losers',
-      dataKey: 'top_pnl_losers',
-      rowCount: response.top_pnl_losers.length,
-      title: 'Top PnL losers',
-      subtitle: 'Lowest realized PnL over the selected window',
-      keyField: 'user',
-      defaultSort: { key: 'rank', direction: 'asc' },
-      dense: true,
-      columns: [
-        { key: 'rank', label: 'Rank', kind: 'rank', format: 'integer', align: 'right' },
-        { key: 'user_short', label: 'Trader', kind: 'dimension' },
-        { key: 'realized_pnl', label: 'Realized PnL', kind: 'metric', format: 'currency_usd', unit: 'USD', align: 'right' },
-        { key: 'volume_usd', label: 'Volume', kind: 'metric', format: 'currency_usd', unit: 'USD', align: 'right' },
-      ],
-    }))
+    tables.push(
+      buildTableDescriptor({
+        id: 'top_pnl_losers',
+        dataKey: 'top_pnl_losers',
+        rowCount: response.top_pnl_losers.length,
+        title: 'Top PnL losers',
+        subtitle: 'Lowest realized PnL over the selected window',
+        keyField: 'user',
+        defaultSort: { key: 'rank', direction: 'asc' },
+        dense: true,
+        columns: [
+          { key: 'rank', label: 'Rank', kind: 'rank', format: 'integer', align: 'right' },
+          { key: 'user_short', label: 'Trader', kind: 'dimension' },
+          {
+            key: 'realized_pnl',
+            label: 'Realized PnL',
+            kind: 'metric',
+            format: 'currency_usd',
+            unit: 'USD',
+            align: 'right',
+          },
+          { key: 'volume_usd', label: 'Volume', kind: 'metric', format: 'currency_usd', unit: 'USD', align: 'right' },
+        ],
+      }),
+    )
   }
 
   const ui = buildPortalUi({
@@ -324,48 +350,76 @@ function decorateHyperliquidAnalyticsPresentation(response: Record<string, any>)
       subtitle: 'Cards for the market snapshot plus ranked sections for coins, traders, and realized PnL.',
     },
     metric_cards: [
-      buildMetricCard({ id: 'total-fills', label: 'Fills', value_path: 'overview.total_fills', format: 'integer', emphasis: 'primary' }),
-      buildMetricCard({ id: 'unique-traders', label: 'Unique traders', value_path: 'overview.unique_traders', format: 'integer' }),
-      buildMetricCard({ id: 'total-volume', label: 'Volume', value_path: 'overview.total_volume_usd', format: 'currency_usd', unit: 'USD' }),
-      buildMetricCard({ id: 'liquidations', label: 'Liquidations', value_path: 'liquidations.count', format: 'integer' }),
+      buildMetricCard({
+        id: 'total-fills',
+        label: 'Fills',
+        value_path: 'overview.total_fills',
+        format: 'integer',
+        emphasis: 'primary',
+      }),
+      buildMetricCard({
+        id: 'unique-traders',
+        label: 'Unique traders',
+        value_path: 'overview.unique_traders',
+        format: 'integer',
+      }),
+      buildMetricCard({
+        id: 'total-volume',
+        label: 'Volume',
+        value_path: 'overview.total_volume_usd',
+        format: 'currency_usd',
+        unit: 'USD',
+      }),
+      buildMetricCard({
+        id: 'liquidations',
+        label: 'Liquidations',
+        value_path: 'liquidations.count',
+        format: 'integer',
+      }),
     ],
     panels: [
       ...(Array.isArray(response.volume_by_coin)
-        ? [buildRankedBarsPanel({
-            id: 'coin-volume-bars',
-            kind: 'ranked_bars_panel',
-            title: 'Volume by coin',
-            subtitle: 'Horizontal ranking by notional USD volume.',
-            data_key: 'volume_by_coin',
-            category_key: 'coin',
-            value_key: 'volume_usd',
-            rank_key: 'rank',
-            value_format: 'currency_usd',
-            unit: 'USD',
-            emphasis: 'primary',
-          })]
+        ? [
+            buildRankedBarsPanel({
+              id: 'coin-volume-bars',
+              kind: 'ranked_bars_panel',
+              title: 'Volume by coin',
+              subtitle: 'Horizontal ranking by notional USD volume.',
+              data_key: 'volume_by_coin',
+              category_key: 'coin',
+              value_key: 'volume_usd',
+              rank_key: 'rank',
+              value_format: 'currency_usd',
+              unit: 'USD',
+              emphasis: 'primary',
+            }),
+          ]
         : []),
       ...(Array.isArray(response.top_traders_by_volume)
-        ? [buildRankedBarsPanel({
-            id: 'trader-volume-bars',
-            kind: 'ranked_bars_panel',
-            title: 'Top traders by volume',
-            subtitle: 'Traders ranked by notional USD volume.',
-            data_key: 'top_traders_by_volume',
-            category_key: 'user_short',
-            value_key: 'volume_usd',
-            rank_key: 'rank',
-            value_format: 'currency_usd',
-            unit: 'USD',
-          })]
+        ? [
+            buildRankedBarsPanel({
+              id: 'trader-volume-bars',
+              kind: 'ranked_bars_panel',
+              title: 'Top traders by volume',
+              subtitle: 'Traders ranked by notional USD volume.',
+              data_key: 'top_traders_by_volume',
+              category_key: 'user_short',
+              value_key: 'volume_usd',
+              rank_key: 'rank',
+              value_format: 'currency_usd',
+              unit: 'USD',
+            }),
+          ]
         : []),
-      ...tables.map((table) => buildTablePanel({
-        id: `${table.id}-panel`,
-        kind: 'table_panel',
-        title: table.title ?? table.id,
-        subtitle: table.subtitle,
-        table_id: table.id,
-      })),
+      ...tables.map((table) =>
+        buildTablePanel({
+          id: `${table.id}-panel`,
+          kind: 'table_panel',
+          title: table.title ?? table.id,
+          subtitle: table.subtitle,
+          table_id: table.id,
+        }),
+      ),
     ],
     follow_up_actions: [
       { label: 'Show ranked rows', intent: 'show_raw', target: 'volume_by_coin' },
@@ -383,7 +437,8 @@ function decorateHyperliquidAnalyticsPresentation(response: Record<string, any>)
 }
 
 export function registerHyperliquidAnalyticsTool(server: McpServer) {
-  registerPortalTool(server,
+  registerPortalTool(
+    server,
     'portal_hyperliquid_get_analytics',
     buildToolDescription('portal_hyperliquid_get_analytics'),
     {
@@ -392,30 +447,34 @@ export function registerHyperliquidAnalyticsTool(server: McpServer) {
         .optional()
         .default('hyperliquid-fills')
         .describe("Network name (default: 'hyperliquid-fills')"),
-      timeframe: z
-        .string()
-        .optional()
-        .default('1h')
-        .describe("Time range: '1h', '6h', '24h'. Default: '1h'"),
+      timeframe: z.string().optional().default('1h').describe("Time range: '1h', '6h', '24h'. Default: '1h'"),
       mode: z
         .enum(['fast', 'deep'])
         .optional()
         .default('deep')
-        .describe('Execution depth. Defaults to complete requested-window analysis; the optional fast value is only for explicitly bounded previews.'),
+        .describe(
+          'Execution depth. Defaults to complete requested-window analysis; the optional fast value is only for explicitly bounded previews.',
+        ),
       from_timestamp: z
         .union([z.string(), z.number()])
         .optional()
-        .describe('Starting timestamp. Accepts Unix seconds, Unix milliseconds, ISO datetime, or relative input like "6h ago".'),
+        .describe(
+          'Starting timestamp. Accepts Unix seconds, Unix milliseconds, ISO datetime, or relative input like "6h ago".',
+        ),
       to_timestamp: z
         .union([z.string(), z.number()])
         .optional()
-        .describe('Ending timestamp. Accepts Unix seconds, Unix milliseconds, ISO datetime, or relative input like "now".'),
+        .describe(
+          'Ending timestamp. Accepts Unix seconds, Unix milliseconds, ISO datetime, or relative input like "now".',
+        ),
       coin: z.array(z.string()).optional().describe('Filter by asset symbols (e.g., ["BTC", "ETH"])'),
       response_format: z
         .enum(['full', 'compact', 'summary'])
         .optional()
         .default('compact')
-        .describe("Response format: 'summary' (smallest snapshot), 'compact' (chat-sized ranked sections, default), 'full' (complete analytics)."),
+        .describe(
+          "Response format: 'summary' (smallest snapshot), 'compact' (chat-sized ranked sections, default), 'full' (complete analytics).",
+        ),
       section_limit: z
         .number()
         .optional()
@@ -423,19 +482,35 @@ export function registerHyperliquidAnalyticsTool(server: McpServer) {
         .describe(`Per-section page size for ranked sections. Default: ${DEFAULT_ANALYTICS_SECTION_LIMIT}`),
       cursor: z.string().optional().describe('Continuation cursor for ranked analytics sections'),
     },
-    async ({ network, timeframe, mode, from_timestamp, to_timestamp, coin, response_format, section_limit, cursor }) => {
+    async ({
+      network,
+      timeframe,
+      mode,
+      from_timestamp,
+      to_timestamp,
+      coin,
+      response_format,
+      section_limit,
+      cursor,
+    }) => {
       const queryStartTime = Date.now()
-      const paginationCursor = cursor ? decodeCursor<HyperliquidAnalyticsCursor>(cursor, 'portal_hyperliquid_get_analytics') : undefined
+      const paginationCursor = cursor
+        ? decodeCursor<HyperliquidAnalyticsCursor>(cursor, 'portal_hyperliquid_get_analytics')
+        : undefined
       const requestedDataset = network ? await resolveDataset(network) : undefined
       let dataset = paginationCursor?.dataset ?? requestedDataset ?? 'hyperliquid-fills'
       if (paginationCursor && requestedDataset && paginationCursor.dataset !== requestedDataset) {
-        throw new ActionableError('This cursor belongs to a different dataset.', [
-          'Reuse the cursor with the same dataset as the previous response.',
-          'Omit cursor to start a fresh Hyperliquid analytics query.',
-        ], {
-          cursor_dataset: paginationCursor.dataset,
-          requested_dataset: requestedDataset,
-        })
+        throw new ActionableError(
+          'This cursor belongs to a different dataset.',
+          [
+            'Reuse the cursor with the same dataset as the previous response.',
+            'Omit cursor to start a fresh Hyperliquid analytics query.',
+          ],
+          {
+            cursor_dataset: paginationCursor.dataset,
+            requested_dataset: requestedDataset,
+          },
+        )
       }
       if (paginationCursor) {
         timeframe = paginationCursor.request.timeframe ?? timeframe
@@ -484,9 +559,7 @@ export function registerHyperliquidAnalyticsTool(server: McpServer) {
           : requestedBlockRange <= FAST_MODE_COMPLETE_WINDOW_BLOCKS
             ? requestedBlockRange
             : FAST_MODE_MAX_ANALYTICS_BLOCKS
-      const effectiveFrom = requestedBlockRange > maxAnalyticsBlocks
-        ? endBlock - maxAnalyticsBlocks + 1
-        : fromBlock
+      const effectiveFrom = requestedBlockRange > maxAnalyticsBlocks ? endBlock - maxAnalyticsBlocks + 1 : fromBlock
       const cacheKey = `${dataset}:${mode}:${timeframe ?? ''}:${String(from_timestamp ?? '')}:${String(to_timestamp ?? '')}:${(coin || []).join(',')}:${response_format}:${section_limit ?? ''}`
       const cached = !cursor ? getCachedHyperliquidAnalyticsResult(cacheKey) : undefined
 
@@ -496,58 +569,64 @@ export function registerHyperliquidAnalyticsTool(server: McpServer) {
           hit: true,
           age_ms: Date.now() - cached.cachedAt,
         }
-        const formattedCachedResponse = formatHyperliquidAnalyticsResponse(cachedResponse, response_format as ResponseFormat)
-        const presentation = decorateHyperliquidAnalyticsPresentation(formattedCachedResponse)
-        return formatResult(
-          presentation.response,
-          cached.summary,
-          {
-            toolName: 'portal_hyperliquid_get_analytics',
-            ordering: {
-              kind: 'sections',
-              volume_by_coin: { order: 'rank_ascending', sorted_by: 'volume_usd', direction: 'desc' },
-              top_traders_by_volume: { order: 'rank_ascending', sorted_by: 'volume_usd', direction: 'desc' },
-              top_pnl_winners: { order: 'rank_ascending', sorted_by: 'realized_pnl', direction: 'desc' },
-              top_pnl_losers: { order: 'rank_ascending', sorted_by: 'realized_pnl', direction: 'asc' },
-            },
-            pagination: cachedResponse._pagination,
-            freshness: buildQueryFreshness({
-              finality: 'latest',
-              headBlockNumber: head.number,
-              windowToBlock: endBlock,
-              resolvedWindow,
-            }),
-            coverage: buildAnalysisCoverage({
-              windowFromBlock: fromBlock,
-              windowToBlock: endBlock,
-              analyzedFromBlock: cached.fromBlock,
-              analyzedToBlock: endBlock,
-              hasMore: Boolean(cachedResponse._pagination?.has_more),
-            }),
-            execution: buildExecutionMetadata({
-              mode,
-              response_format,
-              from_block: cached.fromBlock,
-              to_block: endBlock,
-              range_kind: resolvedWindow.range_kind,
-              notes: ['Served from the short-lived Hyperliquid analytics cache.'],
-            }),
-            ui: presentation.ui,
-            llm: {
-              answer_sequence: ['overview', 'liquidations', 'volume_by_coin', 'top_traders_by_volume', 'top_pnl_winners', 'top_pnl_losers'],
-              parser_notes: [
-                'overview is the market snapshot; the ranked sections underneath are already ordered so the first row is the leader for that ranking.',
-                'Use volume_by_coin for market structure, top_traders_by_volume for concentration, and the PnL sections for realized winner or loser context.',
-              ],
-            },
-            metadata: {
-              dataset: cached.dataset,
-              from_block: cached.fromBlock,
-              to_block: cached.toBlock,
-              query_start_time: queryStartTime,
-            },
-          },
+        const formattedCachedResponse = formatHyperliquidAnalyticsResponse(
+          cachedResponse,
+          response_format as ResponseFormat,
         )
+        const presentation = decorateHyperliquidAnalyticsPresentation(formattedCachedResponse)
+        return formatResult(presentation.response, cached.summary, {
+          toolName: 'portal_hyperliquid_get_analytics',
+          ordering: {
+            kind: 'sections',
+            volume_by_coin: { order: 'rank_ascending', sorted_by: 'volume_usd', direction: 'desc' },
+            top_traders_by_volume: { order: 'rank_ascending', sorted_by: 'volume_usd', direction: 'desc' },
+            top_pnl_winners: { order: 'rank_ascending', sorted_by: 'realized_pnl', direction: 'desc' },
+            top_pnl_losers: { order: 'rank_ascending', sorted_by: 'realized_pnl', direction: 'asc' },
+          },
+          pagination: cachedResponse._pagination,
+          freshness: buildQueryFreshness({
+            finality: 'latest',
+            headBlockNumber: head.number,
+            windowToBlock: endBlock,
+            resolvedWindow,
+          }),
+          coverage: buildAnalysisCoverage({
+            windowFromBlock: fromBlock,
+            windowToBlock: endBlock,
+            analyzedFromBlock: cached.fromBlock,
+            analyzedToBlock: endBlock,
+            hasMore: Boolean(cachedResponse._pagination?.has_more),
+          }),
+          execution: buildExecutionMetadata({
+            mode,
+            response_format,
+            from_block: cached.fromBlock,
+            to_block: endBlock,
+            range_kind: resolvedWindow.range_kind,
+            notes: ['Served from the short-lived Hyperliquid analytics cache.'],
+          }),
+          ui: presentation.ui,
+          llm: {
+            answer_sequence: [
+              'overview',
+              'liquidations',
+              'volume_by_coin',
+              'top_traders_by_volume',
+              'top_pnl_winners',
+              'top_pnl_losers',
+            ],
+            parser_notes: [
+              'overview is the market snapshot; the ranked sections underneath are already ordered so the first row is the leader for that ranking.',
+              'Use volume_by_coin for market structure, top_traders_by_volume for concentration, and the PnL sections for realized winner or loser context.',
+            ],
+          },
+          metadata: {
+            dataset: cached.dataset,
+            from_block: cached.fromBlock,
+            to_block: cached.toBlock,
+            query_start_time: queryStartTime,
+          },
+        })
       }
 
       const loadFreshAnalytics = async () => {
@@ -579,10 +658,7 @@ export function registerHyperliquidAnalyticsTool(server: McpServer) {
         >()
 
         // Per-trader tracking (for top traders)
-        const traderData = new Map<
-          string,
-          { fills: number; volume: number; pnl: number; coins: Set<string> }
-        >()
+        const traderData = new Map<string, { fills: number; volume: number; pnl: number; coins: Set<string> }>()
 
         const { chunksFetched, chunkSizeReduced } = await visitHyperliquidFillBlocks({
           dataset,
@@ -600,7 +676,9 @@ export function registerHyperliquidAnalyticsTool(server: McpServer) {
           },
           initialChunkSize: Math.min(
             maxAnalyticsBlocks,
-            mode === 'deep' ? HYPERLIQUID_ANALYTICS_DEEP_INITIAL_CHUNK_SIZE : HYPERLIQUID_ANALYTICS_FAST_INITIAL_CHUNK_SIZE,
+            mode === 'deep'
+              ? HYPERLIQUID_ANALYTICS_DEEP_INITIAL_CHUNK_SIZE
+              : HYPERLIQUID_ANALYTICS_FAST_INITIAL_CHUNK_SIZE,
           ),
           maxBytes: 150 * 1024 * 1024,
           concurrency: 2,
@@ -630,7 +708,17 @@ export function registerHyperliquidAnalyticsTool(server: McpServer) {
 
               let cd = coinData.get(coinKey)
               if (!cd) {
-                cd = { fills: 0, volume: 0, traders: new Set<number>(), pnl: 0, fees: 0, longs: 0, shorts: 0, liquidations: 0, liqVolume: 0 }
+                cd = {
+                  fills: 0,
+                  volume: 0,
+                  traders: new Set<number>(),
+                  pnl: 0,
+                  fees: 0,
+                  longs: 0,
+                  shorts: 0,
+                  liquidations: 0,
+                  liqVolume: 0,
+                }
                 coinData.set(coinKey, cd)
               }
               cd.fills += 1
@@ -703,7 +791,11 @@ export function registerHyperliquidAnalyticsTool(server: McpServer) {
           }))
 
         const topWinners = Array.from(traderData.entries())
-          .map(([user, d]) => ({ user, realized_pnl: parseFloat(d.pnl.toFixed(2)), volume_usd: parseFloat(d.volume.toFixed(2)) }))
+          .map(([user, d]) => ({
+            user,
+            realized_pnl: parseFloat(d.pnl.toFixed(2)),
+            volume_usd: parseFloat(d.volume.toFixed(2)),
+          }))
           .sort((a, b) => b.realized_pnl - a.realized_pnl)
           .map((item, i) => ({
             rank: i + 1,
@@ -713,7 +805,11 @@ export function registerHyperliquidAnalyticsTool(server: McpServer) {
           }))
 
         const topLosers = Array.from(traderData.entries())
-          .map(([user, d]) => ({ user, realized_pnl: parseFloat(d.pnl.toFixed(2)), volume_usd: parseFloat(d.volume.toFixed(2)) }))
+          .map(([user, d]) => ({
+            user,
+            realized_pnl: parseFloat(d.pnl.toFixed(2)),
+            volume_usd: parseFloat(d.volume.toFixed(2)),
+          }))
           .sort((a, b) => a.realized_pnl - b.realized_pnl)
           .map((item, i) => ({
             rank: i + 1,
@@ -808,14 +904,19 @@ export function registerHyperliquidAnalyticsTool(server: McpServer) {
 
         const notices =
           effectiveFrom > fromBlock
-            ? [`Analyzed the most recent ${maxAnalyticsBlocks.toLocaleString()} blocks because the requested window exceeds the current Hyperliquid analytics scan budget.`]
+            ? [
+                `Analyzed the most recent ${maxAnalyticsBlocks.toLocaleString()} blocks because the requested window exceeds the current Hyperliquid analytics scan budget.`,
+              ]
             : undefined
         if (chunksFetched > 1) response._chunks_fetched = chunksFetched
         if (chunkSizeReduced) response._chunk_size_reduced = true
         response._pagination = {
           ...buildPaginationInfo(
             Math.max(volumePageSize, traderPageSize, pnlPageSize),
-            (response.volume_by_coin?.length ?? 0) + (response.top_traders_by_volume?.length ?? 0) + (response.top_pnl_winners?.length ?? 0) + (response.top_pnl_losers?.length ?? 0),
+            (response.volume_by_coin?.length ?? 0) +
+              (response.top_traders_by_volume?.length ?? 0) +
+              (response.top_pnl_winners?.length ?? 0) +
+              (response.top_pnl_losers?.length ?? 0),
             nextCursor,
           ),
           sections: {
@@ -901,11 +1002,20 @@ export function registerHyperliquidAnalyticsTool(server: McpServer) {
             from_block: freshAnalytics.effectiveFrom,
             to_block: endBlock,
             range_kind: resolvedWindow.range_kind,
-            notes: [coin?.length ? `Coin filter active for ${coin.join(', ')}.` : 'Network-wide Hyperliquid fill analytics.'],
+            notes: [
+              coin?.length ? `Coin filter active for ${coin.join(', ')}.` : 'Network-wide Hyperliquid fill analytics.',
+            ],
           }),
           ui: decorateHyperliquidAnalyticsPresentation(freshAnalytics.formattedResponse).ui,
           llm: {
-            answer_sequence: ['overview', 'liquidations', 'volume_by_coin', 'top_traders_by_volume', 'top_pnl_winners', 'top_pnl_losers'],
+            answer_sequence: [
+              'overview',
+              'liquidations',
+              'volume_by_coin',
+              'top_traders_by_volume',
+              'top_pnl_winners',
+              'top_pnl_losers',
+            ],
             parser_notes: [
               'overview is the market snapshot; the ranked sections underneath are already ordered so the first row is the leader for that ranking.',
               'Use volume_by_coin for market structure, top_traders_by_volume for concentration, and the PnL sections for realized winner or loser context.',

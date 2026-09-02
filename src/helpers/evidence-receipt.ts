@@ -258,16 +258,18 @@ function completeness(payload: JsonRecord): {
 export function buildEvidenceReceipt(toolName: string, toolArgs: JsonRecord, payload: JsonRecord): EvidenceReceipt {
   const normalizedArgs = normalizeEvidenceArguments(toolArgs)
   const meta = isRecord(payload._meta) ? payload._meta : {}
-  const dataset = typeof normalizedArgs.dataset === 'string'
-    ? normalizedArgs.dataset
-    : typeof meta.dataset === 'string'
-      ? meta.dataset
-      : undefined
-  const network = typeof normalizedArgs.network === 'string'
-    ? normalizedArgs.network
-    : typeof meta.network === 'string'
-      ? meta.network
-      : undefined
+  const dataset =
+    typeof normalizedArgs.dataset === 'string'
+      ? normalizedArgs.dataset
+      : typeof meta.dataset === 'string'
+        ? meta.dataset
+        : undefined
+  const network =
+    typeof normalizedArgs.network === 'string'
+      ? normalizedArgs.network
+      : typeof meta.network === 'string'
+        ? meta.network
+        : undefined
   const evidence = primaryEvidence(payload)
   const completion = completeness(payload)
   const exactPayload = exactEvidencePayload(payload)

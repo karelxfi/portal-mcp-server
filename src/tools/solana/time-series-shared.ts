@@ -3,7 +3,12 @@ import { PORTAL_URL } from '../../constants/index.js'
 import { portalFetchStream, portalFetchStreamVisit } from '../../helpers/fetch.js'
 import { formatDuration, formatNumber, formatTimestamp } from '../../helpers/format.js'
 import { hashString53 } from '../../helpers/hash.js'
-import { parseTimeframeToSeconds, resolveTimeframeOrBlocks, type ResolvedBlockWindow, type TimestampInput } from '../../helpers/timeframe.js'
+import {
+  type ResolvedBlockWindow,
+  type TimestampInput,
+  parseTimeframeToSeconds,
+  resolveTimeframeOrBlocks,
+} from '../../helpers/timeframe.js'
 
 export type SolanaTimeSeriesMetric =
   | 'tps'
@@ -199,17 +204,19 @@ export async function computeSolanaTimeSeries({
   to_timestamp,
   resolved_window,
 }: ComputeSolanaTimeSeriesOptions): Promise<SolanaTimeSeriesResult> {
-  const resolvedWindow = resolved_window ?? await resolveTimeframeOrBlocks({
-    dataset,
-    ...(from_timestamp !== undefined || to_timestamp !== undefined
-      ? {
-          from_timestamp,
-          to_timestamp,
-        }
-      : {
-          timeframe: duration,
-        }),
-  })
+  const resolvedWindow =
+    resolved_window ??
+    (await resolveTimeframeOrBlocks({
+      dataset,
+      ...(from_timestamp !== undefined || to_timestamp !== undefined
+        ? {
+            from_timestamp,
+            to_timestamp,
+          }
+        : {
+            timeframe: duration,
+          }),
+    }))
 
   const { from_block: fromBlock, to_block: toBlock } = resolvedWindow
 
@@ -228,7 +235,7 @@ export async function computeSolanaTimeSeries({
   if (slotRange > 250000) {
     throw new Error(
       `Slot range too large for Solana time series (${slotRange.toLocaleString()} slots, max 250k). ` +
-      `Use a shorter duration (e.g., '1h', '6h', or '24h') or a larger interval.`,
+        `Use a shorter duration (e.g., '1h', '6h', or '24h') or a larger interval.`,
     )
   }
 
@@ -243,10 +250,7 @@ export async function computeSolanaTimeSeries({
   const includeAllBlocks = metric === 'tps' || metric === 'slots_per_hour'
 
   const transactionFields = buildTransactionFields(metric)
-  const initialChunkSize = Math.min(
-    CHUNK_SIZE_BY_METRIC[metric],
-    Math.max(1, slotRange + 1),
-  )
+  const initialChunkSize = Math.min(CHUNK_SIZE_BY_METRIC[metric], Math.max(1, slotRange + 1))
   const initialRanges = buildInitialRanges(effectiveFrom, endBlock, initialChunkSize)
   const concurrency = CONCURRENCY_BY_METRIC[metric]
 

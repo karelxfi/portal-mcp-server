@@ -1,6 +1,4 @@
 import type { McpServer } from '@modelcontextprotocol/server'
-
-import { registerPortalTool } from '../../helpers/mcp-registration.js'
 import { z } from 'zod'
 
 import { resolveDataset, validateBlockRange } from '../../cache/datasets.js'
@@ -11,19 +9,18 @@ import {
   scanBoundedBlockRange,
 } from '../../helpers/bounded-search.js'
 import { detectChainType } from '../../helpers/chain.js'
-import { formatTokenValue } from '../../helpers/format.js'
 import {
+  type TokenListLookupMetadata,
   type TokenSymbolResolution,
   buildTokenListLookupNotices,
   getTokenMetadataMapForDatasetWithStatus,
-  type TokenListLookupMetadata,
   resolveTokenSymbolsForQuery,
 } from '../../helpers/entity-resolution.js'
 import { ActionableError, RequestCancelledError, createUnsupportedChainError } from '../../helpers/errors.js'
 import { portalFetchRecentRecords, portalFetchStreamRange } from '../../helpers/fetch.js'
 import { buildEvmLogFields } from '../../helpers/fields.js'
-import { formatResult } from '../../helpers/format.js'
-import { formatTimestamp } from '../../helpers/format.js'
+import { formatResult, formatTimestamp, formatTokenValue } from '../../helpers/format.js'
+import { registerPortalTool } from '../../helpers/mcp-registration.js'
 import { normalizeErc20TransferResult } from '../../helpers/normalized-results.js'
 import {
   buildPaginationInfo,
@@ -87,9 +84,18 @@ export function registerGetErc20TransfersTool(server: McpServer) {
         layout: 'split',
         density: 'compact',
         design_intent: 'activity_investigator',
-        headline: { title: 'Token transfers', subtitle: 'Exact onchain asset movements with full identifiers and units.' },
+        headline: {
+          title: 'Token transfers',
+          subtitle: 'Exact onchain asset movements with full identifiers and units.',
+        },
         metric_cards: [
-          buildMetricCard({ id: 'visible-transfers', label: 'Visible transfers', value_path: 'page_summary.visible_transfers', format: 'integer', emphasis: 'primary' }),
+          buildMetricCard({
+            id: 'visible-transfers',
+            label: 'Visible transfers',
+            value_path: 'page_summary.visible_transfers',
+            format: 'integer',
+            emphasis: 'primary',
+          }),
         ],
         panels: [
           buildTimelinePanel({
@@ -106,7 +112,9 @@ export function registerGetErc20TransfersTool(server: McpServer) {
           }),
         ],
         follow_up_actions: [
-          ...(nextCursor ? [{ label: 'Load older transfers', intent: 'continue' as const, target: '_pagination.next_cursor' }] : []),
+          ...(nextCursor
+            ? [{ label: 'Load older transfers', intent: 'continue' as const, target: '_pagination.next_cursor' }]
+            : []),
           { label: 'Show raw rows', intent: 'show_raw', target: 'items' },
         ],
       }),
@@ -187,17 +195,15 @@ export function registerGetErc20TransfersTool(server: McpServer) {
         }, 0)
         return chunk
       },
-      mergeChunkItems:
-        scanOrder === 'latest'
-          ? (existing, chunk) => [...chunk, ...existing]
-          : undefined,
+      mergeChunkItems: scanOrder === 'latest' ? (existing, chunk) => [...chunk, ...existing] : undefined,
     })
     records.push(...scan.items)
 
     return { ...scan, records, hasMore: matchedLogs > limit }
   }
 
-  registerPortalTool(server,
+  registerPortalTool(
+    server,
     'portal_evm_query_token_transfers',
     buildToolDescription('portal_evm_query_token_transfers'),
     {

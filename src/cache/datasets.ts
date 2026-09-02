@@ -61,9 +61,7 @@ export async function getDatasets(): Promise<Dataset[]> {
   }
 
   return dedupe('datasets', async () => {
-    const data = await portalFetch<Dataset[]>(
-      `${PORTAL_URL}/datasets?expand%5B%5D=metadata&expand%5B%5D=schema`,
-    )
+    const data = await portalFetch<Dataset[]>(`${PORTAL_URL}/datasets?expand%5B%5D=metadata&expand%5B%5D=schema`)
     rememberDatasetKinds(data)
     datasetsCache = { data, timestamp: Date.now() }
     return data
@@ -143,9 +141,21 @@ export async function getChainType(dataset: string): Promise<ChainType> {
 export function isL2Chain(dataset: string): boolean {
   const lower = dataset.toLowerCase()
   const l2Patterns = [
-    'arbitrum', 'optimism', 'base', 'zksync', 'linea', 'scroll',
-    'blast', 'mantle', 'mode', 'zora', 'polygon-zkevm', 'starknet',
-    'taiko', 'manta', 'metis',
+    'arbitrum',
+    'optimism',
+    'base',
+    'zksync',
+    'linea',
+    'scroll',
+    'blast',
+    'mantle',
+    'mode',
+    'zora',
+    'polygon-zkevm',
+    'starknet',
+    'taiko',
+    'manta',
+    'metis',
   ]
   return l2Patterns.some((pattern) => lower.includes(pattern))
 }

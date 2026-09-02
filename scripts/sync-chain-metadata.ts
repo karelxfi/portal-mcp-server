@@ -38,31 +38,48 @@ function decodeAstro(value: unknown): unknown {
   }
   if (Array.isArray(value)) return value.map(decodeAstro)
   if (value && typeof value === 'object')
-    return Object.fromEntries(Object.entries(value as Record<string, unknown>).map(([key, inner]) => [key, decodeAstro(inner)]))
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).map(([key, inner]) => [key, decodeAstro(inner)]),
+    )
   return value
 }
 
 function findChains(node: unknown): Array<Record<string, unknown>> | undefined {
-  if (Array.isArray(node) && node.length && node.every((entry) => entry && typeof entry === 'object' && 'logoUrl' in entry))
+  if (
+    Array.isArray(node) &&
+    node.length &&
+    node.every((entry) => entry && typeof entry === 'object' && 'logoUrl' in entry)
+  )
     return node as Array<Record<string, unknown>>
-  if (Array.isArray(node)) for (const entry of node) {
-    const found = findChains(entry)
-    if (found) return found
-  }
-  if (node && typeof node === 'object') for (const entry of Object.values(node)) {
-    const found = findChains(entry)
-    if (found) return found
-  }
+  if (Array.isArray(node))
+    for (const entry of node) {
+      const found = findChains(entry)
+      if (found) return found
+    }
+  if (node && typeof node === 'object')
+    for (const entry of Object.values(node)) {
+      const found = findChains(entry)
+      if (found) return found
+    }
   return undefined
 }
 
 async function main() {
-  const datasets = (await (await fetch('https://portal.sqd.dev/datasets?expand%5B%5D=metadata')).json()) as PortalDataset[]
+  const datasets = (await (
+    await fetch('https://portal.sqd.dev/datasets?expand%5B%5D=metadata')
+  ).json()) as PortalDataset[]
   const page = await (await fetch('https://sqd.dev/chains')).text()
-  const blobs = [...page.matchAll(/props="([^"]+)"/g)].map((match) => match[1]).filter((blob) => blob.includes('logoUrl'))
+  const blobs = [...page.matchAll(/props="([^"]+)"/g)]
+    .map((match) => match[1])
+    .filter((blob) => blob.includes('logoUrl'))
   const largest = blobs.sort((left, right) => right.length - left.length)[0]
   const unescaped = largest
-    ? largest.replaceAll('&quot;', '"').replaceAll('&amp;', '&').replaceAll('&lt;', '<').replaceAll('&gt;', '>').replaceAll('&#39;', "'")
+    ? largest
+        .replaceAll('&quot;', '"')
+        .replaceAll('&amp;', '&')
+        .replaceAll('&lt;', '<')
+        .replaceAll('&gt;', '>')
+        .replaceAll('&#39;', "'")
     : '[]'
   const chains = findChains(decodeAstro(JSON.parse(unescaped))) ?? []
   const explorerByNetwork = new Map<string, string>()
@@ -117,7 +134,9 @@ async function main() {
   await writeFile(output, source)
   const withLogo = Object.values(sorted).filter((chain) => chain.logo).length
   const withExplorer = Object.values(sorted).filter((chain) => chain.explorer).length
-  console.log(`Wrote ${Object.keys(sorted).length} datasets: ${withLogo} with logos, ${withExplorer} with explorers, ${Buffer.byteLength(source)} bytes`)
+  console.log(
+    `Wrote ${Object.keys(sorted).length} datasets: ${withLogo} with logos, ${withExplorer} with explorers, ${Buffer.byteLength(source)} bytes`,
+  )
 }
 
 main().catch((error) => {

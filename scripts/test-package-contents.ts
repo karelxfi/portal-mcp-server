@@ -1,7 +1,7 @@
 #!/usr/bin/env tsx
 
 import { execFileSync } from 'node:child_process'
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 

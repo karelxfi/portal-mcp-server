@@ -9,7 +9,19 @@ import type { PortalUiSpec, UiFollowUpAction, UiMetricCard, UiPanel } from './ui
 
 type RecordLike = Record<string, unknown>
 
-const SUMMARY_SECTION_KEYS = ['summary', 'overview', 'activity', 'assets', 'market_context', 'guidance', 'evm', 'solana', 'bitcoin', 'hyperliquid', 'liquidations']
+const SUMMARY_SECTION_KEYS = [
+  'summary',
+  'overview',
+  'activity',
+  'assets',
+  'market_context',
+  'guidance',
+  'evm',
+  'solana',
+  'bitcoin',
+  'hyperliquid',
+  'liquidations',
+]
 const RESERVED_TOP_LEVEL_KEYS = new Set([
   'chart',
   'tables',
@@ -295,10 +307,11 @@ function buildChartHint(payload: RecordLike): LlmChartHint | undefined {
 
   const dataRows = getByPath(payload, chart.data_key)
   const rowCount = Array.isArray(dataRows) ? dataRows.length : undefined
-  const tooltipFields =
-    isRecord(chart.tooltip)
-      ? asArray<RecordLike>(chart.tooltip.fields).map((field) => String(field.label ?? field.key ?? '')).filter(Boolean)
-      : []
+  const tooltipFields = isRecord(chart.tooltip)
+    ? asArray<RecordLike>(chart.tooltip.fields)
+        .map((field) => String(field.label ?? field.key ?? ''))
+        .filter(Boolean)
+    : []
 
   if (chart.kind === 'candlestick') {
     const descriptor = chart as unknown as CandlestickChartDescriptor
@@ -330,7 +343,9 @@ function buildChartHint(payload: RecordLike): LlmChartHint | undefined {
     y_keys: [
       ...(descriptor.y_field ? [descriptor.y_field] : []),
       ...(descriptor.grouped_value_field ? [descriptor.grouped_value_field] : []),
-      ...(descriptor.series_keys?.length ? descriptor.series_keys.map((key) => `${descriptor.grouped_value_field ?? 'series'}.${key}`) : []),
+      ...(descriptor.series_keys?.length
+        ? descriptor.series_keys.map((key) => `${descriptor.grouped_value_field ?? 'series'}.${key}`)
+        : []),
     ],
     ...(rowCount !== undefined ? { row_count: rowCount } : {}),
     recommended_visual: descriptor.recommended_visual,
@@ -360,7 +375,11 @@ function buildTableHints(payload: RecordLike): LlmTableHint[] {
     }))
 }
 
-function buildSections(payload: RecordLike, chartHint: LlmChartHint | undefined, tableHints: LlmTableHint[]): LlmSectionHint[] {
+function buildSections(
+  payload: RecordLike,
+  chartHint: LlmChartHint | undefined,
+  tableHints: LlmTableHint[],
+): LlmSectionHint[] {
   const sections: LlmSectionHint[] = []
   const seen = new Set<string>()
 
@@ -377,7 +396,12 @@ function buildSections(payload: RecordLike, chartHint: LlmChartHint | undefined,
   for (const key of SUMMARY_SECTION_KEYS) {
     const value = payload[key]
     if (Array.isArray(value)) {
-      pushSection({ path: key, kind: inferArrayKind(key, chartHint?.data_path), row_count: value.length, title: key.replace(/_/g, ' ') })
+      pushSection({
+        path: key,
+        kind: inferArrayKind(key, chartHint?.data_path),
+        row_count: value.length,
+        title: key.replace(/_/g, ' '),
+      })
     } else if (isRecord(value)) {
       const items = value.items
       if (Array.isArray(items)) {
@@ -413,19 +437,32 @@ function buildSections(payload: RecordLike, chartHint: LlmChartHint | undefined,
   for (const [key, value] of Object.entries(payload)) {
     if (key.startsWith('_') || RESERVED_TOP_LEVEL_KEYS.has(key) || seen.has(key)) continue
     if (Array.isArray(value)) {
-      pushSection({ path: key, kind: inferArrayKind(key, chartHint?.data_path), row_count: value.length, title: key.replace(/_/g, ' ') })
+      pushSection({
+        path: key,
+        kind: inferArrayKind(key, chartHint?.data_path),
+        row_count: value.length,
+        title: key.replace(/_/g, ' '),
+      })
     }
   }
 
   return sections.slice(0, 8)
 }
 
-function annotateSections(sections: LlmSectionHint[], primaryPath: string, answerSequence: string[], recommendedViews: LlmViewHint[]): LlmSectionHint[] {
+function annotateSections(
+  sections: LlmSectionHint[],
+  primaryPath: string,
+  answerSequence: string[],
+  recommendedViews: LlmViewHint[],
+): LlmSectionHint[] {
   const priorityPaths = new Set(answerSequence)
 
   return sections.map((section) => {
-    const matchingViews = recommendedViews.filter((view) => view.data_path === section.path || view.source_path === section.path)
-    const useFor = matchingViews.length > 0 ? Array.from(new Set(matchingViews.map((view) => view.kind))).join(', ') : undefined
+    const matchingViews = recommendedViews.filter(
+      (view) => view.data_path === section.path || view.source_path === section.path,
+    )
+    const useFor =
+      matchingViews.length > 0 ? Array.from(new Set(matchingViews.map((view) => view.kind))).join(', ') : undefined
 
     return {
       ...section,
@@ -672,7 +709,11 @@ function buildPrimaryPreview(
   return undefined
 }
 
-function inferNormalizedFields(payload: RecordLike, primaryPath: string, normalizedOutput: boolean): string[] | undefined {
+function inferNormalizedFields(
+  payload: RecordLike,
+  primaryPath: string,
+  normalizedOutput: boolean,
+): string[] | undefined {
   const primaryValue = getByPath(payload, primaryPath)
   const sampleRecord =
     Array.isArray(primaryValue) && primaryValue.length > 0 && isRecord(primaryValue[0])
@@ -705,10 +746,18 @@ function buildParserNotes(
       : 'Check _pagination before assuming the returned list is complete.'
     : undefined
   const notes = [
-    metricCards.length > 0 ? 'Use _llm.metric_cards for headline numbers before recomputing values from arrays.' : undefined,
-    chartHint ? 'Use _llm.chart plus chart.tooltip and chart.interactions metadata for plotting and hover labels instead of inferring series structure.' : undefined,
-    tableHints.length > 0 ? 'Use _llm.tables columns for labels, ordering, and value formats instead of guessing from field names.' : undefined,
-    normalizedOutput ? 'When present, prefer normalized aliases like primary_id, record_type, timestamp_human, sender, and recipient for cross-chain answers.' : undefined,
+    metricCards.length > 0
+      ? 'Use _llm.metric_cards for headline numbers before recomputing values from arrays.'
+      : undefined,
+    chartHint
+      ? 'Use _llm.chart plus chart.tooltip and chart.interactions metadata for plotting and hover labels instead of inferring series structure.'
+      : undefined,
+    tableHints.length > 0
+      ? 'Use _llm.tables columns for labels, ordering, and value formats instead of guessing from field names.'
+      : undefined,
+    normalizedOutput
+      ? 'When present, prefer normalized aliases like primary_id, record_type, timestamp_human, sender, and recipient for cross-chain answers.'
+      : undefined,
     paginationNote,
     ...(overrides?.parser_notes ?? []),
   ].filter((note): note is string => Boolean(note))
@@ -747,7 +796,12 @@ export function buildLlmHints(payload: RecordLike, overrides?: LlmOverrides): Po
       emphasis: 'primary',
     })
   }
-  const primaryPreview = buildPrimaryPreview(payload, primaryPath, primaryKind, llmTableHints.length > 0 ? llmTableHints : tableHints)
+  const primaryPreview = buildPrimaryPreview(
+    payload,
+    primaryPath,
+    primaryKind,
+    llmTableHints.length > 0 ? llmTableHints : tableHints,
+  )
   const annotatedSections = annotateSections(sections, primaryPath, answerSequence, recommendedViews)
   const llmSections = compactHints ? annotatedSections.slice(0, 5) : annotatedSections
   const llmRecommendedViews = compactHints ? recommendedViews.slice(0, 3) : recommendedViews
@@ -773,7 +827,7 @@ export function buildLlmHints(payload: RecordLike, overrides?: LlmOverrides): Po
       sections: [primarySection],
       recommended_views: [],
       ...(normalizedFields ? { normalized_fields: normalizedFields } : {}),
-      ...((isRecord(payload._pagination) && typeof payload._pagination.next_cursor === 'string')
+      ...(isRecord(payload._pagination) && typeof payload._pagination.next_cursor === 'string'
         ? { follow_up: { continue_cursor_path: '_pagination.next_cursor' } }
         : {}),
       ...(compactParserNotes ? { parser_notes: compactParserNotes } : {}),

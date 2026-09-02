@@ -1,6 +1,4 @@
 import type { McpServer } from '@modelcontextprotocol/server'
-
-import { registerPortalTool } from '../../helpers/mcp-registration.js'
 import { z } from 'zod'
 
 import { resolveDataset, validateBlockRange } from '../../cache/datasets.js'
@@ -10,12 +8,12 @@ import { buildTableDescriptor } from '../../helpers/chart-metadata.js'
 import { createUnsupportedChainError } from '../../helpers/errors.js'
 import { portalFetchStreamRangeVisit } from '../../helpers/fetch.js'
 import { formatResult } from '../../helpers/format.js'
+import { registerPortalTool } from '../../helpers/mcp-registration.js'
+import type { ResponseFormat } from '../../helpers/response-modes.js'
 import { buildAnalysisCoverage, buildQueryFreshness } from '../../helpers/result-metadata.js'
-import { resolveTimeframeOrBlocks, type TimestampInput } from '../../helpers/timeframe.js'
+import { type TimestampInput, resolveTimeframeOrBlocks } from '../../helpers/timeframe.js'
 import { buildExecutionMetadata, buildToolDescription } from '../../helpers/tool-ux.js'
 import { buildMetricCard, buildPortalUi, buildRankedBarsPanel, buildTablePanel } from '../../helpers/ui-metadata.js'
-
-import type { ResponseFormat } from '../../helpers/response-modes.js'
 import { SUBSTRATE_INDEXING_NOTICE, buildSubstrateWindowLabel } from './shared.js'
 
 type RankedCountRow = {
@@ -91,11 +89,7 @@ function decoratePresentation(response: Record<string, any>, dataset: string, wi
     : response.top_event
       ? [response.top_event]
       : []
-  const topCalls = Array.isArray(response.top_calls)
-    ? response.top_calls
-    : response.top_call
-      ? [response.top_call]
-      : []
+  const topCalls = Array.isArray(response.top_calls) ? response.top_calls : response.top_call ? [response.top_call] : []
   const overview = response.overview ?? {}
   response = {
     ...response,
@@ -111,41 +105,45 @@ function decoratePresentation(response: Record<string, any>, dataset: string, wi
   const tables = []
 
   if (Array.isArray(response.top_events)) {
-    tables.push(buildTableDescriptor({
-      id: 'top_events',
-      dataKey: 'top_events',
-      rowCount: response.top_events.length,
-      title: 'Top events',
-      subtitle: 'Ranked by event count in the selected window',
-      keyField: 'name',
-      defaultSort: { key: 'rank', direction: 'asc' },
-      dense: true,
-      columns: [
-        { key: 'rank', label: 'Rank', kind: 'rank', format: 'integer', align: 'right' },
-        { key: 'name', label: 'Event', kind: 'dimension' },
-        { key: 'count', label: 'Count', kind: 'metric', format: 'integer', align: 'right' },
-        { key: 'percentage', label: 'Share', kind: 'metric', format: 'percent', unit: '%', align: 'right' },
-      ],
-    }))
+    tables.push(
+      buildTableDescriptor({
+        id: 'top_events',
+        dataKey: 'top_events',
+        rowCount: response.top_events.length,
+        title: 'Top events',
+        subtitle: 'Ranked by event count in the selected window',
+        keyField: 'name',
+        defaultSort: { key: 'rank', direction: 'asc' },
+        dense: true,
+        columns: [
+          { key: 'rank', label: 'Rank', kind: 'rank', format: 'integer', align: 'right' },
+          { key: 'name', label: 'Event', kind: 'dimension' },
+          { key: 'count', label: 'Count', kind: 'metric', format: 'integer', align: 'right' },
+          { key: 'percentage', label: 'Share', kind: 'metric', format: 'percent', unit: '%', align: 'right' },
+        ],
+      }),
+    )
   }
 
   if (Array.isArray(response.top_calls)) {
-    tables.push(buildTableDescriptor({
-      id: 'top_calls',
-      dataKey: 'top_calls',
-      rowCount: response.top_calls.length,
-      title: 'Top calls',
-      subtitle: 'Ranked by call count in the selected window',
-      keyField: 'name',
-      defaultSort: { key: 'rank', direction: 'asc' },
-      dense: true,
-      columns: [
-        { key: 'rank', label: 'Rank', kind: 'rank', format: 'integer', align: 'right' },
-        { key: 'name', label: 'Call', kind: 'dimension' },
-        { key: 'count', label: 'Count', kind: 'metric', format: 'integer', align: 'right' },
-        { key: 'percentage', label: 'Share', kind: 'metric', format: 'percent', unit: '%', align: 'right' },
-      ],
-    }))
+    tables.push(
+      buildTableDescriptor({
+        id: 'top_calls',
+        dataKey: 'top_calls',
+        rowCount: response.top_calls.length,
+        title: 'Top calls',
+        subtitle: 'Ranked by call count in the selected window',
+        keyField: 'name',
+        defaultSort: { key: 'rank', direction: 'asc' },
+        dense: true,
+        columns: [
+          { key: 'rank', label: 'Rank', kind: 'rank', format: 'integer', align: 'right' },
+          { key: 'name', label: 'Call', kind: 'dimension' },
+          { key: 'count', label: 'Count', kind: 'metric', format: 'integer', align: 'right' },
+          { key: 'percentage', label: 'Share', kind: 'metric', format: 'percent', unit: '%', align: 'right' },
+        ],
+      }),
+    )
   }
 
   return {
@@ -163,46 +161,74 @@ function decoratePresentation(response: Record<string, any>, dataset: string, wi
         subtitle: windowLabel,
       },
       metric_cards: [
-        buildMetricCard({ id: 'events', label: 'Events', value_path: 'presentation_summary.total_events', format: 'integer', emphasis: 'primary' }),
-        buildMetricCard({ id: 'calls', label: 'Calls', value_path: 'presentation_summary.total_calls', format: 'integer' }),
-        buildMetricCard({ id: 'extrinsics', label: 'Extrinsics', value_path: 'presentation_summary.total_extrinsics', format: 'integer' }),
-        buildMetricCard({ id: 'call-success', label: 'Call success', value_path: 'presentation_summary.call_success_rate', format: 'percent', unit: '%' }),
+        buildMetricCard({
+          id: 'events',
+          label: 'Events',
+          value_path: 'presentation_summary.total_events',
+          format: 'integer',
+          emphasis: 'primary',
+        }),
+        buildMetricCard({
+          id: 'calls',
+          label: 'Calls',
+          value_path: 'presentation_summary.total_calls',
+          format: 'integer',
+        }),
+        buildMetricCard({
+          id: 'extrinsics',
+          label: 'Extrinsics',
+          value_path: 'presentation_summary.total_extrinsics',
+          format: 'integer',
+        }),
+        buildMetricCard({
+          id: 'call-success',
+          label: 'Call success',
+          value_path: 'presentation_summary.call_success_rate',
+          format: 'percent',
+          unit: '%',
+        }),
       ],
       panels: [
         ...(Array.isArray(response.top_events)
-          ? [buildRankedBarsPanel({
-              id: 'event-bars',
-              kind: 'ranked_bars_panel',
-              title: 'Top events',
-              subtitle: 'Highest-frequency event names in the selected window.',
-              data_key: 'top_events',
-              category_key: 'name',
-              value_key: 'count',
-              rank_key: 'rank',
-              value_format: 'integer',
-              emphasis: 'primary',
-            })]
+          ? [
+              buildRankedBarsPanel({
+                id: 'event-bars',
+                kind: 'ranked_bars_panel',
+                title: 'Top events',
+                subtitle: 'Highest-frequency event names in the selected window.',
+                data_key: 'top_events',
+                category_key: 'name',
+                value_key: 'count',
+                rank_key: 'rank',
+                value_format: 'integer',
+                emphasis: 'primary',
+              }),
+            ]
           : []),
         ...(Array.isArray(response.top_calls)
-          ? [buildRankedBarsPanel({
-              id: 'call-bars',
-              kind: 'ranked_bars_panel',
-              title: 'Top calls',
-              subtitle: 'Highest-frequency call names in the selected window.',
-              data_key: 'top_calls',
-              category_key: 'name',
-              value_key: 'count',
-              rank_key: 'rank',
-              value_format: 'integer',
-            })]
+          ? [
+              buildRankedBarsPanel({
+                id: 'call-bars',
+                kind: 'ranked_bars_panel',
+                title: 'Top calls',
+                subtitle: 'Highest-frequency call names in the selected window.',
+                data_key: 'top_calls',
+                category_key: 'name',
+                value_key: 'count',
+                rank_key: 'rank',
+                value_format: 'integer',
+              }),
+            ]
           : []),
-        ...tables.map((table) => buildTablePanel({
-          id: `${table.id}-panel`,
-          kind: 'table_panel',
-          title: table.title ?? table.id,
-          subtitle: table.subtitle,
-          table_id: table.id,
-        })),
+        ...tables.map((table) =>
+          buildTablePanel({
+            id: `${table.id}-panel`,
+            kind: 'table_panel',
+            title: table.title ?? table.id,
+            subtitle: table.subtitle,
+            table_id: table.id,
+          }),
+        ),
       ],
       follow_up_actions: [
         { label: 'Show ranked event rows', intent: 'show_raw', target: 'top_events' },
@@ -213,7 +239,8 @@ function decoratePresentation(response: Record<string, any>, dataset: string, wi
 }
 
 export function registerSubstrateAnalyticsTool(server: McpServer) {
-  registerPortalTool(server,
+  registerPortalTool(
+    server,
     'portal_substrate_get_analytics',
     buildToolDescription('portal_substrate_get_analytics'),
     {
@@ -223,21 +250,43 @@ export function registerSubstrateAnalyticsTool(server: McpServer) {
         .enum(['fast', 'deep'])
         .optional()
         .default('deep')
-        .describe('Execution depth. Defaults to complete requested-window analysis; the optional fast value is only for explicitly bounded previews.'),
+        .describe(
+          'Execution depth. Defaults to complete requested-window analysis; the optional fast value is only for explicitly bounded previews.',
+        ),
       from_block: z.number().optional().describe('Starting block number (use this OR timeframe)'),
       to_block: z.number().optional().describe('Ending block number'),
       from_timestamp: z
         .union([z.number(), z.string()])
         .optional()
-        .describe('Starting timestamp. Accepts Unix seconds, Unix milliseconds, ISO datetime, or relative input like "6h ago".'),
+        .describe(
+          'Starting timestamp. Accepts Unix seconds, Unix milliseconds, ISO datetime, or relative input like "6h ago".',
+        ),
       to_timestamp: z
         .union([z.number(), z.string()])
         .optional()
-        .describe('Ending timestamp. Accepts Unix seconds, Unix milliseconds, ISO datetime, or relative input like "now".'),
-      response_format: z.enum(['full', 'compact', 'summary']).optional().default('full').describe("Response format: 'summary' (headline metrics only), 'compact' (core sections), 'full' (full dashboard payload)"),
+        .describe(
+          'Ending timestamp. Accepts Unix seconds, Unix milliseconds, ISO datetime, or relative input like "now".',
+        ),
+      response_format: z
+        .enum(['full', 'compact', 'summary'])
+        .optional()
+        .default('full')
+        .describe(
+          "Response format: 'summary' (headline metrics only), 'compact' (core sections), 'full' (full dashboard payload)",
+        ),
       section_limit: z.number().optional().default(10).describe('Max rows to keep in ranked event and call sections'),
     },
-    async ({ network, timeframe, mode, from_block, to_block, from_timestamp, to_timestamp, response_format, section_limit }) => {
+    async ({
+      network,
+      timeframe,
+      mode,
+      from_block,
+      to_block,
+      from_timestamp,
+      to_timestamp,
+      response_format,
+      section_limit,
+    }) => {
       const queryStartTime = Date.now()
       let dataset = await resolveDataset(network)
       const chainType = detectChainType(dataset)
@@ -323,56 +372,48 @@ export function registerSubstrateAnalyticsTool(server: McpServer) {
       }
 
       await Promise.all([
-        portalFetchStreamRangeVisit(
-          `${PORTAL_URL}/datasets/${dataset}/stream`,
-          eventQuery,
-          {
-            maxBytes: 150 * 1024 * 1024,
-            onRecord: async (record) => {
-              const block = record as { events?: Array<{ name?: string }> }
-              for (const event of block.events ?? []) {
-                totalEvents++
-                const name = String(event.name || 'unknown')
-                eventCounts.set(name, (eventCounts.get(name) || 0) + 1)
-              }
-            },
+        portalFetchStreamRangeVisit(`${PORTAL_URL}/datasets/${dataset}/stream`, eventQuery, {
+          maxBytes: 150 * 1024 * 1024,
+          onRecord: async (record) => {
+            const block = record as { events?: Array<{ name?: string }> }
+            for (const event of block.events ?? []) {
+              totalEvents++
+              const name = String(event.name || 'unknown')
+              eventCounts.set(name, (eventCounts.get(name) || 0) + 1)
+            }
           },
-        ),
-        portalFetchStreamRangeVisit(
-          `${PORTAL_URL}/datasets/${dataset}/stream`,
-          callQuery,
-          {
-            maxBytes: 150 * 1024 * 1024,
-            onRecord: async (record) => {
-              const block = record as {
-                header?: { number?: number }
-                calls?: Array<{ name?: string; success?: boolean }>
-                extrinsics?: Array<{ index?: number; success?: boolean; fee?: string | null }>
-              }
-              const blockNumber = block.header?.number
+        }),
+        portalFetchStreamRangeVisit(`${PORTAL_URL}/datasets/${dataset}/stream`, callQuery, {
+          maxBytes: 150 * 1024 * 1024,
+          onRecord: async (record) => {
+            const block = record as {
+              header?: { number?: number }
+              calls?: Array<{ name?: string; success?: boolean }>
+              extrinsics?: Array<{ index?: number; success?: boolean; fee?: string | null }>
+            }
+            const blockNumber = block.header?.number
 
-              for (const call of block.calls ?? []) {
-                totalCalls++
-                if (call.success !== false) successfulCalls++
-                const name = String(call.name || 'unknown')
-                callCounts.set(name, (callCounts.get(name) || 0) + 1)
-              }
+            for (const call of block.calls ?? []) {
+              totalCalls++
+              if (call.success !== false) successfulCalls++
+              const name = String(call.name || 'unknown')
+              callCounts.set(name, (callCounts.get(name) || 0) + 1)
+            }
 
-              for (const extrinsic of block.extrinsics ?? []) {
-                if (blockNumber === undefined || extrinsic.index === undefined) continue
-                const key = `${blockNumber}:${extrinsic.index}`
-                if (extrinsicKeys.has(key)) continue
-                extrinsicKeys.add(key)
-                if (extrinsic.success === false) {
-                  failedExtrinsics++
-                } else {
-                  successfulExtrinsics++
-                }
-                totalFees += toBigInt(extrinsic.fee)
+            for (const extrinsic of block.extrinsics ?? []) {
+              if (blockNumber === undefined || extrinsic.index === undefined) continue
+              const key = `${blockNumber}:${extrinsic.index}`
+              if (extrinsicKeys.has(key)) continue
+              extrinsicKeys.add(key)
+              if (extrinsic.success === false) {
+                failedExtrinsics++
+              } else {
+                successfulExtrinsics++
               }
-            },
+              totalFees += toBigInt(extrinsic.fee)
+            }
           },
-        ),
+        }),
       ])
 
       const topEvents = rankCounts(eventCounts, totalEvents, section_limit)

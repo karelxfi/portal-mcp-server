@@ -26,24 +26,75 @@ const RAW_APP_FIXTURES: Record<string, Record<string, unknown>> = {
   sparse: {
     answer: 'The deterministic sparse-series fixture preserves chronological order and one missing bucket.',
     time_series: SPARSE_ROWS,
-    chart: { kind: 'time_series', data_key: 'time_series', recommended_visual: 'line', x_field: 'bucket_index', y_field: 'value', interval: '1m', total_points: SPARSE_ROWS.length, value_format: 'integer' },
+    chart: {
+      kind: 'time_series',
+      data_key: 'time_series',
+      recommended_visual: 'line',
+      x_field: 'bucket_index',
+      y_field: 'value',
+      interval: '1m',
+      total_points: SPARSE_ROWS.length,
+      value_format: 'integer',
+    },
     _meta: { network: 'ui-contract-fixture', row_count: SPARSE_ROWS.length, timeframe: '5m' },
-    _freshness: { finality: 'fixture' }, _coverage: { window_complete: true, result_complete: true, missing_buckets: [2] }, _pagination: { has_more: false },
+    _freshness: { finality: 'fixture' },
+    _coverage: { window_complete: true, result_complete: true, missing_buckets: [2] },
+    _pagination: { has_more: false },
     _tool_contract: { name: 'portal_get_time_series' },
-    _ui: { version: 'portal_ui_v1', layout: 'chart_focus', density: 'comfortable', design_intent: 'analytics_dashboard', headline: { title: 'Sparse-series contract fixture', subtitle: 'The chart must not connect across missing bucket 2.' }, panels: [{ kind: 'chart_panel', title: 'Ordered series with a gap', chart_key: 'chart', emphasis: 'primary' }] },
+    _ui: {
+      version: 'portal_ui_v1',
+      layout: 'chart_focus',
+      density: 'comfortable',
+      design_intent: 'analytics_dashboard',
+      headline: {
+        title: 'Sparse-series contract fixture',
+        subtitle: 'The chart must not connect across missing bucket 2.',
+      },
+      panels: [{ kind: 'chart_panel', title: 'Ordered series with a gap', chart_key: 'chart', emphasis: 'primary' }],
+    },
   },
   mixed: {
-    answer: 'The deterministic mixed-sign fixture proves a factual zero baseline and keeps unavailable values distinct from zero.',
+    answer:
+      'The deterministic mixed-sign fixture proves a factual zero baseline and keeps unavailable values distinct from zero.',
     time_series: MIXED_BAR_ROWS,
-    chart: { kind: 'time_series', data_key: 'time_series', recommended_visual: 'bar', x_field: 'bucket_index', y_field: 'value', interval: '1m', total_points: MIXED_BAR_ROWS.length, value_format: 'integer' },
+    chart: {
+      kind: 'time_series',
+      data_key: 'time_series',
+      recommended_visual: 'bar',
+      x_field: 'bucket_index',
+      y_field: 'value',
+      interval: '1m',
+      total_points: MIXED_BAR_ROWS.length,
+      value_format: 'integer',
+    },
     _meta: { network: 'ui-contract-fixture', row_count: MIXED_BAR_ROWS.length, timeframe: '5m' },
-    _freshness: { finality: 'fixture' }, _coverage: { window_complete: true, result_complete: true }, _pagination: { has_more: false },
+    _freshness: { finality: 'fixture' },
+    _coverage: { window_complete: true, result_complete: true },
+    _pagination: { has_more: false },
     _tool_contract: { name: 'portal_get_time_series' },
-    _ui: { version: 'portal_ui_v1', layout: 'chart_focus', density: 'comfortable', design_intent: 'analytics_dashboard', headline: { title: 'Signed-flow contract fixture', subtitle: 'Positive and negative values share an exact zero baseline. Missing values remain missing.' }, panels: [{ kind: 'chart_panel', title: 'Net flow by category', chart_key: 'chart', emphasis: 'primary' }] },
+    _ui: {
+      version: 'portal_ui_v1',
+      layout: 'chart_focus',
+      density: 'comfortable',
+      design_intent: 'analytics_dashboard',
+      headline: {
+        title: 'Signed-flow contract fixture',
+        subtitle: 'Positive and negative values share an exact zero baseline. Missing values remain missing.',
+      },
+      panels: [{ kind: 'chart_panel', title: 'Net flow by category', chart_key: 'chart', emphasis: 'primary' }],
+    },
   },
   error: {
-    error: { code: 'overloaded', origin: 'server', summary: 'SQD is busy and could not start this query inside the bounded wait budget.', retryable: true, suggestions: ['Retry this request in a moment', 'Use a smaller timeframe'] },
-    _coverage: { result_complete: false }, _pagination: { has_more: false }, _tool_contract: { name: 'portal_get_wallet_summary' },
+    error: {
+      code: 'overloaded',
+      origin: 'server',
+      summary: 'SQD is busy and could not start this query inside the bounded wait budget.',
+      retryable: true,
+      suggestions: ['Retry this request in a moment', 'Use a smaller timeframe'],
+    },
+    _coverage: { result_complete: false },
+    _pagination: { has_more: false },
+    _tool_contract: { name: 'portal_get_wallet_summary' },
   },
 }
 
@@ -52,13 +103,24 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function fixturePrimaryEvidence(payload: Record<string, unknown>): { path?: string; count: number } {
-  for (const path of ['items', 'ohlc', 'time_series', 'fills', 'transactions', 'transfers', 'logs', 'events', 'calls']) {
+  for (const path of [
+    'items',
+    'ohlc',
+    'time_series',
+    'fills',
+    'transactions',
+    'transfers',
+    'logs',
+    'events',
+    'calls',
+  ]) {
     if (Array.isArray(payload[path])) return { path, count: payload[path].length }
   }
   const activity = payload.activity as Record<string, unknown> | undefined
   if (Array.isArray(activity?.items)) return { path: 'activity.items', count: activity.items.length }
   const interactions = payload.interactions as Record<string, unknown> | undefined
-  if (Array.isArray(interactions?.top_callers)) return { path: 'interactions.top_callers', count: interactions.top_callers.length }
+  if (Array.isArray(interactions?.top_callers))
+    return { path: 'interactions.top_callers', count: interactions.top_callers.length }
   return { count: 0 }
 }
 
@@ -70,10 +132,12 @@ export const APP_FIXTURES: Record<string, Record<string, unknown>> = Object.from
     const coverage = payload._coverage as Record<string, unknown> | undefined
     const pagination = payload._pagination as Record<string, unknown> | undefined
     const evidence = fixturePrimaryEvidence(payload)
-    const completeness = coverage?.window_complete === false || coverage?.result_complete === false ||
+    const completeness =
+      coverage?.window_complete === false ||
+      coverage?.result_complete === false ||
       (pagination?.has_more === true && pagination?.continuation_scope !== 'adjacent_window')
-      ? 'partial'
-      : 'complete'
+        ? 'partial'
+        : 'complete'
     return [
       name,
       {

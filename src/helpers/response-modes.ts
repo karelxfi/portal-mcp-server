@@ -236,7 +236,9 @@ export function summarizeHyperliquidFills(fills: any[]): any {
   const traders = new Set<string>()
   const coins = new Set<string>()
   const dirCounts: Record<string, number> = {}
-  let totalVolume = 0, totalFees = 0, totalPnl = 0
+  let totalVolume = 0,
+    totalFees = 0,
+    totalPnl = 0
 
   fills.forEach((fill) => {
     if (fill.user) traders.add(fill.user)
@@ -295,7 +297,8 @@ export function summarizeSolanaTransactions(txs: any[]): any {
   if (txs.length === 0) return { count: 0, summary: 'No transactions found' }
 
   const feePayers = new Set<string>()
-  let totalFees = 0, totalComputeUnits = 0
+  let totalFees = 0,
+    totalComputeUnits = 0
   let errorCount = 0
 
   txs.forEach((tx) => {
@@ -428,7 +431,8 @@ export function compactSubstrateEvents(events: any[]): any[] {
     event_name: event.event_name || event.name,
     extrinsic_index: event.extrinsicIndex ?? event.extrinsic_index,
     phase: event.phase,
-    call_address: event.call_address || (Array.isArray(event.callAddress) ? event.callAddress.join('.') : event.callAddress),
+    call_address:
+      event.call_address || (Array.isArray(event.callAddress) ? event.callAddress.join('.') : event.callAddress),
     blockNumber: getBlockNumber(event),
     timestamp: getTimestamp(event),
     ...(compactSubstrateExtrinsic(event.extrinsic) ? { extrinsic: compactSubstrateExtrinsic(event.extrinsic) } : {}),
@@ -508,7 +512,9 @@ export function compactSubstrateCalls(calls: any[]): any[] {
 export function summarizeBitcoinTransactions(txs: any[]): any {
   if (txs.length === 0) return { count: 0, summary: 'No transactions found' }
 
-  let totalSize = 0, totalVsize = 0, totalWeight = 0
+  let totalSize = 0,
+    totalVsize = 0,
+    totalWeight = 0
   const versions = new Map<number, number>()
 
   txs.forEach((tx) => {
@@ -648,7 +654,16 @@ export function compactBitcoinOutputs(outputs: any[]): any[] {
 export function applyResponseFormat(
   data: any,
   format: ResponseFormat,
-  dataType: 'logs' | 'transactions' | 'bitcoin_transactions' | 'bitcoin_inputs' | 'bitcoin_outputs' | 'hyperliquid_fills' | 'solana_transactions' | 'substrate_events' | 'substrate_calls',
+  dataType:
+    | 'logs'
+    | 'transactions'
+    | 'bitcoin_transactions'
+    | 'bitcoin_inputs'
+    | 'bitcoin_outputs'
+    | 'hyperliquid_fills'
+    | 'solana_transactions'
+    | 'substrate_events'
+    | 'substrate_calls',
 ): any {
   if (format === 'full' || !Array.isArray(data)) {
     return data
@@ -656,31 +671,51 @@ export function applyResponseFormat(
 
   if (format === 'summary') {
     switch (dataType) {
-      case 'logs': return summarizeLogs(data)
-      case 'transactions': return summarizeTransactions(data)
-      case 'bitcoin_transactions': return summarizeBitcoinTransactions(data)
-      case 'bitcoin_inputs': return summarizeBitcoinInputs(data)
-      case 'bitcoin_outputs': return summarizeBitcoinOutputs(data)
-      case 'hyperliquid_fills': return summarizeHyperliquidFills(data)
-      case 'solana_transactions': return summarizeSolanaTransactions(data)
-      case 'substrate_events': return summarizeSubstrateEvents(data)
-      case 'substrate_calls': return summarizeSubstrateCalls(data)
-      default: return data
+      case 'logs':
+        return summarizeLogs(data)
+      case 'transactions':
+        return summarizeTransactions(data)
+      case 'bitcoin_transactions':
+        return summarizeBitcoinTransactions(data)
+      case 'bitcoin_inputs':
+        return summarizeBitcoinInputs(data)
+      case 'bitcoin_outputs':
+        return summarizeBitcoinOutputs(data)
+      case 'hyperliquid_fills':
+        return summarizeHyperliquidFills(data)
+      case 'solana_transactions':
+        return summarizeSolanaTransactions(data)
+      case 'substrate_events':
+        return summarizeSubstrateEvents(data)
+      case 'substrate_calls':
+        return summarizeSubstrateCalls(data)
+      default:
+        return data
     }
   }
 
   if (format === 'compact') {
     switch (dataType) {
-      case 'logs': return compactLogs(data)
-      case 'transactions': return compactTransactions(data)
-      case 'bitcoin_transactions': return compactBitcoinTransactions(data)
-      case 'bitcoin_inputs': return compactBitcoinInputs(data)
-      case 'bitcoin_outputs': return compactBitcoinOutputs(data)
-      case 'hyperliquid_fills': return compactHyperliquidFills(data)
-      case 'solana_transactions': return compactSolanaTransactions(data)
-      case 'substrate_events': return compactSubstrateEvents(data)
-      case 'substrate_calls': return compactSubstrateCalls(data)
-      default: return data
+      case 'logs':
+        return compactLogs(data)
+      case 'transactions':
+        return compactTransactions(data)
+      case 'bitcoin_transactions':
+        return compactBitcoinTransactions(data)
+      case 'bitcoin_inputs':
+        return compactBitcoinInputs(data)
+      case 'bitcoin_outputs':
+        return compactBitcoinOutputs(data)
+      case 'hyperliquid_fills':
+        return compactHyperliquidFills(data)
+      case 'solana_transactions':
+        return compactSolanaTransactions(data)
+      case 'substrate_events':
+        return compactSubstrateEvents(data)
+      case 'substrate_calls':
+        return compactSubstrateCalls(data)
+      default:
+        return data
     }
   }
 

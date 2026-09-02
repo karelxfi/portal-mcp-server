@@ -104,10 +104,7 @@ function assertOptionalAsset(pluginRoot: string, value: unknown, field: string) 
 
 function assertSquarePng(path: string, minimumSize: number) {
   const image = readFileSync(path)
-  assert(
-    image.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])),
-    `${path} must be a PNG file`,
-  )
+  assert(image.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])), `${path} must be a PNG file`)
   const width = image.readUInt32BE(16)
   const height = image.readUInt32BE(20)
   assert(width === height, `${path} must be square`)
@@ -270,10 +267,7 @@ function assertManifest() {
     'bundled skills should record the verified upstream commit',
   )
   const portalSkill = readFileSync(resolve(PLUGIN_ROOT, 'skills/portal/SKILL.md'), 'utf8')
-  const portalResultContract = readFileSync(
-    resolve(PLUGIN_ROOT, 'skills/portal/references/mcp-results.md'),
-    'utf8',
-  )
+  const portalResultContract = readFileSync(resolve(PLUGIN_ROOT, 'skills/portal/references/mcp-results.md'), 'utf8')
   for (const required of [
     'tools/list',
     'sqd://tools',

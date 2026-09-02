@@ -1,23 +1,22 @@
 import type { McpServer } from '@modelcontextprotocol/server'
-
-import { registerPortalTool } from '../../helpers/mcp-registration.js'
 import { z } from 'zod'
 
 import { getBlockHead, resolveDataset } from '../../cache/datasets.js'
 import { EVENT_NAMES, PORTAL_URL } from '../../constants/index.js'
 import { detectChainType } from '../../helpers/chain.js'
 import { createUnsupportedChainError } from '../../helpers/errors.js'
-import { TRANSACTION_FIELD_PRESETS } from '../../helpers/field-presets.js'
 import { portalFetchStreamRangeVisit } from '../../helpers/fetch.js'
+import { TRANSACTION_FIELD_PRESETS } from '../../helpers/field-presets.js'
 import { buildEvmLogFields } from '../../helpers/fields.js'
 import { formatResult } from '../../helpers/format.js'
 import { hashString53 } from '../../helpers/hash.js'
+import { registerPortalTool } from '../../helpers/mcp-registration.js'
 import { buildAnalysisCoverage, buildQueryFreshness } from '../../helpers/result-metadata.js'
 import {
-  getTimestampWindowNotices,
-  resolveTimeframeOrBlocks,
   type ResolvedBlockWindow,
   type TimestampInput,
+  getTimestampWindowNotices,
+  resolveTimeframeOrBlocks,
 } from '../../helpers/timeframe.js'
 import { buildExecutionMetadata, buildToolDescription } from '../../helpers/tool-ux.js'
 import { normalizeEvmAddress } from '../../helpers/validation.js'
@@ -37,7 +36,8 @@ import { normalizeEvmAddress } from '../../helpers/validation.js'
 export function registerGetContractActivityTool(server: McpServer) {
   const FAST_MODE_BLOCK_CAP = 3000
 
-  registerPortalTool(server,
+  registerPortalTool(
+    server,
     'portal_evm_get_contract_activity',
     buildToolDescription('portal_evm_get_contract_activity'),
     {
@@ -51,17 +51,23 @@ export function registerGetContractActivityTool(server: McpServer) {
       from_timestamp: z
         .union([z.string(), z.number()])
         .optional()
-        .describe('Starting timestamp. Accepts Unix seconds, Unix milliseconds, ISO datetime, or relative input like "1h ago".'),
+        .describe(
+          'Starting timestamp. Accepts Unix seconds, Unix milliseconds, ISO datetime, or relative input like "1h ago".',
+        ),
       to_timestamp: z
         .union([z.string(), z.number()])
         .optional()
-        .describe('Ending timestamp. Accepts Unix seconds, Unix milliseconds, ISO datetime, or relative input like "now".'),
+        .describe(
+          'Ending timestamp. Accepts Unix seconds, Unix milliseconds, ISO datetime, or relative input like "now".',
+        ),
       include_events: z.boolean().optional().default(true).describe('Include event log summary'),
       mode: z
         .enum(['fast', 'deep'])
         .optional()
         .default('deep')
-        .describe('Execution depth. Defaults to complete requested-window analysis; the optional fast value is only for explicitly bounded previews.'),
+        .describe(
+          'Execution depth. Defaults to complete requested-window analysis; the optional fast value is only for explicitly bounded previews.',
+        ),
     },
     async ({ network, contract_address, timeframe, from_timestamp, to_timestamp, include_events, mode }) => {
       const queryStartTime = Date.now()
@@ -115,8 +121,10 @@ export function registerGetContractActivityTool(server: McpServer) {
         toBlock = resolved.to_block
         resolvedWindow = resolved
         if (from_timestamp !== undefined || to_timestamp !== undefined) {
-          const fromLabel = resolved.from_lookup?.normalized_input ?? (from_timestamp !== undefined ? String(from_timestamp) : 'start')
-          const toLabel = resolved.to_lookup?.normalized_input ?? (to_timestamp !== undefined ? String(to_timestamp) : 'now')
+          const fromLabel =
+            resolved.from_lookup?.normalized_input ?? (from_timestamp !== undefined ? String(from_timestamp) : 'start')
+          const toLabel =
+            resolved.to_lookup?.normalized_input ?? (to_timestamp !== undefined ? String(to_timestamp) : 'now')
           windowDescription = `${fromLabel} -> ${toLabel}`
         }
       }

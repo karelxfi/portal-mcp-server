@@ -1,6 +1,4 @@
 import type { McpServer } from '@modelcontextprotocol/server'
-
-import { registerPortalTool } from '../../helpers/mcp-registration.js'
 import { z } from 'zod'
 
 import { resolveDataset, validateBlockRange } from '../../cache/datasets.js'
@@ -16,10 +14,20 @@ import {
   buildSolanaTransactionFields,
 } from '../../helpers/fields.js'
 import { formatResult } from '../../helpers/format.js'
+import { registerPortalTool } from '../../helpers/mcp-registration.js'
 import { normalizeSolanaInstructionResult } from '../../helpers/normalized-results.js'
-import { buildPaginationInfo, decodeRecentPageCursor, encodeRecentPageCursor, paginateAscendingItems } from '../../helpers/pagination.js'
-import { buildChronologicalPageOrdering, buildQueryCoverage, buildQueryFreshness } from '../../helpers/result-metadata.js'
-import { getTimestampWindowNotices, type TimestampInput, resolveTimeframeOrBlocks } from '../../helpers/timeframe.js'
+import {
+  buildPaginationInfo,
+  decodeRecentPageCursor,
+  encodeRecentPageCursor,
+  paginateAscendingItems,
+} from '../../helpers/pagination.js'
+import {
+  buildChronologicalPageOrdering,
+  buildQueryCoverage,
+  buildQueryFreshness,
+} from '../../helpers/result-metadata.js'
+import { type TimestampInput, getTimestampWindowNotices, resolveTimeframeOrBlocks } from '../../helpers/timeframe.js'
 import { buildExecutionMetadata, buildToolDescription } from '../../helpers/tool-ux.js'
 import { getValidationNotices, isValidSolanaAddress, validateSolanaQuerySize } from '../../helpers/validation.js'
 
@@ -92,7 +100,8 @@ export function registerQuerySolanaInstructionsTool(server: McpServer) {
     instructionAddress?: number[] | string
   }
 
-  const getBlockNumber = (item: SolanaInstructionItem) => typeof item.block_number === 'number' ? item.block_number : undefined
+  const getBlockNumber = (item: SolanaInstructionItem) =>
+    typeof item.block_number === 'number' ? item.block_number : undefined
   const getTransactionIndex = (item: SolanaInstructionItem) => {
     if (typeof item.transactionIndex === 'number') return item.transactionIndex
     if (typeof item.transactionIndex === 'string') {
@@ -116,7 +125,8 @@ export function registerQuerySolanaInstructionsTool(server: McpServer) {
       return instructionPath(left).localeCompare(instructionPath(right))
     })
 
-  registerPortalTool(server,
+  registerPortalTool(
+    server,
     'portal_solana_query_instructions',
     buildToolDescription('portal_solana_query_instructions'),
     {
@@ -130,11 +140,15 @@ export function registerQuerySolanaInstructionsTool(server: McpServer) {
       from_timestamp: z
         .union([z.number(), z.string()])
         .optional()
-        .describe('Starting timestamp. Accepts Unix seconds, Unix milliseconds, ISO datetime, or relative input like "1h ago".'),
+        .describe(
+          'Starting timestamp. Accepts Unix seconds, Unix milliseconds, ISO datetime, or relative input like "1h ago".',
+        ),
       to_timestamp: z
         .union([z.number(), z.string()])
         .optional()
-        .describe('Ending timestamp. Accepts Unix seconds, Unix milliseconds, ISO datetime, or relative input like "now".'),
+        .describe(
+          'Ending timestamp. Accepts Unix seconds, Unix milliseconds, ISO datetime, or relative input like "now".',
+        ),
       finalized_only: z.boolean().optional().default(false).describe('Only query finalized slots'),
       program_id: stringListInput('Program IDs.'),
       d1: stringListInput('1-byte discriminator filter (0x-prefixed hex).'),
@@ -246,13 +260,17 @@ export function registerQuerySolanaInstructionsTool(server: McpServer) {
         })
       }
       if (paginationCursor && requestedDataset && paginationCursor.dataset !== requestedDataset) {
-        throw new ActionableError('This cursor belongs to a different network.', [
-          'Reuse the cursor with the same network as the previous response.',
-          'Omit cursor to start a fresh Solana instruction query.',
-        ], {
-          cursor_dataset: paginationCursor.dataset,
-          requested_dataset: requestedDataset,
-        })
+        throw new ActionableError(
+          'This cursor belongs to a different network.',
+          [
+            'Reuse the cursor with the same network as the previous response.',
+            'Omit cursor to start a fresh Solana instruction query.',
+          ],
+          {
+            cursor_dataset: paginationCursor.dataset,
+            requested_dataset: requestedDataset,
+          },
+        )
       }
       if (paginationCursor) {
         dataset = paginationCursor.dataset
@@ -295,28 +313,52 @@ export function registerQuerySolanaInstructionsTool(server: McpServer) {
 
       for (const [label, values] of [
         ['program_id', program_id],
-        ['a0', a0], ['a1', a1], ['a2', a2], ['a3', a3], ['a4', a4], ['a5', a5],
-        ['a6', a6], ['a7', a7], ['a8', a8], ['a9', a9], ['a10', a10], ['a11', a11],
-        ['a12', a12], ['a13', a13], ['a14', a14], ['a15', a15],
+        ['a0', a0],
+        ['a1', a1],
+        ['a2', a2],
+        ['a3', a3],
+        ['a4', a4],
+        ['a5', a5],
+        ['a6', a6],
+        ['a7', a7],
+        ['a8', a8],
+        ['a9', a9],
+        ['a10', a10],
+        ['a11', a11],
+        ['a12', a12],
+        ['a13', a13],
+        ['a14', a14],
+        ['a15', a15],
         ['mentions_account', mentions_account],
         ['transaction_fee_payer', transaction_fee_payer],
       ] as Array<[string, string[] | undefined]>) {
         const invalid = values?.find((value) => !isValidSolanaAddress(value))
         if (invalid) {
-          throw new ActionableError(`${label} contains an invalid Solana public key.`, [
-            'Use a base58-encoded 32-byte Solana public key.',
-            'Correct or remove the invalid filter before retrying.',
-          ], { field: label }, { code: 'invalid_request', origin: 'client_input', retryable: false })
+          throw new ActionableError(
+            `${label} contains an invalid Solana public key.`,
+            [
+              'Use a base58-encoded 32-byte Solana public key.',
+              'Correct or remove the invalid filter before retrying.',
+            ],
+            { field: label },
+            { code: 'invalid_request', origin: 'client_input', retryable: false },
+          )
         }
       }
       for (const [label, values, bytes] of [
-        ['d1', d1, 1], ['d2', d2, 2], ['d4', d4, 4], ['d8', d8, 8],
+        ['d1', d1, 1],
+        ['d2', d2, 2],
+        ['d4', d4, 4],
+        ['d8', d8, 8],
       ] as Array<[string, string[] | undefined, number]>) {
         const invalid = values?.find((value) => !new RegExp(`^0x[0-9a-fA-F]{${bytes * 2}}$`).test(value))
         if (invalid) {
-          throw new ActionableError(`${label} must contain exactly ${bytes} byte${bytes === 1 ? '' : 's'} of 0x-prefixed hex.`, [
-            `Correct the ${label} discriminator before retrying.`,
-          ], { field: label }, { code: 'invalid_request', origin: 'client_input', retryable: false })
+          throw new ActionableError(
+            `${label} must contain exactly ${bytes} byte${bytes === 1 ? '' : 's'} of 0x-prefixed hex.`,
+            [`Correct the ${label} discriminator before retrying.`],
+            { field: label },
+            { code: 'invalid_request', origin: 'client_input', retryable: false },
+          )
         }
       }
 
@@ -326,7 +368,8 @@ export function registerQuerySolanaInstructionsTool(server: McpServer) {
             from_block: paginationCursor.window_from_block,
             to_block: paginationCursor.window_to_block,
             range_kind:
-              paginationCursor.request.from_timestamp !== undefined || paginationCursor.request.to_timestamp !== undefined
+              paginationCursor.request.from_timestamp !== undefined ||
+              paginationCursor.request.to_timestamp !== undefined
                 ? 'timestamp_range'
                 : paginationCursor.request.timeframe
                   ? 'timeframe'
@@ -360,11 +403,14 @@ export function registerQuerySolanaInstructionsTool(server: McpServer) {
         limit,
       })
       if (!validation.valid) {
-        throw new ActionableError(validation.error ?? 'Solana instruction query is too large for a safe MCP response.', [
-          'Reduce the slot range or add more specific filters like program_id, mentions_account, or a discriminator.',
-          'Example: program_id: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"',
-          'Example: timeframe: "15m", program_id: ["TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"]',
-        ])
+        throw new ActionableError(
+          validation.error ?? 'Solana instruction query is too large for a safe MCP response.',
+          [
+            'Reduce the slot range or add more specific filters like program_id, mentions_account, or a discriminator.',
+            'Example: program_id: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"',
+            'Example: timeframe: "15m", program_id: ["TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"]',
+          ],
+        )
       }
 
       const instructionFilter: Record<string, unknown> = {}
@@ -435,24 +481,27 @@ export function registerQuerySolanaInstructionsTool(server: McpServer) {
         initialSequentialChunks: hasFilters ? 1 : 0,
       })
 
-      const allInstructions = sortInstructions(results.flatMap((block: unknown) => {
-        const typedBlock = block as {
-          number?: number
-          timestamp?: number
-          header?: { number?: number; timestamp?: number }
-          instructions?: Array<Record<string, unknown>>
-        }
-        const blockNumber = typedBlock.number ?? typedBlock.header?.number
-        const timestamp = typedBlock.timestamp ?? typedBlock.header?.timestamp
+      const allInstructions = sortInstructions(
+        results.flatMap((block: unknown) => {
+          const typedBlock = block as {
+            number?: number
+            timestamp?: number
+            header?: { number?: number; timestamp?: number }
+            instructions?: Array<Record<string, unknown>>
+          }
+          const blockNumber = typedBlock.number ?? typedBlock.header?.number
+          const timestamp = typedBlock.timestamp ?? typedBlock.header?.timestamp
 
-        return (typedBlock.instructions || []).map((instruction) =>
-          normalizeSolanaInstructionResult({
-            ...instruction,
-            ...(blockNumber !== undefined ? { block_number: blockNumber, slot_number: blockNumber } : {}),
-            ...(timestamp !== undefined ? { timestamp } : {}),
-          }) as SolanaInstructionItem,
-        )
-      }))
+          return (typedBlock.instructions || []).map(
+            (instruction) =>
+              normalizeSolanaInstructionResult({
+                ...instruction,
+                ...(blockNumber !== undefined ? { block_number: blockNumber, slot_number: blockNumber } : {}),
+                ...(timestamp !== undefined ? { timestamp } : {}),
+              }) as SolanaInstructionItem,
+          )
+        }),
+      )
       const page = paginateAscendingItems(
         allInstructions,
         limit,
@@ -464,53 +513,54 @@ export function registerQuerySolanaInstructionsTool(server: McpServer) {
             }
           : undefined,
       )
-      const nextCursor = page.hasMore && page.nextBoundary
-        ? encodeRecentPageCursor<SolanaInstructionsRequest>({
-            tool: 'portal_solana_query_instructions',
-            dataset,
-            request: {
-              ...(timeframe ? { timeframe } : {}),
-              ...(from_timestamp !== undefined ? { from_timestamp } : {}),
-              ...(to_timestamp !== undefined ? { to_timestamp } : {}),
-              limit,
-              finalized_only,
-              ...(program_id ? { program_id } : {}),
-              ...(d1 ? { d1 } : {}),
-              ...(d2 ? { d2 } : {}),
-              ...(d4 ? { d4 } : {}),
-              ...(d8 ? { d8 } : {}),
-              ...(a0 ? { a0 } : {}),
-              ...(a1 ? { a1 } : {}),
-              ...(a2 ? { a2 } : {}),
-              ...(a3 ? { a3 } : {}),
-              ...(a4 ? { a4 } : {}),
-              ...(a5 ? { a5 } : {}),
-              ...(a6 ? { a6 } : {}),
-              ...(a7 ? { a7 } : {}),
-              ...(a8 ? { a8 } : {}),
-              ...(a9 ? { a9 } : {}),
-              ...(a10 ? { a10 } : {}),
-              ...(a11 ? { a11 } : {}),
-              ...(a12 ? { a12 } : {}),
-              ...(a13 ? { a13 } : {}),
-              ...(a14 ? { a14 } : {}),
-              ...(a15 ? { a15 } : {}),
-              ...(mentions_account ? { mentions_account } : {}),
-              ...(is_committed !== undefined ? { is_committed } : {}),
-              ...(transaction_fee_payer ? { transaction_fee_payer } : {}),
-              include_transaction,
-              include_transaction_balances,
-              include_transaction_token_balances,
-              include_inner_instructions,
-              include_logs,
-              include_transaction_instructions,
-            },
-            window_from_block: resolvedFromBlock,
-            window_to_block: endBlock,
-            page_to_block: page.nextBoundary.page_to_block,
-            skip_inclusive_block: page.nextBoundary.skip_inclusive_block,
-          })
-        : undefined
+      const nextCursor =
+        page.hasMore && page.nextBoundary
+          ? encodeRecentPageCursor<SolanaInstructionsRequest>({
+              tool: 'portal_solana_query_instructions',
+              dataset,
+              request: {
+                ...(timeframe ? { timeframe } : {}),
+                ...(from_timestamp !== undefined ? { from_timestamp } : {}),
+                ...(to_timestamp !== undefined ? { to_timestamp } : {}),
+                limit,
+                finalized_only,
+                ...(program_id ? { program_id } : {}),
+                ...(d1 ? { d1 } : {}),
+                ...(d2 ? { d2 } : {}),
+                ...(d4 ? { d4 } : {}),
+                ...(d8 ? { d8 } : {}),
+                ...(a0 ? { a0 } : {}),
+                ...(a1 ? { a1 } : {}),
+                ...(a2 ? { a2 } : {}),
+                ...(a3 ? { a3 } : {}),
+                ...(a4 ? { a4 } : {}),
+                ...(a5 ? { a5 } : {}),
+                ...(a6 ? { a6 } : {}),
+                ...(a7 ? { a7 } : {}),
+                ...(a8 ? { a8 } : {}),
+                ...(a9 ? { a9 } : {}),
+                ...(a10 ? { a10 } : {}),
+                ...(a11 ? { a11 } : {}),
+                ...(a12 ? { a12 } : {}),
+                ...(a13 ? { a13 } : {}),
+                ...(a14 ? { a14 } : {}),
+                ...(a15 ? { a15 } : {}),
+                ...(mentions_account ? { mentions_account } : {}),
+                ...(is_committed !== undefined ? { is_committed } : {}),
+                ...(transaction_fee_payer ? { transaction_fee_payer } : {}),
+                include_transaction,
+                include_transaction_balances,
+                include_transaction_token_balances,
+                include_inner_instructions,
+                include_logs,
+                include_transaction_instructions,
+              },
+              window_from_block: resolvedFromBlock,
+              window_to_block: endBlock,
+              page_to_block: page.nextBoundary.page_to_block,
+              skip_inclusive_block: page.nextBoundary.skip_inclusive_block,
+            })
+          : undefined
 
       const notices = [...getTimestampWindowNotices(resolvedBlocks), ...getValidationNotices(validation)]
       if (nextCursor) notices.push('Older results are available via _pagination.next_cursor.')

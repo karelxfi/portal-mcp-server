@@ -1,26 +1,24 @@
 import type { McpServer } from '@modelcontextprotocol/server'
-
-import { registerPortalTool } from '../../helpers/mcp-registration.js'
 import { z } from 'zod'
 
 import { resolveDataset, validateBlockRange } from '../../cache/datasets.js'
 import { PORTAL_URL } from '../../constants/index.js'
+import { fetchBitcoinBlockFees, satsToBtcString, totalBitcoinFees } from '../../helpers/bitcoin-fees.js'
 import { detectChainType } from '../../helpers/chain.js'
 import { buildTableDescriptor } from '../../helpers/chart-metadata.js'
 import { createUnsupportedChainError } from '../../helpers/errors.js'
 import { portalFetchStreamRange } from '../../helpers/fetch.js'
-import { formatResult } from '../../helpers/format.js'
-import { formatNumber, formatBTC, formatPct, formatDuration } from '../../helpers/format.js'
-import { fetchBitcoinBlockFees, satsToBtcString, totalBitcoinFees } from '../../helpers/bitcoin-fees.js'
+import { formatBTC, formatDuration, formatNumber, formatPct, formatResult } from '../../helpers/format.js'
+import { registerPortalTool } from '../../helpers/mcp-registration.js'
+import type { ResponseFormat } from '../../helpers/response-modes.js'
 import {
   type AnalysisSectionCoverage,
   buildAnalysisCoverage,
   buildAnalysisSectionCoverage,
   buildQueryFreshness,
 } from '../../helpers/result-metadata.js'
-import type { ResponseFormat } from '../../helpers/response-modes.js'
 import { buildPercentileSummary } from '../../helpers/statistics.js'
-import { resolveTimeframeOrBlocks, type TimestampInput } from '../../helpers/timeframe.js'
+import { type TimestampInput, resolveTimeframeOrBlocks } from '../../helpers/timeframe.js'
 import { buildExecutionMetadata, buildToolDescription } from '../../helpers/tool-ux.js'
 import { buildMetricCard, buildPortalUi, buildRankedBarsPanel, buildTablePanel } from '../../helpers/ui-metadata.js'
 
@@ -97,15 +95,18 @@ function formatBitcoinAnalyticsResponse(response: Record<string, any>, responseF
 
 function decorateBitcoinAnalyticsPresentation(response: Record<string, any>) {
   const breakdown = response.script_type_adoption?.breakdown
-  const scriptTypes = breakdown && typeof breakdown === 'object'
-    ? Object.entries(breakdown).map(([type, value], index) => ({
-        rank: index + 1,
-        type,
-        count: Number((value as Record<string, unknown>)?.count ?? 0),
-        percentage: Number((value as Record<string, unknown>)?.percentage ?? 0),
-      })).sort((left, right) => right.count - left.count || left.type.localeCompare(right.type))
-        .map((row, index) => ({ ...row, rank: index + 1 }))
-    : []
+  const scriptTypes =
+    breakdown && typeof breakdown === 'object'
+      ? Object.entries(breakdown)
+          .map(([type, value], index) => ({
+            rank: index + 1,
+            type,
+            count: Number((value as Record<string, unknown>)?.count ?? 0),
+            percentage: Number((value as Record<string, unknown>)?.percentage ?? 0),
+          }))
+          .sort((left, right) => right.count - left.count || left.type.localeCompare(right.type))
+          .map((row, index) => ({ ...row, rank: index + 1 }))
+      : []
   const block = response.block_details ?? response.overview ?? {}
   const transaction = response.transaction_stats ?? {}
   const presentationSummary = {
@@ -115,24 +116,25 @@ function decorateBitcoinAnalyticsPresentation(response: Record<string, any>) {
     segwit_percentage: transaction.segwit_percentage ?? response.overview?.segwit_percentage,
     avg_fee_per_tx_btc: response.fee_analysis?.avg_fee_per_tx_btc ?? response.overview?.avg_fee_per_tx_btc,
   }
-  const table = scriptTypes.length > 0
-    ? buildTableDescriptor({
-        id: 'bitcoin_script_types',
-        dataKey: 'script_types',
-        rowCount: scriptTypes.length,
-        title: 'Bitcoin output script types',
-        subtitle: 'Observed output scripts ranked by count in the sampled blocks',
-        keyField: 'type',
-        defaultSort: { key: 'rank', direction: 'asc' },
-        dense: true,
-        columns: [
-          { key: 'rank', label: 'Rank', kind: 'rank', format: 'integer', align: 'right' },
-          { key: 'type', label: 'Script type', kind: 'dimension' },
-          { key: 'count', label: 'Outputs', kind: 'metric', format: 'integer', align: 'right' },
-          { key: 'percentage', label: 'Share', kind: 'metric', format: 'percent', unit: '%', align: 'right' },
-        ],
-      })
-    : undefined
+  const table =
+    scriptTypes.length > 0
+      ? buildTableDescriptor({
+          id: 'bitcoin_script_types',
+          dataKey: 'script_types',
+          rowCount: scriptTypes.length,
+          title: 'Bitcoin output script types',
+          subtitle: 'Observed output scripts ranked by count in the sampled blocks',
+          keyField: 'type',
+          defaultSort: { key: 'rank', direction: 'asc' },
+          dense: true,
+          columns: [
+            { key: 'rank', label: 'Rank', kind: 'rank', format: 'integer', align: 'right' },
+            { key: 'type', label: 'Script type', kind: 'dimension' },
+            { key: 'count', label: 'Outputs', kind: 'metric', format: 'integer', align: 'right' },
+            { key: 'percentage', label: 'Share', kind: 'metric', format: 'percent', unit: '%', align: 'right' },
+          ],
+        })
+      : undefined
   const normalizedResponse = {
     ...response,
     presentation_summary: presentationSummary,
@@ -149,10 +151,32 @@ function decorateBitcoinAnalyticsPresentation(response: Record<string, any>) {
       design_intent: 'analytics_dashboard',
       headline: { title: 'Bitcoin network analytics' },
       metric_cards: [
-        buildMetricCard({ id: 'blocks', label: 'Blocks analyzed', value_path: 'presentation_summary.blocks_analyzed', format: 'integer', emphasis: 'primary' }),
-        buildMetricCard({ id: 'transactions', label: 'Transactions', value_path: 'presentation_summary.total_transactions', format: 'integer' }),
-        buildMetricCard({ id: 'block-time', label: 'Average block time', value_path: 'presentation_summary.avg_block_time_seconds', format: 'decimal', unit: 'seconds' }),
-        buildMetricCard({ id: 'segwit', label: 'SegWit share', value_path: 'presentation_summary.segwit_percentage', format: 'percent' }),
+        buildMetricCard({
+          id: 'blocks',
+          label: 'Blocks analyzed',
+          value_path: 'presentation_summary.blocks_analyzed',
+          format: 'integer',
+          emphasis: 'primary',
+        }),
+        buildMetricCard({
+          id: 'transactions',
+          label: 'Transactions',
+          value_path: 'presentation_summary.total_transactions',
+          format: 'integer',
+        }),
+        buildMetricCard({
+          id: 'block-time',
+          label: 'Average block time',
+          value_path: 'presentation_summary.avg_block_time_seconds',
+          format: 'decimal',
+          unit: 'seconds',
+        }),
+        buildMetricCard({
+          id: 'segwit',
+          label: 'SegWit share',
+          value_path: 'presentation_summary.segwit_percentage',
+          format: 'percent',
+        }),
       ],
       panels: table
         ? [
@@ -178,7 +202,11 @@ function decorateBitcoinAnalyticsPresentation(response: Record<string, any>) {
           ]
         : [],
       ...(scriptTypes.length > 0
-        ? { follow_up_actions: [{ label: 'Show script type rows', intent: 'show_raw' as const, target: 'script_types' }] }
+        ? {
+            follow_up_actions: [
+              { label: 'Show script type rows', intent: 'show_raw' as const, target: 'script_types' },
+            ],
+          }
         : {}),
     }),
   }
@@ -201,7 +229,8 @@ export function registerBitcoinAnalyticsTool(server: McpServer) {
   const FEE_SCAN_MAX_BLOCKS = 36
   const ADDRESS_SCAN_MAX_BLOCKS = 50
 
-  registerPortalTool(server,
+  registerPortalTool(
+    server,
     'portal_bitcoin_get_analytics',
     buildToolDescription('portal_bitcoin_get_analytics'),
     {
@@ -214,17 +243,23 @@ export function registerBitcoinAnalyticsTool(server: McpServer) {
         .enum(['fast', 'deep'])
         .optional()
         .default('deep')
-        .describe('Execution depth. Defaults to complete requested-window analysis; the optional fast value is only for explicitly bounded previews.'),
+        .describe(
+          'Execution depth. Defaults to complete requested-window analysis; the optional fast value is only for explicitly bounded previews.',
+        ),
       from_block: z.number().optional().describe('Starting block number (use this OR timeframe)'),
       to_block: z.number().optional().describe('Ending block number'),
       from_timestamp: z
         .union([z.string(), z.number()])
         .optional()
-        .describe('Starting timestamp. Accepts Unix seconds, Unix milliseconds, ISO datetime, or relative input like "6h ago".'),
+        .describe(
+          'Starting timestamp. Accepts Unix seconds, Unix milliseconds, ISO datetime, or relative input like "6h ago".',
+        ),
       to_timestamp: z
         .union([z.string(), z.number()])
         .optional()
-        .describe('Ending timestamp. Accepts Unix seconds, Unix milliseconds, ISO datetime, or relative input like "now".'),
+        .describe(
+          'Ending timestamp. Accepts Unix seconds, Unix milliseconds, ISO datetime, or relative input like "now".',
+        ),
       include_address_activity: z
         .boolean()
         .optional()
@@ -234,9 +269,21 @@ export function registerBitcoinAnalyticsTool(server: McpServer) {
         .enum(['full', 'compact', 'summary'])
         .optional()
         .default('full')
-        .describe("Response format: 'summary' (high-level metrics only), 'compact' (core sections, lighter payload), 'full' (complete analytics)."),
+        .describe(
+          "Response format: 'summary' (high-level metrics only), 'compact' (core sections, lighter payload), 'full' (complete analytics).",
+        ),
     },
-    async ({ network, timeframe, mode, from_block, to_block, from_timestamp, to_timestamp, include_address_activity, response_format }) => {
+    async ({
+      network,
+      timeframe,
+      mode,
+      from_block,
+      to_block,
+      from_timestamp,
+      to_timestamp,
+      include_address_activity,
+      response_format,
+    }) => {
       const queryStartTime = Date.now()
       let dataset = await resolveDataset(network)
       const chainType = detectChainType(dataset)
@@ -300,13 +347,9 @@ export function registerBitcoinAnalyticsTool(server: McpServer) {
         transactions: [{}],
       }
 
-      const txResults = await portalFetchStreamRange(
-        `${PORTAL_URL}/datasets/${dataset}/stream`,
-        txQuery,
-        {
-          maxBytes: 100 * 1024 * 1024,
-        },
-      )
+      const txResults = await portalFetchStreamRange(`${PORTAL_URL}/datasets/${dataset}/stream`, txQuery, {
+        maxBytes: 100 * 1024 * 1024,
+      })
 
       // Compute block & transaction stats
       let totalTxs = 0
@@ -429,14 +472,10 @@ export function registerBitcoinAnalyticsTool(server: McpServer) {
         }
 
         try {
-          const outputResults = await portalFetchStreamRange(
-            `${PORTAL_URL}/datasets/${dataset}/stream`,
-            outputQuery,
-            {
-              maxBlocks: outputMaxBlocks,
-              maxBytes: 100 * 1024 * 1024,
-            },
-          )
+          const outputResults = await portalFetchStreamRange(`${PORTAL_URL}/datasets/${dataset}/stream`, outputQuery, {
+            maxBlocks: outputMaxBlocks,
+            maxBytes: 100 * 1024 * 1024,
+          })
 
           const addresses = new Set<string>()
           const scriptTypes = new Map<string, number>()
@@ -541,7 +580,9 @@ export function registerBitcoinAnalyticsTool(server: McpServer) {
           analyzedFromBlock: endBlock + 1,
           analyzedToBlock: endBlock,
         })
-        sectionNotices.push('Fee analysis is unavailable for this window because the fee scan failed; retry or use a smaller range.')
+        sectionNotices.push(
+          'Fee analysis is unavailable for this window because the fee scan failed; retry or use a smaller range.',
+        )
         response.fee_analysis = {
           scope: 'unavailable',
           sampled: true,
@@ -553,7 +594,9 @@ export function registerBitcoinAnalyticsTool(server: McpServer) {
 
       const notices = [
         ...(requestedBlocks > maxBlocks
-          ? [`Analyzed ${numBlocks} of ${requestedBlocks} requested blocks because the requested window exceeds the current Bitcoin analytics scan budget.`]
+          ? [
+              `Analyzed ${numBlocks} of ${requestedBlocks} requested blocks because the requested window exceeds the current Bitcoin analytics scan budget.`,
+            ]
           : []),
         ...sectionNotices,
       ]
@@ -565,62 +608,68 @@ export function registerBitcoinAnalyticsTool(server: McpServer) {
             : ''
       const formattedResponse = formatBitcoinAnalyticsResponse(response, response_format as ResponseFormat)
       const presentation = decorateBitcoinAnalyticsPresentation(formattedResponse)
-      const message = response_format === 'summary'
-        ? `Bitcoin summary: ${numBlocks} blocks, ${totalTxs.toLocaleString()} txs, ${avgBlockTime.toFixed(0)}s avg block time${feeScope}`
-        : `Bitcoin network analytics: ${numBlocks} blocks, ${totalTxs.toLocaleString()} txs, ${avgTxsPerBlock.toFixed(0)} avg txs/block, ${avgBlockTime.toFixed(0)}s avg block time, ${segwitPct.toFixed(0)}% segwit${feeScope}`
+      const message =
+        response_format === 'summary'
+          ? `Bitcoin summary: ${numBlocks} blocks, ${totalTxs.toLocaleString()} txs, ${avgBlockTime.toFixed(0)}s avg block time${feeScope}`
+          : `Bitcoin network analytics: ${numBlocks} blocks, ${totalTxs.toLocaleString()} txs, ${avgTxsPerBlock.toFixed(0)} avg txs/block, ${avgBlockTime.toFixed(0)}s avg block time, ${segwitPct.toFixed(0)}% segwit${feeScope}`
 
-      return formatResult(
-        presentation.response,
-        message,
-        {
-          toolName: 'portal_bitcoin_get_analytics',
-          ...(notices.length > 0 ? { notices } : {}),
-          ordering: {
-            kind: 'sections',
-            block_series: 'oldest_to_newest',
-          },
-          freshness: buildQueryFreshness({
-            finality: 'latest',
-            headBlockNumber: head.number,
-            windowToBlock: endBlock,
-            resolvedWindow,
-          }),
-          coverage: buildAnalysisCoverage({
-            windowFromBlock: resolvedFromBlock,
-            windowToBlock: endBlock,
-            analyzedFromBlock: effectiveFrom,
-            analyzedToBlock: endBlock,
-            sections,
-          }),
-          execution: buildExecutionMetadata({
-            mode,
-            response_format,
-            from_block: effectiveFrom,
-            to_block: endBlock,
-            range_kind: resolvedWindow.range_kind,
-            notes: [
-              include_address_activity ? 'Address-activity enrichment was included.' : 'Address-activity enrichment was skipped for speed.',
-              ...sectionNotices,
-            ],
-          }),
-          ui: presentation.ui,
-          llm: {
-            compact: true,
-            primary_path: presentation.response.script_types?.length ? 'script_types' : 'presentation_summary',
-            answer_sequence: ['presentation_summary', 'block_details', 'transaction_stats', 'network_activity', 'fee_analysis', 'script_types'],
-            parser_notes: [
-              'Bitcoin values use BTC units in analytics summaries with exact satoshi companions; script_types contains ranked output-script evidence when address activity is enabled.',
-              'fee_analysis.scope says whether fees cover the whole analyzed window or only its newest blocks; _coverage.sections carries the exact block set per section.',
-            ],
-          },
-          metadata: {
-            dataset,
-            from_block: effectiveFrom,
-            to_block: endBlock,
-            query_start_time: queryStartTime,
-          },
+      return formatResult(presentation.response, message, {
+        toolName: 'portal_bitcoin_get_analytics',
+        ...(notices.length > 0 ? { notices } : {}),
+        ordering: {
+          kind: 'sections',
+          block_series: 'oldest_to_newest',
         },
-      )
+        freshness: buildQueryFreshness({
+          finality: 'latest',
+          headBlockNumber: head.number,
+          windowToBlock: endBlock,
+          resolvedWindow,
+        }),
+        coverage: buildAnalysisCoverage({
+          windowFromBlock: resolvedFromBlock,
+          windowToBlock: endBlock,
+          analyzedFromBlock: effectiveFrom,
+          analyzedToBlock: endBlock,
+          sections,
+        }),
+        execution: buildExecutionMetadata({
+          mode,
+          response_format,
+          from_block: effectiveFrom,
+          to_block: endBlock,
+          range_kind: resolvedWindow.range_kind,
+          notes: [
+            include_address_activity
+              ? 'Address-activity enrichment was included.'
+              : 'Address-activity enrichment was skipped for speed.',
+            ...sectionNotices,
+          ],
+        }),
+        ui: presentation.ui,
+        llm: {
+          compact: true,
+          primary_path: presentation.response.script_types?.length ? 'script_types' : 'presentation_summary',
+          answer_sequence: [
+            'presentation_summary',
+            'block_details',
+            'transaction_stats',
+            'network_activity',
+            'fee_analysis',
+            'script_types',
+          ],
+          parser_notes: [
+            'Bitcoin values use BTC units in analytics summaries with exact satoshi companions; script_types contains ranked output-script evidence when address activity is enabled.',
+            'fee_analysis.scope says whether fees cover the whole analyzed window or only its newest blocks; _coverage.sections carries the exact block set per section.',
+          ],
+        },
+        metadata: {
+          dataset,
+          from_block: effectiveFrom,
+          to_block: endBlock,
+          query_start_time: queryStartTime,
+        },
+      })
     },
   )
 }

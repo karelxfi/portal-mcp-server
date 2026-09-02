@@ -108,10 +108,7 @@ const PORTAL_TOOL_OUTPUT_SCHEMA = z
       .describe('Replayable arguments, exact-data digest, row count, and completeness receipt.'),
     _execution: z.record(z.string(), z.unknown()).optional().describe('Bounded execution and scan details.'),
     _ui: z.unknown().optional().describe('Optional chart, table, and follow-up presentation metadata.'),
-    _app: z
-      .record(z.string(), z.unknown())
-      .optional()
-      .describe('SQD Explorer identity and honest host-render state.'),
+    _app: z.record(z.string(), z.unknown()).optional().describe('SQD Explorer identity and honest host-render state.'),
     _server: z
       .object({
         name: z.string(),

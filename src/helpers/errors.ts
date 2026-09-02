@@ -130,7 +130,17 @@ function summarizeQueryBody(query: unknown): Record<string, unknown> {
     }
   }
 
-  for (const key of ['logs', 'transactions', 'traces', 'stateDiffs', 'calls', 'events', 'instructions', 'inputs', 'outputs']) {
+  for (const key of [
+    'logs',
+    'transactions',
+    'traces',
+    'stateDiffs',
+    'calls',
+    'events',
+    'instructions',
+    'inputs',
+    'outputs',
+  ]) {
     const value = query[key]
     if (Array.isArray(value)) {
       summary[`${key}_count`] = value.length
@@ -159,12 +169,20 @@ function sanitizeContextValue(value: unknown, key: string | undefined, depth: nu
   }
 
   const normalizedKey = key ? normalizeContextKey(key) : ''
-  if (normalizedKey === 'query' || normalizedKey === 'body' || normalizedKey === 'request_body' || normalizedKey === 'payload') {
+  if (
+    normalizedKey === 'query' ||
+    normalizedKey === 'body' ||
+    normalizedKey === 'request_body' ||
+    normalizedKey === 'payload'
+  ) {
     return summarizeQueryBody(value)
   }
 
   if (typeof value === 'string') {
-    const sanitized = normalizedKey.includes('url') || normalizedKey === 'uri' || normalizedKey === 'endpoint' ? sanitizeUrl(value) : value
+    const sanitized =
+      normalizedKey.includes('url') || normalizedKey === 'uri' || normalizedKey === 'endpoint'
+        ? sanitizeUrl(value)
+        : value
     return truncateContextString(sanitized)
   }
 
@@ -448,7 +466,8 @@ export function parsePortalError(
     retryable: status >= 500,
   }
   const upstreamOverloaded =
-    status === 529 || /\"type\"\s*:\s*\"rate_limit_error\"|\"code\"\s*:\s*\"overloaded\"|service is overloaded/i.test(errorText)
+    status === 529 ||
+    /\"type\"\s*:\s*\"rate_limit_error\"|\"code\"\s*:\s*\"overloaded\"|service is overloaded/i.test(errorText)
 
   // 400 Bad Request - Parse detailed error
   if (status === 400) {
@@ -516,7 +535,9 @@ export function parsePortalError(
       if (datasetMatch) {
         suggestions.push(`Network '${datasetMatch[1]}' was not found or is not available here`)
         suggestions.push('Use portal_list_networks to see available networks')
-        suggestions.push("Use portal_list_networks with query: 'ethereum', 'base', or another chain name to find the right network")
+        suggestions.push(
+          "Use portal_list_networks with query: 'ethereum', 'base', or another chain name to find the right network",
+        )
       }
     } else {
       suggestions.push('Verify the network name is correct')
@@ -628,11 +649,16 @@ export function createBlockRangeError(fromBlock: number, toBlock: number, reason
     suggestions.push('fromBlock must be >= 0')
   }
 
-  return new ActionableError(reason, suggestions, { fromBlock, toBlock, range }, {
-    code: 'invalid_request',
-    origin: 'client_input',
-    retryable: false,
-  })
+  return new ActionableError(
+    reason,
+    suggestions,
+    { fromBlock, toBlock, range },
+    {
+      code: 'invalid_request',
+      origin: 'client_input',
+      retryable: false,
+    },
+  )
 }
 
 /**
@@ -699,11 +725,16 @@ export function createAddressFormatError(address: string): ActionableError {
     suggestions.push(`Try: ${address.toLowerCase()}`)
   }
 
-  return new ActionableError(`Invalid address format: ${address}`, suggestions, { address }, {
-    code: 'invalid_request',
-    origin: 'client_input',
-    retryable: false,
-  })
+  return new ActionableError(
+    `Invalid address format: ${address}`,
+    suggestions,
+    { address },
+    {
+      code: 'invalid_request',
+      origin: 'client_input',
+      retryable: false,
+    },
+  )
 }
 
 function describeChainType(chainType: string): string {

@@ -1,5 +1,6 @@
 import { DEFAULT_RETRIES, DEFAULT_TIMEOUT, STREAM_TIMEOUT } from '../constants/index.js'
 import { portalRequestsTotal } from '../metrics.js'
+import { portalAdmission } from './admission.js'
 import { ActionableError, RequestCancelledError, createTimeoutError, parsePortalError, wrapError } from './errors.js'
 import {
   type RequestAbortContext,
@@ -7,7 +8,6 @@ import {
   getPortalRequestSignal,
   isAbortLike,
 } from './request-context.js'
-import { portalAdmission } from './admission.js'
 
 // ============================================================================
 
@@ -475,7 +475,8 @@ export async function portalFetchStream(
       releaseAdmission?.()
       releaseAdmission = undefined
       const retryDelay = lastError instanceof ActionableError ? lastError.retryAfterMs : undefined
-      if (!(await waitForRetry(attempt, options.retries, retryStartedAt, retryDelay ?? computeRetryDelayMs(attempt)))) break
+      if (!(await waitForRetry(attempt, options.retries, retryStartedAt, retryDelay ?? computeRetryDelayMs(attempt))))
+        break
     } finally {
       releaseAdmission?.()
       abortContext.cleanup()

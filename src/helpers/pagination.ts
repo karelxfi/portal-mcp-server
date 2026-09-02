@@ -157,11 +157,15 @@ export function decodeCursor<T extends CursorPayload>(cursor: string, expectedTo
     return parsed
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error)
-    throw new ActionableError('Invalid pagination cursor.', [
-      'Use the exact next_cursor value from the previous response.',
-      'Do not edit or truncate the cursor string.',
-      'Start a fresh query without cursor if you want a new preview window.',
-    ], { expected_tool: expectedTool, detail })
+    throw new ActionableError(
+      'Invalid pagination cursor.',
+      [
+        'Use the exact next_cursor value from the previous response.',
+        'Do not edit or truncate the cursor string.',
+        'Start a fresh query without cursor if you want a new preview window.',
+      ],
+      { expected_tool: expectedTool, detail },
+    )
   }
 }
 

@@ -1,10 +1,7 @@
 {
   "version": "0.7.9",
   "captured_at": "2026-05-16T14:19:19.881Z",
-  "passes": [
-    "cold",
-    "warm"
-  ],
+  "passes": ["cold", "warm"],
   "sample_count": 56,
   "aggregate": {
     "median_chars": 10139,

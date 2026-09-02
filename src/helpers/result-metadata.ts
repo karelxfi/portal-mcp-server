@@ -1,20 +1,18 @@
 import { formatTimestamp } from './format.js'
 import type { BlockAtTimestampResult, EstimatedTimeframeResolution, ResolvedBlockWindow } from './timeframe.js'
 
-type TimestampBoundarySummary = Pick<
-  BlockAtTimestampResult,
-  | 'timestamp'
-  | 'resolution'
-  | 'block_number'
-> & Partial<Pick<
-  BlockAtTimestampResult,
-  | 'timestamp_human'
-  | 'normalized_input'
-  | 'block_timestamp'
-  | 'block_timestamp_human'
-  | 'timestamp_delta_seconds'
-  | 'boundary'
->>
+type TimestampBoundarySummary = Pick<BlockAtTimestampResult, 'timestamp' | 'resolution' | 'block_number'> &
+  Partial<
+    Pick<
+      BlockAtTimestampResult,
+      | 'timestamp_human'
+      | 'normalized_input'
+      | 'block_timestamp'
+      | 'block_timestamp_human'
+      | 'timestamp_delta_seconds'
+      | 'boundary'
+    >
+  >
 
 export interface QueryFreshness {
   kind: 'query_window'
@@ -285,13 +283,9 @@ export function buildBucketCoverage(params: {
     filled_buckets: params.filledBuckets,
     empty_buckets: Math.max(0, params.returnedBuckets - params.filledBuckets),
     anchor: params.anchor,
-    ...(params.requestedFromTimestamp !== undefined
-      ? { requested_from_timestamp: params.requestedFromTimestamp }
-      : {}),
+    ...(params.requestedFromTimestamp !== undefined ? { requested_from_timestamp: params.requestedFromTimestamp } : {}),
     ...(params.requestedToTimestamp !== undefined ? { requested_to_timestamp: params.requestedToTimestamp } : {}),
-    ...(params.analyzedFromTimestamp !== undefined
-      ? { analyzed_from_timestamp: params.analyzedFromTimestamp }
-      : {}),
+    ...(params.analyzedFromTimestamp !== undefined ? { analyzed_from_timestamp: params.analyzedFromTimestamp } : {}),
     ...(params.analyzedToTimestamp !== undefined ? { analyzed_to_timestamp: params.analyzedToTimestamp } : {}),
     ...(params.indexedEvidenceEndTimestamp !== undefined
       ? { indexed_evidence_end_timestamp: params.indexedEvidenceEndTimestamp }
@@ -332,7 +326,8 @@ export function buildAnalysisCoverage(params: {
   const sectionSampled = Object.values(sections).some((section) => section.sampled)
   return {
     kind: 'analysis_window',
-    window_complete: params.analyzedFromBlock <= params.windowFromBlock && params.analyzedToBlock >= params.windowToBlock,
+    window_complete:
+      params.analyzedFromBlock <= params.windowFromBlock && params.analyzedToBlock >= params.windowToBlock,
     result_complete: !(params.hasMore ?? false),
     continuation: params.hasMore ? 'cursor' : 'none',
     window_from_block: params.windowFromBlock,
@@ -400,7 +395,9 @@ export function buildRankedOrdering(params: {
   }
 }
 
-export function buildBucketGapDiagnostics<T extends { bucket_index: number; timestamp: number; timestamp_human?: string }>(params: {
+export function buildBucketGapDiagnostics<
+  T extends { bucket_index: number; timestamp: number; timestamp_human?: string },
+>(params: {
   buckets: T[]
   intervalSeconds: number
   isFilled: (bucket: T) => boolean
@@ -419,8 +416,7 @@ export function buildBucketGapDiagnostics<T extends { bucket_index: number; time
 
   const classifyGapKind = (bucket: T) => {
     const bucketEnd = bucket.timestamp + params.intervalSeconds
-    const beforeObservedData =
-      params.firstObservedTimestamp !== undefined && bucketEnd <= params.firstObservedTimestamp
+    const beforeObservedData = params.firstObservedTimestamp !== undefined && bucketEnd <= params.firstObservedTimestamp
     const afterObservedData =
       params.lastObservedTimestamp !== undefined && bucket.timestamp > params.lastObservedTimestamp
     return !windowComplete && (beforeObservedData || afterObservedData) ? 'coverage_gap_likely' : 'no_activity'

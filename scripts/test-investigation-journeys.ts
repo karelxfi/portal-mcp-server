@@ -2,7 +2,12 @@
 
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 
-import { EXACT_DECIMAL_ZERO, addExactDecimals, formatExactDecimal, parseExactDecimal } from '../src/helpers/exact-decimal.ts'
+import {
+  EXACT_DECIMAL_ZERO,
+  addExactDecimals,
+  formatExactDecimal,
+  parseExactDecimal,
+} from '../src/helpers/exact-decimal.ts'
 import { assert, callToolWithRetry, closeTestClient, connectTestClient } from './test-helpers.ts'
 
 const BASE_USDC = '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913'
@@ -44,7 +49,12 @@ async function main() {
   const evidence: Record<string, unknown>[] = []
 
   try {
-    const head = await callToolWithRetry(connected.client, 'portal_get_head', { network: 'base-mainnet' }, { retries: 1 })
+    const head = await callToolWithRetry(
+      connected.client,
+      'portal_get_head',
+      { network: 'base-mainnet' },
+      { retries: 1 },
+    )
     assert(!head.isError && Number.isInteger(head.data?.number), 'Base head should resolve')
 
     const seed = await callToolWithRetry(
@@ -61,7 +71,9 @@ async function main() {
       { retries: 1 },
     )
     assert(!seed.isError && seed.data?.items?.length > 0, 'wallet journey should find a recent exact Base transaction')
-    const wallet = String(seed.data.items.find((item: any) => /^0x[0-9a-f]{40}$/i.test(item?.from))?.from ?? '').toLowerCase()
+    const wallet = String(
+      seed.data.items.find((item: any) => /^0x[0-9a-f]{40}$/i.test(item?.from))?.from ?? '',
+    ).toLowerCase()
     assert(/^0x[0-9a-f]{40}$/.test(wallet), 'wallet journey should derive a factual active wallet')
 
     const walletResult = await callToolWithRetry(
@@ -94,7 +106,10 @@ async function main() {
     )
     assert(!contractResult.isError, 'contract investigation should succeed')
     assertEvidence(contractResult.data, 'portal_evm_get_contract_activity', 'contract investigation')
-    assert(contractResult.data?.interactions?.total_transactions > 0, 'active USDC contract should have recent interactions')
+    assert(
+      contractResult.data?.interactions?.total_transactions > 0,
+      'active USDC contract should have recent interactions',
+    )
     assert(
       contractResult.data.interactions.top_callers.reduce((sum: number, row: any) => sum + row.interaction_count, 0) <=
         contractResult.data.interactions.total_transactions,

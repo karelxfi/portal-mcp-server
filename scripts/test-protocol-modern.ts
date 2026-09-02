@@ -49,10 +49,7 @@ async function main() {
     )
     assert(client.getServerVersion()?.version === npmVersion, `expected server version ${npmVersion}`)
     const discover = client.getDiscoverResult()
-    assert(
-      discover?.supportedVersions?.includes('2026-07-28') === true,
-      'server/discover should advertise 2026-07-28',
-    )
+    assert(discover?.supportedVersions?.includes('2026-07-28') === true, 'server/discover should advertise 2026-07-28')
     assert(discover?.resultType === 'complete', 'server/discover should identify the complete result')
     assertCacheHint(discover, 'server/discover')
     const instructions = client.getInstructions()

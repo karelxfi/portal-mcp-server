@@ -115,8 +115,13 @@ async function main() {
     const toolResult = await client.callTool({ name: 'portal_get_recent_activity', arguments: toolInput })
     const structured = toolResult.structuredContent as Record<string, any> | undefined
     assert(toolResult.isError !== true, 'the live recent activity result must succeed before host rendering')
-    assert(structured?._ui?.design_intent === 'activity_investigator', 'the live result must contain its App UI contract')
-    const expectedHeading = String(structured?._ui?.headline?.title ?? structured?.display?.title ?? structured?.answer ?? '')
+    assert(
+      structured?._ui?.design_intent === 'activity_investigator',
+      'the live result must contain its App UI contract',
+    )
+    const expectedHeading = String(
+      structured?._ui?.headline?.title ?? structured?.display?.title ?? structured?.answer ?? '',
+    )
     assert(expectedHeading.length > 0, 'the live result must include a subject for the App heading')
 
     await writeFile(hostSource, hostEntry)
@@ -136,7 +141,9 @@ async function main() {
     page.on('console', (message) => {
       if (message.type() === 'error') errors.push(message.text())
     })
-    await page.setContent(`<!doctype html><html><body style="margin:0;background:#08090a"><iframe id="sqd-app-frame" title="SQD Explorer" sandbox="allow-scripts" style="width:100%;height:880px;border:0"></iframe></body></html>`)
+    await page.setContent(
+      `<!doctype html><html><body style="margin:0;background:#08090a"><iframe id="sqd-app-frame" title="SQD Explorer" sandbox="allow-scripts" style="width:100%;height:880px;border:0"></iframe></body></html>`,
+    )
     await page.evaluate(
       ({ resourceHtml, toolInputValue, toolResultValue }) => {
         Object.assign(window, {
@@ -161,7 +168,10 @@ async function main() {
       (await resultHeading.textContent()) === expectedHeading,
       'the App heading must preserve the live result claim exactly',
     )
-    assert((await frame.locator('.sqd-timeline .sqd-event').count()) > 0, 'the App must render live recent activity rows')
+    assert(
+      (await frame.locator('.sqd-timeline .sqd-event').count()) > 0,
+      'the App must render live recent activity rows',
+    )
     assert(await frame.locator('.sqd-mark').first().isVisible(), 'the rendered App must retain the SQD mark')
     assert(
       (await frame.locator('.sqd-app[data-mode="inline"]').count()) === 1,
@@ -193,19 +203,33 @@ async function main() {
       const dangers = await frame.locator('.sqd-notice--danger').allInnerTexts()
       const busy = await frame.locator('.sqd-shell[aria-busy="true"]').count()
       const calls = await page.evaluate(() => (window as any).__SQD_TOOL_CALLS__ ?? [])
-      const backState = await frame.locator('.sqd-topbar button', { hasText: 'Back' }).evaluateAll((nodes) => nodes.map((node) => (node as HTMLButtonElement).disabled))
+      const backState = await frame
+        .locator('.sqd-topbar button', { hasText: 'Back' })
+        .evaluateAll((nodes) => nodes.map((node) => (node as HTMLButtonElement).disabled))
       const topbar = await frame.locator('.sqd-topbar').innerText()
       const mode = await frame.locator('.sqd-app').first().getAttribute('data-mode')
-      const receipt = await frame.locator('.sqd-receipt-line, .sqd-receipt').first().innerText().catch(() => '')
-      throw new Error(`${message} (danger notices: ${JSON.stringify(dangers)}; busy: ${busy}; tool calls: ${JSON.stringify(calls)}; back: ${JSON.stringify(backState)}; mode: ${mode}; topbar: ${JSON.stringify(topbar)}; receipt: ${JSON.stringify(receipt)}; page errors: ${errors.join(' | ')})`)
+      const receipt = await frame
+        .locator('.sqd-receipt-line, .sqd-receipt')
+        .first()
+        .innerText()
+        .catch(() => '')
+      throw new Error(
+        `${message} (danger notices: ${JSON.stringify(dangers)}; busy: ${busy}; tool calls: ${JSON.stringify(calls)}; back: ${JSON.stringify(backState)}; mode: ${mode}; topbar: ${JSON.stringify(topbar)}; receipt: ${JSON.stringify(receipt)}; page errors: ${errors.join(' | ')})`,
+      )
     }
     const timelineText = () => frame.locator('.sqd-timeline').first().innerText()
     const firstPage = await timelineText()
     const loadOlder = frame.getByRole('button', { name: 'Load older activity' })
-    assert((await loadOlder.count()) === 1 && (await loadOlder.isEnabled()), 'the continuation action must be offered and enabled')
+    assert(
+      (await loadOlder.count()) === 1 && (await loadOlder.isEnabled()),
+      'the continuation action must be offered and enabled',
+    )
     await loadOlder.click()
     const back = frame.locator('.sqd-topbar button', { hasText: 'Back' })
-    await until(async () => (await back.count()) === 1 && (await back.isEnabled()), 'loading older activity must produce a second result the person can step back from')
+    await until(
+      async () => (await back.count()) === 1 && (await back.isEnabled()),
+      'loading older activity must produce a second result the person can step back from',
+    )
     const secondPage = await timelineText()
     assert(secondPage !== firstPage, 'loading older activity must show different rows than the first page')
     assert(
@@ -220,7 +244,8 @@ async function main() {
     assert((await timelineText()) === secondPage, 'Forward must return to the loaded page exactly')
     console.log('PASS  Load older, Back and Forward round-trip live pages through the host bridge')
 
-    const downloads = () => page.evaluate(() => ((window as any).__SQD_DOWNLOADS__ ?? []) as Array<Array<Record<string, any>>>)
+    const downloads = () =>
+      page.evaluate(() => ((window as any).__SQD_DOWNLOADS__ ?? []) as Array<Array<Record<string, any>>>)
     await frame.getByRole('button', { name: 'Download JSON' }).click()
     await until(async () => (await downloads()).length >= 1, 'Download JSON must reach the host as a download request')
     await frame.getByRole('button', { name: 'Download CSV' }).click()
@@ -233,7 +258,10 @@ async function main() {
       'the JSON download must be a JSON file',
     )
     const parsedJson = JSON.parse(String(jsonResource.text))
-    assert(Array.isArray(parsedJson.items) && parsedJson._evidence?.result?.exact_data_sha256, 'the JSON download must carry the exact rows and receipt')
+    assert(
+      Array.isArray(parsedJson.items) && parsedJson._evidence?.result?.exact_data_sha256,
+      'the JSON download must carry the exact rows and receipt',
+    )
     assert(
       csvResource?.uri?.endsWith('.csv') && String(csvResource.mimeType).startsWith('text/csv'),
       'the CSV download must be a CSV file',
@@ -278,13 +306,19 @@ async function main() {
     const rowsBefore = await table.locator('tbody tr').count()
     const filter = frame.locator('.sqd-input').first()
     await filter.fill(linkedId.slice(0, 12))
-    assert((await table.locator('tbody tr').count()) >= 1 && (await table.locator('tbody tr').count()) <= rowsBefore, 'filtering must narrow the exact rows')
+    assert(
+      (await table.locator('tbody tr').count()) >= 1 && (await table.locator('tbody tr').count()) <= rowsBefore,
+      'filtering must narrow the exact rows',
+    )
     await filter.fill('sqd-no-such-row')
     assert((await table.locator('tbody tr').count()) === 0, 'filtering must hide non-matching rows')
     await filter.fill('')
     assert((await table.locator('tbody tr').count()) === rowsBefore, 'clearing the filter must restore every row')
     await table.locator('.sqd-sort').first().click()
-    assert((await table.locator('th[aria-sort="ascending"], th[aria-sort="descending"]').count()) === 1, 'sorting must mark the sorted column')
+    assert(
+      (await table.locator('th[aria-sort="ascending"], th[aria-sort="descending"]').count()) === 1,
+      'sorting must mark the sorted column',
+    )
     console.log('PASS  table filter and sort work in the host')
 
     await frame.locator('.sqd-topbar button', { hasText: 'Exit full screen' }).click()
@@ -310,7 +344,9 @@ async function main() {
     assert(hostError === undefined, `the MCP Apps host bridge must stay error-free: ${hostError}`)
     assert(errors.length === 0, `the MCP Apps host bridge and view must not log errors: ${errors.join(' | ')}`)
 
-    console.log('PASS  official MCP Apps AppBridge initialized the SQD resource and visibly rendered a live recent-activity result')
+    console.log(
+      'PASS  official MCP Apps AppBridge initialized the SQD resource and visibly rendered a live recent-activity result',
+    )
     console.log('PASS  rendered SQD App interaction revealed exact row evidence')
   } finally {
     await browser.close()

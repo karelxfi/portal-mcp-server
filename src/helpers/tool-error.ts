@@ -1,8 +1,8 @@
 import type { CallToolResult } from '@modelcontextprotocol/server'
 
+import { gitCommit, npmVersion } from '../version.js'
 import { describeToolError } from './errors.js'
 import { getToolContract } from './tool-ux.js'
-import { gitCommit, npmVersion } from '../version.js'
 
 /**
  * Convert expected handler failures into a stable MCP tool result. Protocol

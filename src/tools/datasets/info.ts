@@ -1,17 +1,25 @@
 import type { McpServer } from '@modelcontextprotocol/server'
-
-import { registerPortalTool } from '../../helpers/mcp-registration.js'
 import { z } from 'zod'
 
 import { getBlockHead, getChainType, getDatasets, isL2Chain, resolveDataset } from '../../cache/datasets.js'
 import { PORTAL_URL } from '../../constants/index.js'
 import { portalFetch, portalFetchStream } from '../../helpers/fetch.js'
-import { formatResult, humanizeLabel, normalizeUnixTimestamp } from '../../helpers/format.js'
-import { formatDuration, formatTimestamp } from '../../helpers/format.js'
+import {
+  formatDuration,
+  formatResult,
+  formatTimestamp,
+  humanizeLabel,
+  normalizeUnixTimestamp,
+} from '../../helpers/format.js'
+import { registerPortalTool } from '../../helpers/mcp-registration.js'
 import { buildToolDescription } from '../../helpers/tool-ux.js'
 import type { BlockHead, DatasetMetadata } from '../../types/index.js'
 
-async function fetchHeadTimestamp(dataset: string, chainType: string, blockNumber: number): Promise<number | undefined> {
+async function fetchHeadTimestamp(
+  dataset: string,
+  chainType: string,
+  blockNumber: number,
+): Promise<number | undefined> {
   const baseQuery = {
     fromBlock: blockNumber,
     toBlock: blockNumber,
@@ -31,11 +39,11 @@ async function fetchHeadTimestamp(dataset: string, chainType: string, blockNumbe
           ...baseQuery,
         }
       : chainType === 'solana'
-      ? {
-          type: 'solana',
-          includeAllBlocks: true,
-          ...baseQuery,
-        }
+        ? {
+            type: 'solana',
+            includeAllBlocks: true,
+            ...baseQuery,
+          }
         : chainType === 'bitcoin'
           ? {
               type: 'bitcoin',
@@ -48,37 +56,36 @@ async function fetchHeadTimestamp(dataset: string, chainType: string, blockNumbe
                 includeAllBlocks: true,
                 ...baseQuery,
               }
-          : chainType === 'hyperliquidFills'
-            ? {
-                type: 'hyperliquidFills',
-              ...baseQuery,
-              fields: {
-                ...baseQuery.fields,
-                fill: { time: true },
-              },
-              fills: [{}],
-            }
-          : chainType === 'hyperliquidReplicaCmds'
-            ? {
-                type: 'hyperliquidReplicaCmds',
-                ...baseQuery,
-                fields: {
-                  ...baseQuery.fields,
-                  action: { actionIndex: true },
-                },
-                actions: [{}],
-              }
-            : {
-                type: 'evm',
-                includeAllBlocks: true,
-                ...baseQuery,
-              }
+            : chainType === 'hyperliquidFills'
+              ? {
+                  type: 'hyperliquidFills',
+                  ...baseQuery,
+                  fields: {
+                    ...baseQuery.fields,
+                    fill: { time: true },
+                  },
+                  fills: [{}],
+                }
+              : chainType === 'hyperliquidReplicaCmds'
+                ? {
+                    type: 'hyperliquidReplicaCmds',
+                    ...baseQuery,
+                    fields: {
+                      ...baseQuery.fields,
+                      action: { actionIndex: true },
+                    },
+                    actions: [{}],
+                  }
+                : {
+                    type: 'evm',
+                    includeAllBlocks: true,
+                    ...baseQuery,
+                  }
 
-  const response = await portalFetchStream(
-    `${PORTAL_URL}/datasets/${dataset}/stream`,
-    query,
-    { maxBlocks: 1, maxBytes: 2 * 1024 * 1024 },
-  )
+  const response = await portalFetchStream(`${PORTAL_URL}/datasets/${dataset}/stream`, query, {
+    maxBlocks: 1,
+    maxBytes: 2 * 1024 * 1024,
+  })
 
   const first = response[0] as { header?: { timestamp?: number }; timestamp?: number } | undefined
   return normalizeUnixTimestamp(first?.header?.timestamp ?? first?.timestamp)
@@ -119,11 +126,12 @@ function buildFreshnessSummary(params: {
     return `${networkLabel} is indexed, but Portal could not determine how fresh the current head is.`
   }
 
-  const status = indexedHead.status === 'fresh'
-    ? 'looks caught up'
-    : indexedHead.status === 'delayed'
-      ? 'is a little behind'
-      : 'is noticeably behind'
+  const status =
+    indexedHead.status === 'fresh'
+      ? 'looks caught up'
+      : indexedHead.status === 'delayed'
+        ? 'is a little behind'
+        : 'is noticeably behind'
 
   const ageSummary =
     typeof indexedHead.age_formatted === 'string'
@@ -149,7 +157,8 @@ function buildFreshnessSummary(params: {
 // ============================================================================
 
 export function registerGetDatasetInfoTool(server: McpServer) {
-  registerPortalTool(server,
+  registerPortalTool(
+    server,
     'portal_get_network_info',
     buildToolDescription('portal_get_network_info'),
     {
@@ -170,15 +179,28 @@ export function registerGetDatasetInfoTool(server: McpServer) {
       const chainType = await getChainType(dataset)
       const [headTimestamp, finalizedHeadTimestamp] = await Promise.all([
         fetchHeadTimestamp(dataset, chainType, head.number).catch(() => undefined),
-        finalizedHead ? fetchHeadTimestamp(dataset, chainType, finalizedHead.number).catch(() => undefined) : Promise.resolve(undefined),
+        finalizedHead
+          ? fetchHeadTimestamp(dataset, chainType, finalizedHead.number).catch(() => undefined)
+          : Promise.resolve(undefined),
       ])
 
       // Infer correct network type (Portal metadata has bugs — many mainnets labeled "testnet")
       const name = dataset.toLowerCase()
       let networkType = ds?.metadata?.type
-      if (name.includes('mainnet') || name.includes('-fills') || name.includes('-replica-cmds') || name === 'arbitrum-one' || name === 'arbitrum-nova') {
+      if (
+        name.includes('mainnet') ||
+        name.includes('-fills') ||
+        name.includes('-replica-cmds') ||
+        name === 'arbitrum-one' ||
+        name === 'arbitrum-nova'
+      ) {
         networkType = 'mainnet'
-      } else if (name.includes('testnet') || name.includes('sepolia') || name.includes('holesky') || name.includes('goerli')) {
+      } else if (
+        name.includes('testnet') ||
+        name.includes('sepolia') ||
+        name.includes('holesky') ||
+        name.includes('goerli')
+      ) {
         networkType = 'testnet'
       } else if (name.includes('devnet')) {
         networkType = 'devnet'
@@ -187,60 +209,60 @@ export function registerGetDatasetInfoTool(server: McpServer) {
       const indexedHead = buildHeadLag(head.number, headTimestamp)
       const finalizedHeadLag = finalizedHead ? buildHeadLag(finalizedHead.number, finalizedHeadTimestamp) : undefined
 
-      return formatResult({
-        network: dataset,
-        display_name: ds?.metadata?.display_name,
-        vm:
-          chainType === 'hyperliquidFills' || chainType === 'hyperliquidReplicaCmds'
-            ? 'hyperliquid'
-            : chainType,
-        network_type: networkType,
-        chain_id: ds?.metadata?.evm?.chain_id,
-        is_l2: chainType === 'evm' && isL2Chain(dataset),
-        real_time: ds?.real_time,
-        start_block: metadata.start_block,
-        head,
-        finalized_head: finalizedHead,
-        freshness_summary: buildFreshnessSummary({
+      return formatResult(
+        {
+          network: dataset,
+          display_name: ds?.metadata?.display_name,
+          vm: chainType === 'hyperliquidFills' || chainType === 'hyperliquidReplicaCmds' ? 'hyperliquid' : chainType,
+          network_type: networkType,
+          chain_id: ds?.metadata?.evm?.chain_id,
+          is_l2: chainType === 'evm' && isL2Chain(dataset),
+          real_time: ds?.real_time,
+          start_block: metadata.start_block,
+          head,
+          finalized_head: finalizedHead,
+          freshness_summary: buildFreshnessSummary({
+            networkLabel,
+            realTime: ds?.real_time,
+            indexedHead,
+            finalizedLagBlocks:
+              finalizedHead !== undefined ? Math.max(0, head.number - finalizedHead.number) : undefined,
+            finalizedLagFormatted:
+              finalizedHeadTimestamp !== undefined && headTimestamp !== undefined
+                ? formatDuration(Math.max(0, headTimestamp - finalizedHeadTimestamp))
+                : undefined,
+          }),
+          indexing: {
+            indexed_head: indexedHead,
+            finalized_head: finalizedHeadLag,
+            finalized_lag_blocks:
+              finalizedHead !== undefined ? Math.max(0, head.number - finalizedHead.number) : undefined,
+            finalized_lag_seconds:
+              finalizedHeadTimestamp !== undefined && headTimestamp !== undefined
+                ? Math.max(0, headTimestamp - finalizedHeadTimestamp)
+                : undefined,
+            finalized_lag_formatted:
+              finalizedHeadTimestamp !== undefined && headTimestamp !== undefined
+                ? formatDuration(Math.max(0, headTimestamp - finalizedHeadTimestamp))
+                : undefined,
+          },
+          tables: ds?.schema?.tables ? Object.keys(ds.schema.tables) : undefined,
+          aliases: ds?.aliases,
+        },
+        buildFreshnessSummary({
           networkLabel,
           realTime: ds?.real_time,
           indexedHead,
-          finalizedLagBlocks:
-            finalizedHead !== undefined ? Math.max(0, head.number - finalizedHead.number) : undefined,
+          finalizedLagBlocks: finalizedHead !== undefined ? Math.max(0, head.number - finalizedHead.number) : undefined,
           finalizedLagFormatted:
             finalizedHeadTimestamp !== undefined && headTimestamp !== undefined
               ? formatDuration(Math.max(0, headTimestamp - finalizedHeadTimestamp))
               : undefined,
         }),
-        indexing: {
-          indexed_head: indexedHead,
-          finalized_head: finalizedHeadLag,
-          finalized_lag_blocks:
-            finalizedHead !== undefined ? Math.max(0, head.number - finalizedHead.number) : undefined,
-          finalized_lag_seconds:
-            finalizedHeadTimestamp !== undefined && headTimestamp !== undefined
-              ? Math.max(0, headTimestamp - finalizedHeadTimestamp)
-              : undefined,
-          finalized_lag_formatted:
-            finalizedHeadTimestamp !== undefined && headTimestamp !== undefined
-              ? formatDuration(Math.max(0, headTimestamp - finalizedHeadTimestamp))
-              : undefined,
+        {
+          toolName: 'portal_get_network_info',
         },
-        tables: ds?.schema?.tables ? Object.keys(ds.schema.tables) : undefined,
-        aliases: ds?.aliases,
-      }, buildFreshnessSummary({
-        networkLabel,
-        realTime: ds?.real_time,
-        indexedHead,
-        finalizedLagBlocks:
-          finalizedHead !== undefined ? Math.max(0, head.number - finalizedHead.number) : undefined,
-        finalizedLagFormatted:
-          finalizedHeadTimestamp !== undefined && headTimestamp !== undefined
-            ? formatDuration(Math.max(0, headTimestamp - finalizedHeadTimestamp))
-            : undefined,
-      }), {
-        toolName: 'portal_get_network_info',
-      })
+      )
     },
   )
 }

@@ -62,12 +62,7 @@ export interface UiStatListPanel extends BaseUiPanel {
   unit?: string
 }
 
-export type UiPanel =
-  | UiChartPanel
-  | UiTablePanel
-  | UiTimelinePanel
-  | UiRankedBarsPanel
-  | UiStatListPanel
+export type UiPanel = UiChartPanel | UiTablePanel | UiTimelinePanel | UiRankedBarsPanel | UiStatListPanel
 
 export interface UiFollowUpAction {
   label: string

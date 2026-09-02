@@ -149,15 +149,16 @@ const TOOL_DEFINITIONS: Record<string, ToolDefinition> = {
       'checking which token-list addresses a symbol maps to before querying logs or transfers',
       'turning a user-friendly token name into deterministic EVM filters',
     ],
-    summary:
-      'Resolve user-facing blockchain entities into query-ready identifiers, with ambiguity kept explicit.',
+    summary: 'Resolve user-facing blockchain entities into query-ready identifiers, with ambiguity kept explicit.',
     when_to_use: [
       'The user names a token symbol such as USDC, WETH, DAI, or PEPE and you need contract addresses before querying raw data.',
       'The user names a well-known EVM contract, protocol, pool identifier, or Hyperliquid ticker and you need a deterministic follow-up filter.',
       'You need to disambiguate bridged token variants on an EVM network.',
       'You want a source-backed token address rather than relying on memory or hardcoded constants.',
     ],
-    avoid_when: ['You already have the exact address, pool id, protocol slug, or coin filter and can pass it directly.'],
+    avoid_when: [
+      'You already have the exact address, pool id, protocol slug, or coin filter and can pass it directly.',
+    ],
     examples: [
       { label: 'Resolve USDC on Base', input: { network: 'base-mainnet', kind: 'token', query: 'USDC', limit: 10 } },
       {
@@ -226,7 +227,10 @@ const TOOL_DEFINITIONS: Record<string, ToolDefinition> = {
     ],
     avoid_when: ['You need every raw record with full chain-specific fields and no summarization.'],
     examples: [
-      { label: 'EVM wallet fund-flow triage', input: { network: 'base-mainnet', address: '0xabc...', timeframe: '24h' } },
+      {
+        label: 'EVM wallet fund-flow triage',
+        input: { network: 'base-mainnet', address: '0xabc...', timeframe: '24h' },
+      },
       {
         label: 'Solana wallet activity and fee flow',
         input: { network: 'solana-mainnet', address: 'Vote111...', timeframe: '6h' },

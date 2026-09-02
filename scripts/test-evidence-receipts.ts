@@ -48,16 +48,18 @@ function main() {
   )
 
   const receipt = buildEvidenceReceipt('portal_evm_query_transactions', args, completePayload)
-  const sameReceipt = buildEvidenceReceipt(
-    'portal_evm_query_transactions',
-    reorderedArgs,
-    { ...completePayload, _meta: { ...completePayload._meta, response_time_ms: 999 } },
-  )
+  const sameReceipt = buildEvidenceReceipt('portal_evm_query_transactions', reorderedArgs, {
+    ...completePayload,
+    _meta: { ...completePayload._meta, response_time_ms: 999 },
+  })
   assert(receipt.version === 'sqd_evidence_v1', 'receipt should use the documented version')
   assert(receipt.source.query_type === 'evm', 'receipt should classify EVM tools')
   assert(receipt.source.dataset === 'base-mainnet', 'receipt should identify the exact dataset')
   assert(receipt.request.arguments_sha256 === sameReceipt.request.arguments_sha256, 'argument digest should be stable')
-  assert(receipt.result.exact_data_sha256 === sameReceipt.result.exact_data_sha256, 'timing must not alter exact-data digest')
+  assert(
+    receipt.result.exact_data_sha256 === sameReceipt.result.exact_data_sha256,
+    'timing must not alter exact-data digest',
+  )
   assert(receipt.result.row_count === 2, 'receipt should count exact primary rows')
   assert(receipt.result.primary_evidence_path === 'items', 'receipt should locate primary evidence')
   assert(receipt.result.completeness === 'complete', 'receipt should prove complete results')

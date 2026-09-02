@@ -1,7 +1,7 @@
 #!/usr/bin/env tsx
 
 import { type Client, Client as McpClient } from '@modelcontextprotocol/client'
-import { getDefaultEnvironment, StdioClientTransport } from '@modelcontextprotocol/client/stdio'
+import { StdioClientTransport, getDefaultEnvironment } from '@modelcontextprotocol/client/stdio'
 
 export type ConnectedTestClient = {
   client: Client
@@ -271,7 +271,10 @@ export function assertChatSurface(parsed: any, label: string, options?: { expect
   assert(parsed._evidence.version === 'sqd_evidence_v1', `${label} _evidence.version should be sqd_evidence_v1`)
   assert(parsed._evidence.tool === parsed._tool_contract.name, `${label} evidence tool should match the tool contract`)
   assertRecord(parsed._evidence.source, `${label} _evidence.source`)
-  assert(parsed._evidence.source.provider === 'SQD Portal', `${label} should identify SQD Portal as the evidence source`)
+  assert(
+    parsed._evidence.source.provider === 'SQD Portal',
+    `${label} should identify SQD Portal as the evidence source`,
+  )
   assertRecord(parsed._evidence.request, `${label} _evidence.request`)
   assertRecord(parsed._evidence.request.arguments, `${label} _evidence.request.arguments`)
   assertNonEmptyString(parsed._evidence.request.arguments_sha256, `${label} arguments digest`)
@@ -400,7 +403,8 @@ export async function callToolWithRetry(
       if (
         isError &&
         attempt <= retries &&
-        (isRetryableError(text) || (structuredError && typeof structuredError === 'object' && structuredError.retryable === true))
+        (isRetryableError(text) ||
+          (structuredError && typeof structuredError === 'object' && structuredError.retryable === true))
       ) {
         const declaredRetryAfterMs =
           structuredError && typeof structuredError === 'object' && typeof structuredError.retry_after_ms === 'number'

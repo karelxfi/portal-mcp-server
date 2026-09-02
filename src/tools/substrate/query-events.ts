@@ -1,6 +1,4 @@
 import type { McpServer } from '@modelcontextprotocol/server'
-
-import { registerPortalTool } from '../../helpers/mcp-registration.js'
 import { z } from 'zod'
 
 import { resolveDataset, validateBlockRange } from '../../cache/datasets.js'
@@ -8,23 +6,37 @@ import { PORTAL_URL } from '../../constants/index.js'
 import { detectChainType } from '../../helpers/chain.js'
 import { createUnsupportedChainError } from '../../helpers/errors.js'
 import { portalFetchRecentRecords } from '../../helpers/fetch.js'
-import { buildSubstrateBlockFields, buildSubstrateCallFields, buildSubstrateEventFields, buildSubstrateExtrinsicFields } from '../../helpers/fields.js'
+import {
+  buildSubstrateBlockFields,
+  buildSubstrateCallFields,
+  buildSubstrateEventFields,
+  buildSubstrateExtrinsicFields,
+} from '../../helpers/fields.js'
 import { formatResult } from '../../helpers/format.js'
+import { registerPortalTool } from '../../helpers/mcp-registration.js'
 import { normalizeSubstrateEventResult } from '../../helpers/normalized-results.js'
-import { buildPaginationInfo, decodeRecentPageCursor, encodeRecentPageCursor, paginateAscendingItems } from '../../helpers/pagination.js'
-import { buildChronologicalPageOrdering, buildQueryCoverage, buildQueryFreshness } from '../../helpers/result-metadata.js'
-import { applyResponseFormat, resolveDefaultResponseFormat, type ResponseFormat } from '../../helpers/response-modes.js'
-import { getTimestampWindowNotices, type TimestampInput, resolveTimeframeOrBlocks } from '../../helpers/timeframe.js'
+import {
+  buildPaginationInfo,
+  decodeRecentPageCursor,
+  encodeRecentPageCursor,
+  paginateAscendingItems,
+} from '../../helpers/pagination.js'
+import { type ResponseFormat, applyResponseFormat, resolveDefaultResponseFormat } from '../../helpers/response-modes.js'
+import {
+  buildChronologicalPageOrdering,
+  buildQueryCoverage,
+  buildQueryFreshness,
+} from '../../helpers/result-metadata.js'
+import { type TimestampInput, getTimestampWindowNotices, resolveTimeframeOrBlocks } from '../../helpers/timeframe.js'
 import { buildExecutionMetadata, buildToolDescription } from '../../helpers/tool-ux.js'
 import { buildMetricCard, buildPortalUi, buildTimelinePanel } from '../../helpers/ui-metadata.js'
 import { getValidationNotices, validateSubstrateQuerySize } from '../../helpers/validation.js'
-
 import {
-  flattenSubstrateEvents,
-  getSubstrateEventIndex,
-  buildSubstrateWindowLabel,
   SUBSTRATE_INDEXING_NOTICE,
   type SubstrateEventRequest,
+  buildSubstrateWindowLabel,
+  flattenSubstrateEvents,
+  getSubstrateEventIndex,
 } from './shared.js'
 
 type SubstrateEventCursor = {
@@ -63,10 +75,13 @@ function sortEvents(items: SubstrateEventItem[]) {
 }
 
 function buildSubstrateEventPresentation(data: unknown, visibleCount: number, nextCursor?: string) {
-  const items = Array.isArray(data) ? data as SubstrateEventItem[] : undefined
+  const items = Array.isArray(data) ? (data as SubstrateEventItem[]) : undefined
   const response = items
     ? { page_summary: { visible_events: visibleCount }, items }
-    : { ...(data && typeof data === 'object' && !Array.isArray(data) ? data as Record<string, unknown> : {}), page_summary: { visible_events: visibleCount } }
+    : {
+        ...(data && typeof data === 'object' && !Array.isArray(data) ? (data as Record<string, unknown>) : {}),
+        page_summary: { visible_events: visibleCount },
+      }
 
   return {
     response,
@@ -77,7 +92,13 @@ function buildSubstrateEventPresentation(data: unknown, visibleCount: number, ne
       design_intent: 'activity_investigator',
       headline: { title: 'Substrate events', subtitle: 'Indexed events with freshness.' },
       metric_cards: [
-        buildMetricCard({ id: 'visible-events', label: 'Visible events', value_path: 'page_summary.visible_events', format: 'integer', emphasis: 'primary' }),
+        buildMetricCard({
+          id: 'visible-events',
+          label: 'Visible events',
+          value_path: 'page_summary.visible_events',
+          format: 'integer',
+          emphasis: 'primary',
+        }),
       ],
       panels: items
         ? [
@@ -95,7 +116,9 @@ function buildSubstrateEventPresentation(data: unknown, visibleCount: number, ne
           ]
         : [],
       follow_up_actions: [
-        ...(nextCursor ? [{ label: 'Load older events', intent: 'continue' as const, target: '_pagination.next_cursor' }] : []),
+        ...(nextCursor
+          ? [{ label: 'Load older events', intent: 'continue' as const, target: '_pagination.next_cursor' }]
+          : []),
         ...(items ? [{ label: 'Show raw rows', intent: 'show_raw' as const, target: 'items' }] : []),
       ],
     }),
@@ -103,7 +126,8 @@ function buildSubstrateEventPresentation(data: unknown, visibleCount: number, ne
 }
 
 export function registerSubstrateQueryEventsTool(server: McpServer) {
-  registerPortalTool(server,
+  registerPortalTool(
+    server,
     'portal_substrate_query_events',
     buildToolDescription('portal_substrate_query_events'),
     {
@@ -114,21 +138,67 @@ export function registerSubstrateQueryEventsTool(server: McpServer) {
       from_timestamp: z
         .union([z.number(), z.string()])
         .optional()
-        .describe('Starting timestamp. Accepts Unix seconds, Unix milliseconds, ISO datetime, or relative input like "6h ago".'),
+        .describe(
+          'Starting timestamp. Accepts Unix seconds, Unix milliseconds, ISO datetime, or relative input like "6h ago".',
+        ),
       to_timestamp: z
         .union([z.number(), z.string()])
         .optional()
-        .describe('Ending timestamp. Accepts Unix seconds, Unix milliseconds, ISO datetime, or relative input like "now".'),
+        .describe(
+          'Ending timestamp. Accepts Unix seconds, Unix milliseconds, ISO datetime, or relative input like "now".',
+        ),
       finalized_only: z.boolean().optional().default(false).describe('Only query finalized blocks'),
-      event_names: z.array(z.string()).optional().describe('Optional qualified event names like Balances.Transfer or System.ExtrinsicSuccess'),
-      include_extrinsic: z.boolean().optional().default(false).describe('Attach the parent extrinsic inline for each matching event'),
-      include_call: z.boolean().optional().default(false).describe('Attach the emitting call inline when the event has call context'),
-      include_stack: z.boolean().optional().default(false).describe('Attach the parent call stack when the event has nested call context'),
-      response_format: z.enum(['full', 'compact', 'summary']).optional().describe("Response format: defaults to 'compact' for chat-friendly output. Compact mode keeps requested extrinsic or call context in a smaller inline shape."),
-      limit: z.number().int().min(1).max(10).optional().default(10).describe('Max events to return (max: 10; use compact mode for context-rich rows)'),
+      event_names: z
+        .array(z.string())
+        .optional()
+        .describe('Optional qualified event names like Balances.Transfer or System.ExtrinsicSuccess'),
+      include_extrinsic: z
+        .boolean()
+        .optional()
+        .default(false)
+        .describe('Attach the parent extrinsic inline for each matching event'),
+      include_call: z
+        .boolean()
+        .optional()
+        .default(false)
+        .describe('Attach the emitting call inline when the event has call context'),
+      include_stack: z
+        .boolean()
+        .optional()
+        .default(false)
+        .describe('Attach the parent call stack when the event has nested call context'),
+      response_format: z
+        .enum(['full', 'compact', 'summary'])
+        .optional()
+        .describe(
+          "Response format: defaults to 'compact' for chat-friendly output. Compact mode keeps requested extrinsic or call context in a smaller inline shape.",
+        ),
+      limit: z
+        .number()
+        .int()
+        .min(1)
+        .max(10)
+        .optional()
+        .default(10)
+        .describe('Max events to return (max: 10; use compact mode for context-rich rows)'),
       cursor: z.string().optional().describe('Continuation cursor from a previous response'),
     },
-    async ({ network, timeframe, from_block, to_block, from_timestamp, to_timestamp, finalized_only, event_names, include_extrinsic, include_call, include_stack, response_format, limit, cursor }) => {
+    async ({
+      network,
+      timeframe,
+      from_block,
+      to_block,
+      from_timestamp,
+      to_timestamp,
+      finalized_only,
+      event_names,
+      include_extrinsic,
+      include_call,
+      include_stack,
+      response_format,
+      limit,
+      cursor,
+    }) => {
       const queryStartTime = Date.now()
       const paginationCursor = cursor
         ? decodeRecentPageCursor<SubstrateEventRequest>(cursor, 'portal_substrate_query_events')
@@ -173,7 +243,8 @@ export function registerSubstrateQueryEventsTool(server: McpServer) {
             from_block: paginationCursor.window_from_block,
             to_block: paginationCursor.window_to_block,
             range_kind:
-              paginationCursor.request.from_timestamp !== undefined || paginationCursor.request.to_timestamp !== undefined
+              paginationCursor.request.from_timestamp !== undefined ||
+              paginationCursor.request.to_timestamp !== undefined
                 ? 'timestamp_range'
                 : paginationCursor.request.timeframe
                   ? 'timeframe'
@@ -221,12 +292,14 @@ export function registerSubstrateQueryEventsTool(server: McpServer) {
         fromBlock: resolvedFromBlock,
         toBlock: pageToBlock,
         fields,
-        events: [{
-          ...(event_names?.length ? { name: event_names } : {}),
-          ...(include_extrinsic ? { extrinsic: true } : {}),
-          ...(include_call ? { call: true } : {}),
-          ...(include_stack ? { stack: true } : {}),
-        }],
+        events: [
+          {
+            ...(event_names?.length ? { name: event_names } : {}),
+            ...(include_extrinsic ? { extrinsic: true } : {}),
+            ...(include_call ? { call: true } : {}),
+            ...(include_stack ? { stack: true } : {}),
+          },
+        ],
       }
 
       const cursorSkip = paginationCursor?.skip_inclusive_block ?? 0
@@ -257,31 +330,36 @@ export function registerSubstrateQueryEventsTool(server: McpServer) {
           : undefined,
       )
 
-      const nextCursor = page.hasMore && page.nextBoundary
-        ? encodeRecentPageCursor<SubstrateEventRequest>({
-            tool: 'portal_substrate_query_events',
-            dataset,
-            request: {
-              ...(timeframe ? { timeframe } : {}),
-              ...(from_timestamp !== undefined ? { from_timestamp } : {}),
-              ...(to_timestamp !== undefined ? { to_timestamp } : {}),
-              limit,
-              finalized_only,
-              ...(event_names?.length ? { event_names } : {}),
-              include_extrinsic,
-              include_call,
-              include_stack,
-              response_format: effectiveResponseFormat,
-            },
-            window_from_block: resolvedFromBlock,
-            window_to_block: endBlock,
-            page_to_block: page.nextBoundary.page_to_block,
-            skip_inclusive_block: page.nextBoundary.skip_inclusive_block,
-          })
-        : undefined
+      const nextCursor =
+        page.hasMore && page.nextBoundary
+          ? encodeRecentPageCursor<SubstrateEventRequest>({
+              tool: 'portal_substrate_query_events',
+              dataset,
+              request: {
+                ...(timeframe ? { timeframe } : {}),
+                ...(from_timestamp !== undefined ? { from_timestamp } : {}),
+                ...(to_timestamp !== undefined ? { to_timestamp } : {}),
+                limit,
+                finalized_only,
+                ...(event_names?.length ? { event_names } : {}),
+                include_extrinsic,
+                include_call,
+                include_stack,
+                response_format: effectiveResponseFormat,
+              },
+              window_from_block: resolvedFromBlock,
+              window_to_block: endBlock,
+              page_to_block: page.nextBoundary.page_to_block,
+              skip_inclusive_block: page.nextBoundary.skip_inclusive_block,
+            })
+          : undefined
 
       const formattedData = applyResponseFormat(page.pageItems, effectiveResponseFormat, 'substrate_events')
-      const notices = [SUBSTRATE_INDEXING_NOTICE, ...getTimestampWindowNotices(resolvedBlocks), ...getValidationNotices(validation)]
+      const notices = [
+        SUBSTRATE_INDEXING_NOTICE,
+        ...getTimestampWindowNotices(resolvedBlocks),
+        ...getValidationNotices(validation),
+      ]
       if (/"(?:refTime|proofSize)"/.test(JSON.stringify(formattedData))) {
         notices.push('Substrate Weight v2 refTime values are picoseconds and proofSize values are bytes.')
       }
@@ -309,9 +387,10 @@ export function registerSubstrateQueryEventsTool(server: McpServer) {
         to_block: endBlock,
         resolvedWindow: resolvedBlocks,
       })
-      const message = effectiveResponseFormat === 'summary'
-        ? `Substrate event summary for ${page.pageItems.length} rows across ${windowLabel}${page.hasMore ? ' (latest preview page)' : ''}`
-        : `Retrieved ${page.pageItems.length} Substrate events${page.hasMore ? ` from the most recent matching blocks (preview page limited to ${limit})` : ''}`
+      const message =
+        effectiveResponseFormat === 'summary'
+          ? `Substrate event summary for ${page.pageItems.length} rows across ${windowLabel}${page.hasMore ? ' (latest preview page)' : ''}`
+          : `Retrieved ${page.pageItems.length} Substrate events${page.hasMore ? ` from the most recent matching blocks (preview page limited to ${limit})` : ''}`
       const presentation = buildSubstrateEventPresentation(formattedData, page.pageItems.length, nextCursor)
 
       return formatResult(presentation.response, message, {
@@ -345,7 +424,11 @@ export function registerSubstrateQueryEventsTool(server: McpServer) {
         ui: presentation.ui,
         llm: {
           compact: true,
-          answer_sequence: ['page_summary', ...(Array.isArray(formattedData) ? ['items'] : ['summary']), '_pagination.next_cursor'],
+          answer_sequence: [
+            'page_summary',
+            ...(Array.isArray(formattedData) ? ['items'] : ['summary']),
+            '_pagination.next_cursor',
+          ],
           parser_notes: [
             'items is a chronological event page when row output is requested; always inspect the Substrate indexing notice before describing recency.',
           ],

@@ -1,22 +1,7 @@
 import type { McpServer } from '@modelcontextprotocol/server'
 
-// Discovery
-import { registerListDatasetsTool } from './datasets/list.js'
-import { registerGetDatasetInfoTool } from './datasets/info.js'
-import { registerResolveEntityTool } from './datasets/resolve-entity.js'
-
-// Global / debug
-import { registerGetBlockNumberTool } from './evm/block-number.js'
-import { registerBlockAtTimestampTool } from './evm/block-at-timestamp.js'
-import { registerQueryBlocksTool } from './evm/query-blocks.js'
-
-// EVM
-import { registerQueryLogsTool } from './evm/query-logs.js'
-import { registerQueryTransactionsTool } from './evm/query-transactions.js'
-import { registerGetErc20TransfersTool } from './evm/erc20-transfers.js'
-import { registerContractDeploymentTool } from './evm/contract-deployment.js'
-import { registerEvmOhlcTool } from './evm/ohlc.js'
-
+// Bitcoin
+import { registerBitcoinAnalyticsTool, registerQueryBitcoinTransactionsTool } from './bitcoin/index.js'
 import {
   registerGetContractActivityTool,
   registerGetRecentTransactionsTool,
@@ -24,25 +9,31 @@ import {
   registerGetTopContractsTool,
   registerGetWalletSummaryTool,
 } from './convenience/index.js'
-
+import { registerGetDatasetInfoTool } from './datasets/info.js'
+// Discovery
+import { registerListDatasetsTool } from './datasets/list.js'
+import { registerResolveEntityTool } from './datasets/resolve-entity.js'
+import { registerBlockAtTimestampTool } from './evm/block-at-timestamp.js'
+// Global / debug
+import { registerGetBlockNumberTool } from './evm/block-number.js'
+import { registerContractDeploymentTool } from './evm/contract-deployment.js'
+import { registerGetErc20TransfersTool } from './evm/erc20-transfers.js'
+import { registerEvmOhlcTool } from './evm/ohlc.js'
+import { registerQueryBlocksTool } from './evm/query-blocks.js'
+// EVM
+import { registerQueryLogsTool } from './evm/query-logs.js'
+import { registerQueryTransactionsTool } from './evm/query-transactions.js'
+// Hyperliquid
+import {
+  registerHyperliquidAnalyticsTool,
+  registerHyperliquidOhlcTool,
+  registerQueryHyperliquidFillsTool,
+  registerQueryHyperliquidReplicaCmdsTool,
+} from './hyperliquid/index.js'
+import { registerSolanaAnalyticsTool } from './solana/analytics.js'
 // Solana
 import { registerQuerySolanaInstructionsTool } from './solana/query-instructions.js'
 import { registerQuerySolanaTransactionsTool } from './solana/query-transactions.js'
-import { registerSolanaAnalyticsTool } from './solana/analytics.js'
-
-// Bitcoin
-import {
-  registerQueryBitcoinTransactionsTool,
-  registerBitcoinAnalyticsTool,
-} from './bitcoin/index.js'
-
-// Hyperliquid
-import {
-  registerQueryHyperliquidFillsTool,
-  registerQueryHyperliquidReplicaCmdsTool,
-  registerHyperliquidAnalyticsTool,
-  registerHyperliquidOhlcTool,
-} from './hyperliquid/index.js'
 import {
   registerSubstrateAnalyticsTool,
   registerSubstrateQueryCallsTool,

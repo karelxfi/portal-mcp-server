@@ -74,9 +74,7 @@ async function main() {
   )
   console.log('PASS  paired bootstrap ignores low-latency ratio noise below five milliseconds')
 
-  const skewedBaseline = Array.from({ length: 50 }, (_, index) =>
-    index < 5 ? 2 + index * 0.1 : 30_000 + index * 17,
-  )
+  const skewedBaseline = Array.from({ length: 50 }, (_, index) => (index < 5 ? 2 + index * 0.1 : 30_000 + index * 17))
   const skewedCandidate = skewedBaseline.map((value, index) => value + (index < 5 ? 1 : 300))
   const skewedChange = comparePairedLatencies(skewedBaseline, skewedCandidate, { seed: 8_204 })
   assert(

@@ -1,12 +1,11 @@
 import type { McpServer } from '@modelcontextprotocol/server'
-
-import { registerPortalTool } from '../../helpers/mcp-registration.js'
 import { z } from 'zod'
 
 import { resolveDataset } from '../../cache/datasets.js'
 import { detectChainType } from '../../helpers/chain.js'
 import { createUnsupportedChainError } from '../../helpers/errors.js'
 import { formatResult } from '../../helpers/format.js'
+import { registerPortalTool } from '../../helpers/mcp-registration.js'
 import { buildBlockLookupFreshness } from '../../helpers/result-metadata.js'
 import { resolveBlockAtTimestamp } from '../../helpers/timeframe.js'
 import { buildExecutionMetadata, buildToolDescription } from '../../helpers/tool-ux.js'
@@ -16,7 +15,8 @@ import { buildExecutionMetadata, buildToolDescription } from '../../helpers/tool
 // ============================================================================
 
 export function registerBlockAtTimestampTool(server: McpServer) {
-  registerPortalTool(server,
+  registerPortalTool(
+    server,
     'portal_debug_resolve_time_to_block',
     buildToolDescription('portal_debug_resolve_time_to_block'),
     {
@@ -43,39 +43,38 @@ export function registerBlockAtTimestampTool(server: McpServer) {
       }
 
       const result = await resolveBlockAtTimestamp(dataset, timestamp)
-      const notices = result.resolution === 'estimated'
-        ? ['Timestamp lookup near the current head was not indexed yet, so this result was estimated from the latest indexed block.']
-        : undefined
+      const notices =
+        result.resolution === 'estimated'
+          ? [
+              'Timestamp lookup near the current head was not indexed yet, so this result was estimated from the latest indexed block.',
+            ]
+          : undefined
 
-      return formatResult(
-        result,
-        `Resolved to ${dataset} block ${result.block_number} (${result.resolution}).`,
-        {
-          toolName: 'portal_debug_resolve_time_to_block',
-          notices,
-          freshness: buildBlockLookupFreshness(result),
-          coverage: {
-            kind: 'timestamp_lookup',
-            window_complete: true,
-            result_complete: true,
-            resolution: result.resolution,
-          },
-          execution: {
-            ...buildExecutionMetadata({
-              notes: [
-                result.resolution === 'estimated'
-                  ? 'Resolved near the indexed head using the latest known block timestamp.'
-                  : 'Verified indexed boundary; timestamp_delta_seconds is the offset from the requested time.',
-              ],
-            }),
-            timestamp: result.timestamp,
-            resolution: result.resolution,
-          },
-          metadata: {
-            network: dataset,
-          },
+      return formatResult(result, `Resolved to ${dataset} block ${result.block_number} (${result.resolution}).`, {
+        toolName: 'portal_debug_resolve_time_to_block',
+        notices,
+        freshness: buildBlockLookupFreshness(result),
+        coverage: {
+          kind: 'timestamp_lookup',
+          window_complete: true,
+          result_complete: true,
+          resolution: result.resolution,
         },
-      )
+        execution: {
+          ...buildExecutionMetadata({
+            notes: [
+              result.resolution === 'estimated'
+                ? 'Resolved near the indexed head using the latest known block timestamp.'
+                : 'Verified indexed boundary; timestamp_delta_seconds is the offset from the requested time.',
+            ],
+          }),
+          timestamp: result.timestamp,
+          resolution: result.resolution,
+        },
+        metadata: {
+          network: dataset,
+        },
+      })
     },
   )
 }

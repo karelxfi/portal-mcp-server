@@ -12,11 +12,11 @@ import { tokenListCacheEventsTotal, tokenListRequestsTotal } from '../metrics.js
 import { createCache } from './cache-manager.js'
 import { ActionableError, RequestCancelledError } from './errors.js'
 import {
+  type SharedPortalWork,
   createRequestAbortContext,
   isAbortLike,
   runAsSharedPortalWork,
   waitForSharedPortalWork,
-  type SharedPortalWork,
 } from './request-context.js'
 
 const CACHE_TTL = 5 * 60 * 1000 // 5 minutes
@@ -189,14 +189,16 @@ export async function getCoinGeckoTokenListWithStatus(chain: string): Promise<Co
   tokenListCacheEventsTotal.inc({ source, chain: normalizedChain, event: 'miss' })
 
   const existingPending = pendingTokenLists.get(cacheKey)
-  const work = existingPending ?? runAsSharedPortalWork(async () => {
-    const data = await fetchCoinGeckoTokenList(normalizedChain, url)
-    const loaded = { tokens: data.tokens, fetchedAt: Date.now() }
-    tokenListCache.set(cacheKey, loaded)
-    staleTokenLists.set(cacheKey, loaded)
-    tokenListCacheEventsTotal.inc({ source, chain: normalizedChain, event: 'store' })
-    return loaded
-  })
+  const work =
+    existingPending ??
+    runAsSharedPortalWork(async () => {
+      const data = await fetchCoinGeckoTokenList(normalizedChain, url)
+      const loaded = { tokens: data.tokens, fetchedAt: Date.now() }
+      tokenListCache.set(cacheKey, loaded)
+      staleTokenLists.set(cacheKey, loaded)
+      tokenListCacheEventsTotal.inc({ source, chain: normalizedChain, event: 'store' })
+      return loaded
+    })
   if (!existingPending) {
     pendingTokenLists.set(cacheKey, work)
     work.promise.then(
@@ -298,9 +300,7 @@ function normalizeDexScreenerPair(value: unknown): DexScreenerPair | undefined {
     chainId: pair.chainId,
     dexId: pair.dexId,
     pairAddress: pair.pairAddress,
-    labels: Array.isArray(pair.labels)
-      ? pair.labels.filter((label): label is string => typeof label === 'string')
-      : [],
+    labels: Array.isArray(pair.labels) ? pair.labels.filter((label): label is string => typeof label === 'string') : [],
     baseToken: {
       address: baseToken.address,
       name: baseToken.name,
@@ -311,16 +311,11 @@ function normalizeDexScreenerPair(value: unknown): DexScreenerPair | undefined {
       name: quoteToken.name,
       symbol: quoteToken.symbol,
     },
-    ...(typeof liquidity?.usd === 'number' && Number.isFinite(liquidity.usd)
-      ? { liquidityUsd: liquidity.usd }
-      : {}),
+    ...(typeof liquidity?.usd === 'number' && Number.isFinite(liquidity.usd) ? { liquidityUsd: liquidity.usd } : {}),
   }
 }
 
-export async function getDexScreenerPair(
-  chain: string,
-  pairAddress: string,
-): Promise<DexScreenerPair | undefined> {
+export async function getDexScreenerPair(chain: string, pairAddress: string): Promise<DexScreenerPair | undefined> {
   const normalizedChain = chain.trim().toLowerCase()
   const normalizedPairAddress = pairAddress.trim().toLowerCase()
   return withCache(`dexscreener:pair:${normalizedChain}:${normalizedPairAddress}`, CACHE_TTL, async () => {
@@ -328,16 +323,11 @@ export async function getDexScreenerPair(
       `${DEXSCREENER_API}/latest/dex/pairs/${encodeURIComponent(normalizedChain)}/${encodeURIComponent(normalizedPairAddress)}`,
       'DEX Screener API',
     )
-    return (response.pairs ?? [])
-      .map(normalizeDexScreenerPair)
-      .find((pair): pair is DexScreenerPair => Boolean(pair))
+    return (response.pairs ?? []).map(normalizeDexScreenerPair).find((pair): pair is DexScreenerPair => Boolean(pair))
   })
 }
 
-export async function getDexScreenerTokenPairs(
-  chain: string,
-  tokenAddress: string,
-): Promise<DexScreenerPair[]> {
+export async function getDexScreenerTokenPairs(chain: string, tokenAddress: string): Promise<DexScreenerPair[]> {
   const normalizedChain = chain.trim().toLowerCase()
   const normalizedTokenAddress = tokenAddress.trim().toLowerCase()
   return withCache(`dexscreener:token-pairs:${normalizedChain}:${normalizedTokenAddress}`, CACHE_TTL, async () => {

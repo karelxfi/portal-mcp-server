@@ -1,12 +1,11 @@
 import type { McpServer } from '@modelcontextprotocol/server'
-
-import { registerPortalTool } from '../../helpers/mcp-registration.js'
 import { z } from 'zod'
 
 import { resolveDataset } from '../../cache/datasets.js'
 import { PORTAL_URL } from '../../constants/index.js'
 import { portalFetch } from '../../helpers/fetch.js'
 import { formatResult } from '../../helpers/format.js'
+import { registerPortalTool } from '../../helpers/mcp-registration.js'
 import { buildToolDescription } from '../../helpers/tool-ux.js'
 import type { BlockHead } from '../../types/index.js'
 
@@ -15,7 +14,8 @@ import type { BlockHead } from '../../types/index.js'
 // ============================================================================
 
 export function registerGetBlockNumberTool(server: McpServer) {
-  registerPortalTool(server,
+  registerPortalTool(
+    server,
     'portal_get_head',
     buildToolDescription('portal_get_head'),
     {
@@ -32,7 +32,7 @@ export function registerGetBlockNumberTool(server: McpServer) {
       if (!head || typeof head !== 'object' || !('number' in head) || head.number == null) {
         throw new Error(
           `No head block available for network '${dataset}'. The network may be temporarily unavailable or syncing. ` +
-          `Try again in a moment, or use portal_list_networks to verify the network exists.`,
+            `Try again in a moment, or use portal_list_networks to verify the network exists.`,
         )
       }
       return formatResult({ ...head, type, network: dataset }, undefined, {

@@ -1,16 +1,14 @@
 import type { McpServer } from '@modelcontextprotocol/server'
-
-import { registerPortalTool } from '../../helpers/mcp-registration.js'
 import { z } from 'zod'
 
 import { getBlockHead, resolveDataset } from '../../cache/datasets.js'
 import { PORTAL_URL } from '../../constants/index.js'
 import { detectChainType, isL2Chain } from '../../helpers/chain.js'
 import { ActionableError, createUnsupportedChainError } from '../../helpers/errors.js'
-import { TRANSACTION_FIELD_PRESETS } from '../../helpers/field-presets.js'
 import { portalFetchRecentRecords } from '../../helpers/fetch.js'
-import { formatResult } from '../../helpers/format.js'
-import { formatTimestamp, formatTransactionFields } from '../../helpers/format.js'
+import { TRANSACTION_FIELD_PRESETS } from '../../helpers/field-presets.js'
+import { formatResult, formatTimestamp, formatTransactionFields } from '../../helpers/format.js'
+import { registerPortalTool } from '../../helpers/mcp-registration.js'
 import {
   normalizeBitcoinTransactionResult,
   normalizeEvmTransactionResult,
@@ -18,11 +16,26 @@ import {
   normalizeSolanaTransactionResult,
 } from '../../helpers/normalized-results.js'
 import { buildPaginationInfo, decodeCursor, encodeCursor, paginateAscendingItems } from '../../helpers/pagination.js'
-import { buildChronologicalPageOrdering, buildQueryCoverage, buildQueryFreshness } from '../../helpers/result-metadata.js'
-import { describeTimeWindowInput, getTimestampWindowNotices, resolveTimeframeOrBlocks, type ResolvedBlockWindow, type TimestampInput } from '../../helpers/timeframe.js'
+import {
+  buildChronologicalPageOrdering,
+  buildQueryCoverage,
+  buildQueryFreshness,
+} from '../../helpers/result-metadata.js'
+import {
+  type ResolvedBlockWindow,
+  type TimestampInput,
+  describeTimeWindowInput,
+  getTimestampWindowNotices,
+  resolveTimeframeOrBlocks,
+} from '../../helpers/timeframe.js'
 import { buildExecutionMetadata, buildToolDescription } from '../../helpers/tool-ux.js'
 import { buildPortalUi, buildTimelinePanel } from '../../helpers/ui-metadata.js'
-import { getQueryExamples, getValidationNotices, normalizeAddresses, validateQuerySize } from '../../helpers/validation.js'
+import {
+  getQueryExamples,
+  getValidationNotices,
+  normalizeAddresses,
+  validateQuerySize,
+} from '../../helpers/validation.js'
 import { fetchRecentHyperliquidFillBlocks } from '../hyperliquid/fill-stream.js'
 
 // ============================================================================
@@ -34,7 +47,10 @@ import { fetchRecentHyperliquidFillBlocks } from '../hyperliquid/fill-stream.js'
  * Supports EVM, Solana, and Bitcoin chains.
  */
 
-function flattenTransactionsWithBlockContext(results: unknown[], formatter?: (tx: Record<string, unknown>) => Record<string, unknown>) {
+function flattenTransactionsWithBlockContext(
+  results: unknown[],
+  formatter?: (tx: Record<string, unknown>) => Record<string, unknown>,
+) {
   return results.flatMap((block: unknown) => {
     const typedBlock = block as {
       number?: number
@@ -127,18 +143,18 @@ function sortRecentTransactions(items: RecentTransactionItem[]): RecentTransacti
 }
 
 function describeRecentWindow(rangeLabel: string) {
-  return rangeLabel.includes('->') ? rangeLabel : (/^\d+$/.test(rangeLabel) ? `last ${rangeLabel} blocks` : describeTimeWindowInput(rangeLabel))
+  return rangeLabel.includes('->')
+    ? rangeLabel
+    : /^\d+$/.test(rangeLabel)
+      ? `last ${rangeLabel} blocks`
+      : describeTimeWindowInput(rangeLabel)
 }
 
 function buildRecentMessage(prefix: string, rangeLabel: string, hasMore: boolean, limit: number) {
   return `${prefix}${hasMore ? ` (preview page capped at ${limit})` : ''} from ${describeRecentWindow(rangeLabel)}`
 }
 
-function buildRecentActivityUi(params: {
-  dataset: string
-  rangeLabel: string
-  nextCursor?: string
-}) {
+function buildRecentActivityUi(params: { dataset: string; rangeLabel: string; nextCursor?: string }) {
   return buildPortalUi({
     version: 'portal_ui_v1',
     layout: 'split',
@@ -149,8 +165,19 @@ function buildRecentActivityUi(params: {
       subtitle: `${params.dataset} from ${describeRecentWindow(params.rangeLabel)}`,
     },
     metric_cards: [
-      { id: 'visible-activity', label: 'Visible activity', value_path: '_meta.returned', format: 'integer', emphasis: 'primary' },
-      { id: 'latest-visible-block', label: 'Latest visible block', value_path: '_coverage.returned_to_block', format: 'integer' },
+      {
+        id: 'visible-activity',
+        label: 'Visible activity',
+        value_path: '_meta.returned',
+        format: 'integer',
+        emphasis: 'primary',
+      },
+      {
+        id: 'latest-visible-block',
+        label: 'Latest visible block',
+        value_path: '_coverage.returned_to_block',
+        format: 'integer',
+      },
       { id: 'result-complete', label: 'Result complete', value_path: '_coverage.result_complete' },
     ],
     panels: [
@@ -176,9 +203,7 @@ function buildRecentActivityUi(params: {
   })
 }
 
-function createRecentTransactionsCursor(
-  params: Omit<RecentTransactionsCursor, 'tool'>,
-) {
+function createRecentTransactionsCursor(params: Omit<RecentTransactionsCursor, 'tool'>) {
   return encodeCursor({
     tool: 'portal_get_recent_activity',
     ...params,
@@ -186,37 +211,51 @@ function createRecentTransactionsCursor(
 }
 
 export function registerGetRecentTransactionsTool(server: McpServer) {
-  registerPortalTool(server,
+  registerPortalTool(
+    server,
     'portal_get_recent_activity',
     buildToolDescription('portal_get_recent_activity'),
     {
       network: z
         .string()
         .optional()
-        .describe("Network name (supports short names: 'polygon', 'base', 'ethereum', 'arbitrum', etc.). Optional when continuing with cursor."),
+        .describe(
+          "Network name (supports short names: 'polygon', 'base', 'ethereum', 'arbitrum', etc.). Optional when continuing with cursor.",
+        ),
       timeframe: z
         .string()
         .optional()
         .default('100')
-        .describe(
-          "Time period or block count. Examples: '100' (default), '1h', '6h', '24h', '7d', '3d'.",
-        ),
+        .describe("Time period or block count. Examples: '100' (default), '1h', '6h', '24h', '7d', '3d'."),
       from_timestamp: z
         .union([z.number(), z.string()])
         .optional()
-        .describe('Starting timestamp. Accepts Unix seconds, Unix milliseconds, ISO datetime, or relative input like "1h ago".'),
+        .describe(
+          'Starting timestamp. Accepts Unix seconds, Unix milliseconds, ISO datetime, or relative input like "1h ago".',
+        ),
       to_timestamp: z
         .union([z.number(), z.string()])
         .optional()
-        .describe('Ending timestamp. Accepts Unix seconds, Unix milliseconds, ISO datetime, or relative input like "now".'),
+        .describe(
+          'Ending timestamp. Accepts Unix seconds, Unix milliseconds, ISO datetime, or relative input like "now".',
+        ),
       from_addresses: z.array(z.string()).optional().describe('Filter by sender addresses'),
       to_addresses: z.array(z.string()).optional().describe('Filter by recipient addresses'),
-      limit: z.number().int().min(1).max(25).optional().default(10).describe('Max activity rows to return (default: 10, max: 25)'),
+      limit: z
+        .number()
+        .int()
+        .min(1)
+        .max(25)
+        .optional()
+        .default(10)
+        .describe('Max activity rows to return (default: 10, max: 25)'),
       cursor: z.string().optional().describe('Continuation cursor from a previous response'),
     },
     async ({ network, timeframe, from_timestamp, to_timestamp, from_addresses, to_addresses, limit, cursor }) => {
       const queryStartTime = Date.now()
-      const paginationCursor = cursor ? decodeCursor<RecentTransactionsCursor>(cursor, 'portal_get_recent_activity') : undefined
+      const paginationCursor = cursor
+        ? decodeCursor<RecentTransactionsCursor>(cursor, 'portal_get_recent_activity')
+        : undefined
       const requestedDataset = network ? await resolveDataset(network) : undefined
       let dataset = paginationCursor?.dataset ?? requestedDataset
       if (!dataset) {
@@ -228,13 +267,17 @@ export function registerGetRecentTransactionsTool(server: McpServer) {
       const chainType = detectChainType(dataset)
 
       if (paginationCursor && requestedDataset && paginationCursor.dataset !== requestedDataset) {
-        throw new ActionableError('This cursor belongs to a different network.', [
-          'Reuse the cursor with the same network and filters as the previous response.',
-          'Omit cursor to start a fresh query window.',
-        ], {
-          cursor_dataset: paginationCursor.dataset,
-          requested_dataset: requestedDataset,
-        })
+        throw new ActionableError(
+          'This cursor belongs to a different network.',
+          [
+            'Reuse the cursor with the same network and filters as the previous response.',
+            'Omit cursor to start a fresh query window.',
+          ],
+          {
+            cursor_dataset: paginationCursor.dataset,
+            requested_dataset: requestedDataset,
+          },
+        )
       }
 
       if (paginationCursor) {
@@ -260,7 +303,10 @@ export function registerGetRecentTransactionsTool(server: McpServer) {
         })
       }
 
-      if ((chainType === 'bitcoin' || chainType === 'hyperliquidFills' || chainType === 'hyperliquidReplicaCmds') && (from_addresses?.length || to_addresses?.length)) {
+      if (
+        (chainType === 'bitcoin' || chainType === 'hyperliquidFills' || chainType === 'hyperliquidReplicaCmds') &&
+        (from_addresses?.length || to_addresses?.length)
+      ) {
         throw new ActionableError(
           `from_addresses and to_addresses are not valid ${chainType === 'bitcoin' ? 'Bitcoin' : 'Hyperliquid'} recent-activity filters.`,
           chainType === 'bitcoin'
@@ -278,10 +324,15 @@ export function registerGetRecentTransactionsTool(server: McpServer) {
       }
 
       if (chainType === 'solana' && to_addresses?.length) {
-        throw new ActionableError('to_addresses is not a Solana transaction concept and cannot be applied safely.', [
-          'Use from_addresses to filter by Solana fee payer.',
-          'Use portal_solana_query_transactions with mentions_account to find transactions involving an account.',
-        ], { network: dataset }, { code: 'invalid_request', origin: 'client_input', retryable: false })
+        throw new ActionableError(
+          'to_addresses is not a Solana transaction concept and cannot be applied safely.',
+          [
+            'Use from_addresses to filter by Solana fee payer.',
+            'Use portal_solana_query_transactions with mentions_account to find transactions involving an account.',
+          ],
+          { network: dataset },
+          { code: 'invalid_request', origin: 'client_input', retryable: false },
+        )
       }
 
       // Resolve block range — numeric values are exact block counts,
@@ -460,7 +511,9 @@ export function registerGetRecentTransactionsTool(server: McpServer) {
       })
 
       const allTxs = sortRecentTransactions(
-        flattenTransactionsWithBlockContext(results, (tx) => normalizeEvmTransactionResult(formatTransactionFields(tx))) as RecentTransactionItem[],
+        flattenTransactionsWithBlockContext(results, (tx) =>
+          normalizeEvmTransactionResult(formatTransactionFields(tx)),
+        ) as RecentTransactionItem[],
       )
       const page = paginateAscendingItems(
         allTxs,
@@ -473,22 +526,23 @@ export function registerGetRecentTransactionsTool(server: McpServer) {
             }
           : undefined,
       )
-      const nextCursor = page.hasMore && page.nextBoundary
-        ? createRecentTransactionsCursor({
-            dataset,
-            ...(timeframe ? { timeframe } : {}),
-            ...(from_timestamp !== undefined ? { from_timestamp } : {}),
-            ...(to_timestamp !== undefined ? { to_timestamp } : {}),
-            range_label: rangeLabel,
-            limit,
-            ...(normalizedFrom ? { from_addresses: normalizedFrom } : {}),
-            ...(normalizedTo ? { to_addresses: normalizedTo } : {}),
-            window_from_block: fromBlock,
-            window_to_block: windowToBlock,
-            page_to_block: page.nextBoundary.page_to_block,
-            skip_inclusive_block: page.nextBoundary.skip_inclusive_block,
-          })
-        : undefined
+      const nextCursor =
+        page.hasMore && page.nextBoundary
+          ? createRecentTransactionsCursor({
+              dataset,
+              ...(timeframe ? { timeframe } : {}),
+              ...(from_timestamp !== undefined ? { from_timestamp } : {}),
+              ...(to_timestamp !== undefined ? { to_timestamp } : {}),
+              range_label: rangeLabel,
+              limit,
+              ...(normalizedFrom ? { from_addresses: normalizedFrom } : {}),
+              ...(normalizedTo ? { to_addresses: normalizedTo } : {}),
+              window_from_block: fromBlock,
+              window_to_block: windowToBlock,
+              page_to_block: page.nextBoundary.page_to_block,
+              skip_inclusive_block: page.nextBoundary.skip_inclusive_block,
+            })
+          : undefined
       const notices = [...getTimestampWindowNotices(resolvedBlocks), ...getValidationNotices(validation)]
       if (nextCursor) {
         notices.push('Older results are available via _pagination.next_cursor.')
@@ -563,7 +617,22 @@ async function queryBitcoinRecent(params: {
   headBlockNumber: number
   queryStartTime: number
 }) {
-  const { dataset, fromBlock, pageToBlock, windowToBlock, timeframe, fromTimestamp, toTimestamp, rangeLabel, limit, fetchLimit, cursor, resolvedBlocks, headBlockNumber, queryStartTime } = params
+  const {
+    dataset,
+    fromBlock,
+    pageToBlock,
+    windowToBlock,
+    timeframe,
+    fromTimestamp,
+    toTimestamp,
+    rangeLabel,
+    limit,
+    fetchLimit,
+    cursor,
+    resolvedBlocks,
+    headBlockNumber,
+    queryStartTime,
+  } = params
   const query = {
     type: 'bitcoin',
     fromBlock,
@@ -590,7 +659,9 @@ async function queryBitcoinRecent(params: {
   })
 
   const allTxs = sortRecentTransactions(
-    flattenTransactionsWithBlockContext(results, (tx) => normalizeBitcoinTransactionResult(tx)) as RecentTransactionItem[],
+    flattenTransactionsWithBlockContext(results, (tx) =>
+      normalizeBitcoinTransactionResult(tx),
+    ) as RecentTransactionItem[],
   )
   const page = paginateAscendingItems(
     allTxs,
@@ -603,22 +674,23 @@ async function queryBitcoinRecent(params: {
         }
       : undefined,
   )
-  const nextCursor = page.hasMore && page.nextBoundary
-    ? createRecentTransactionsCursor({
-        dataset,
-        ...(timeframe ? { timeframe } : {}),
-        ...(fromTimestamp !== undefined ? { from_timestamp: fromTimestamp } : {}),
-        ...(toTimestamp !== undefined ? { to_timestamp: toTimestamp } : {}),
-        range_label: rangeLabel,
-        limit,
-        ...(params.cursor?.from_addresses ? { from_addresses: params.cursor.from_addresses } : {}),
-        ...(params.cursor?.to_addresses ? { to_addresses: params.cursor.to_addresses } : {}),
-        window_from_block: fromBlock,
-        window_to_block: windowToBlock,
-        page_to_block: page.nextBoundary.page_to_block,
-        skip_inclusive_block: page.nextBoundary.skip_inclusive_block,
-      })
-    : undefined
+  const nextCursor =
+    page.hasMore && page.nextBoundary
+      ? createRecentTransactionsCursor({
+          dataset,
+          ...(timeframe ? { timeframe } : {}),
+          ...(fromTimestamp !== undefined ? { from_timestamp: fromTimestamp } : {}),
+          ...(toTimestamp !== undefined ? { to_timestamp: toTimestamp } : {}),
+          range_label: rangeLabel,
+          limit,
+          ...(params.cursor?.from_addresses ? { from_addresses: params.cursor.from_addresses } : {}),
+          ...(params.cursor?.to_addresses ? { to_addresses: params.cursor.to_addresses } : {}),
+          window_from_block: fromBlock,
+          window_to_block: windowToBlock,
+          page_to_block: page.nextBoundary.page_to_block,
+          skip_inclusive_block: page.nextBoundary.skip_inclusive_block,
+        })
+      : undefined
   const notices = getTimestampWindowNotices(resolvedBlocks)
   if (nextCursor) notices.push('Older results are available via _pagination.next_cursor.')
 
@@ -694,7 +766,23 @@ async function querySolanaRecent(params: {
   headBlockNumber: number
   queryStartTime: number
 }) {
-  const { dataset, fromBlock, pageToBlock, windowToBlock, timeframe, fromTimestamp, toTimestamp, rangeLabel, from_addresses, limit, fetchLimit, cursor, resolvedBlocks, headBlockNumber, queryStartTime } = params
+  const {
+    dataset,
+    fromBlock,
+    pageToBlock,
+    windowToBlock,
+    timeframe,
+    fromTimestamp,
+    toTimestamp,
+    rangeLabel,
+    from_addresses,
+    limit,
+    fetchLimit,
+    cursor,
+    resolvedBlocks,
+    headBlockNumber,
+    queryStartTime,
+  } = params
   const txFilters: Record<string, unknown>[] = []
   if (from_addresses?.length) {
     txFilters.push({ feePayer: from_addresses })
@@ -726,7 +814,9 @@ async function querySolanaRecent(params: {
   })
 
   const allTxs = sortRecentTransactions(
-    flattenTransactionsWithBlockContext(results, (tx) => normalizeSolanaTransactionResult(tx)) as RecentTransactionItem[],
+    flattenTransactionsWithBlockContext(results, (tx) =>
+      normalizeSolanaTransactionResult(tx),
+    ) as RecentTransactionItem[],
   )
   const page = paginateAscendingItems(
     allTxs,
@@ -739,22 +829,23 @@ async function querySolanaRecent(params: {
         }
       : undefined,
   )
-  const nextCursor = page.hasMore && page.nextBoundary
-    ? createRecentTransactionsCursor({
-        dataset,
-        ...(timeframe ? { timeframe } : {}),
-        ...(fromTimestamp !== undefined ? { from_timestamp: fromTimestamp } : {}),
-        ...(toTimestamp !== undefined ? { to_timestamp: toTimestamp } : {}),
-        range_label: rangeLabel,
-        limit,
-        ...(params.cursor?.from_addresses ? { from_addresses: params.cursor.from_addresses } : {}),
-        ...(params.cursor?.to_addresses ? { to_addresses: params.cursor.to_addresses } : {}),
-        window_from_block: fromBlock,
-        window_to_block: windowToBlock,
-        page_to_block: page.nextBoundary.page_to_block,
-        skip_inclusive_block: page.nextBoundary.skip_inclusive_block,
-      })
-    : undefined
+  const nextCursor =
+    page.hasMore && page.nextBoundary
+      ? createRecentTransactionsCursor({
+          dataset,
+          ...(timeframe ? { timeframe } : {}),
+          ...(fromTimestamp !== undefined ? { from_timestamp: fromTimestamp } : {}),
+          ...(toTimestamp !== undefined ? { to_timestamp: toTimestamp } : {}),
+          range_label: rangeLabel,
+          limit,
+          ...(params.cursor?.from_addresses ? { from_addresses: params.cursor.from_addresses } : {}),
+          ...(params.cursor?.to_addresses ? { to_addresses: params.cursor.to_addresses } : {}),
+          window_from_block: fromBlock,
+          window_to_block: windowToBlock,
+          page_to_block: page.nextBoundary.page_to_block,
+          skip_inclusive_block: page.nextBoundary.skip_inclusive_block,
+        })
+      : undefined
   const notices = getTimestampWindowNotices(resolvedBlocks)
   if (nextCursor) notices.push('Older results are available via _pagination.next_cursor.')
 
@@ -829,7 +920,22 @@ async function queryHyperliquidRecent(params: {
   headBlockNumber: number
   queryStartTime: number
 }) {
-  const { dataset, fromBlock, pageToBlock, windowToBlock, timeframe, fromTimestamp, toTimestamp, rangeLabel, limit, fetchLimit, cursor, resolvedBlocks, headBlockNumber, queryStartTime } = params
+  const {
+    dataset,
+    fromBlock,
+    pageToBlock,
+    windowToBlock,
+    timeframe,
+    fromTimestamp,
+    toTimestamp,
+    rangeLabel,
+    limit,
+    fetchLimit,
+    cursor,
+    resolvedBlocks,
+    headBlockNumber,
+    queryStartTime,
+  } = params
 
   const recentFetch = await fetchRecentHyperliquidFillBlocks({
     dataset,
@@ -855,24 +961,26 @@ async function queryHyperliquidRecent(params: {
   })
   const results = recentFetch.blocks
 
-  const allFills = sortRecentTransactions(results.flatMap((block: unknown) => {
-    const typedBlock = block as {
-      number?: number
-      timestamp?: number
-      header?: { number?: number; timestamp?: number }
-      fills?: Array<Record<string, unknown>>
-    }
-    const blockNumber = typedBlock.number ?? typedBlock.header?.number
-    const timestamp = typedBlock.timestamp ?? typedBlock.header?.timestamp
+  const allFills = sortRecentTransactions(
+    results.flatMap((block: unknown) => {
+      const typedBlock = block as {
+        number?: number
+        timestamp?: number
+        header?: { number?: number; timestamp?: number }
+        fills?: Array<Record<string, unknown>>
+      }
+      const blockNumber = typedBlock.number ?? typedBlock.header?.number
+      const timestamp = typedBlock.timestamp ?? typedBlock.header?.timestamp
 
-    return (typedBlock.fills || []).map((fill) =>
-      normalizeHyperliquidFillResult({
-        ...fill,
-        ...(blockNumber !== undefined ? { block_number: blockNumber } : {}),
-        ...(timestamp !== undefined ? { timestamp } : {}),
-      }),
-    ) as RecentTransactionItem[]
-  }))
+      return (typedBlock.fills || []).map((fill) =>
+        normalizeHyperliquidFillResult({
+          ...fill,
+          ...(blockNumber !== undefined ? { block_number: blockNumber } : {}),
+          ...(timestamp !== undefined ? { timestamp } : {}),
+        }),
+      ) as RecentTransactionItem[]
+    }),
+  )
 
   const page = paginateAscendingItems(
     allFills,
@@ -885,31 +993,27 @@ async function queryHyperliquidRecent(params: {
         }
       : undefined,
   )
-  const nextCursor = page.hasMore && page.nextBoundary
-    ? createRecentTransactionsCursor({
-        dataset,
-        ...(timeframe ? { timeframe } : {}),
-        ...(fromTimestamp !== undefined ? { from_timestamp: fromTimestamp } : {}),
-        ...(toTimestamp !== undefined ? { to_timestamp: toTimestamp } : {}),
-        range_label: rangeLabel,
-        limit,
-        window_from_block: fromBlock,
-        window_to_block: windowToBlock,
-        page_to_block: page.nextBoundary.page_to_block,
-        skip_inclusive_block: page.nextBoundary.skip_inclusive_block,
-      })
-    : undefined
+  const nextCursor =
+    page.hasMore && page.nextBoundary
+      ? createRecentTransactionsCursor({
+          dataset,
+          ...(timeframe ? { timeframe } : {}),
+          ...(fromTimestamp !== undefined ? { from_timestamp: fromTimestamp } : {}),
+          ...(toTimestamp !== undefined ? { to_timestamp: toTimestamp } : {}),
+          range_label: rangeLabel,
+          limit,
+          window_from_block: fromBlock,
+          window_to_block: windowToBlock,
+          page_to_block: page.nextBoundary.page_to_block,
+          skip_inclusive_block: page.nextBoundary.skip_inclusive_block,
+        })
+      : undefined
   const notices = getTimestampWindowNotices(resolvedBlocks)
   if (nextCursor) notices.push('Older results are available via _pagination.next_cursor.')
 
   return formatResult(
     page.pageItems,
-    buildRecentMessage(
-      `Retrieved ${page.pageItems.length} recent Hyperliquid fills`,
-      rangeLabel,
-      page.hasMore,
-      limit,
-    ),
+    buildRecentMessage(`Retrieved ${page.pageItems.length} recent Hyperliquid fills`, rangeLabel, page.hasMore, limit),
     {
       toolName: 'portal_get_recent_activity',
       ...(notices.length > 0 ? { notices } : {}),

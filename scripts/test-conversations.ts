@@ -127,7 +127,10 @@ const SCENARIOS: ConversationScenario[] = [
         validate: (data) => {
           assert(data.overview?.vm === 'evm', 'Wallet summary should resolve EVM wallet')
           assert(data.next_steps?.actions?.length > 0, 'Wallet summary should expose next steps')
-          assert(data.investigation?.version === 'portal_investigation_v1', 'Wallet summary should include investigation guide')
+          assert(
+            data.investigation?.version === 'portal_investigation_v1',
+            'Wallet summary should include investigation guide',
+          )
           assert(
             Array.isArray(data.investigation?.follow_up_filters) && data.investigation.follow_up_filters.length > 0,
             'Wallet summary should suggest follow-up filters',
@@ -146,7 +149,10 @@ const SCENARIOS: ConversationScenario[] = [
           limit: 2,
         }),
         validate: (data) => {
-          assert(Array.isArray(data.items) && data.items.length > 0, 'Suspicious token trace should return transfer rows')
+          assert(
+            Array.isArray(data.items) && data.items.length > 0,
+            'Suspicious token trace should return transfer rows',
+          )
           assert(
             data.investigation?.pivots?.some((pivot: any) =>
               ['from', 'to', 'token_address', 'transaction_hash'].includes(String(pivot.field)),
@@ -318,10 +324,7 @@ const SCENARIOS: ConversationScenario[] = [
         }),
         validate: (data) => {
           assert(Array.isArray(data.items) && data.items.length > 0, 'Solana program query should return rows')
-          assert(
-            data._execution !== undefined,
-            'Solana program query should describe the window',
-          )
+          assert(data._execution !== undefined, 'Solana program query should describe the window')
         },
       },
       {

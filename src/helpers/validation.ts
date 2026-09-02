@@ -338,7 +338,8 @@ export function validateSolanaQuerySize(options: SolanaQueryValidationOptions): 
   if (slotRange > maximum && !hasLowLimit) {
     return {
       valid: false,
-      error: `Query too large (${slotRange.toLocaleString()} slots${hasFilters ? '' : ' unfiltered'}). ` +
+      error:
+        `Query too large (${slotRange.toLocaleString()} slots${hasFilters ? '' : ' unfiltered'}). ` +
         `Solana slots are data-dense — max safe range is ${maximum.toLocaleString()} slots. ` +
         `Reduce range or add filters (program_id, account, etc.).`,
     }
@@ -377,14 +378,19 @@ const SUBSTRATE_MAXIMUM_RANGES = {
 
 export function validateSubstrateQuerySize(options: SubstrateQueryValidationOptions): QueryValidationResult {
   const { blockRange, hasFilters, queryType, limit } = options
-  const recommended = hasFilters ? SUBSTRATE_RECOMMENDED_RANGES[queryType].filtered : SUBSTRATE_RECOMMENDED_RANGES[queryType].unfiltered
-  const maximum = hasFilters ? SUBSTRATE_MAXIMUM_RANGES[queryType].filtered : SUBSTRATE_MAXIMUM_RANGES[queryType].unfiltered
+  const recommended = hasFilters
+    ? SUBSTRATE_RECOMMENDED_RANGES[queryType].filtered
+    : SUBSTRATE_RECOMMENDED_RANGES[queryType].unfiltered
+  const maximum = hasFilters
+    ? SUBSTRATE_MAXIMUM_RANGES[queryType].filtered
+    : SUBSTRATE_MAXIMUM_RANGES[queryType].unfiltered
   const hasLowLimit = limit <= 100
 
   if (blockRange > maximum && !hasLowLimit) {
     return {
       valid: false,
-      error: `Query too large (${blockRange.toLocaleString()} blocks${hasFilters ? '' : ' unfiltered'}). ` +
+      error:
+        `Query too large (${blockRange.toLocaleString()} blocks${hasFilters ? '' : ' unfiltered'}). ` +
         `Substrate ${queryType} queries should stay under ${maximum.toLocaleString()} blocks for safe MCP-sized responses.`,
       recommendation: hasFilters
         ? `Split the request into smaller windows of about ${recommended.toLocaleString()} blocks each.`

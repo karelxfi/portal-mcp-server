@@ -5,6 +5,12 @@ import { readFile } from 'node:fs/promises'
 import { Client } from '@modelcontextprotocol/client'
 import { InMemoryTransport } from '@modelcontextprotocol/server'
 
+import { CHAINS, LOGO_CDN, LOGO_ORIGINS } from '../src/app-ui/chains.generated.js'
+import { chainLogoUrl, explorerLink } from '../src/app-ui/explorers.js'
+import { buildEvidenceExport } from '../src/app-ui/export.js'
+import { APP_FIXTURES } from '../src/app-ui/fixtures.js'
+import { evidenceArguments, planFollowup, shorterDuration } from '../src/app-ui/followup-state.js'
+import { formatValue } from '../src/app-ui/view.js'
 import {
   ACTIVITY_EXPLORER_RESOURCE_URI,
   ACTIVITY_EXPLORER_TOOLS,
@@ -15,12 +21,6 @@ import {
   resolveActivityExplorerSurface,
 } from '../src/apps/activity-explorer.js'
 import { ACTIVITY_EXPLORER_BYTES, ACTIVITY_EXPLORER_HASH } from '../src/generated/activity-explorer.version.js'
-import { CHAINS, LOGO_CDN, LOGO_ORIGINS } from '../src/app-ui/chains.generated.js'
-import { chainLogoUrl, explorerLink } from '../src/app-ui/explorers.js'
-import { evidenceArguments, planFollowup, shorterDuration } from '../src/app-ui/followup-state.js'
-import { formatValue } from '../src/app-ui/view.js'
-import { buildEvidenceExport } from '../src/app-ui/export.js'
-import { APP_FIXTURES } from '../src/app-ui/fixtures.js'
 import { buildCandlestickChart, buildTimeSeriesChart } from '../src/helpers/chart-metadata.js'
 import { formatResult } from '../src/helpers/format.js'
 import { register } from '../src/metrics.js'

@@ -1,16 +1,24 @@
 import type { McpServer } from '@modelcontextprotocol/server'
-
-import { registerPortalTool } from '../../helpers/mcp-registration.js'
 import { z } from 'zod'
 
 import { resolveDataset, validateBlockRange } from '../../cache/datasets.js'
 import { PORTAL_URL } from '../../constants/index.js'
 import { portalFetchRecentRecords } from '../../helpers/fetch.js'
 import { formatResult } from '../../helpers/format.js'
+import { registerPortalTool } from '../../helpers/mcp-registration.js'
 import { normalizeHyperliquidReplicaCmdResult } from '../../helpers/normalized-results.js'
-import { buildPaginationInfo, decodeRecentPageCursor, encodeRecentPageCursor, paginateAscendingItems } from '../../helpers/pagination.js'
-import { buildChronologicalPageOrdering, buildQueryCoverage, buildQueryFreshness } from '../../helpers/result-metadata.js'
-import { getTimestampWindowNotices, type TimestampInput, resolveTimeframeOrBlocks } from '../../helpers/timeframe.js'
+import {
+  buildPaginationInfo,
+  decodeRecentPageCursor,
+  encodeRecentPageCursor,
+  paginateAscendingItems,
+} from '../../helpers/pagination.js'
+import {
+  buildChronologicalPageOrdering,
+  buildQueryCoverage,
+  buildQueryFreshness,
+} from '../../helpers/result-metadata.js'
+import { type TimestampInput, getTimestampWindowNotices, resolveTimeframeOrBlocks } from '../../helpers/timeframe.js'
 import { buildExecutionMetadata, buildToolDescription } from '../../helpers/tool-ux.js'
 
 // ============================================================================
@@ -62,7 +70,8 @@ function sortActions(items: HyperliquidActionItem[]) {
 }
 
 export function registerQueryHyperliquidReplicaCmdsTool(server: McpServer) {
-  registerPortalTool(server,
+  registerPortalTool(
+    server,
     'portal_debug_hyperliquid_query_replica_commands',
     buildToolDescription('portal_debug_hyperliquid_query_replica_commands'),
     {
@@ -71,20 +80,21 @@ export function registerQueryHyperliquidReplicaCmdsTool(server: McpServer) {
         .optional()
         .default('hyperliquid-replica-cmds')
         .describe("Network name (default: 'hyperliquid-replica-cmds'). Optional when continuing with cursor."),
-      timeframe: z
-        .string()
-        .optional()
-        .describe("Time range (e.g., '1h', '24h'). Alternative to from_block/to_block."),
+      timeframe: z.string().optional().describe("Time range (e.g., '1h', '24h'). Alternative to from_block/to_block."),
       from_block: z.number().optional().describe('Starting block number (use this OR timeframe)'),
       to_block: z.number().optional().describe('Ending block number'),
       from_timestamp: z
         .union([z.number(), z.string()])
         .optional()
-        .describe('Starting timestamp. Accepts Unix seconds, Unix milliseconds, ISO datetime, or relative input like "1h ago".'),
+        .describe(
+          'Starting timestamp. Accepts Unix seconds, Unix milliseconds, ISO datetime, or relative input like "1h ago".',
+        ),
       to_timestamp: z
         .union([z.number(), z.string()])
         .optional()
-        .describe('Ending timestamp. Accepts Unix seconds, Unix milliseconds, ISO datetime, or relative input like "now".'),
+        .describe(
+          'Ending timestamp. Accepts Unix seconds, Unix milliseconds, ISO datetime, or relative input like "now".',
+        ),
       finalized_only: z.boolean().optional().default(false).describe('Only query finalized blocks'),
       action_type: z
         .array(z.enum(['order', 'cancel', 'cancelByCloid', 'batchModify', 'transfer', 'withdraw', 'updateLeverage']))
@@ -93,7 +103,16 @@ export function registerQueryHyperliquidReplicaCmdsTool(server: McpServer) {
       user: z.array(z.string()).optional().describe('User wallet addresses (0x-prefixed, lowercase)'),
       vault_address: z.array(z.string()).optional().describe('Vault addresses (0x-prefixed, lowercase)'),
       status: z.enum(['ok', 'err']).optional().describe('Filter by action status'),
-      limit: z.number().int().min(1).max(1).optional().default(1).describe('Max actions to return (1). Replica command payloads can contain large batches, so this exact one-record cursor page is the verified safe response budget.'),
+      limit: z
+        .number()
+        .int()
+        .min(1)
+        .max(1)
+        .optional()
+        .default(1)
+        .describe(
+          'Max actions to return (1). Replica command payloads can contain large batches, so this exact one-record cursor page is the verified safe response budget.',
+        ),
       cursor: z.string().optional().describe('Continuation cursor from a previous response'),
     },
     async ({
@@ -135,7 +154,8 @@ export function registerQueryHyperliquidReplicaCmdsTool(server: McpServer) {
             from_block: paginationCursor.window_from_block,
             to_block: paginationCursor.window_to_block,
             range_kind:
-              paginationCursor.request.from_timestamp !== undefined || paginationCursor.request.to_timestamp !== undefined
+              paginationCursor.request.from_timestamp !== undefined ||
+              paginationCursor.request.to_timestamp !== undefined
                 ? 'timestamp_range'
                 : paginationCursor.request.timeframe
                   ? 'timeframe'
@@ -224,27 +244,28 @@ export function registerQueryHyperliquidReplicaCmdsTool(server: McpServer) {
             }
           : undefined,
       )
-      const nextCursor = page.hasMore && page.nextBoundary
-        ? encodeRecentPageCursor<HyperliquidReplicaRequest>({
-          tool: 'portal_debug_hyperliquid_query_replica_commands',
-            dataset,
-            request: {
-              ...(timeframe ? { timeframe } : {}),
-              ...(from_timestamp !== undefined ? { from_timestamp } : {}),
-              ...(to_timestamp !== undefined ? { to_timestamp } : {}),
-              limit,
-              finalized_only,
-              ...(action_type ? { action_type } : {}),
-              ...(user ? { user } : {}),
-              ...(vault_address ? { vault_address } : {}),
-              ...(status ? { status } : {}),
-            },
-            window_from_block: resolvedFromBlock,
-            window_to_block: endBlock,
-            page_to_block: page.nextBoundary.page_to_block,
-            skip_inclusive_block: page.nextBoundary.skip_inclusive_block,
-          })
-        : undefined
+      const nextCursor =
+        page.hasMore && page.nextBoundary
+          ? encodeRecentPageCursor<HyperliquidReplicaRequest>({
+              tool: 'portal_debug_hyperliquid_query_replica_commands',
+              dataset,
+              request: {
+                ...(timeframe ? { timeframe } : {}),
+                ...(from_timestamp !== undefined ? { from_timestamp } : {}),
+                ...(to_timestamp !== undefined ? { to_timestamp } : {}),
+                limit,
+                finalized_only,
+                ...(action_type ? { action_type } : {}),
+                ...(user ? { user } : {}),
+                ...(vault_address ? { vault_address } : {}),
+                ...(status ? { status } : {}),
+              },
+              window_from_block: resolvedFromBlock,
+              window_to_block: endBlock,
+              page_to_block: page.nextBoundary.page_to_block,
+              skip_inclusive_block: page.nextBoundary.skip_inclusive_block,
+            })
+          : undefined
       const notices = getTimestampWindowNotices(resolvedBlocks)
       if (nextCursor) notices.push('Older results are available via _pagination.next_cursor.')
       const freshness = buildQueryFreshness({

@@ -1,16 +1,6 @@
 #!/usr/bin/env tsx
 
 import {
-  buildBitcoinBlockFields,
-  buildBitcoinTransactionFields,
-  buildEvmBlockFields,
-  buildEvmLogFields,
-  buildEvmTransactionFields,
-  buildSolanaTransactionFields,
-  buildSubstrateBlockFields,
-  buildSubstrateEventFields,
-} from '../src/helpers/fields.ts'
-import {
   EXACT_DECIMAL_ZERO,
   addExactDecimals,
   compareExactDecimals,
@@ -20,12 +10,16 @@ import {
   parseExactDecimal,
 } from '../src/helpers/exact-decimal.ts'
 import {
-  assert,
-  assertChatSurface,
-  callToolWithRetry,
-  closeTestClient,
-  connectTestClient,
-} from './test-helpers.ts'
+  buildBitcoinBlockFields,
+  buildBitcoinTransactionFields,
+  buildEvmBlockFields,
+  buildEvmLogFields,
+  buildEvmTransactionFields,
+  buildSolanaTransactionFields,
+  buildSubstrateBlockFields,
+  buildSubstrateEventFields,
+} from '../src/helpers/fields.ts'
+import { assert, assertChatSurface, callToolWithRetry, closeTestClient, connectTestClient } from './test-helpers.ts'
 
 const PORTAL = 'https://portal.sqd.dev'
 const BASE_USDC = '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913'
@@ -60,9 +54,8 @@ async function fetchNdjson(dataset: string, body: JsonRecord): Promise<JsonRecor
 
         lastError = error
         const retryAfterSeconds = Number(response.headers.get('retry-after') ?? '')
-        const retryDelayMs = Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0
-          ? retryAfterSeconds * 1_000
-          : attempt * 1_500
+        const retryDelayMs =
+          Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0 ? retryAfterSeconds * 1_000 : attempt * 1_500
         await new Promise((resolve) => setTimeout(resolve, retryDelayMs))
         continue
       }
@@ -297,8 +290,14 @@ async function main() {
       pagedFailedTransactions.every((item) => Number(item.status) === 0),
       'Every paged Base transaction should retain failed status',
     )
-    assert(finalTransactionPage?._coverage?.window_complete === true, 'Final Base transaction page should cover the window')
-    assert(finalTransactionPage?._coverage?.result_complete === true, 'Final Base transaction page should exhaust matches')
+    assert(
+      finalTransactionPage?._coverage?.window_complete === true,
+      'Final Base transaction page should cover the window',
+    )
+    assert(
+      finalTransactionPage?._coverage?.result_complete === true,
+      'Final Base transaction page should exhaust matches',
+    )
     console.log('PASS  Base EVM scan pagination: all 8 failed transactions match Portal without gaps or duplicates')
 
     const directBitcoin = flatten(
@@ -374,7 +373,10 @@ async function main() {
       const source = directEvents.find((row) => `${row.block_number}:${row.index}` === item.primary_id)
       assert(source?.name === item.event_name, 'Polkadot event name should match Portal')
     }
-    assert(finalSubstratePage?._coverage?.window_complete === true, 'Final Polkadot page should cover the source window')
+    assert(
+      finalSubstratePage?._coverage?.window_complete === true,
+      'Final Polkadot page should cover the source window',
+    )
     assert(finalSubstratePage?._coverage?.result_complete === true, 'Final Polkadot page should exhaust results')
     const eventCounts = new Map<string, number>()
     for (const event of directEvents) eventCounts.set(event.name, (eventCounts.get(event.name) ?? 0) + 1)
@@ -400,7 +402,9 @@ async function main() {
       assert(stable(source?.args) === stable(item.args), 'Polkadot sampled event arguments should match Portal')
     }
     assertComplete(substrateSample, 'Polkadot event payload sample', directEventSample.length)
-    console.log(`PASS  Polkadot events: all ${directEvents.length} identities and names, plus exact sampled arguments, match Portal`)
+    console.log(
+      `PASS  Polkadot events: all ${directEvents.length} identities and names, plus exact sampled arguments, match Portal`,
+    )
 
     const solanaHeadData = await call('portal_get_head', { network: 'solana-mainnet' })
     const solanaHead = Number(solanaHeadData.number)
@@ -439,7 +443,10 @@ async function main() {
       }),
       'transactions',
     )
-    assert(directSolana.length > 0 && directSolana.length <= 200, 'Chosen Solana payer should have a bounded result set')
+    assert(
+      directSolana.length > 0 && directSolana.length <= 200,
+      'Chosen Solana payer should have a bounded result set',
+    )
     const solanaData = await call('portal_solana_query_transactions', {
       network: 'solana-mainnet',
       from_block: solanaFrom,
@@ -449,11 +456,7 @@ async function main() {
       limit: 25,
     })
     const signature = (item: JsonRecord) => item.signatures?.[0]
-    assertEqualSet(
-      solanaData.items.map(signature),
-      directSolana.map(signature),
-      'Solana fee-payer transactions',
-    )
+    assertEqualSet(solanaData.items.map(signature), directSolana.map(signature), 'Solana fee-payer transactions')
     for (const item of solanaData.items as JsonRecord[]) {
       const source = directSolana.find((row) => signature(row) === signature(item))
       assert(source?.feePayer === item.feePayer, 'Solana fee payer should match Portal')
@@ -505,8 +508,8 @@ async function main() {
         return price && size ? addExactDecimals(sum, multiplyExactDecimals(price, size)) : sum
       }, EXACT_DECIMAL_ZERO)
       const baseVolume = sizes.reduce((sum, size) => addExactDecimals(sum, size), EXACT_DECIMAL_ZERO)
-      const high = prices.reduce((best, price) => compareExactDecimals(price, best) > 0 ? price : best, prices[0])
-      const low = prices.reduce((best, price) => compareExactDecimals(price, best) < 0 ? price : best, prices[0])
+      const high = prices.reduce((best, price) => (compareExactDecimals(price, best) > 0 ? price : best), prices[0])
+      const low = prices.reduce((best, price) => (compareExactDecimals(price, best) < 0 ? price : best), prices[0])
       const vwap = divideExactDecimals(notional, baseVolume, 18)
       return {
         timestamp: candle.timestamp,
@@ -523,7 +526,10 @@ async function main() {
     for (const expected of expectedCandles) {
       const actual = ohlcData.ohlc.find((candle: JsonRecord) => candle.timestamp === expected.timestamp)
       for (const key of ['open', 'high', 'low', 'close', 'volume', 'base_volume', 'fill_count', 'vwap']) {
-        assert(actual?.[key] === expected[key], `Hyperliquid candle ${expected.timestamp} ${key} should match raw fills`)
+        assert(
+          actual?.[key] === expected[key],
+          `Hyperliquid candle ${expected.timestamp} ${key} should match raw fills`,
+        )
       }
     }
     assert(

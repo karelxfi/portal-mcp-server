@@ -81,9 +81,19 @@ const CASES: NegativeCase[] = [
   {
     name: 'Conflicting compare/group args',
     tool: 'portal_get_time_series',
-    args: { network: 'base', metric: 'transaction_count', duration: '1h', interval: '5m', compare_previous: true, group_by: 'contract' },
+    args: {
+      network: 'base',
+      metric: 'transaction_count',
+      duration: '1h',
+      interval: '5m',
+      compare_previous: true,
+      group_by: 'contract',
+    },
     expect: (text) => {
-      assert(/compare_previous and group_by="contract" cannot be used together/i.test(text), 'Invalid combo should explain the conflict')
+      assert(
+        /compare_previous and group_by="contract" cannot be used together/i.test(text),
+        'Invalid combo should explain the conflict',
+      )
     },
   },
   {
@@ -162,7 +172,10 @@ function runRedactionAssertions() {
     sensitiveContext,
   )
   assertNoSecretText(actionable.message, 'ActionableError message')
-  assert(actionable.message.includes('https://portal.sqd.dev/datasets/base-mainnet/stream'), 'Sanitized context should keep URL path')
+  assert(
+    actionable.message.includes('https://portal.sqd.dev/datasets/base-mainnet/stream'),
+    'Sanitized context should keep URL path',
+  )
   assert(!actionable.message.includes('?api_key='), 'Sanitized context should remove URL query strings')
   assert(actionable.message.includes('"logs_count":1'), 'Sanitized context should summarize query array counts')
   assert(!actionable.message.includes('0xabc'), 'Sanitized context should not embed full query JSON')

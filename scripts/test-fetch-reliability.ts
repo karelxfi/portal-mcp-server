@@ -22,12 +22,12 @@ import {
   sleep,
 } from '../src/helpers/fetch.js'
 import { formatResult } from '../src/helpers/format.js'
-import { runWithPortalRequestSignal } from '../src/helpers/request-context.js'
 import { registerPortalTool } from '../src/helpers/mcp-registration.js'
+import { runWithPortalRequestSignal } from '../src/helpers/request-context.js'
 import { toolCallsTotal, toolErrorsTotal, toolOutcomesTotal } from '../src/metrics.js'
 import { createPortalServer } from '../src/server.js'
 import { fetchAdaptiveTransactionRange } from '../src/tools/evm/query-transactions.js'
-import { isBoundedUpstreamToolError, type ToolCallResult } from './test-helpers.ts'
+import { type ToolCallResult, isBoundedUpstreamToolError } from './test-helpers.ts'
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(`Assertion failed: ${message}`)
@@ -163,7 +163,10 @@ async function main() {
     const sharedTokenLists = await Promise.all(
       Array.from({ length: 8 }, () => getCoinGeckoTokenListWithStatus('polygon')),
     )
-    assert(sharedRetryCalls === 2, `eight token-list callers should share one retry sequence, observed ${sharedRetryCalls} calls`)
+    assert(
+      sharedRetryCalls === 2,
+      `eight token-list callers should share one retry sequence, observed ${sharedRetryCalls} calls`,
+    )
     assert(
       sharedTokenLists.every((result) => result.tokens[0]?.symbol === 'POL'),
       'all token-list waiters should receive the same recovered payload',
@@ -258,10 +261,7 @@ async function main() {
     () => admission.acquire(),
     (error) =>
       assert(
-        error instanceof ActionableError &&
-          error.code === 'overloaded' &&
-          error.origin === 'server' &&
-          error.retryable,
+        error instanceof ActionableError && error.code === 'overloaded' && error.origin === 'server' && error.retryable,
         'full admission queue should return a retryable overload error',
       ),
   )
@@ -287,14 +287,13 @@ async function main() {
     'cancelled admission should release its queue entry',
   )
 
-  const noHeaderDelays = Array.from({ length: 8 }, (_, index) =>
-    computeRetryDelayMs(2, undefined, () => index / 8),
-  )
+  const noHeaderDelays = Array.from({ length: 8 }, (_, index) => computeRetryDelayMs(2, undefined, () => index / 8))
   assert(new Set(noHeaderDelays).size === 8, 'retry jitter should de-correlate concurrent callers')
-  const retryAfterDelays = Array.from({ length: 8 }, (_, index) =>
-    computeRetryDelayMs(0, '2', () => index / 8),
+  const retryAfterDelays = Array.from({ length: 8 }, (_, index) => computeRetryDelayMs(0, '2', () => index / 8))
+  assert(
+    retryAfterDelays.every((delay) => delay >= 2_000),
+    'retry jitter must not violate Retry-After',
   )
-  assert(retryAfterDelays.every((delay) => delay >= 2_000), 'retry jitter must not violate Retry-After')
   assert(
     computeRetryAttemptTimeoutMs(30_000, 2, 1_000, 1_000) === 15_000,
     'retry-enabled requests should cap their first attempt to the total wall-clock budget',
@@ -670,10 +669,16 @@ async function main() {
       await portalFetchStream(`${baseUrl}/mcp-cancel-stall`, {}, { timeout: 5_000, retries: 0 })
       return { content: [{ type: 'text' as const, text: 'unexpected success' }] }
     })
-    registerPortalTool(mcpServer, '__test_cancel_no_args', 'No-argument cancellation propagation test.', {}, async () => {
-      await portalFetchStream(`${baseUrl}/mcp-no-args-cancel-stall`, {}, { timeout: 5_000, retries: 0 })
-      return { content: [{ type: 'text' as const, text: 'unexpected success' }] }
-    })
+    registerPortalTool(
+      mcpServer,
+      '__test_cancel_no_args',
+      'No-argument cancellation propagation test.',
+      {},
+      async () => {
+        await portalFetchStream(`${baseUrl}/mcp-no-args-cancel-stall`, {}, { timeout: 5_000, retries: 0 })
+        return { content: [{ type: 'text' as const, text: 'unexpected success' }] }
+      },
+    )
     registerPortalTool(mcpServer, '__test_success_outcome', 'Complete outcome metric test.', {}, async () => ({
       content: [{ type: 'text' as const, text: JSON.stringify({ value: 1 }) }],
       structuredContent: { value: 1 },
@@ -734,10 +739,13 @@ async function main() {
       await expectFastFailure(
         'MCP handler propagates client cancellation to Portal fetches',
         () =>
-          client.callTool({ name: '__test_cancel_portal_fetch', arguments: {} }, {
-            signal: mcpCancellation.signal,
-            timeout: 2_000,
-          }),
+          client.callTool(
+            { name: '__test_cancel_portal_fetch', arguments: {} },
+            {
+              signal: mcpCancellation.signal,
+              timeout: 2_000,
+            },
+          ),
         (error) =>
           assert(
             error instanceof Error && (error.name === 'AbortError' || /abort|cancel/i.test(error.message)),
@@ -757,8 +765,14 @@ async function main() {
       const thrownErrorResult = await client.callTool({ name: '__test_request_error_outcome', arguments: {} })
       assert(thrownErrorResult.isError, 'thrown handler failures should become tool errors')
       const thrownErrorPayload = thrownErrorResult.structuredContent as Record<string, any> | undefined
-      assert(thrownErrorPayload?.error?.code === 'internal_error', 'unexpected handler failures should use internal_error')
-      assert(thrownErrorPayload?.error?.origin === 'server', 'unexpected handler failures should be attributed to server')
+      assert(
+        thrownErrorPayload?.error?.code === 'internal_error',
+        'unexpected handler failures should use internal_error',
+      )
+      assert(
+        thrownErrorPayload?.error?.origin === 'server',
+        'unexpected handler failures should be attributed to server',
+      )
       assert(
         !JSON.stringify(thrownErrorResult).includes('Fixture request failure'),
         'unexpected handler details should not be exposed to clients',
@@ -782,10 +796,7 @@ async function main() {
       assert(oversizedResult.isError, 'oversized results should return a structured tool error')
       assert(oversizedPayload?.error?.code === 'response_too_large', 'oversized results need a stable code')
       assert(oversizedPayload?.error?.retryable === true, 'oversized results should be correctable')
-      assert(
-        oversizedPayload?._coverage?.result_complete === false,
-        'oversized results must never look complete',
-      )
+      assert(oversizedPayload?._coverage?.result_complete === false, 'oversized results must never look complete')
 
       const cancellationDeadline = Date.now() + 750
       while (closedRequests <= closedBeforeMcpCancellation && Date.now() < cancellationDeadline) {
@@ -798,10 +809,13 @@ async function main() {
       await expectFastFailure(
         'no-argument MCP tools also propagate client cancellation',
         () =>
-          client.callTool({ name: '__test_cancel_no_args', arguments: {} }, {
-            signal: noArgsCancellation.signal,
-            timeout: 2_000,
-          }),
+          client.callTool(
+            { name: '__test_cancel_no_args', arguments: {} },
+            {
+              signal: noArgsCancellation.signal,
+              timeout: 2_000,
+            },
+          ),
         (error) =>
           assert(
             error instanceof Error && (error.name === 'AbortError' || /abort|cancel/i.test(error.message)),

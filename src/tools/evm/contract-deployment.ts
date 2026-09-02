@@ -1,6 +1,4 @@
 import type { McpServer } from '@modelcontextprotocol/server'
-
-import { registerPortalTool } from '../../helpers/mcp-registration.js'
 import { z } from 'zod'
 
 import { getBlockHead, resolveDataset, validateBlockRange } from '../../cache/datasets.js'
@@ -15,8 +13,8 @@ import { resolveKnownContractReference } from '../../helpers/entity-resolution.j
 import { ActionableError, createUnsupportedChainError } from '../../helpers/errors.js'
 import { portalFetchStreamRange } from '../../helpers/fetch.js'
 import { buildEvmTransactionFields } from '../../helpers/fields.js'
-import { formatResult } from '../../helpers/format.js'
-import { formatTimestamp } from '../../helpers/format.js'
+import { formatResult, formatTimestamp } from '../../helpers/format.js'
+import { registerPortalTool } from '../../helpers/mcp-registration.js'
 import { buildQueryCoverage, buildQueryFreshness } from '../../helpers/result-metadata.js'
 import { getTimestampWindowNotices, resolveTimeframeOrBlocks } from '../../helpers/timeframe.js'
 import { buildExecutionMetadata, buildToolDescription } from '../../helpers/tool-ux.js'
@@ -117,7 +115,8 @@ function getBlockNumber(item: DeploymentTrace): number | undefined {
 }
 
 export function registerContractDeploymentTool(server: McpServer) {
-  registerPortalTool(server,
+  registerPortalTool(
+    server,
     'portal_evm_get_contract_deployment',
     buildToolDescription('portal_evm_get_contract_deployment'),
     {

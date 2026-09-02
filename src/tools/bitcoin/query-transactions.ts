@@ -1,6 +1,4 @@
 import type { McpServer } from '@modelcontextprotocol/server'
-
-import { registerPortalTool } from '../../helpers/mcp-registration.js'
 import { z } from 'zod'
 
 import { resolveDataset, validateBlockRange } from '../../cache/datasets.js'
@@ -10,6 +8,7 @@ import { createUnsupportedChainError } from '../../helpers/errors.js'
 import { portalFetchRecentRecords, portalFetchStreamRange } from '../../helpers/fetch.js'
 import { buildBitcoinBlockFields, buildBitcoinTransactionFields } from '../../helpers/fields.js'
 import { formatResult } from '../../helpers/format.js'
+import { registerPortalTool } from '../../helpers/mcp-registration.js'
 import {
   normalizeBitcoinInputResult,
   normalizeBitcoinOutputResult,
@@ -21,13 +20,13 @@ import {
   encodeRecentPageCursor,
   paginateAscendingItems,
 } from '../../helpers/pagination.js'
+import { type ResponseFormat, applyResponseFormat, resolveDefaultResponseFormat } from '../../helpers/response-modes.js'
 import {
   buildChronologicalPageOrdering,
   buildQueryCoverage,
   buildQueryFreshness,
 } from '../../helpers/result-metadata.js'
-import { applyResponseFormat, resolveDefaultResponseFormat, type ResponseFormat } from '../../helpers/response-modes.js'
-import { getTimestampWindowNotices, type TimestampInput, resolveTimeframeOrBlocks } from '../../helpers/timeframe.js'
+import { type TimestampInput, getTimestampWindowNotices, resolveTimeframeOrBlocks } from '../../helpers/timeframe.js'
 import { buildExecutionMetadata, buildToolDescription } from '../../helpers/tool-ux.js'
 
 export function registerQueryBitcoinTransactionsTool(server: McpServer) {
@@ -99,7 +98,8 @@ export function registerQueryBitcoinTransactionsTool(server: McpServer) {
     scriptPubKeyAddress: true,
   }
 
-  registerPortalTool(server,
+  registerPortalTool(
+    server,
     'portal_bitcoin_query_transactions',
     buildToolDescription('portal_bitcoin_query_transactions'),
     {
@@ -131,7 +131,14 @@ export function registerQueryBitcoinTransactionsTool(server: McpServer) {
         .describe(
           "Response format: defaults to 'compact' for chat-friendly output. Compact mode keeps inline inputs and outputs in a smaller shape when requested.",
         ),
-      limit: z.number().int().min(1).max(25).optional().default(20).describe('Max transactions to return (default: 20, max: 25)'),
+      limit: z
+        .number()
+        .int()
+        .min(1)
+        .max(25)
+        .optional()
+        .default(20)
+        .describe('Max transactions to return (default: 20, max: 25)'),
       cursor: z.string().optional().describe('Continuation cursor from a previous response'),
     },
     async ({

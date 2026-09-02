@@ -1,6 +1,4 @@
 import type { McpServer } from '@modelcontextprotocol/server'
-
-import { registerPortalTool } from '../../helpers/mcp-registration.js'
 import { z } from 'zod'
 
 import { resolveDataset, validateBlockRange } from '../../cache/datasets.js'
@@ -12,9 +10,9 @@ import {
 } from '../../helpers/bounded-search.js'
 import { detectChainType, isL2Chain } from '../../helpers/chain.js'
 import {
+  type TokenListLookupMetadata,
   type TokenSymbolResolution,
   buildTokenListLookupNotices,
-  type TokenListLookupMetadata,
   resolveTokenSymbolsForQuery,
 } from '../../helpers/entity-resolution.js'
 import { createUnsupportedChainError } from '../../helpers/errors.js'
@@ -22,8 +20,8 @@ import { resolveEventTopic0 } from '../../helpers/evm-aliases.js'
 import { portalFetchRecentRecords, portalFetchStreamRange } from '../../helpers/fetch.js'
 import { getLogFields } from '../../helpers/field-presets.js'
 import { buildEvmLogFields, buildEvmTraceFields, buildEvmTransactionFields } from '../../helpers/fields.js'
-import { formatResult } from '../../helpers/format.js'
-import { formatTimestamp } from '../../helpers/format.js'
+import { formatResult, formatTimestamp } from '../../helpers/format.js'
+import { registerPortalTool } from '../../helpers/mcp-registration.js'
 import { normalizeEvmLogResult } from '../../helpers/normalized-results.js'
 import {
   buildPaginationInfo,
@@ -263,7 +261,8 @@ async function fetchLogsByScanOrder({
 }
 
 export function registerQueryLogsTool(server: McpServer) {
-  registerPortalTool(server,
+  registerPortalTool(
+    server,
     'portal_evm_query_logs',
     buildToolDescription('portal_evm_query_logs'),
     {
@@ -355,7 +354,9 @@ export function registerQueryLogsTool(server: McpServer) {
         .max(25)
         .optional()
         .default(20)
-        .describe('Max logs to return (default: 20, max: 25). This verified ceiling keeps pages within MCP client budgets.'),
+        .describe(
+          'Max logs to return (default: 20, max: 25). This verified ceiling keeps pages within MCP client budgets.',
+        ),
       field_preset: z
         .enum(['minimal', 'standard', 'full'])
         .optional()
@@ -776,9 +777,9 @@ export function registerQueryLogsTool(server: McpServer) {
             ? page.pageItems.length > 0
               ? `Retrieved ${page.pageItems.length} logs from the newest ${scanResult.scannedBlocks.toLocaleString()} blocks; older requested blocks were not scanned`
               : `No matching logs found in the newest ${scanResult.scannedBlocks.toLocaleString()} blocks; older requested blocks were not scanned`
-          : scanResult
-            ? `Retrieved ${page.pageItems.length} logs by scanning ${scan_order === 'latest' ? 'backward from the end' : 'forward from the start'} of the window`
-            : `Retrieved ${page.pageItems.length} logs${page.hasMore ? ` from the most recent matching blocks (preview page limited to ${limit})` : ''}`
+            : scanResult
+              ? `Retrieved ${page.pageItems.length} logs by scanning ${scan_order === 'latest' ? 'backward from the end' : 'forward from the start'} of the window`
+              : `Retrieved ${page.pageItems.length} logs${page.hasMore ? ` from the most recent matching blocks (preview page limited to ${limit})` : ''}`
 
       return formatResult(formattedData, message, {
         toolName: 'portal_evm_query_logs',

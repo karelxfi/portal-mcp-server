@@ -99,8 +99,14 @@ async function fetchNdjson(url: string, body: Record<string, unknown>) {
 
 function assertClearUnsupported(text: string, toolName: string) {
   assert(text.includes(toolName), `${toolName} unsupported response should mention the tool name`)
-  assert(/does not support network 'polkadot'/i.test(text), `${toolName} unsupported response should mention polkadot clearly`)
-  assert(!text.includes("table 'transactions' does not exist"), `${toolName} should not leak raw Portal transactions parse errors`)
+  assert(
+    /does not support network 'polkadot'/i.test(text),
+    `${toolName} unsupported response should mention polkadot clearly`,
+  )
+  assert(
+    !text.includes("table 'transactions' does not exist"),
+    `${toolName} should not leak raw Portal transactions parse errors`,
+  )
   assert(!text.includes("table 'fills' does not exist"), `${toolName} should not leak raw Portal fills parse errors`)
 }
 
@@ -121,7 +127,9 @@ async function main() {
     const substrateNamedTools = tools.filter((tool) => tool.name.includes('substrate')).map((tool) => tool.name)
 
     console.log(`Server reports ${tools.length} tools`)
-    console.log(`Registered Substrate-named tools: ${substrateNamedTools.length > 0 ? substrateNamedTools.join(', ') : '(none)'}\n`)
+    console.log(
+      `Registered Substrate-named tools: ${substrateNamedTools.length > 0 ? substrateNamedTools.join(', ') : '(none)'}\n`,
+    )
 
     for (const requiredTool of [
       'portal_list_networks',
@@ -137,13 +145,29 @@ async function main() {
     }
     assert(substrateNamedTools.length === 3, 'Expected exactly 3 Substrate-named public tools')
 
-    const listNetworks = await callTool(client, 'portal_list_networks', { vm: 'substrate', network_type: 'mainnet', limit: 10 })
+    const listNetworks = await callTool(client, 'portal_list_networks', {
+      vm: 'substrate',
+      network_type: 'mainnet',
+      limit: 10,
+    })
     assert(!listNetworks.isError, 'portal_list_networks should succeed for vm=substrate')
     const listData = extractJson(listNetworks.text)
-    assert(Array.isArray(listData.items) && listData.items.length > 0, 'portal_list_networks should return substrate items')
-    assert(listData.items.every((item: any) => item.vm === 'substrate'), 'Substrate list filter should only return substrate networks')
-    assert(listData.items.every((item: any) => item.real_time === false), 'Current Substrate list results should advertise non-real-time indexing')
-    assert(listData.items.some((item: any) => String(item.network).includes('polkadot')), 'Substrate list should include at least one polkadot-family network')
+    assert(
+      Array.isArray(listData.items) && listData.items.length > 0,
+      'portal_list_networks should return substrate items',
+    )
+    assert(
+      listData.items.every((item: any) => item.vm === 'substrate'),
+      'Substrate list filter should only return substrate networks',
+    )
+    assert(
+      listData.items.every((item: any) => item.real_time === false),
+      'Current Substrate list results should advertise non-real-time indexing',
+    )
+    assert(
+      listData.items.some((item: any) => String(item.network).includes('polkadot')),
+      'Substrate list should include at least one polkadot-family network',
+    )
     console.log('PASS  portal_list_networks -> substrate discovery works')
 
     const networkInfo = await callTool(client, 'portal_get_network_info', { network: 'polkadot' })
@@ -156,21 +180,36 @@ async function main() {
     const head = await callTool(client, 'portal_get_head', { network: 'polkadot' })
     assert(!head.isError, 'portal_get_head should succeed for polkadot')
     const headData = extractJson(head.text)
-    assert(typeof headData.number === 'number' && headData.number > 1_000_000, 'polkadot head should be a recent block number')
+    assert(
+      typeof headData.number === 'number' && headData.number > 1_000_000,
+      'polkadot head should be a recent block number',
+    )
     console.log(`PASS  portal_get_head -> head ${headData.number}`)
 
     const olderLookup = await callExactTimestampLookup(client, POLKADOT_OLD_TIMESTAMP_ISO)
     assert(!olderLookup.isError, 'older Substrate timestamp lookup should succeed')
     const olderLookupData = extractJson(olderLookup.text)
-    assert(olderLookupData.resolution === 'verified_boundary', 'older Substrate timestamp lookup should be a verified boundary')
-    assert(olderLookupData.block_number === 10000000, 'older Substrate timestamp lookup should resolve the nearest verified block')
-    assert(olderLookupData.block_timestamp === POLKADOT_OLD_TIMESTAMP_SECONDS, 'older Substrate timestamp lookup should match the indexed block timestamp')
+    assert(
+      olderLookupData.resolution === 'verified_boundary',
+      'older Substrate timestamp lookup should be a verified boundary',
+    )
+    assert(
+      olderLookupData.block_number === 10000000,
+      'older Substrate timestamp lookup should resolve the nearest verified block',
+    )
+    assert(
+      olderLookupData.block_timestamp === POLKADOT_OLD_TIMESTAMP_SECONDS,
+      'older Substrate timestamp lookup should match the indexed block timestamp',
+    )
     console.log('PASS  portal_debug_resolve_time_to_block -> older ISO timestamp resolves exactly')
 
     const millisLookup = await callExactTimestampLookup(client, POLKADOT_RECENT_TIMESTAMP_MS)
     assert(!millisLookup.isError, 'millisecond Substrate timestamp lookup should succeed')
     const millisLookupData = extractJson(millisLookup.text)
-    assert(millisLookupData.resolution === 'verified_boundary', 'millisecond Substrate timestamp lookup should stay verified after normalization')
+    assert(
+      millisLookupData.resolution === 'verified_boundary',
+      'millisecond Substrate timestamp lookup should stay verified after normalization',
+    )
     assert(millisLookupData.timestamp === 1775790360, 'millisecond timestamp input should normalize to seconds')
     console.log('PASS  portal_debug_resolve_time_to_block -> millisecond input is normalized correctly')
 
@@ -182,9 +221,18 @@ async function main() {
     })
     assert(!blockQuery.isError, 'portal_debug_query_blocks should succeed for polkadot')
     const blockData = extractJson(blockQuery.text)
-    assert(Array.isArray(blockData.items) && blockData.items.length === 3, 'Substrate block query should return the requested sample blocks')
-    assert(blockData.items[0]?.header?.number === POLKADOT_SAMPLE_FROM_BLOCK, 'Substrate block query should preserve the first requested block number')
-    assert(blockData.items[0]?.header?.timestamp > 1_000_000_000_000, 'Substrate block query should now use native millisecond timestamps')
+    assert(
+      Array.isArray(blockData.items) && blockData.items.length === 3,
+      'Substrate block query should return the requested sample blocks',
+    )
+    assert(
+      blockData.items[0]?.header?.number === POLKADOT_SAMPLE_FROM_BLOCK,
+      'Substrate block query should preserve the first requested block number',
+    )
+    assert(
+      blockData.items[0]?.header?.timestamp > 1_000_000_000_000,
+      'Substrate block query should now use native millisecond timestamps',
+    )
     console.log('PASS  portal_debug_query_blocks -> substrate blocks use the native substrate query path')
 
     const eventsResult = await callTool(client, 'portal_substrate_query_events', {
@@ -198,12 +246,30 @@ async function main() {
     })
     assert(!eventsResult.isError, 'portal_substrate_query_events should succeed for polkadot')
     const eventsData = extractJson(eventsResult.text)
-    assert(Array.isArray(eventsData.items) && eventsData.items.length > 0, 'portal_substrate_query_events should return rows')
-    assert(eventsData.items.every((item: any) => item.event_name === 'ParaInclusion.CandidateIncluded' || item.name === 'ParaInclusion.CandidateIncluded'), 'event filter should be respected')
-    assert(eventsData._execution?.response_format === 'compact', 'portal_substrate_query_events should now default to compact mode')
-    assert(eventsData.items[0]?.extrinsic !== undefined, 'portal_substrate_query_events should attach inline extrinsic context')
+    assert(
+      Array.isArray(eventsData.items) && eventsData.items.length > 0,
+      'portal_substrate_query_events should return rows',
+    )
+    assert(
+      eventsData.items.every(
+        (item: any) =>
+          item.event_name === 'ParaInclusion.CandidateIncluded' || item.name === 'ParaInclusion.CandidateIncluded',
+      ),
+      'event filter should be respected',
+    )
+    assert(
+      eventsData._execution?.response_format === 'compact',
+      'portal_substrate_query_events should now default to compact mode',
+    )
+    assert(
+      eventsData.items[0]?.extrinsic !== undefined,
+      'portal_substrate_query_events should attach inline extrinsic context',
+    )
     assert(eventsData.items[0]?.call !== undefined, 'portal_substrate_query_events should attach inline call context')
-    assert(eventsData._ordering?.kind === 'chronological_page', 'portal_substrate_query_events should include chronological ordering metadata')
+    assert(
+      eventsData._ordering?.kind === 'chronological_page',
+      'portal_substrate_query_events should include chronological ordering metadata',
+    )
     console.log('PASS  portal_substrate_query_events -> filtered events and inline context work')
 
     const eventsSummary = await callTool(client, 'portal_substrate_query_events', {
@@ -229,11 +295,28 @@ async function main() {
     })
     assert(!callsResult.isError, 'portal_substrate_query_calls should succeed for polkadot')
     const callsData = extractJson(callsResult.text)
-    assert(Array.isArray(callsData.items) && callsData.items.length > 0, 'portal_substrate_query_calls should return rows')
-    assert(callsData.items.every((item: any) => item.call_name === 'ParaInherent.enter' || item.name === 'ParaInherent.enter'), 'call filter should be respected')
-    assert(callsData._execution?.response_format === 'compact', 'portal_substrate_query_calls should now default to compact mode')
-    assert(callsData.items[0]?.extrinsic !== undefined, 'portal_substrate_query_calls should attach inline extrinsic context')
-    assert(Array.isArray(callsData.items[0]?.events) && callsData.items[0].events.length > 0, 'portal_substrate_query_calls should attach emitted events')
+    assert(
+      Array.isArray(callsData.items) && callsData.items.length > 0,
+      'portal_substrate_query_calls should return rows',
+    )
+    assert(
+      callsData.items.every(
+        (item: any) => item.call_name === 'ParaInherent.enter' || item.name === 'ParaInherent.enter',
+      ),
+      'call filter should be respected',
+    )
+    assert(
+      callsData._execution?.response_format === 'compact',
+      'portal_substrate_query_calls should now default to compact mode',
+    )
+    assert(
+      callsData.items[0]?.extrinsic !== undefined,
+      'portal_substrate_query_calls should attach inline extrinsic context',
+    )
+    assert(
+      Array.isArray(callsData.items[0]?.events) && callsData.items[0].events.length > 0,
+      'portal_substrate_query_calls should attach emitted events',
+    )
     console.log('PASS  portal_substrate_query_calls -> filtered calls and emitted events work')
 
     const callsCompact = await callTool(client, 'portal_substrate_query_calls', {
@@ -245,7 +328,10 @@ async function main() {
     })
     assert(!callsCompact.isError, 'portal_substrate_query_calls compact mode should succeed')
     const callsCompactData = extractJson(callsCompact.text)
-    assert(Array.isArray(callsCompactData.items) && callsCompactData.items.length > 0, 'portal_substrate_query_calls compact mode should still return rows')
+    assert(
+      Array.isArray(callsCompactData.items) && callsCompactData.items.length > 0,
+      'portal_substrate_query_calls compact mode should still return rows',
+    )
     assert(callsCompactData.items[0]?.call_name !== undefined, 'compact Substrate call rows should keep call_name')
     console.log('PASS  portal_substrate_query_calls -> compact mode stays readable')
 
@@ -257,10 +343,22 @@ async function main() {
     assert(!analyticsResult.isError, 'portal_substrate_get_analytics should succeed for polkadot')
     const analyticsData = extractJson(analyticsResult.text)
     assert(analyticsData.overview?.network === 'polkadot', 'portal_substrate_get_analytics should report the network')
-    assert(Array.isArray(analyticsData.top_events) && analyticsData.top_events.length > 0, 'portal_substrate_get_analytics should rank top events')
-    assert(Array.isArray(analyticsData.top_calls) && analyticsData.top_calls.length > 0, 'portal_substrate_get_analytics should rank top calls')
-    assert(Array.isArray(analyticsData.tables) && analyticsData.tables.some((table: any) => table?.id === 'top_events'), 'portal_substrate_get_analytics should expose top_events table metadata')
-    assert(Array.isArray(analyticsData.tables) && analyticsData.tables.some((table: any) => table?.id === 'top_calls'), 'portal_substrate_get_analytics should expose top_calls table metadata')
+    assert(
+      Array.isArray(analyticsData.top_events) && analyticsData.top_events.length > 0,
+      'portal_substrate_get_analytics should rank top events',
+    )
+    assert(
+      Array.isArray(analyticsData.top_calls) && analyticsData.top_calls.length > 0,
+      'portal_substrate_get_analytics should rank top calls',
+    )
+    assert(
+      Array.isArray(analyticsData.tables) && analyticsData.tables.some((table: any) => table?.id === 'top_events'),
+      'portal_substrate_get_analytics should expose top_events table metadata',
+    )
+    assert(
+      Array.isArray(analyticsData.tables) && analyticsData.tables.some((table: any) => table?.id === 'top_calls'),
+      'portal_substrate_get_analytics should expose top_calls table metadata',
+    )
     console.log('PASS  portal_substrate_get_analytics -> dashboard payload is live')
 
     const analyticsSummary = await callTool(client, 'portal_substrate_get_analytics', {
@@ -271,7 +369,10 @@ async function main() {
     })
     assert(!analyticsSummary.isError, 'portal_substrate_get_analytics summary mode should succeed')
     const analyticsSummaryData = extractJson(analyticsSummary.text)
-    assert(analyticsSummaryData.overview?.total_events > 0, 'portal_substrate_get_analytics summary should report event totals')
+    assert(
+      analyticsSummaryData.overview?.total_events > 0,
+      'portal_substrate_get_analytics summary should report event totals',
+    )
     console.log('PASS  portal_substrate_get_analytics -> summary mode is useful')
 
     for (const [toolName, args] of [
@@ -288,7 +389,10 @@ async function main() {
     const directTimestamp = await fetchJson(
       `https://portal.sqd.dev/datasets/polkadot/timestamps/${POLKADOT_OLD_TIMESTAMP_SECONDS}/block`,
     )
-    assert(directTimestamp.block_number === 9992550, 'direct substrate timestamp endpoint should resolve the older sample block')
+    assert(
+      directTimestamp.block_number === 9992550,
+      'direct substrate timestamp endpoint should resolve the older sample block',
+    )
     console.log('PASS  direct Portal timestamp lookup -> backend substrate timestamps are live')
 
     const directEvents = await fetchNdjson('https://portal.sqd.dev/datasets/polkadot/stream', {
@@ -302,7 +406,10 @@ async function main() {
       events: [{}],
     })
     assert(directEvents.length > 0, 'direct substrate events query should return blocks')
-    assert(directEvents.some((block: any) => Array.isArray(block.events) && block.events.length > 0), 'direct substrate events query should return at least one event')
+    assert(
+      directEvents.some((block: any) => Array.isArray(block.events) && block.events.length > 0),
+      'direct substrate events query should return at least one event',
+    )
     console.log('PASS  direct Portal events query -> substrate events are available')
 
     const directCalls = await fetchNdjson('https://portal.sqd.dev/datasets/polkadot/stream', {
@@ -316,7 +423,10 @@ async function main() {
       calls: [{}],
     })
     assert(directCalls.length > 0, 'direct substrate calls query should return blocks')
-    assert(directCalls.some((block: any) => Array.isArray(block.calls) && block.calls.length > 0), 'direct substrate calls query should return at least one call')
+    assert(
+      directCalls.some((block: any) => Array.isArray(block.calls) && block.calls.length > 0),
+      'direct substrate calls query should return at least one call',
+    )
     console.log('PASS  direct Portal calls query -> substrate calls are available')
 
     console.log('\nSubstrate QA passed.')

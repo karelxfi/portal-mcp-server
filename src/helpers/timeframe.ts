@@ -6,8 +6,8 @@ import { getBlockHead, getDatasetMetadata } from '../cache/datasets.js'
 import { PORTAL_URL } from '../constants/index.js'
 import { detectChainType } from './chain.js'
 import { ActionableError } from './errors.js'
-import { formatTimestamp } from './format.js'
 import { portalFetch, portalFetchStream } from './fetch.js'
+import { formatTimestamp } from './format.js'
 
 export type Timeframe = '1h' | '6h' | '12h' | '24h' | '3d' | '7d' | '14d' | '30d'
 export type TimestampInput = string | number
@@ -52,10 +52,10 @@ const DATASET_BLOCK_TIMES: Record<string, number> = {
   'mode-': 2,
   'zora-': 2,
   'celo-': 5,
-  'polkadot': 6,
-  'kusama': 6,
-  'westend': 6,
-  'rococo': 6,
+  polkadot: 6,
+  kusama: 6,
+  westend: 6,
+  rococo: 6,
   'asset-hub-polkadot': 6,
   'asset-hub-kusama': 6,
   'people-chain': 6,
@@ -168,9 +168,7 @@ function markTimestampEndpointDown(dataset: string): void {
   const previous = timestampFailures.get(dataset)
   timestampFailures.set(dataset, {
     failedAt: now,
-    count: previous && now - previous.failedAt <= TIMESTAMP_FAILURE_TTL
-      ? previous.count + 1
-      : 1,
+    count: previous && now - previous.failedAt <= TIMESTAMP_FAILURE_TTL ? previous.count + 1 : 1,
   })
 }
 
@@ -242,13 +240,7 @@ const DURATION_UNITS: Record<string, DurationUnitInfo> = {
 }
 
 function normalizeDurationText(input: string): string {
-  return input
-    .trim()
-    .toLowerCase()
-    .replace(/[,_]/g, ' ')
-    .replace(/[–—]/g, '-')
-    .replace(/\s+/g, ' ')
-    .replace(/\.$/, '')
+  return input.trim().toLowerCase().replace(/[,_]/g, ' ').replace(/[–—]/g, '-').replace(/\s+/g, ' ').replace(/\.$/, '')
 }
 
 function getDurationExpression(input: string): string {
@@ -341,9 +333,7 @@ const TIMESTAMP_TIMEOUT = 2500
  */
 function portalTimestampValue(dataset: string, timestamp: number): number {
   const chainType = detectChainType(dataset)
-  return chainType === 'hyperliquidFills' || chainType === 'tron'
-    ? Math.floor(timestamp * 1000)
-    : Math.floor(timestamp)
+  return chainType === 'hyperliquidFills' || chainType === 'tron' ? Math.floor(timestamp * 1000) : Math.floor(timestamp)
 }
 
 export async function timestampToBlock(dataset: string, timestamp: number): Promise<number> {
@@ -461,7 +451,10 @@ function parseRelativeTimestamp(input: string, nowUnix: number): ParsedTimestamp
   }
 }
 
-export function parseTimestampInput(input: string | number, nowUnix: number = Math.floor(Date.now() / 1000)): ParsedTimestampInput {
+export function parseTimestampInput(
+  input: string | number,
+  nowUnix: number = Math.floor(Date.now() / 1000),
+): ParsedTimestampInput {
   if (typeof input === 'number' && Number.isFinite(input)) {
     const timestamp = input > 1_000_000_000_000 ? Math.floor(input / 1000) : Math.floor(input)
     return {
@@ -583,9 +576,7 @@ async function refineTimestampBoundary(params: {
       }))
       .filter(
         (block) =>
-          Number.isFinite(block.blockNumber) &&
-          Number.isFinite(block.blockTimestamp) &&
-          block.blockTimestamp > 0,
+          Number.isFinite(block.blockNumber) && Number.isFinite(block.blockTimestamp) && block.blockTimestamp > 0,
       )
       .map((block) => ({
         blockNumber: Math.floor(block.blockNumber),
@@ -711,14 +702,19 @@ async function refineTimestampBoundary(params: {
 export async function resolveBlockAtTimestamp(
   dataset: string,
   input: string | number,
-  options: { boundary?: TimestampBoundary; headBlock?: number; headTimestamp?: number; verificationRetries?: number } = {},
+  options: {
+    boundary?: TimestampBoundary
+    headBlock?: number
+    headTimestamp?: number
+    verificationRetries?: number
+  } = {},
 ): Promise<BlockAtTimestampResult> {
   const parsed = parseTimestampInput(input)
   const boundary = options.boundary ?? 'nearest'
   const metadata = await getDatasetMetadata(dataset)
   const headBlock = options.headBlock ?? metadata.head.number
   const verificationRetries = options.verificationRetries ?? 2
-  const headTimestamp = options.headTimestamp ?? await getHeadTimestamp(dataset, headBlock, verificationRetries)
+  const headTimestamp = options.headTimestamp ?? (await getHeadTimestamp(dataset, headBlock, verificationRetries))
   const chainType = detectChainType(dataset)
   const blockTime = estimateBlockTime(dataset, chainType)
   // "now" is wall-clock based while Portal answers from the indexed head.
@@ -858,10 +854,10 @@ export async function resolveTimeframeOrBlocks(params: {
 
   if (hasTimestampWindow && (timeframe || hasBlockWindow)) {
     throw new ActionableError(
-      "Use either timeframe, block numbers, or timestamps for the query window.",
+      'Use either timeframe, block numbers, or timestamps for the query window.',
       [
         "Use timeframe for relative presets like '1h', 'past 30 minutes', or 'in last 38 mins'.",
-        "Use from_block/to_block for exact block windows.",
+        'Use from_block/to_block for exact block windows.',
         "Use from_timestamp/to_timestamp for natural time windows like '1h ago', 'past 30 minutes', or ISO datetimes.",
       ],
       {
@@ -1012,7 +1008,7 @@ export async function resolveTimeframeOrBlocks(params: {
     }
   }
 
-  throw new Error("Provide timeframe, from_block, or from_timestamp/to_timestamp to define the query window.")
+  throw new Error('Provide timeframe, from_block, or from_timestamp/to_timestamp to define the query window.')
 }
 
 export function getTimestampWindowNotices(window: unknown): string[] {

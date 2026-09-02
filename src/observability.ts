@@ -1,11 +1,11 @@
 import { detectChainType } from './helpers/chain.js'
 import {
   RequestCancelledError,
-  describeToolError,
-  sanitizeText,
   type ToolErrorCode,
   type ToolErrorDescriptor,
   type ToolErrorOrigin,
+  describeToolError,
+  sanitizeText,
 } from './helpers/errors.js'
 import { getToolContract } from './helpers/tool-ux.js'
 import {
@@ -231,10 +231,7 @@ function isEmptyPayload(payload: Record<string, unknown> | undefined): boolean {
   return resultArrays.length > 0 && resultArrays.every(([, value]) => (value as unknown[]).length === 0)
 }
 
-export function classifyToolResultState(params: {
-  status: ToolEventStatus
-  result?: unknown
-}): ToolResultState {
+export function classifyToolResultState(params: { status: ToolEventStatus; result?: unknown }): ToolResultState {
   const { status, result } = params
   if (status === 'cancelled') return 'cancelled'
   if (status === 'tool_error' || status === 'request_error') return 'error'
@@ -296,11 +293,8 @@ function normalizeClientIdentity(name?: string, version?: string): { family: str
   const normalizedName = name?.trim().toLowerCase() ?? ''
   let family = 'unknown'
   if (normalizedName.includes('claude') || normalizedName.includes('anthropic')) family = 'claude'
-  else if (
-    normalizedName.includes('codex') ||
-    normalizedName.includes('chatgpt') ||
-    normalizedName.includes('openai')
-  ) family = 'openai'
+  else if (normalizedName.includes('codex') || normalizedName.includes('chatgpt') || normalizedName.includes('openai'))
+    family = 'openai'
   else if (normalizedName.includes('grok') || normalizedName.includes('xai')) family = 'grok'
   else if (normalizedName.includes('gemini') || normalizedName.includes('google')) family = 'gemini'
   else if (normalizedName.includes('cursor')) family = 'cursor'
@@ -601,9 +595,7 @@ export function recordToolOutcome(params: {
             origin: errorDescriptor.origin,
             summary: truncateText(sanitizeText(errorDescriptor.summary), 280),
             retryable: errorDescriptor.retryable,
-            ...(errorDescriptor.retryAfterMs !== undefined
-              ? { retry_after_ms: errorDescriptor.retryAfterMs }
-              : {}),
+            ...(errorDescriptor.retryAfterMs !== undefined ? { retry_after_ms: errorDescriptor.retryAfterMs } : {}),
           },
         }
       : {}),

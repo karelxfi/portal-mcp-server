@@ -1,6 +1,4 @@
 import type { McpServer } from '@modelcontextprotocol/server'
-
-import { registerPortalTool } from '../../helpers/mcp-registration.js'
 import { z } from 'zod'
 
 import { resolveDataset, validateBlockRange } from '../../cache/datasets.js'
@@ -8,22 +6,27 @@ import { PORTAL_URL } from '../../constants/index.js'
 import { detectChainType } from '../../helpers/chain.js'
 import { buildTableDescriptor } from '../../helpers/chart-metadata.js'
 import { ActionableError, createUnsupportedChainError } from '../../helpers/errors.js'
+import { divideExactDecimals, formatIntegerUnitsExact } from '../../helpers/exact-decimal.js'
 import { portalFetchStream, portalFetchStreamRangeVisit } from '../../helpers/fetch.js'
+import { formatDuration, formatNumber, formatPct, formatResult, shortenAddress } from '../../helpers/format.js'
+import { hashString53 } from '../../helpers/hash.js'
+import { registerPortalTool } from '../../helpers/mcp-registration.js'
 import {
+  buildPaginationInfo,
+  decodeOffsetPageCursor,
+  encodeOffsetPageCursor,
+  paginateOffsetItems,
+} from '../../helpers/pagination.js'
+import {
+  type SharedPortalWork,
   getPortalRequestSignal,
   runAsSharedPortalWork,
-  type SharedPortalWork,
   waitForSharedPortalWork,
 } from '../../helpers/request-context.js'
-import { formatResult } from '../../helpers/format.js'
-import { formatDuration, formatNumber, formatPct, shortenAddress } from '../../helpers/format.js'
-import { hashString53 } from '../../helpers/hash.js'
-import { buildPaginationInfo, decodeOffsetPageCursor, encodeOffsetPageCursor, paginateOffsetItems } from '../../helpers/pagination.js'
-import { buildAnalysisCoverage, buildQueryFreshness } from '../../helpers/result-metadata.js'
 import type { ResponseFormat } from '../../helpers/response-modes.js'
+import { buildAnalysisCoverage, buildQueryFreshness } from '../../helpers/result-metadata.js'
 import { buildPercentileSummary } from '../../helpers/statistics.js'
-import { divideExactDecimals, formatIntegerUnitsExact } from '../../helpers/exact-decimal.js'
-import { parseTimeframeToSeconds, resolveTimeframeOrBlocks, type TimestampInput } from '../../helpers/timeframe.js'
+import { type TimestampInput, parseTimeframeToSeconds, resolveTimeframeOrBlocks } from '../../helpers/timeframe.js'
 import { buildExecutionMetadata, buildToolDescription } from '../../helpers/tool-ux.js'
 import { buildMetricCard, buildPortalUi, buildRankedBarsPanel, buildTablePanel } from '../../helpers/ui-metadata.js'
 
@@ -213,26 +216,36 @@ function decorateSolanaAnalyticsPresentation(response: Record<string, any>) {
     : response.top_program
       ? [response.top_program]
       : []
-  const tables = programRows.length > 0
-    ? [buildTableDescriptor({
-        id: 'top_programs',
-        dataKey: 'top_programs.programs',
-        rowCount: programRows.length,
-        title: 'Top Solana programs',
-        subtitle: 'Programs ranked by observed instruction count in the analyzed slots',
-        keyField: 'program_id',
-        defaultSort: { key: 'rank', direction: 'asc' },
-        dense: true,
-        columns: [
-          { key: 'rank', label: 'Rank', kind: 'rank', format: 'integer', align: 'right' },
-          { key: 'program_name', label: 'Program', kind: 'dimension' },
-          { key: 'program_id', label: 'Program ID', kind: 'dimension', format: 'address' },
-          { key: 'instruction_count', label: 'Instructions', kind: 'metric', format: 'integer', align: 'right' },
-          { key: 'share', label: 'Share', kind: 'metric', align: 'right' },
-          { key: 'avg_compute_units', label: 'Avg compute', kind: 'metric', format: 'integer', unit: 'compute units', align: 'right' },
-        ],
-      })]
-    : []
+  const tables =
+    programRows.length > 0
+      ? [
+          buildTableDescriptor({
+            id: 'top_programs',
+            dataKey: 'top_programs.programs',
+            rowCount: programRows.length,
+            title: 'Top Solana programs',
+            subtitle: 'Programs ranked by observed instruction count in the analyzed slots',
+            keyField: 'program_id',
+            defaultSort: { key: 'rank', direction: 'asc' },
+            dense: true,
+            columns: [
+              { key: 'rank', label: 'Rank', kind: 'rank', format: 'integer', align: 'right' },
+              { key: 'program_name', label: 'Program', kind: 'dimension' },
+              { key: 'program_id', label: 'Program ID', kind: 'dimension', format: 'address' },
+              { key: 'instruction_count', label: 'Instructions', kind: 'metric', format: 'integer', align: 'right' },
+              { key: 'share', label: 'Share', kind: 'metric', align: 'right' },
+              {
+                key: 'avg_compute_units',
+                label: 'Avg compute',
+                kind: 'metric',
+                format: 'integer',
+                unit: 'compute units',
+                align: 'right',
+              },
+            ],
+          }),
+        ]
+      : []
   const overview = response.overview ?? {}
   const summary = {
     tps: response.throughput?.tps ?? overview.tps,
@@ -259,34 +272,58 @@ function decorateSolanaAnalyticsPresentation(response: Record<string, any>) {
       design_intent: 'analytics_dashboard',
       headline: { title: 'Solana network analytics' },
       metric_cards: [
-        buildMetricCard({ id: 'tps', label: 'TPS', value_path: 'presentation_summary.tps', format: 'decimal', emphasis: 'primary' }),
-        buildMetricCard({ id: 'fees', label: 'Fees', value_path: 'presentation_summary.total_fees_sol', format: 'decimal', unit: 'SOL' }),
-        buildMetricCard({ id: 'success', label: 'Success rate', value_path: 'presentation_summary.success_rate', format: 'percent' }),
+        buildMetricCard({
+          id: 'tps',
+          label: 'TPS',
+          value_path: 'presentation_summary.tps',
+          format: 'decimal',
+          emphasis: 'primary',
+        }),
+        buildMetricCard({
+          id: 'fees',
+          label: 'Fees',
+          value_path: 'presentation_summary.total_fees_sol',
+          format: 'decimal',
+          unit: 'SOL',
+        }),
+        buildMetricCard({
+          id: 'success',
+          label: 'Success rate',
+          value_path: 'presentation_summary.success_rate',
+          format: 'percent',
+        }),
       ],
       panels: [
         ...(programRows.length > 0
-          ? [buildRankedBarsPanel({
-              id: 'program-bars',
-              kind: 'ranked_bars_panel',
-              title: 'Top programs',
-              subtitle: 'Programs ranked by observed instruction count.',
-              data_key: 'top_programs.programs',
-              category_key: 'program_name',
-              value_key: 'instruction_count',
-              rank_key: 'rank',
-              value_format: 'integer',
-              emphasis: 'primary',
-            }), buildTablePanel({
-              id: 'program-table-panel',
-              kind: 'table_panel',
-              title: 'Program evidence',
-              subtitle: 'Exact program IDs and observed counts.',
-              table_id: 'top_programs',
-            })]
+          ? [
+              buildRankedBarsPanel({
+                id: 'program-bars',
+                kind: 'ranked_bars_panel',
+                title: 'Top programs',
+                subtitle: 'Programs ranked by observed instruction count.',
+                data_key: 'top_programs.programs',
+                category_key: 'program_name',
+                value_key: 'instruction_count',
+                rank_key: 'rank',
+                value_format: 'integer',
+                emphasis: 'primary',
+              }),
+              buildTablePanel({
+                id: 'program-table-panel',
+                kind: 'table_panel',
+                title: 'Program evidence',
+                subtitle: 'Exact program IDs and observed counts.',
+                table_id: 'top_programs',
+              }),
+            ]
           : []),
       ],
       ...(programRows.length > 0
-        ? { follow_up_actions: [{ label: 'Show ranked program rows', intent: 'show_raw' as const, target: 'top_programs.programs' }] }
+        ? {
+            follow_up_actions: [
+              { label: 'Show ranked program rows', intent: 'show_raw' as const, target: 'top_programs.programs' },
+            ],
+          }
         : {}),
     }),
   }
@@ -317,14 +354,10 @@ async function visitAdaptiveSolanaRange(
   onRecord: (record: unknown) => void | Promise<void>,
 ): Promise<number> {
   try {
-    return await portalFetchStreamRangeVisit(
-      url,
-      buildQuery(from, to),
-      {
-        maxBytes: 150 * 1024 * 1024,
-        onRecord,
-      },
-    )
+    return await portalFetchStreamRangeVisit(url, buildQuery(from, to), {
+      maxBytes: 150 * 1024 * 1024,
+      onRecord,
+    })
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
     const rangeSize = to - from + 1
@@ -371,7 +404,8 @@ function getProgramName(id: string): string {
 }
 
 export function registerSolanaAnalyticsTool(server: McpServer) {
-  registerPortalTool(server,
+  registerPortalTool(
+    server,
     'portal_solana_get_analytics',
     buildToolDescription('portal_solana_get_analytics'),
     {
@@ -379,20 +413,28 @@ export function registerSolanaAnalyticsTool(server: McpServer) {
       timeframe: z
         .string()
         .optional()
-        .describe("Time range. Accepts compact durations like '15m' or natural phrases like 'past 30 minutes'. Optional; defaults to a 1h analysis window."),
+        .describe(
+          "Time range. Accepts compact durations like '15m' or natural phrases like 'past 30 minutes'. Optional; defaults to a 1h analysis window.",
+        ),
       mode: z
         .enum(['fast', 'deep'])
         .optional()
         .default('deep')
-        .describe('Execution depth. Defaults to complete requested-window analysis; the optional fast value is only for explicitly bounded previews.'),
+        .describe(
+          'Execution depth. Defaults to complete requested-window analysis; the optional fast value is only for explicitly bounded previews.',
+        ),
       from_timestamp: z
         .union([z.string(), z.number()])
         .optional()
-        .describe('Starting timestamp. Accepts Unix seconds, Unix milliseconds, ISO datetime, or relative input like "1h ago".'),
+        .describe(
+          'Starting timestamp. Accepts Unix seconds, Unix milliseconds, ISO datetime, or relative input like "1h ago".',
+        ),
       to_timestamp: z
         .union([z.string(), z.number()])
         .optional()
-        .describe('Ending timestamp. Accepts Unix seconds, Unix milliseconds, ISO datetime, or relative input like "now".'),
+        .describe(
+          'Ending timestamp. Accepts Unix seconds, Unix milliseconds, ISO datetime, or relative input like "now".',
+        ),
       include_compute_units: z
         .boolean()
         .optional()
@@ -412,10 +454,23 @@ export function registerSolanaAnalyticsTool(server: McpServer) {
         .enum(['full', 'compact', 'summary'])
         .optional()
         .default('full')
-        .describe("Response format: 'summary' (high-level metrics), 'compact' (core sections), 'full' (complete analytics)."),
+        .describe(
+          "Response format: 'summary' (high-level metrics), 'compact' (core sections), 'full' (complete analytics).",
+        ),
       cursor: z.string().optional().describe('Continuation cursor for paginating top_programs'),
     },
-    async ({ network, timeframe, mode, from_timestamp, to_timestamp, include_compute_units, include_programs, program_limit, response_format, cursor }) => {
+    async ({
+      network,
+      timeframe,
+      mode,
+      from_timestamp,
+      to_timestamp,
+      include_compute_units,
+      include_programs,
+      program_limit,
+      response_format,
+      cursor,
+    }) => {
       const queryStartTime = Date.now()
       const paginationCursor = cursor
         ? decodeOffsetPageCursor<SolanaAnalyticsCursorRequest>(cursor, 'portal_solana_get_analytics')
@@ -423,13 +478,17 @@ export function registerSolanaAnalyticsTool(server: McpServer) {
       const requestedDataset = network ? await resolveDataset(network) : undefined
       let dataset = paginationCursor?.dataset ?? requestedDataset ?? 'solana-mainnet'
       if (paginationCursor && requestedDataset && paginationCursor.dataset !== requestedDataset) {
-        throw new ActionableError('This cursor belongs to a different dataset.', [
-          'Reuse the cursor with the same dataset as the previous response.',
-          'Omit cursor to start a fresh Solana analytics snapshot.',
-        ], {
-          cursor_dataset: paginationCursor.dataset,
-          requested_dataset: requestedDataset,
-        })
+        throw new ActionableError(
+          'This cursor belongs to a different dataset.',
+          [
+            'Reuse the cursor with the same dataset as the previous response.',
+            'Omit cursor to start a fresh Solana analytics snapshot.',
+          ],
+          {
+            cursor_dataset: paginationCursor.dataset,
+            requested_dataset: requestedDataset,
+          },
+        )
       }
       if (paginationCursor) {
         timeframe = paginationCursor.request.timeframe
@@ -479,9 +538,10 @@ export function registerSolanaAnalyticsTool(server: McpServer) {
       )
 
       const requestedSlots = endBlock - fromBlock + 1
-      const maxSlotsForTimeframe = mode === 'deep'
-        ? SOLANA_ANALYTICS_SLOT_BUDGET[analyticsBudgetKey]
-        : SOLANA_ANALYTICS_FAST_SLOT_BUDGET[analyticsBudgetKey]
+      const maxSlotsForTimeframe =
+        mode === 'deep'
+          ? SOLANA_ANALYTICS_SLOT_BUDGET[analyticsBudgetKey]
+          : SOLANA_ANALYTICS_FAST_SLOT_BUDGET[analyticsBudgetKey]
       const slotsAnalyzed = Math.min(requestedSlots, maxSlotsForTimeframe, MAX_ANALYTICS_SLOTS)
       const effectiveFrom = requestedSlots > slotsAnalyzed ? endBlock - slotsAnalyzed + 1 : fromBlock
       const cacheKey = `${dataset}:${mode}:${requestedTimeframe}:${String(from_timestamp ?? '')}:${String(to_timestamp ?? '')}:${include_compute_units}:${include_programs}:${response_format}:${program_limit}`
@@ -531,8 +591,17 @@ export function registerSolanaAnalyticsTool(server: McpServer) {
             llm: {
               compact: true,
               primary_path: response.top_programs?.programs?.length ? 'top_programs.programs' : 'presentation_summary',
-              answer_sequence: ['presentation_summary', 'network', 'throughput', 'fees', 'activity', 'top_programs.programs'],
-              parser_notes: ['Fee totals are exact decimal strings; ranked program rows appear only when include_programs is requested.'],
+              answer_sequence: [
+                'presentation_summary',
+                'network',
+                'throughput',
+                'fees',
+                'activity',
+                'top_programs.programs',
+              ],
+              parser_notes: [
+                'Fee totals are exact decimal strings; ranked program rows appear only when include_programs is requested.',
+              ],
             },
             metadata: {
               dataset: cached.dataset,
@@ -576,9 +645,10 @@ export function registerSolanaAnalyticsTool(server: McpServer) {
           transactions: [{}],
         })
 
-        const analyticsChunkSize = (
-          mode === 'deep' ? SOLANA_ANALYTICS_CHUNK_SIZE[analyticsBudgetKey] : SOLANA_ANALYTICS_FAST_CHUNK_SIZE[analyticsBudgetKey]
-        ) || INITIAL_SOLANA_ANALYTICS_CHUNK_SIZE
+        const analyticsChunkSize =
+          (mode === 'deep'
+            ? SOLANA_ANALYTICS_CHUNK_SIZE[analyticsBudgetKey]
+            : SOLANA_ANALYTICS_FAST_CHUNK_SIZE[analyticsBudgetKey]) || INITIAL_SOLANA_ANALYTICS_CHUNK_SIZE
         const txRanges = buildSlotRanges(effectiveFrom, endBlock, analyticsChunkSize)
         for (let index = 0; index < txRanges.length; index += SOLANA_ANALYTICS_CONCURRENCY) {
           const rangeBatch = txRanges.slice(index, index + SOLANA_ANALYTICS_CONCURRENCY)
@@ -627,15 +697,15 @@ export function registerSolanaAnalyticsTool(server: McpServer) {
           firstTimestamp !== undefined && lastTimestamp !== undefined
             ? Math.max(0, lastTimestamp - firstTimestamp)
             : slotsAnalyzed * 0.4
-        const avgSlotTime = slotsAnalyzed > 1 && timeSpanSeconds > 0
-          ? timeSpanSeconds / (slotsAnalyzed - 1)
-          : 0.4
+        const avgSlotTime = slotsAnalyzed > 1 && timeSpanSeconds > 0 ? timeSpanSeconds / (slotsAnalyzed - 1) : 0.4
         const avgTxsPerSlot = slotsAnalyzed > 0 ? totalTxs / slotsAnalyzed : 0
         const tps = avgSlotTime > 0 ? avgTxsPerSlot / avgSlotTime : 0
         const avgFee = totalTxs > 0 ? Number(totalFees) / totalTxs : 0
-        const avgFeeExact = totalTxs > 0
-          ? divideExactDecimals({ coefficient: totalFees, scale: 0 }, { coefficient: BigInt(totalTxs), scale: 0 }, 9).value ?? '0'
-          : '0'
+        const avgFeeExact =
+          totalTxs > 0
+            ? (divideExactDecimals({ coefficient: totalFees, scale: 0 }, { coefficient: BigInt(totalTxs), scale: 0 }, 9)
+                .value ?? '0')
+            : '0'
         const successRate = totalTxs > 0 ? ((totalTxs - errorCount) / totalTxs) * 100 : 0
         const avgComputeUnits = computeUnitsSampleTxs > 0 ? totalComputeUnits / computeUnitsSampleTxs : 0
         const slotsPerHour = timeSpanSeconds > 0 ? (slotsAnalyzed / timeSpanSeconds) * 3600 : 0
@@ -719,7 +789,9 @@ export function registerSolanaAnalyticsTool(server: McpServer) {
                       range.to,
                       MIN_SOLANA_PROGRAM_CHUNK_SIZE,
                       (record) => {
-                        const block = record as { instructions?: Array<{ programId?: string; computeUnitsConsumed?: number | string }> }
+                        const block = record as {
+                          instructions?: Array<{ programId?: string; computeUnitsConsumed?: number | string }>
+                        }
                         programSlotsAnalyzed++
                         ;(block.instructions || []).forEach((instr) => {
                           totalInstructions++
@@ -793,7 +865,9 @@ export function registerSolanaAnalyticsTool(server: McpServer) {
 
         const notices =
           requestedSlots > slotsAnalyzed
-            ? [`Analyzed ${slotsAnalyzed} of ${requestedSlots} requested slots because the requested window exceeds the current Solana analytics scan budget.`]
+            ? [
+                `Analyzed ${slotsAnalyzed} of ${requestedSlots} requested slots because the requested window exceeds the current Solana analytics scan budget.`,
+              ]
             : mode === 'fast' && !timeframe
               ? ['Bounded preview requests default to a 5-minute Solana window.']
               : undefined
@@ -898,15 +972,28 @@ export function registerSolanaAnalyticsTool(server: McpServer) {
             range_kind: resolvedWindow.range_kind,
             notes: [
               include_programs ? 'Top-program pagination is active.' : 'Program scan was skipped unless requested.',
-              include_compute_units ? 'Compute-unit sampling was enabled.' : 'Compute-unit sampling stayed lightweight.',
+              include_compute_units
+                ? 'Compute-unit sampling was enabled.'
+                : 'Compute-unit sampling stayed lightweight.',
             ],
           }),
           ui: presentation.ui,
           llm: {
             compact: true,
-            primary_path: freshAnalytics.response.top_programs?.programs?.length ? 'top_programs.programs' : 'presentation_summary',
-            answer_sequence: ['presentation_summary', 'network', 'throughput', 'fees', 'activity', 'top_programs.programs'],
-            parser_notes: ['Fee totals are exact decimal strings; ranked program rows appear only when include_programs is requested.'],
+            primary_path: freshAnalytics.response.top_programs?.programs?.length
+              ? 'top_programs.programs'
+              : 'presentation_summary',
+            answer_sequence: [
+              'presentation_summary',
+              'network',
+              'throughput',
+              'fees',
+              'activity',
+              'top_programs.programs',
+            ],
+            parser_notes: [
+              'Fee totals are exact decimal strings; ranked program rows appear only when include_programs is requested.',
+            ],
           },
           metadata: {
             dataset,

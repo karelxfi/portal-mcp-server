@@ -3,19 +3,20 @@
 // ============================================================================
 
 import { Buffer } from 'node:buffer'
-import type { LlmOverrides } from './llm-hints.js'
-import { buildLlmHints } from './llm-hints.js'
-import type { PipesRecipe } from './pipes-recipe.js'
-import { getToolContract } from './tool-ux.js'
-import type { UiFollowUpAction } from './ui-metadata.js'
-import { ActionableError } from './errors.js'
+
 import {
   ACTIVITY_EXPLORER_RESOURCE_URI,
   ACTIVITY_EXPLORER_TOOLS,
   isActivityExplorerEnabled,
 } from '../apps/activity-explorer.js'
 import { gitCommit, npmVersion } from '../version.js'
+import { ActionableError } from './errors.js'
 import { formatIntegerUnitsExact } from './exact-decimal.js'
+import type { LlmOverrides } from './llm-hints.js'
+import { buildLlmHints } from './llm-hints.js'
+import type { PipesRecipe } from './pipes-recipe.js'
+import { getToolContract } from './tool-ux.js'
+import type { UiFollowUpAction } from './ui-metadata.js'
 
 const MAX_RESPONSE_BYTES = 50_000
 
@@ -148,14 +149,20 @@ export function assertUniqueNormalizedIds(value: unknown, path = '$', visited = 
       for (const [index, row] of normalizedRows.entries()) {
         const id = typeof row.primary_id === 'string' ? row.primary_id.trim() : ''
         if (!id) {
-          throw new ActionableError(`Normalized evidence at ${path}[${index}] has no stable primary_id.`, [
-            'Retry after the server identity contract is repaired.',
-          ], { path, index }, { code: 'incomplete_result', origin: 'server', retryable: false })
+          throw new ActionableError(
+            `Normalized evidence at ${path}[${index}] has no stable primary_id.`,
+            ['Retry after the server identity contract is repaired.'],
+            { path, index },
+            { code: 'incomplete_result', origin: 'server', retryable: false },
+          )
         }
         if (ids.has(id)) {
-          throw new ActionableError(`Normalized evidence at ${path} contains duplicate primary_id ${id}.`, [
-            'Retry after the server identity contract is repaired.',
-          ], { path, primary_id: id }, { code: 'incomplete_result', origin: 'server', retryable: false })
+          throw new ActionableError(
+            `Normalized evidence at ${path} contains duplicate primary_id ${id}.`,
+            ['Retry after the server identity contract is repaired.'],
+            { path, primary_id: id },
+            { code: 'incomplete_result', origin: 'server', retryable: false },
+          )
         }
         ids.add(id)
       }
@@ -243,7 +250,10 @@ function decodeCursorTool(cursor: string): string | undefined {
   }
 }
 
-function buildExecutableContinuationAction(pagination: RecordLike | undefined, toolName: string | undefined): FollowUpActionEnvelope | undefined {
+function buildExecutableContinuationAction(
+  pagination: RecordLike | undefined,
+  toolName: string | undefined,
+): FollowUpActionEnvelope | undefined {
   const nextCursor = typeof pagination?.next_cursor === 'string' ? pagination.next_cursor : undefined
   if (!nextCursor || !toolName) return undefined
 
@@ -262,8 +272,10 @@ function buildExecutableContinuationAction(pagination: RecordLike | undefined, t
 }
 
 function isPaginationContinueAction(action: FollowUpActionEnvelope): boolean {
-  return action.intent === 'continue'
-    && (action.target === '_pagination.next_cursor' || action.cursor_path === '_pagination.next_cursor')
+  return (
+    action.intent === 'continue' &&
+    (action.target === '_pagination.next_cursor' || action.cursor_path === '_pagination.next_cursor')
+  )
 }
 
 function normalizeFollowUpAction(action: RecordLike): FollowUpActionEnvelope {
@@ -294,14 +306,18 @@ function withContinuationExecutableMetadata(
     cursor_path: action.cursor_path ?? '_pagination.next_cursor',
     executable: executableAction?.executable === true,
     ...(executableAction?.executable === true && executableAction.tool ? { tool: executableAction.tool } : {}),
-    ...(executableAction?.executable === true && executableAction.arguments ? { arguments: executableAction.arguments } : {}),
+    ...(executableAction?.executable === true && executableAction.arguments
+      ? { arguments: executableAction.arguments }
+      : {}),
   }
 }
 
 function capitalizeWord(word: string): string {
   const lower = word.toLowerCase()
   if (DISPLAY_NAME_OVERRIDES[lower]) return DISPLAY_NAME_OVERRIDES[lower]
-  if (['api', 'btc', 'dex', 'eth', 'evm', 'ohlc', 'rpc', 'sol', 'sql', 'ui', 'usd', 'usdc', 'usdt', 'vm'].includes(lower)) {
+  if (
+    ['api', 'btc', 'dex', 'eth', 'evm', 'ohlc', 'rpc', 'sol', 'sql', 'ui', 'usd', 'usdc', 'usdt', 'vm'].includes(lower)
+  ) {
     return lower.toUpperCase()
   }
   if (/^[0-9]+[mhdw]$/.test(lower)) return lower
@@ -321,8 +337,9 @@ function makeCompletenessAwareAnswer(answer: string, payload: RecordLike): strin
     return answer
   }
 
-  const notice = collectPayloadNotices(payload)
-    .find((item) => /\b(partial|incomplete|coverage|analyzed\b.*\brequested|sample|truncated|shortened)\b/i.test(item))
+  const notice = collectPayloadNotices(payload).find((item) =>
+    /\b(partial|incomplete|coverage|analyzed\b.*\brequested|sample|truncated|shortened)\b/i.test(item),
+  )
   const suffixes: string[] = []
   if (coverage?.window_complete === false) {
     if (!/\b(partial|incomplete|coverage|analyzed\b.*\brequested|only\b.*\brequested)\b/i.test(answer)) {
@@ -375,7 +392,10 @@ export function humanizeLabel(value: unknown): string | undefined {
     .trim()
 
   if (!normalized) return trimmed
-  return normalized.split(' ').map((word) => capitalizeWord(word)).join(' ')
+  return normalized
+    .split(' ')
+    .map((word) => capitalizeWord(word))
+    .join(' ')
 }
 
 /**
@@ -414,12 +434,7 @@ export function hexToDecimal(hex: string): string {
  * Convert wei (hex or bigint) to ETH with specified decimals.
  */
 export function weiToEth(wei: string | bigint, decimals: number = 18): string {
-  const weiValue =
-    typeof wei === 'bigint'
-      ? wei
-      : /^-?\d+$/.test(wei.trim())
-        ? BigInt(wei.trim())
-        : hexToBigInt(wei)
+  const weiValue = typeof wei === 'bigint' ? wei : /^-?\d+$/.test(wei.trim()) ? BigInt(wei.trim()) : hexToBigInt(wei)
   return formatIntegerUnitsExact(weiValue, decimals)
 }
 
@@ -427,12 +442,7 @@ export function weiToEth(wei: string | bigint, decimals: number = 18): string {
  * Convert wei to Gwei for gas prices.
  */
 export function weiToGwei(wei: string | bigint): string {
-  const weiValue =
-    typeof wei === 'bigint'
-      ? wei
-      : /^-?\d+$/.test(wei.trim())
-        ? BigInt(wei.trim())
-        : hexToBigInt(wei)
+  const weiValue = typeof wei === 'bigint' ? wei : /^-?\d+$/.test(wei.trim()) ? BigInt(wei.trim()) : hexToBigInt(wei)
   return formatIntegerUnitsExact(weiValue, 9)
 }
 
@@ -469,12 +479,7 @@ export function formatTimestamp(timestamp: number): string {
 }
 
 export function normalizeUnixTimestamp(value: unknown): number | undefined {
-  const numeric =
-    typeof value === 'number'
-      ? value
-      : typeof value === 'string'
-        ? Number(value)
-        : undefined
+  const numeric = typeof value === 'number' ? value : typeof value === 'string' ? Number(value) : undefined
 
   if (numeric === undefined || !Number.isFinite(numeric) || numeric <= 0) {
     return undefined
@@ -721,18 +726,17 @@ function buildChatAnswer(payload: RecordLike): string | undefined {
   }
 
   if (Array.isArray(payload.items)) {
-    return makeCompletenessAwareAnswer(`Returned ${payload.items.length.toLocaleString('en-US')} result${payload.items.length === 1 ? '' : 's'}.`, payload)
+    return makeCompletenessAwareAnswer(
+      `Returned ${payload.items.length.toLocaleString('en-US')} result${payload.items.length === 1 ? '' : 's'}.`,
+      payload,
+    )
   }
 
   const meta = isRecord(payload._meta) ? payload._meta : undefined
   const summary = isRecord(payload.summary) ? payload.summary : undefined
   const toolContract = isRecord(payload._tool_contract) ? payload._tool_contract : undefined
   const network = humanizeLabel(
-    meta?.network
-    ?? meta?.dataset
-    ?? summary?.network
-    ?? payload.network
-    ?? payload.display_name,
+    meta?.network ?? meta?.dataset ?? summary?.network ?? payload.network ?? payload.display_name,
   )
   const toolName = typeof toolContract?.name === 'string' ? toolContract.name : undefined
   const toolLabel = humanizeLabel(toolName?.replace(/^portal_/, ''))
@@ -753,26 +757,28 @@ function buildDisplay(payload: RecordLike): RecordLike | undefined {
   const toolContract = isRecord(payload._tool_contract) ? payload._tool_contract : undefined
 
   const title =
-    (typeof headline?.title === 'string' && headline.title)
-    || humanizeLabel(summary?.pair_label)
-    || humanizeLabel(summary?.venue_label)
-    || humanizeLabel(summary?.metric)
-    || humanizeLabel(toolContract?.name)
+    (typeof headline?.title === 'string' && headline.title) ||
+    humanizeLabel(summary?.pair_label) ||
+    humanizeLabel(summary?.venue_label) ||
+    humanizeLabel(summary?.metric) ||
+    humanizeLabel(toolContract?.name)
   const resolvedNetwork =
-    humanizeLabel(meta?.network)
-    || humanizeLabel(meta?.dataset)
-    || humanizeLabel(summary?.network)
-    || humanizeLabel(payload.network)
-    || humanizeLabel(payload.display_name)
+    humanizeLabel(meta?.network) ||
+    humanizeLabel(meta?.dataset) ||
+    humanizeLabel(summary?.network) ||
+    humanizeLabel(payload.network) ||
+    humanizeLabel(payload.display_name)
 
   const subtitle =
-    (typeof headline?.subtitle === 'string' && headline.subtitle)
-    || [
+    (typeof headline?.subtitle === 'string' && headline.subtitle) ||
+    [
       resolvedNetwork,
       humanizeLabel(summary?.venue_label),
       typeof summary?.interval === 'string' ? summary.interval : undefined,
       typeof summary?.duration === 'string' ? summary.duration : undefined,
-    ].filter((value): value is string => Boolean(value)).join(' • ')
+    ]
+      .filter((value): value is string => Boolean(value))
+      .join(' • ')
 
   const display: RecordLike = {}
   if (title) display.title = title
@@ -787,15 +793,13 @@ function buildDisplay(payload: RecordLike): RecordLike | undefined {
   }
 
   const focus =
-    humanizeLabel(summary?.pair_label)
-    || humanizeLabel(summary?.metric)
-    || humanizeLabel(summary?.base_token)
-    || (typeof payload.address === 'string' ? payload.address : undefined)
+    humanizeLabel(summary?.pair_label) ||
+    humanizeLabel(summary?.metric) ||
+    humanizeLabel(summary?.base_token) ||
+    (typeof payload.address === 'string' ? payload.address : undefined)
   if (focus) display.focus = focus
 
-  const source =
-    humanizeLabel(summary?.venue_label)
-    || humanizeLabel(summary?.source)
+  const source = humanizeLabel(summary?.venue_label) || humanizeLabel(summary?.source)
   if (source) display.source = source
 
   return Object.keys(display).length > 0 ? display : undefined
@@ -811,8 +815,9 @@ function buildNextSteps(payload: RecordLike): RecordLike | undefined {
   const adjacentWindow = pagination?.continuation_scope === 'adjacent_window'
   const continuationLabel = adjacentWindow ? 'Load previous window' : 'Load more results'
   const executableContinuation = buildExecutableContinuationAction(pagination, toolName)
-  const actions = asArray<RecordLike>(ui?.follow_up_actions)
-    .map((action) => withContinuationExecutableMetadata(normalizeFollowUpAction(action), executableContinuation))
+  const actions = asArray<RecordLike>(ui?.follow_up_actions).map((action) =>
+    withContinuationExecutableMetadata(normalizeFollowUpAction(action), executableContinuation),
+  )
   const hasExplicitContinueAction = actions.some((action) => action.intent === 'continue')
 
   if (hasContinuation && !hasExplicitContinueAction) {
@@ -976,7 +981,8 @@ function inferPrimaryEvidenceKind(payload: RecordLike, primaryPath?: string): st
   if (primaryPath.includes('transfer')) return 'token_transfers'
   if (primaryPath.includes('top_')) return 'ranked_summary'
   if (primaryPath.includes('overview') || primaryPath.includes('summary')) return 'summary'
-  if (primaryPath === 'number' || primaryPath.includes('block_number') || primaryPath.includes('timestamp')) return 'lookup'
+  if (primaryPath === 'number' || primaryPath.includes('block_number') || primaryPath.includes('timestamp'))
+    return 'lookup'
   return 'records'
 }
 
@@ -1097,18 +1103,20 @@ function buildInvestigationGuide(payload: RecordLike): RecordLike | undefined {
     ...asArray<string>(payload._notices),
     ...(typeof payload._notice === 'string' ? [payload._notice] : []),
   ].slice(0, 4)
-  const primaryPath = inferPrimaryEvidencePath(payload) ?? (typeof payload.answer === 'string' ? 'answer' : undefined) ?? '_summary'
+  const primaryPath =
+    inferPrimaryEvidencePath(payload) ?? (typeof payload.answer === 'string' ? 'answer' : undefined) ?? '_summary'
   const primaryKind = inferPrimaryEvidenceKind(payload, primaryPath)
   const returned = inferReturnedCount(payload, primaryPath)
   const pivots = collectInvestigationPivots(payload)
   const limitations: string[] = []
-  const continuationScope = typeof pagination?.continuation_scope === 'string'
-    ? pagination.continuation_scope
-    : 'remaining_results'
+  const continuationScope =
+    typeof pagination?.continuation_scope === 'string' ? pagination.continuation_scope : 'remaining_results'
   const resultIncomplete =
     coverage?.result_complete === false ||
     coverage?.window_complete === false ||
-    (coverage?.result_complete !== true && continuationScope !== 'adjacent_window' && typeof pagination?.next_cursor === 'string')
+    (coverage?.result_complete !== true &&
+      continuationScope !== 'adjacent_window' &&
+      typeof pagination?.next_cursor === 'string')
 
   if (typeof meta?.queried_blocks === 'string') {
     limitations.push(`Evidence is limited to queried blocks ${meta.queried_blocks}.`)
@@ -1159,12 +1167,7 @@ function buildInvestigationGuide(payload: RecordLike): RecordLike | undefined {
 
   return {
     version: 'portal_investigation_v1',
-    status:
-      resultIncomplete
-        ? 'partial_page'
-        : intent === 'discover'
-          ? 'reference_result'
-          : 'bounded_result',
+    status: resultIncomplete ? 'partial_page' : intent === 'discover' ? 'reference_result' : 'bounded_result',
     evidence: {
       ...(typeof toolContract?.name === 'string' ? { tool: toolContract.name } : {}),
       ...(primaryPath ? { primary_path: primaryPath } : {}),
@@ -1210,12 +1213,12 @@ function mergeExecutionMetadata(
   } as Record<string, unknown>
 
   if (
-    inferredExecution?.['scan_window']
-    && explicitExecution?.['scan_window']
-    && typeof inferredExecution['scan_window'] === 'object'
-    && inferredExecution['scan_window'] !== null
-    && typeof explicitExecution['scan_window'] === 'object'
-    && explicitExecution['scan_window'] !== null
+    inferredExecution?.['scan_window'] &&
+    explicitExecution?.['scan_window'] &&
+    typeof inferredExecution['scan_window'] === 'object' &&
+    inferredExecution['scan_window'] !== null &&
+    typeof explicitExecution['scan_window'] === 'object' &&
+    explicitExecution['scan_window'] !== null
   ) {
     merged.scan_window = {
       ...(inferredExecution['scan_window'] as Record<string, unknown>),
@@ -1226,16 +1229,13 @@ function mergeExecutionMetadata(
   return merged
 }
 
-function normalizeExecutionMetadata(
-  execution: Record<string, unknown>,
-  toolName?: string,
-): Record<string, unknown> {
+function normalizeExecutionMetadata(execution: Record<string, unknown>, toolName?: string): Record<string, unknown> {
   const hasWindowOrResolution =
-    execution.kind !== undefined
-    || execution.range_kind !== undefined
-    || execution.scan_window !== undefined
-    || execution.timestamp !== undefined
-    || execution.resolution !== undefined
+    execution.kind !== undefined ||
+    execution.range_kind !== undefined ||
+    execution.scan_window !== undefined ||
+    execution.timestamp !== undefined ||
+    execution.resolution !== undefined
 
   if (hasWindowOrResolution) {
     return {
@@ -1251,10 +1251,7 @@ function normalizeExecutionMetadata(
   }
 }
 
-function responseTooLargeError(
-  formattedBytes: number,
-  options?: FormatOptions,
-): ActionableError {
+function responseTooLargeError(formattedBytes: number, options?: FormatOptions): ActionableError {
   const pagination = isRecord(options?.pagination) ? options?.pagination : undefined
   const pageSize = typeof pagination?.page_size === 'number' ? pagination.page_size : options?.maxItems
   const recommendedLimit =
@@ -1286,11 +1283,7 @@ function responseTooLargeError(
  * Format results as MCP text content with optional metadata. Oversized
  * responses fail explicitly instead of silently dropping blockchain rows.
  */
-export function formatResult(
-  data: unknown,
-  message?: string,
-  options?: FormatOptions,
-): FormattedToolResult {
+export function formatResult(data: unknown, message?: string, options?: FormatOptions): FormattedToolResult {
   let dataToFormat = data
   const notices = [...(options?.notices || [])]
 
@@ -1342,8 +1335,8 @@ export function formatResult(
     const payloadRecord = responsePayload as Record<string, unknown>
     const toolContract = options?.toolName ? getToolContract(options.toolName) : undefined
     const execution = normalizeExecutionMetadata(
-      mergeExecutionMetadata(buildInferredExecutionMetadata(metadata), options?.execution)
-        ?? buildDefaultExecution(options?.toolName),
+      mergeExecutionMetadata(buildInferredExecutionMetadata(metadata), options?.execution) ??
+        buildDefaultExecution(options?.toolName),
       options?.toolName,
     )
 
@@ -1369,11 +1362,7 @@ export function formatResult(
     if (options?.ui !== undefined) {
       payloadRecord._ui = options.ui
     }
-    if (
-      options?.toolName &&
-      ACTIVITY_EXPLORER_TOOLS.has(options.toolName) &&
-      isActivityExplorerEnabled()
-    ) {
+    if (options?.toolName && ACTIVITY_EXPLORER_TOOLS.has(options.toolName) && isActivityExplorerEnabled()) {
       payloadRecord._app = {
         name: 'SQD Explorer',
         stage: 'beta',
@@ -1467,10 +1456,6 @@ export function formatResult(
 /**
  * Format a result with the shared lossless size guard.
  */
-export function formatResultWithLimit(
-  data: unknown,
-  message: string,
-  limit: number,
-): FormattedToolResult {
+export function formatResultWithLimit(data: unknown, message: string, limit: number): FormattedToolResult {
   return formatResult(data, message, { maxItems: limit, warnOnTruncation: true })
 }

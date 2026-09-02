@@ -89,7 +89,9 @@ async function main() {
   ].join('\n')
   await mkdir(path.dirname(OUTPUT), { recursive: true })
   await writeFile(OUTPUT, source)
-  console.log(`Wrote ${path.relative(process.cwd(), OUTPUT)}: ${Object.keys(recorded).length} fixtures, ${Buffer.byteLength(source)} bytes`)
+  console.log(
+    `Wrote ${path.relative(process.cwd(), OUTPUT)}: ${Object.keys(recorded).length} fixtures, ${Buffer.byteLength(source)} bytes`,
+  )
 }
 
 main().catch((error) => {

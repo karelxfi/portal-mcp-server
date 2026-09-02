@@ -536,8 +536,14 @@ export const TOOL_SPECS: ToolSpec[] = [
       const firstNetworks = new Set(getItems(first).map((item: any) => item.network))
       const secondNetworks = getItems(second.data).map((item: any) => item.network)
       assert(secondNetworks.length > 0, 'Expected a second network catalog page')
-      assert(secondNetworks.every((network: string) => !firstNetworks.has(network)), 'Expected disjoint network catalog pages')
-      assert(second.data.page_offset === first.items.length, 'Expected network catalog offset to advance by the first page size')
+      assert(
+        secondNetworks.every((network: string) => !firstNetworks.has(network)),
+        'Expected disjoint network catalog pages',
+      )
+      assert(
+        second.data.page_offset === first.items.length,
+        'Expected network catalog offset to advance by the first page size',
+      )
     },
   },
   {
@@ -626,10 +632,7 @@ export const TOOL_SPECS: ToolSpec[] = [
 
       const hyperliquidCoinData = hyperliquidCoinResult.data
       assert(hyperliquidCoinData.matches?.[0]?.coin === 'BTC', 'Expected bitcoin to normalize to BTC')
-      assert(
-        hyperliquidCoinData.suggested_arguments?.coin?.includes('BTC'),
-        'Expected Hyperliquid coin suggestion',
-      )
+      assert(hyperliquidCoinData.suggested_arguments?.coin?.includes('BTC'), 'Expected Hyperliquid coin suggestion')
 
       const poolData = poolResult.data
       assert(poolData.matches?.[0]?.identifier === context.baseUniswapV4PoolId, 'Expected pool id match')
@@ -809,8 +812,14 @@ export const TOOL_SPECS: ToolSpec[] = [
 
       if (!groupedResult.isError) {
         const groupedData = groupedResult.data
-        assert(Array.isArray(groupedData.top_contracts) && groupedData.top_contracts.length > 0, 'Expected top_contracts')
-        assert(groupedData.chart?.grouped_value_field === 'contract_address', 'Expected grouped contract chart metadata')
+        assert(
+          Array.isArray(groupedData.top_contracts) && groupedData.top_contracts.length > 0,
+          'Expected top_contracts',
+        )
+        assert(
+          groupedData.chart?.grouped_value_field === 'contract_address',
+          'Expected grouped contract chart metadata',
+        )
         expectWindowMetadata(groupedData, 'portal_get_time_series grouped')
         expectGapDiagnostics(groupedData, 'portal_get_time_series grouped')
         expectPresentation(groupedData, 'portal_get_time_series grouped', {
@@ -857,9 +866,9 @@ export const TOOL_SPECS: ToolSpec[] = [
           'Expected Hyperliquid coverage to return every aligned bucket',
         )
         assert(
-          hyperliquidRows.every((row: any) =>
-            typeof row.bucket_complete === 'boolean' &&
-            ['closed', 'open_or_partial'].includes(row.bucket_state),
+          hyperliquidRows.every(
+            (row: any) =>
+              typeof row.bucket_complete === 'boolean' && ['closed', 'open_or_partial'].includes(row.bucket_state),
           ),
           'Expected every Hyperliquid time-series bucket to disclose its completion state',
         )
@@ -1307,10 +1316,7 @@ export const TOOL_SPECS: ToolSpec[] = [
       const data = result.data
       const items = getItems(data)
       assert(items.length > 0, 'Expected Solana program instruction rows')
-      assert(
-        data._execution !== undefined,
-        'Expected Solana execution window metadata',
-      )
+      assert(data._execution !== undefined, 'Expected Solana execution window metadata')
       expectWindowMetadata(data, 'portal_solana_query_instructions token program')
       expectOrdering(data, 'portal_solana_query_instructions token program')
     },
@@ -1543,8 +1549,7 @@ export const TOOL_SPECS: ToolSpec[] = [
       const candles = Array.isArray(data.ohlc) ? data.ohlc : getItems(data)
       assert(candles.length > 0, 'Expected Hyperliquid candles')
       assert(
-        candles.length === data._coverage?.expected_buckets &&
-        candles.length === data._coverage?.returned_buckets,
+        candles.length === data._coverage?.expected_buckets && candles.length === data._coverage?.returned_buckets,
         'Expected every aligned Hyperliquid candle reported by coverage',
       )
       assert(
@@ -1552,9 +1557,9 @@ export const TOOL_SPECS: ToolSpec[] = [
         'Expected Hyperliquid candles to include non-empty buckets',
       )
       assert(
-        candles.every((candle: any) =>
-          typeof candle.bucket_complete === 'boolean' &&
-          ['closed', 'open_or_partial'].includes(candle.bucket_state),
+        candles.every(
+          (candle: any) =>
+            typeof candle.bucket_complete === 'boolean' && ['closed', 'open_or_partial'].includes(candle.bucket_state),
         ),
         'Expected every Hyperliquid candle to disclose its completion state',
       )
@@ -1579,9 +1584,15 @@ export const TOOL_SPECS: ToolSpec[] = [
           (data._coverage?.window_complete === true && data.summary?.all_buckets_complete === true),
         'OHLC must be complete only when source coverage and every requested candle are complete',
       )
-      assert(data._pagination?.continuation_scope === 'adjacent_window', 'OHLC cursor should be labeled as an older adjacent window')
+      assert(
+        data._pagination?.continuation_scope === 'adjacent_window',
+        'OHLC cursor should be labeled as an older adjacent window',
+      )
       if (data._coverage?.result_complete === true) {
-        assert(data.investigation?.status !== 'partial_page', 'A complete OHLC window should not be labeled as a partial page')
+        assert(
+          data.investigation?.status !== 'partial_page',
+          'A complete OHLC window should not be labeled as a partial page',
+        )
       }
     },
   },

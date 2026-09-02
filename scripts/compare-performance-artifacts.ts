@@ -53,7 +53,9 @@ async function main() {
   }
 
   if (regressions.length > 0) {
-    throw new Error(`${regressions.length} statistically supported latency regressions exceeded both the 10% and 5ms gates`)
+    throw new Error(
+      `${regressions.length} statistically supported latency regressions exceeded both the 10% and 5ms gates`,
+    )
   }
   console.log(`PASS  ${baseline.gitSha.slice(0, 12)} -> ${candidate.gitSha.slice(0, 12)} performance comparison`)
 }

@@ -1,12 +1,12 @@
 import {
   CandlestickSeries,
   ColorType,
-  createChart,
   CrosshairMode,
   HistogramSeries,
-  LineStyle,
   type IChartApi,
+  LineStyle,
   type UTCTimestamp,
+  createChart,
 } from 'lightweight-charts'
 
 import { chainFor, chainLogoUrl, explorerLink, identifierKind } from './explorers.js'
@@ -179,7 +179,17 @@ function numeric(value: unknown): number | undefined {
   return Number.isFinite(parsed) ? parsed : undefined
 }
 
-const NUMERIC_FORMATS = new Set(['integer', 'compact_number', 'percent', 'currency_usd', 'gwei', 'bytes', 'btc', 'decimal', 'timestamp'])
+const NUMERIC_FORMATS = new Set([
+  'integer',
+  'compact_number',
+  'percent',
+  'currency_usd',
+  'gwei',
+  'bytes',
+  'btc',
+  'decimal',
+  'timestamp',
+])
 
 /* An exact decimal string keeps every digit when a double would drop some
    (more than 15 significant digits) or when the readable summary would round
@@ -537,7 +547,8 @@ function placeTooltip(node: HTMLElement, anchorX: number) {
 }
 
 function splitTooltipValue(entry: string): TooltipRow {
-  if (entry.endsWith('not available')) return { label: entry.slice(0, -'not available'.length).trim(), value: 'not available' }
+  if (entry.endsWith('not available'))
+    return { label: entry.slice(0, -'not available'.length).trim(), value: 'not available' }
   const match = /^(.*\S)\s+(\S+)$/.exec(entry)
   return match ? { label: match[1], value: match[2] } : { label: entry, value: '' }
 }
@@ -1220,7 +1231,10 @@ function buildCandleTerminal(
     button.setAttribute('data-low', String(point.low))
     button.setAttribute('data-close', String(point.close))
     if (point.volume !== undefined) button.setAttribute('data-volume', String(point.volume))
-    button.setAttribute('aria-label', `${tooltipTitle(index)}. ${exactRows[index].map((row) => `${row.label} ${row.value}`.trim()).join('. ')}.`)
+    button.setAttribute(
+      'aria-label',
+      `${tooltipTitle(index)}. ${exactRows[index].map((row) => `${row.label} ${row.value}`.trim()).join('. ')}.`,
+    )
     button.setAttribute('aria-pressed', 'false')
     button.style.left = `${(index / parsed.length) * 100}%`
     button.style.width = `${100 / parsed.length}%`
@@ -1864,7 +1878,9 @@ function tablePanel(payload: Record<string, unknown>, panel: Panel, options: Pan
         const formatted = missing ? '' : formatValue(rawValue, column.format, column.unit)
         if (missing) td.setAttribute('aria-label', 'Not available')
         if (isIdentifierColumn(column, rawValue)) td.classList.add('sqd-hash')
-        const cellLink = missing ? null : identifierLink(payload, column.key, text(rawValue), options.actions, formatted)
+        const cellLink = missing
+          ? null
+          : identifierLink(payload, column.key, text(rawValue), options.actions, formatted)
         if (cellLink) td.append(cellLink)
         else {
           td.textContent = formatted
@@ -2011,7 +2027,9 @@ function tablePanel(payload: Record<string, unknown>, panel: Panel, options: Pan
           button.addEventListener('click', () => showDetails(`Evidence row ${pageStart + index + 1}`, row))
           td.append(button)
         } else {
-          const cellLink = missing ? null : identifierLink(payload, column.key, text(rawValue), options.actions, formatted)
+          const cellLink = missing
+            ? null
+            : identifierLink(payload, column.key, text(rawValue), options.actions, formatted)
           if (cellLink) td.append(cellLink)
           else {
             td.textContent = formatted
@@ -2039,12 +2057,7 @@ function tablePanel(payload: Record<string, unknown>, panel: Panel, options: Pan
   renderBody()
   const declaredRows = Number(descriptor.row_count)
   const totalRows = Number.isFinite(declaredRows) ? Math.max(rows.length, declaredRows) : rows.length
-  const limitNotice = displayLimitNotice(
-    'evidence rows',
-    Math.min(rows.length, pageSize),
-    rows.length,
-    totalRows,
-  )
+  const limitNotice = displayLimitNotice('evidence rows', Math.min(rows.length, pageSize), rows.length, totalRows)
   if (limitNotice) body.append(limitNotice)
   return root
 }
@@ -2133,7 +2146,9 @@ function timelinePanel(payload: Record<string, unknown>, panel: Panel, options: 
         if (amount !== undefined) {
           const tone = direction === 'in' ? 'in' : direction === 'out' ? 'out' : 'flat'
           const sign = direction === 'in' ? '+' : direction === 'out' ? '-' : ''
-          const unit = panel.unit_key ? text(getByPath(row, text(panel.unit_key))) || text(panel.unit) : text(panel.unit)
+          const unit = panel.unit_key
+            ? text(getByPath(row, text(panel.unit_key))) || text(panel.unit)
+            : text(panel.unit)
           event.append(
             element(
               'span',
@@ -2146,7 +2161,9 @@ function timelinePanel(payload: Record<string, unknown>, panel: Panel, options: 
       timeline.append(event)
     }
     body.replaceChildren(rows.length ? timeline : element('div', 'sqd-chart-empty', 'No activity rows were returned.'))
-    body.append(...panelLimit('timeline rows', rows.length, sourceRows.length, options, { expanded, pageSize, onToggle: render }))
+    body.append(
+      ...panelLimit('timeline rows', rows.length, sourceRows.length, options, { expanded, pageSize, onToggle: render }),
+    )
   }
   render(false)
   return root
@@ -2191,7 +2208,9 @@ function rankedPanel(payload: Record<string, unknown>, panel: Panel, options: Pa
       ranked.append(item)
     }
     body.replaceChildren(rows.length ? ranked : element('div', 'sqd-chart-empty', 'No ranked values were returned.'))
-    body.append(...panelLimit('ranked rows', rows.length, sourceRows.length, options, { expanded, pageSize, onToggle: render }))
+    body.append(
+      ...panelLimit('ranked rows', rows.length, sourceRows.length, options, { expanded, pageSize, onToggle: render }),
+    )
   }
   render(false)
   return root
@@ -2252,8 +2271,10 @@ function panels(payload: Record<string, unknown>, options: PanelOptions): PanelS
     const kind = text(panel.kind)
     if (kind === 'chart_panel') built.push({ panel, node: chartPanel(payload, panel), table: false })
     else if (kind === 'table_panel') built.push({ panel, node: tablePanel(payload, panel, options), table: true })
-    else if (kind === 'timeline_panel') built.push({ panel, node: timelinePanel(payload, panel, options), table: false })
-    else if (kind === 'ranked_bars_panel') built.push({ panel, node: rankedPanel(payload, panel, options), table: false })
+    else if (kind === 'timeline_panel')
+      built.push({ panel, node: timelinePanel(payload, panel, options), table: false })
+    else if (kind === 'ranked_bars_panel')
+      built.push({ panel, node: rankedPanel(payload, panel, options), table: false })
     else if (kind === 'stat_list_panel') built.push({ panel, node: statPanel(payload, panel, options), table: false })
   }
   for (const panel of specs) build(panel)
@@ -2423,9 +2444,7 @@ function executableFollowups(payload: Record<string, unknown>): Record<string, u
   const pagination = isRecord(payload._pagination) ? payload._pagination : {}
   if (pagination.has_more && !specs.some((action) => action.intent === 'continue'))
     specs.unshift({ label: 'Load more evidence', intent: 'continue', target: '_pagination.next_cursor' })
-  return specs.filter(
-    (action) => action.executable !== false && EXECUTABLE_INTENTS.includes(text(action.intent)),
-  )
+  return specs.filter((action) => action.executable !== false && EXECUTABLE_INTENTS.includes(text(action.intent)))
 }
 
 /* Inline keeps to the host's two-action rule: the primary follow-up and the
@@ -2562,9 +2581,7 @@ export function renderExplorer(root: HTMLElement, state: ExplorerState, actions:
     const payload = state.payload
     shell.append(masthead(payload, actions))
     if (state.error) {
-      shell.append(
-        notice('danger', state.error, [actionButton('Retry', () => actions.runFollowup('retry'))]),
-      )
+      shell.append(notice('danger', state.error, [actionButton('Retry', () => actions.runFollowup('retry'))]))
     }
     /* Inline, only notices that reduce trust sit above the instrument; the
        informational ones (a forming candle) follow it as a footnote. */

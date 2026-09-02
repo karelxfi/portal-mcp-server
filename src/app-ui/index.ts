@@ -1,7 +1,7 @@
 import { App, applyDocumentTheme, applyHostFonts, applyHostStyleVariables } from '@modelcontextprotocol/ext-apps'
 
-import { evidenceArguments, planFollowup } from './followup-state.js'
 import { buildEvidenceExport, downloadEvidence } from './export.js'
+import { evidenceArguments, planFollowup } from './followup-state.js'
 import { type ExplorerActions, type ExplorerState, isRecord, renderExplorer } from './view.js'
 
 declare const __SQD_APP_VERSION__: string

@@ -3,7 +3,7 @@
    pinned to a full commit SHA with a version comment, every checkout drops
    its credentials, and every workflow starts from an empty permission set. */
 
-import { readdirSync, readFileSync } from 'node:fs'
+import { readFileSync, readdirSync } from 'node:fs'
 import path from 'node:path'
 
 const directory = path.resolve('.github/workflows')

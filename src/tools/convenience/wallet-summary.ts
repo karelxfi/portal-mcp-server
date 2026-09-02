@@ -1,6 +1,4 @@
 import type { McpServer } from '@modelcontextprotocol/server'
-
-import { registerPortalTool } from '../../helpers/mcp-registration.js'
 import { z } from 'zod'
 
 import { getBlockHead, resolveDataset } from '../../cache/datasets.js'
@@ -18,10 +16,9 @@ import {
   createUnsupportedChainError,
   sanitizeText,
 } from '../../helpers/errors.js'
-import { portalFetchRecentRecords } from '../../helpers/fetch.js'
-import { buildEvmLogFields } from '../../helpers/fields.js'
 import {
   EXACT_DECIMAL_ZERO,
+  type ExactDecimal,
   addExactDecimals,
   compareExactDecimals,
   divideExactDecimals,
@@ -29,9 +26,18 @@ import {
   formatIntegerUnitsExact,
   multiplyExactDecimals,
   parseExactDecimal,
-  type ExactDecimal,
 } from '../../helpers/exact-decimal.js'
-import { formatResult, formatTimestamp, formatTokenAmount, formatTransactionFields, hexToBigInt, humanizeLabel } from '../../helpers/format.js'
+import { portalFetchRecentRecords } from '../../helpers/fetch.js'
+import { buildEvmLogFields } from '../../helpers/fields.js'
+import {
+  formatResult,
+  formatTimestamp,
+  formatTokenAmount,
+  formatTransactionFields,
+  hexToBigInt,
+  humanizeLabel,
+} from '../../helpers/format.js'
+import { registerPortalTool } from '../../helpers/mcp-registration.js'
 import {
   normalizeBitcoinInputResult,
   normalizeBitcoinOutputResult,
@@ -41,9 +47,9 @@ import {
 } from '../../helpers/normalized-results.js'
 import { decodeCursor, encodeCursor, paginateAscendingItems } from '../../helpers/pagination.js'
 import { buildWalletPipesRecipe } from '../../helpers/pipes-recipe.js'
+import { runWithPortalRequestDeadline } from '../../helpers/request-context.js'
 import { type ResponseFormat, resolveDefaultResponseFormat } from '../../helpers/response-modes.js'
 import { buildQueryFreshness, buildSectionCoverage } from '../../helpers/result-metadata.js'
-import { runWithPortalRequestDeadline } from '../../helpers/request-context.js'
 import {
   type TimestampInput,
   describeTimeWindowInput,
@@ -56,9 +62,9 @@ import { buildExecutionMetadata, buildToolDescription } from '../../helpers/tool
 import {
   buildMetricCard,
   buildPortalUi,
+  buildRankedBarsPanel,
   buildStatListPanel,
   buildTablePanel,
-  buildRankedBarsPanel,
   buildTimelinePanel,
 } from '../../helpers/ui-metadata.js'
 import {
@@ -560,7 +566,14 @@ function buildWalletFlowCounterpartiesTable(rowCount: number) {
       { key: 'activity_count', label: 'Movement events', kind: 'metric', format: 'integer', align: 'right' },
       { key: 'inbound_count', label: 'Inbound', kind: 'metric', format: 'integer', align: 'right' },
       { key: 'outbound_count', label: 'Outbound', kind: 'metric', format: 'integer', align: 'right' },
-      { key: 'native_received_eth', label: 'Native received', kind: 'metric', format: 'decimal', align: 'right', unit: 'ETH' },
+      {
+        key: 'native_received_eth',
+        label: 'Native received',
+        kind: 'metric',
+        format: 'decimal',
+        align: 'right',
+        unit: 'ETH',
+      },
       { key: 'native_sent_eth', label: 'Native sent', kind: 'metric', format: 'decimal', align: 'right', unit: 'ETH' },
     ],
   })
@@ -750,15 +763,18 @@ function rankMovementsWithinAssets(
 }
 
 function addCounterpartyFlow(
-  counterparties: Map<string, {
-    inboundCount: number
-    outboundCount: number
-    nativeReceivedEth: ExactDecimal
-    nativeSentEth: ExactDecimal
-    tokenReceivedCount: number
-    tokenSentCount: number
-    recordTypes: Set<string>
-  }>,
+  counterparties: Map<
+    string,
+    {
+      inboundCount: number
+      outboundCount: number
+      nativeReceivedEth: ExactDecimal
+      nativeSentEth: ExactDecimal
+      tokenReceivedCount: number
+      tokenSentCount: number
+      recordTypes: Set<string>
+    }
+  >,
   address: string | undefined,
   direction: 'in' | 'out',
   recordType: string,
@@ -790,15 +806,18 @@ function addCounterpartyFlow(
 }
 
 function buildFlowCounterpartyRows(
-  counterparties: Map<string, {
-    inboundCount: number
-    outboundCount: number
-    nativeReceivedEth: ExactDecimal
-    nativeSentEth: ExactDecimal
-    tokenReceivedCount: number
-    tokenSentCount: number
-    recordTypes: Set<string>
-  }>,
+  counterparties: Map<
+    string,
+    {
+      inboundCount: number
+      outboundCount: number
+      nativeReceivedEth: ExactDecimal
+      nativeSentEth: ExactDecimal
+      tokenReceivedCount: number
+      tokenSentCount: number
+      recordTypes: Set<string>
+    }
+  >,
   limit = 10,
 ): WalletFlowCounterpartyRow[] {
   return Array.from(counterparties.entries())
@@ -833,24 +852,30 @@ function buildEvmFundFlow(params: {
   let nativeOutboundCount = 0
   let inboundEvents = 0
   let outboundEvents = 0
-  const counterparties = new Map<string, {
-    inboundCount: number
-    outboundCount: number
-    nativeReceivedEth: ExactDecimal
-    nativeSentEth: ExactDecimal
-    tokenReceivedCount: number
-    tokenSentCount: number
-    recordTypes: Set<string>
-  }>()
-  const tokenAssets = new Map<string, {
-    assetId: string
-    symbol?: string
-    decimals: number
-    inbound: bigint
-    outbound: bigint
-    inboundCount: number
-    outboundCount: number
-  }>()
+  const counterparties = new Map<
+    string,
+    {
+      inboundCount: number
+      outboundCount: number
+      nativeReceivedEth: ExactDecimal
+      nativeSentEth: ExactDecimal
+      tokenReceivedCount: number
+      tokenSentCount: number
+      recordTypes: Set<string>
+    }
+  >()
+  const tokenAssets = new Map<
+    string,
+    {
+      assetId: string
+      symbol?: string
+      decimals: number
+      inbound: bigint
+      outbound: bigint
+      inboundCount: number
+      outboundCount: number
+    }
+  >()
   const movements: WalletFlowMovement[] = []
 
   for (const tx of params.transactions) {
@@ -890,14 +915,16 @@ function buildEvmFundFlow(params: {
   for (const transfer of params.tokenTransfers) {
     const sender = typeof transfer.from === 'string' ? transfer.from.toLowerCase() : undefined
     const recipient = typeof transfer.to === 'string' ? transfer.to.toLowerCase() : undefined
-    const direction = transfer.direction === 'out' || sender === wallet
-      ? 'out'
-      : transfer.direction === 'in' || recipient === wallet
-        ? 'in'
-        : undefined
+    const direction =
+      transfer.direction === 'out' || sender === wallet
+        ? 'out'
+        : transfer.direction === 'in' || recipient === wallet
+          ? 'in'
+          : undefined
     if (!direction) continue
 
-    const tokenAddress = typeof transfer.token_address === 'string' ? transfer.token_address.toLowerCase() : 'unknown-token'
+    const tokenAddress =
+      typeof transfer.token_address === 'string' ? transfer.token_address.toLowerCase() : 'unknown-token'
     const symbol = typeof transfer.token_symbol === 'string' ? transfer.token_symbol : undefined
     const decimals = typeof transfer.token_decimals === 'number' ? transfer.token_decimals : 18
     const amountRaw = parseBigIntAmount(transfer.value_decimal)
@@ -942,21 +969,33 @@ function buildEvmFundFlow(params: {
 
   const assetFlows: WalletAssetFlowRow[] = [
     ...(nativeReceivedEth.coefficient > 0n || nativeSentEth.coefficient > 0n
-      ? [{
-          asset_type: 'native',
-          asset: 'ETH',
-          symbol: 'ETH',
-          inbound_count: nativeInboundCount,
-          outbound_count: nativeOutboundCount,
-          inbound_amount: `${formatExactDecimal(nativeReceivedEth)} ETH`,
-          outbound_amount: `${formatExactDecimal(nativeSentEth)} ETH`,
-          net_amount: `${formatExactDecimal(addExactDecimals(nativeReceivedEth, { coefficient: -nativeSentEth.coefficient, scale: nativeSentEth.scale }))} ETH`,
-          inbound_amount_decimal: formatExactDecimal(nativeReceivedEth),
-          outbound_amount_decimal: formatExactDecimal(nativeSentEth),
-          net_amount_decimal: formatExactDecimal(addExactDecimals(nativeReceivedEth, { coefficient: -nativeSentEth.coefficient, scale: nativeSentEth.scale })),
-          amount_decimals: 18,
-          net_direction: compareExactDecimals(nativeReceivedEth, nativeSentEth) > 0 ? 'in' as const : compareExactDecimals(nativeSentEth, nativeReceivedEth) > 0 ? 'out' as const : 'flat' as const,
-        }]
+      ? [
+          {
+            asset_type: 'native',
+            asset: 'ETH',
+            symbol: 'ETH',
+            inbound_count: nativeInboundCount,
+            outbound_count: nativeOutboundCount,
+            inbound_amount: `${formatExactDecimal(nativeReceivedEth)} ETH`,
+            outbound_amount: `${formatExactDecimal(nativeSentEth)} ETH`,
+            net_amount: `${formatExactDecimal(addExactDecimals(nativeReceivedEth, { coefficient: -nativeSentEth.coefficient, scale: nativeSentEth.scale }))} ETH`,
+            inbound_amount_decimal: formatExactDecimal(nativeReceivedEth),
+            outbound_amount_decimal: formatExactDecimal(nativeSentEth),
+            net_amount_decimal: formatExactDecimal(
+              addExactDecimals(nativeReceivedEth, {
+                coefficient: -nativeSentEth.coefficient,
+                scale: nativeSentEth.scale,
+              }),
+            ),
+            amount_decimals: 18,
+            net_direction:
+              compareExactDecimals(nativeReceivedEth, nativeSentEth) > 0
+                ? ('in' as const)
+                : compareExactDecimals(nativeSentEth, nativeReceivedEth) > 0
+                  ? ('out' as const)
+                  : ('flat' as const),
+          },
+        ]
       : []),
     ...Array.from(tokenAssets.values()).map((asset) => {
       const net = asset.inbound - asset.outbound
@@ -980,10 +1019,10 @@ function buildEvmFundFlow(params: {
         outbound_amount_raw: asset.outbound.toString(),
         net_amount_raw: net.toString(),
         amount_decimals: asset.decimals,
-        net_direction: net > 0n ? 'in' as const : net < 0n ? 'out' as const : 'flat' as const,
+        net_direction: net > 0n ? ('in' as const) : net < 0n ? ('out' as const) : ('flat' as const),
       }
     }),
-  ].sort((left, right) => (right.inbound_count + right.outbound_count) - (left.inbound_count + left.outbound_count))
+  ].sort((left, right) => right.inbound_count + right.outbound_count - (left.inbound_count + left.outbound_count))
 
   const sortedMovements = rankMovementsWithinAssets(movements)
   const movementAssets = new Set(sortedMovements.map((movement) => `${movement.asset_type}:${movement.asset}`))
@@ -1001,7 +1040,9 @@ function buildEvmFundFlow(params: {
       outbound_events: outboundEvents,
       native_received_eth: formatExactDecimal(nativeReceivedEth),
       native_sent_eth: formatExactDecimal(nativeSentEth),
-      native_net_eth: formatExactDecimal(addExactDecimals(nativeReceivedEth, { coefficient: -nativeSentEth.coefficient, scale: nativeSentEth.scale })),
+      native_net_eth: formatExactDecimal(
+        addExactDecimals(nativeReceivedEth, { coefficient: -nativeSentEth.coefficient, scale: nativeSentEth.scale }),
+      ),
       asset_count: assetFlows.length,
       top_movement_counterparty: topCounterparty?.address,
       ...(movementAssets.size === 1 ? { largest_movement: sortedMovements[0] } : {}),
@@ -1012,19 +1053,23 @@ function buildEvmFundFlow(params: {
     largest_movements: sortedMovements,
     next_pivots: [
       ...(topCounterparty
-        ? [{
-            goal: 'Investigate the top counterparty',
-            tool: 'portal_get_wallet_summary',
-            network_field: 'overview.network',
-            address: topCounterparty.address,
-          }]
+        ? [
+            {
+              goal: 'Investigate the top counterparty',
+              tool: 'portal_get_wallet_summary',
+              network_field: 'overview.network',
+              address: topCounterparty.address,
+            },
+          ]
         : []),
       ...(sortedMovements[0]?.tx_hash
-        ? [{
-            goal: 'Inspect the largest movement transaction',
-            tool: 'portal_evm_query_transactions',
-            transaction_hash: sortedMovements[0].tx_hash,
-          }]
+        ? [
+            {
+              goal: 'Inspect the largest movement transaction',
+              tool: 'portal_evm_query_transactions',
+              transaction_hash: sortedMovements[0].tx_hash,
+            },
+          ]
         : []),
     ],
   }
@@ -1052,19 +1097,25 @@ function buildSimpleAssetFlow(params: {
   }
 }
 
-export function applyWalletSummaryResponseFormat<T extends Record<string, unknown>>(summary: T, responseFormat: ResponseFormat): T {
-  const activity = summary.activity && typeof summary.activity === 'object' && !Array.isArray(summary.activity)
-    ? summary.activity as Record<string, unknown>
-    : undefined
-  const fundFlow = summary.fund_flow && typeof summary.fund_flow === 'object' && !Array.isArray(summary.fund_flow)
-    ? summary.fund_flow as Record<string, unknown>
-    : undefined
+export function applyWalletSummaryResponseFormat<T extends Record<string, unknown>>(
+  summary: T,
+  responseFormat: ResponseFormat,
+): T {
+  const activity =
+    summary.activity && typeof summary.activity === 'object' && !Array.isArray(summary.activity)
+      ? (summary.activity as Record<string, unknown>)
+      : undefined
+  const fundFlow =
+    summary.fund_flow && typeof summary.fund_flow === 'object' && !Array.isArray(summary.fund_flow)
+      ? (summary.fund_flow as Record<string, unknown>)
+      : undefined
 
   if (responseFormat === 'compact') {
     const activityItems = Array.isArray(activity?.items) ? activity.items : undefined
-    const relationships = summary.relationships && typeof summary.relationships === 'object' && !Array.isArray(summary.relationships)
-      ? summary.relationships as Record<string, unknown>
-      : undefined
+    const relationships =
+      summary.relationships && typeof summary.relationships === 'object' && !Array.isArray(summary.relationships)
+        ? (summary.relationships as Record<string, unknown>)
+        : undefined
 
     return {
       ...summary,
@@ -1094,11 +1145,15 @@ export function applyWalletSummaryResponseFormat<T extends Record<string, unknow
         ? {
             fund_flow: {
               ...fundFlow,
-              asset_flows: Array.isArray(fundFlow.asset_flows) ? fundFlow.asset_flows.slice(0, 5) : fundFlow.asset_flows,
+              asset_flows: Array.isArray(fundFlow.asset_flows)
+                ? fundFlow.asset_flows.slice(0, 5)
+                : fundFlow.asset_flows,
               movement_counterparties: Array.isArray(fundFlow.movement_counterparties)
                 ? fundFlow.movement_counterparties.slice(0, 5)
                 : fundFlow.movement_counterparties,
-              largest_movements: Array.isArray(fundFlow.largest_movements) ? fundFlow.largest_movements.slice(0, 5) : fundFlow.largest_movements,
+              largest_movements: Array.isArray(fundFlow.largest_movements)
+                ? fundFlow.largest_movements.slice(0, 5)
+                : fundFlow.largest_movements,
             },
           }
         : {}),
@@ -1118,7 +1173,9 @@ export function applyWalletSummaryResponseFormat<T extends Record<string, unknow
             movement_counterparties: Array.isArray(fundFlow.movement_counterparties)
               ? fundFlow.movement_counterparties.slice(0, 5)
               : fundFlow.movement_counterparties,
-            largest_movements: Array.isArray(fundFlow.largest_movements) ? fundFlow.largest_movements.slice(0, 5) : fundFlow.largest_movements,
+            largest_movements: Array.isArray(fundFlow.largest_movements)
+              ? fundFlow.largest_movements.slice(0, 5)
+              : fundFlow.largest_movements,
           },
         }
       : {}),
@@ -1126,20 +1183,24 @@ export function applyWalletSummaryResponseFormat<T extends Record<string, unknow
 }
 
 export function bitcoinValueToSats(value: unknown): bigint {
-  let text = typeof value === 'string'
-    ? value.trim()
-    : typeof value === 'number' && Number.isFinite(value)
-      ? value.toFixed(8)
-      : ''
+  let text =
+    typeof value === 'string'
+      ? value.trim()
+      : typeof value === 'number' && Number.isFinite(value)
+        ? value.toFixed(8)
+        : ''
   if (/e/i.test(text)) {
     const numeric = Number(text)
     text = Number.isFinite(numeric) ? numeric.toFixed(8) : ''
   }
   const match = /^(-?)(\d+)(?:\.(\d{0,8}))?$/.exec(text)
   if (!match) {
-    throw new ActionableError('Portal returned a Bitcoin value that cannot be represented exactly in satoshis.', [
-      'Retry the request. If it repeats, report the affected Bitcoin dataset and block window.',
-    ], { value: text.slice(0, 64) }, { code: 'incomplete_result', origin: 'upstream', retryable: true })
+    throw new ActionableError(
+      'Portal returned a Bitcoin value that cannot be represented exactly in satoshis.',
+      ['Retry the request. If it repeats, report the affected Bitcoin dataset and block window.'],
+      { value: text.slice(0, 64) },
+      { code: 'incomplete_result', origin: 'upstream', retryable: true },
+    )
   }
   const magnitude = BigInt(match[2]) * 100_000_000n + BigInt((match[3] ?? '').padEnd(8, '0') || '0')
   return match[1] ? -magnitude : magnitude
@@ -1309,7 +1370,8 @@ function buildWalletLlmOverrides(vm: 'evm' | 'solana' | 'bitcoin' | 'hyperliquid
 export function registerGetWalletSummaryTool(server: McpServer) {
   const FAST_MODE_BLOCK_CAP = 3000
 
-  registerPortalTool(server,
+  registerPortalTool(
+    server,
     'portal_get_wallet_summary',
     buildToolDescription('portal_get_wallet_summary'),
     {
@@ -1323,11 +1385,15 @@ export function registerGetWalletSummaryTool(server: McpServer) {
       from_timestamp: z
         .union([z.string(), z.number()])
         .optional()
-        .describe('Starting timestamp. Accepts Unix seconds, Unix milliseconds, ISO datetime, or relative input like "1h ago".'),
+        .describe(
+          'Starting timestamp. Accepts Unix seconds, Unix milliseconds, ISO datetime, or relative input like "1h ago".',
+        ),
       to_timestamp: z
         .union([z.string(), z.number()])
         .optional()
-        .describe('Ending timestamp. Accepts Unix seconds, Unix milliseconds, ISO datetime, or relative input like "now".'),
+        .describe(
+          'Ending timestamp. Accepts Unix seconds, Unix milliseconds, ISO datetime, or relative input like "now".',
+        ),
       include_tokens: z.boolean().optional().default(true).describe('Include ERC20 token transfers'),
       include_nfts: z.boolean().optional().default(false).describe('Include NFT transfers (ERC721/1155)'),
       limit_per_type: z
@@ -1337,16 +1403,22 @@ export function registerGetWalletSummaryTool(server: McpServer) {
         .max(RETAINED_WALLET_LIMIT_MAX)
         .optional()
         .default(5)
-        .describe('Requested items per category (default: 5). Values up to the retained compatibility maximum of 10 are accepted, while each category is safely capped at 4 rows and remains cursorable.'),
+        .describe(
+          'Requested items per category (default: 5). Values up to the retained compatibility maximum of 10 are accepted, while each category is safely capped at 4 rows and remains cursorable.',
+        ),
       mode: z
         .enum(['fast', 'deep'])
         .optional()
         .default('deep')
-        .describe('Execution depth. Defaults to complete requested-window analysis; the optional fast value is only for explicitly bounded previews.'),
+        .describe(
+          'Execution depth. Defaults to complete requested-window analysis; the optional fast value is only for explicitly bounded previews.',
+        ),
       response_format: z
         .enum(['full', 'compact', 'summary'])
         .optional()
-        .describe("Response format: defaults to 'compact' for a readable wallet investigation. Use 'summary' for headline flow only or 'full' for all returned activity rows."),
+        .describe(
+          "Response format: defaults to 'compact' for a readable wallet investigation. Use 'summary' for headline flow only or 'full' for all returned activity rows.",
+        ),
       cursor: z.string().optional().describe('Continuation cursor from a previous response'),
     },
     async ({
@@ -1378,20 +1450,26 @@ export function registerGetWalletSummaryTool(server: McpServer) {
       const networkLabel = humanizeLabel(dataset) ?? dataset
 
       if (address) {
-        const valid = chainType === 'evm'
-          ? isValidEvmAddress(address)
-          : chainType === 'solana'
-            ? isValidSolanaAddress(address)
-            : chainType === 'bitcoin'
-              ? isValidBitcoinAddress(address)
-              : chainType === 'hyperliquidFills' || chainType === 'hyperliquidReplicaCmds'
-                ? isValidHyperliquidAddress(address)
-                : true
+        const valid =
+          chainType === 'evm'
+            ? isValidEvmAddress(address)
+            : chainType === 'solana'
+              ? isValidSolanaAddress(address)
+              : chainType === 'bitcoin'
+                ? isValidBitcoinAddress(address)
+                : chainType === 'hyperliquidFills' || chainType === 'hyperliquidReplicaCmds'
+                  ? isValidHyperliquidAddress(address)
+                  : true
         if (!valid) {
-          throw new ActionableError(`Invalid ${chainType} wallet address.`, [
-            `Provide a valid address for ${networkLabel}.`,
-            'Omit cursor to start a new wallet query after correcting the address.',
-          ], { network: dataset }, { code: 'invalid_request', origin: 'client_input', retryable: false })
+          throw new ActionableError(
+            `Invalid ${chainType} wallet address.`,
+            [
+              `Provide a valid address for ${networkLabel}.`,
+              'Omit cursor to start a new wallet query after correcting the address.',
+            ],
+            { network: dataset },
+            { code: 'invalid_request', origin: 'client_input', retryable: false },
+          )
         }
         if (chainType === 'evm' || chainType === 'hyperliquidFills' || chainType === 'hyperliquidReplicaCmds') {
           address = address.toLowerCase()
@@ -1901,9 +1979,24 @@ export function registerGetWalletSummaryTool(server: McpServer) {
       ])
 
       const activeSectionOutcomes = [
-        { key: 'transactions', label: 'transactions', enabled: sectionCursors.transactions !== null, outcome: transactionOutcome },
-        { key: 'token_transfers', label: 'token transfers', enabled: include_tokens && sectionCursors.token_transfers !== null, outcome: tokenOutcome },
-        { key: 'nft_transfers', label: 'NFT transfers', enabled: include_nfts && sectionCursors.nft_transfers !== null, outcome: nftOutcome },
+        {
+          key: 'transactions',
+          label: 'transactions',
+          enabled: sectionCursors.transactions !== null,
+          outcome: transactionOutcome,
+        },
+        {
+          key: 'token_transfers',
+          label: 'token transfers',
+          enabled: include_tokens && sectionCursors.token_transfers !== null,
+          outcome: tokenOutcome,
+        },
+        {
+          key: 'nft_transfers',
+          label: 'NFT transfers',
+          enabled: include_nfts && sectionCursors.nft_transfers !== null,
+          outcome: nftOutcome,
+        },
       ] as const
       const cancelledSection = activeSectionOutcomes.find(
         (section) => section.outcome.status === 'rejected' && section.outcome.reason instanceof RequestCancelledError,
@@ -1914,7 +2007,10 @@ export function registerGetWalletSummaryTool(server: McpServer) {
         (section) => section.enabled && section.outcome.status === 'rejected',
       )
       const enabledSectionCount = activeSectionOutcomes.filter((section) => section.enabled).length
-      if (failedActiveSections.length === enabledSectionCount && failedActiveSections[0]?.outcome.status === 'rejected') {
+      if (
+        failedActiveSections.length === enabledSectionCount &&
+        failedActiveSections[0]?.outcome.status === 'rejected'
+      ) {
         throw failedActiveSections[0].outcome.reason
       }
 
@@ -2009,7 +2105,9 @@ export function registerGetWalletSummaryTool(server: McpServer) {
           (notice) => !notice.startsWith('Accepted the retained') && !notice.startsWith('Showing the latest'),
         ),
         ...(hasMore
-          ? [`Showing the latest ${limit_per_type} ${limitedItems.join(' and ')} in this page. Load older wallet activity to continue.`]
+          ? [
+              `Showing the latest ${limit_per_type} ${limitedItems.join(' and ')} in this page. Load older wallet activity to continue.`,
+            ]
           : []),
       ]
 
@@ -2163,9 +2261,10 @@ export function registerGetWalletSummaryTool(server: McpServer) {
       const topFlowCounterparty = fundFlow.summary.top_movement_counterparty
         ? ` Top asset-movement counterparty: ${fundFlow.summary.top_movement_counterparty}.`
         : ''
-      const partialPrefix = sectionFailures.length > 0
-        ? `Partial wallet summary; ${sectionFailures.map((failure) => failure.label).join(', ')} unavailable. `
-        : ''
+      const partialPrefix =
+        sectionFailures.length > 0
+          ? `Partial wallet summary; ${sectionFailures.map((failure) => failure.label).join(', ')} unavailable. `
+          : ''
       const message = hasMore
         ? `${partialPrefix}Wallet flow for ${normalizedAddress}: ${fundFlow.summary.inbound_events} inbound and ${fundFlow.summary.outbound_events} outbound movement events from ${describeWalletWindow(windowDescription)} (preview page capped at ${limit_per_type}; continue with cursor for older rows).${topFlowCounterparty}`
         : `${partialPrefix}Wallet flow for ${normalizedAddress}: ${fundFlow.summary.inbound_events} inbound and ${fundFlow.summary.outbound_events} outbound movement events from ${describeWalletWindow(windowDescription)}.${topFlowCounterparty}`
@@ -2219,7 +2318,8 @@ export function registerGetWalletSummaryTool(server: McpServer) {
               : windowToBlock - fromBlock + 1 <= 50_000
                 ? 'long_window'
                 : 'expensive',
-          recommended_window: 'Use timeframe="30m" for a bounded interactive EVM triage window, or continue with the cursor for more rows in this window.',
+          recommended_window:
+            'Use timeframe="30m" for a bounded interactive EVM triage window, or continue with the cursor for more rows in this window.',
           from_block: fromBlock,
           to_block: windowToBlock,
           range_kind: resolvedWindow.range_kind,
@@ -2247,20 +2347,24 @@ export function registerGetWalletSummaryTool(server: McpServer) {
               format: 'integer',
             }),
             ...(include_tokens && !sectionFailures.some((failure) => failure.key === 'token_transfers')
-              ? [buildMetricCard({
-                  id: 'token-transfers',
-                  label: 'Token transfers',
-                  value_path: 'assets.token_transfers',
-                  format: 'integer',
-                })]
+              ? [
+                  buildMetricCard({
+                    id: 'token-transfers',
+                    label: 'Token transfers',
+                    value_path: 'assets.token_transfers',
+                    format: 'integer',
+                  }),
+                ]
               : []),
             ...(include_nfts && !sectionFailures.some((failure) => failure.key === 'nft_transfers')
-              ? [buildMetricCard({
-                  id: 'nft-transfers',
-                  label: 'NFT transfers',
-                  value_path: 'assets.nft_transfers',
-                  format: 'integer',
-                })]
+              ? [
+                  buildMetricCard({
+                    id: 'nft-transfers',
+                    label: 'NFT transfers',
+                    value_path: 'assets.nft_transfers',
+                    format: 'integer',
+                  }),
+                ]
               : []),
           ],
           panels,
@@ -2305,8 +2409,20 @@ async function buildNonEvmWalletSummary(params: {
   paginationCursor?: WalletSummaryCursor
   compatibilityNotices?: string[]
 }) {
-  const { dataset, chainType, address, timeframe, from_timestamp, to_timestamp, mode, limit_per_type, response_format, queryStartTime, paginationCursor, compatibilityNotices = [] } =
-    params
+  const {
+    dataset,
+    chainType,
+    address,
+    timeframe,
+    from_timestamp,
+    to_timestamp,
+    mode,
+    limit_per_type,
+    response_format,
+    queryStartTime,
+    paginationCursor,
+    compatibilityNotices = [],
+  } = params
   const effectiveResponseFormat = resolveDefaultResponseFormat(response_format)
   const networkLabel = humanizeLabel(dataset) ?? dataset
   const pipesRecipe = buildWalletPipesRecipe({
@@ -2336,7 +2452,7 @@ async function buildNonEvmWalletSummary(params: {
     ? {
         from_block: paginationCursor.window_from_block,
         to_block: paginationCursor.window_to_block,
-        range_kind: /^\d+$/.test(timeframe) ? 'block_range' as const : 'timeframe' as const,
+        range_kind: /^\d+$/.test(timeframe) ? ('block_range' as const) : ('timeframe' as const),
       }
     : useInteractiveHyperliquidEstimate
       ? {
@@ -2353,20 +2469,20 @@ async function buildNonEvmWalletSummary(params: {
           },
         }
       : from_timestamp !== undefined || to_timestamp !== undefined || !/^\d+$/.test(timeframe)
-      ? await resolveTimeframeOrBlocks({
-          dataset,
-          ...(from_timestamp !== undefined || to_timestamp !== undefined
-            ? {
-                from_timestamp: from_timestamp as TimestampInput | undefined,
-                to_timestamp: to_timestamp as TimestampInput | undefined,
-              }
-            : { timeframe }),
-        })
-      : {
-          from_block: Math.max(0, head.number - parseInt(timeframe, 10)),
-          to_block: head.number,
-          range_kind: 'block_range' as const,
-        }
+        ? await resolveTimeframeOrBlocks({
+            dataset,
+            ...(from_timestamp !== undefined || to_timestamp !== undefined
+              ? {
+                  from_timestamp: from_timestamp as TimestampInput | undefined,
+                  to_timestamp: to_timestamp as TimestampInput | undefined,
+                }
+              : { timeframe }),
+          })
+        : {
+            from_block: Math.max(0, head.number - parseInt(timeframe, 10)),
+            to_block: head.number,
+            range_kind: 'block_range' as const,
+          }
 
   const requestedFromBlock = resolvedWindow.from_block
   const toBlock = resolvedWindow.to_block
@@ -2383,9 +2499,9 @@ async function buildNonEvmWalletSummary(params: {
         ? 250
         : chainType === 'bitcoin'
           ? 200
-        : chainType === 'hyperliquidFills' || chainType === 'hyperliquidReplicaCmds'
-          ? 2_000
-          : undefined
+          : chainType === 'hyperliquidFills' || chainType === 'hyperliquidReplicaCmds'
+            ? 2_000
+            : undefined
 
     if (fastBlockCap !== undefined && toBlock - fromBlock + 1 > fastBlockCap) {
       fromBlock = Math.max(fromBlock, toBlock - fastBlockCap + 1)
@@ -2424,40 +2540,34 @@ async function buildNonEvmWalletSummary(params: {
       retries: WALLET_QUERY_RETRIES,
     })
 
-    const allItems = sortTransactions(results.flatMap((block: any) => {
-      const blockNumber = block.number ?? block.header?.number
-      const timestamp = block.timestamp ?? block.header?.timestamp
-      return (block.transactions || []).map((tx: any) => {
-        const signature = Array.isArray(tx.signatures) && typeof tx.signatures[0] === 'string'
-          ? tx.signatures[0]
-          : undefined
+    const allItems = sortTransactions(
+      results.flatMap((block: any) => {
+        const blockNumber = block.number ?? block.header?.number
+        const timestamp = block.timestamp ?? block.header?.timestamp
+        return (block.transactions || []).map((tx: any) => {
+          const signature =
+            Array.isArray(tx.signatures) && typeof tx.signatures[0] === 'string' ? tx.signatures[0] : undefined
 
-        // Portal can attach large transaction context even when a narrow field
-        // selection was requested. Build the wallet row from the explicit
-        // contract instead of spreading that unbounded upstream object into an
-        // MCP response.
-        return normalizeSolanaTransactionResult({
-          ...(signature ? { signature } : {}),
-          ...(typeof tx.transactionIndex === 'number' ? { transactionIndex: tx.transactionIndex } : {}),
-          ...(typeof tx.fee === 'number' || typeof tx.fee === 'string' ? { fee: tx.fee } : {}),
-          ...(typeof tx.feePayer === 'string' ? { feePayer: tx.feePayer } : {}),
-          // A Solana runtime error can be a deeply nested object. Wallet
-          // summaries only promise transaction outcome, so expose the exact
-          // success/failure fact without copying an unbounded error payload.
-          success: tx.err === null || tx.err === undefined,
-          ...(blockNumber !== undefined ? { block_number: blockNumber, slot_number: blockNumber } : {}),
-          ...(timestamp !== undefined
-            ? { timestamp, timestamp_human: formatTimestamp(timestamp) }
-            : {}),
+          // Portal can attach large transaction context even when a narrow field
+          // selection was requested. Build the wallet row from the explicit
+          // contract instead of spreading that unbounded upstream object into an
+          // MCP response.
+          return normalizeSolanaTransactionResult({
+            ...(signature ? { signature } : {}),
+            ...(typeof tx.transactionIndex === 'number' ? { transactionIndex: tx.transactionIndex } : {}),
+            ...(typeof tx.fee === 'number' || typeof tx.fee === 'string' ? { fee: tx.fee } : {}),
+            ...(typeof tx.feePayer === 'string' ? { feePayer: tx.feePayer } : {}),
+            // A Solana runtime error can be a deeply nested object. Wallet
+            // summaries only promise transaction outcome, so expose the exact
+            // success/failure fact without copying an unbounded error payload.
+            success: tx.err === null || tx.err === undefined,
+            ...(blockNumber !== undefined ? { block_number: blockNumber, slot_number: blockNumber } : {}),
+            ...(timestamp !== undefined ? { timestamp, timestamp_human: formatTimestamp(timestamp) } : {}),
+          })
         })
-      })
-    }) as WalletTransactionItem[])
-    const transactionPage = paginateAscendingItems(
-      allItems,
-      limit_per_type,
-      getBlockNumber,
-      transactionCursor,
+      }) as WalletTransactionItem[],
     )
+    const transactionPage = paginateAscendingItems(allItems, limit_per_type, getBlockNumber, transactionCursor)
     const items = transactionPage.pageItems.map((item) => {
       const feeLamports = parseBigIntAmount(item.fee)
       return {
@@ -2490,13 +2600,10 @@ async function buildNonEvmWalletSummary(params: {
       notices.push('Older Solana wallet transactions are available via _pagination.next_cursor.')
     }
     const totalFees = items.reduce((sum, item) => sum + parseBigIntAmount(item.fee), 0n)
-    const averageFee = items.length > 0
-      ? divideExactDecimals(
-          { coefficient: totalFees, scale: 0 },
-          { coefficient: BigInt(items.length), scale: 0 },
-          18,
-        )
-      : { value: '0', rounded: false }
+    const averageFee =
+      items.length > 0
+        ? divideExactDecimals({ coefficient: totalFees, scale: 0 }, { coefficient: BigInt(items.length), scale: 0 }, 18)
+        : { value: '0', rounded: false }
     const feeMovements = rankMovementsWithinAssets(
       items.map((item) => {
         const feeLamports = parseBigIntAmount(item.fee)
@@ -2543,44 +2650,53 @@ async function buildNonEvmWalletSummary(params: {
       movement_counterparties: [],
       largest_movements: feeMovements,
       next_pivots: items[0]?.tx_hash
-        ? [{ goal: 'Inspect a Solana transaction', tool: 'portal_solana_query_transactions', tx_hash: items[0].tx_hash }]
+        ? [
+            {
+              goal: 'Inspect a Solana transaction',
+              tool: 'portal_solana_query_transactions',
+              tx_hash: items[0].tx_hash,
+            },
+          ]
         : [],
     }
 
     return formatResult(
-      applyWalletSummaryResponseFormat({
-        overview: {
-          network: dataset,
-          vm: 'solana',
-          address,
-          from_block: requestedFromBlock,
-          to_block: toBlock,
-          analyzed_from_block: fromBlock,
-          recent_activity_count: items.length,
-          result_state: solanaCompleteness.state,
-        },
-        completeness: solanaCompleteness,
-        activity: {
-          count: items.length,
-          items,
-        },
-        fund_flow: fundFlow,
-        assets: {
-          token_balance_changes: [],
-        },
-        solana: {
-          fee_summary: {
-            total_fees_lamports: totalFees.toString(),
-            avg_fee_lamports: averageFee.value ?? '0',
-            avg_fee_rounded: averageFee.rounded,
+      applyWalletSummaryResponseFormat(
+        {
+          overview: {
+            network: dataset,
+            vm: 'solana',
+            address,
+            from_block: requestedFromBlock,
+            to_block: toBlock,
+            analyzed_from_block: fromBlock,
+            recent_activity_count: items.length,
+            result_state: solanaCompleteness.state,
           },
+          completeness: solanaCompleteness,
+          activity: {
+            count: items.length,
+            items,
+          },
+          fund_flow: fundFlow,
+          assets: {
+            token_balance_changes: [],
+          },
+          solana: {
+            fee_summary: {
+              total_fees_lamports: totalFees.toString(),
+              avg_fee_lamports: averageFee.value ?? '0',
+              avg_fee_rounded: averageFee.rounded,
+            },
+          },
+          tables: [
+            buildWalletActivityTable('Wallet activity', items.length),
+            buildWalletAssetFlowsTable(fundFlow.asset_flows.length),
+            buildWalletLargestMovementsTable(fundFlow.largest_movements.length),
+          ],
         },
-        tables: [
-          buildWalletActivityTable('Wallet activity', items.length),
-          buildWalletAssetFlowsTable(fundFlow.asset_flows.length),
-          buildWalletLargestMovementsTable(fundFlow.largest_movements.length),
-        ],
-      }, effectiveResponseFormat),
+        effectiveResponseFormat,
+      ),
       `Wallet flow for ${address} on ${networkLabel}: ${items.length} recent Solana transactions and ${totalFees.toString()} lamports in observed fees.${nextCursor ? ' This is a preview page; continue with the cursor for older rows.' : ''}`,
       {
         toolName: 'portal_get_wallet_summary',
@@ -2604,12 +2720,20 @@ async function buildNonEvmWalletSummary(params: {
         execution: buildExecutionMetadata({
           mode,
           response_format: effectiveResponseFormat,
-          result_scope: hasMore ? 'preview_page' : fromBlock > requestedFromBlock ? 'partial_window' : 'complete_window',
+          result_scope: hasMore
+            ? 'preview_page'
+            : fromBlock > requestedFromBlock
+              ? 'partial_window'
+              : 'complete_window',
           requested_blocks: Math.max(0, toBlock - requestedFromBlock + 1),
           analyzed_blocks: Math.max(0, toBlock - fromBlock + 1),
           estimated_scan_blocks: Math.max(0, toBlock - fromBlock + 1),
           estimated_runtime_class:
-            toBlock - fromBlock + 1 <= 2_000 ? 'interactive' : toBlock - fromBlock + 1 <= 100_000 ? 'long_window' : 'expensive',
+            toBlock - fromBlock + 1 <= 2_000
+              ? 'interactive'
+              : toBlock - fromBlock + 1 <= 100_000
+                ? 'long_window'
+                : 'expensive',
           recommended_window: 'Use timeframe="15m" for a bounded interactive Solana triage window.',
           from_block: fromBlock,
           to_block: toBlock,
@@ -2634,7 +2758,13 @@ async function buildNonEvmWalletSummary(params: {
           ],
           followUpActions: [
             ...(nextCursor
-              ? [{ label: 'Load older wallet activity', intent: 'continue' as const, target: '_pagination.next_cursor' }]
+              ? [
+                  {
+                    label: 'Load older wallet activity',
+                    intent: 'continue' as const,
+                    target: '_pagination.next_cursor',
+                  },
+                ]
               : []),
             { label: 'Show raw activity rows', intent: 'show_raw', target: 'activity.items' },
           ],
@@ -2666,116 +2796,141 @@ async function buildNonEvmWalletSummary(params: {
     const outputsExhausted = Boolean(paginationCursor && paginationCursor.sections.outputs === null)
     const inputsExhausted = Boolean(paginationCursor && paginationCursor.sections.inputs === null)
     const [outputBlocks, inputBlocks] = await Promise.all([
-      outputsExhausted ? Promise.resolve([]) : portalFetchRecentRecords(
-        `${PORTAL_URL}/datasets/${dataset}/stream`,
-        {
-          type: 'bitcoin',
-          fromBlock,
-          toBlock: outputCursor?.page_to_block ?? toBlock,
-          fields: {
-            block: { number: true, timestamp: true },
-            output: { transactionIndex: true, outputIndex: true, value: true, scriptPubKeyAddress: true },
-            transaction: { transactionIndex: true, hash: true },
-          },
-          outputs: [{ scriptPubKeyAddress: [address], transaction: true }],
-        },
-        {
-          itemKeys: ['outputs'],
-          countItems: (record) => {
-            const outputs = (record as { outputs?: Array<{ scriptPubKeyAddress?: string }> })?.outputs
-            return Array.isArray(outputs)
-              ? outputs.filter((output) => output.scriptPubKeyAddress === address).length
-              : 0
-          },
-          limit: limit_per_type + (outputCursor?.skip_inclusive_block ?? 0) + 1,
-          chunkSize: 100,
-          concurrency: 2,
-          timeout: WALLET_QUERY_TIMEOUT_MS,
-          retries: WALLET_QUERY_RETRIES,
-        },
-      ),
-      inputsExhausted ? Promise.resolve([]) : portalFetchRecentRecords(
-        `${PORTAL_URL}/datasets/${dataset}/stream`,
-        {
-          type: 'bitcoin',
-          fromBlock,
-          toBlock: inputCursor?.page_to_block ?? toBlock,
-          fields: {
-            block: { number: true, timestamp: true },
-            input: { transactionIndex: true, inputIndex: true, prevoutValue: true, prevoutScriptPubKeyAddress: true },
-            transaction: { transactionIndex: true, hash: true },
-          },
-          inputs: [{ prevoutScriptPubKeyAddress: [address], transaction: true }],
-        },
-        {
-          itemKeys: ['inputs'],
-          countItems: (record) => {
-            const inputs = (record as { inputs?: Array<{ prevoutScriptPubKeyAddress?: string }> })?.inputs
-            return Array.isArray(inputs)
-              ? inputs.filter((input) => input.prevoutScriptPubKeyAddress === address).length
-              : 0
-          },
-          limit: limit_per_type + (inputCursor?.skip_inclusive_block ?? 0) + 1,
-          chunkSize: 100,
-          concurrency: 2,
-          timeout: WALLET_QUERY_TIMEOUT_MS,
-          retries: WALLET_QUERY_RETRIES,
-        },
-      ),
+      outputsExhausted
+        ? Promise.resolve([])
+        : portalFetchRecentRecords(
+            `${PORTAL_URL}/datasets/${dataset}/stream`,
+            {
+              type: 'bitcoin',
+              fromBlock,
+              toBlock: outputCursor?.page_to_block ?? toBlock,
+              fields: {
+                block: { number: true, timestamp: true },
+                output: { transactionIndex: true, outputIndex: true, value: true, scriptPubKeyAddress: true },
+                transaction: { transactionIndex: true, hash: true },
+              },
+              outputs: [{ scriptPubKeyAddress: [address], transaction: true }],
+            },
+            {
+              itemKeys: ['outputs'],
+              countItems: (record) => {
+                const outputs = (record as { outputs?: Array<{ scriptPubKeyAddress?: string }> })?.outputs
+                return Array.isArray(outputs)
+                  ? outputs.filter((output) => output.scriptPubKeyAddress === address).length
+                  : 0
+              },
+              limit: limit_per_type + (outputCursor?.skip_inclusive_block ?? 0) + 1,
+              chunkSize: 100,
+              concurrency: 2,
+              timeout: WALLET_QUERY_TIMEOUT_MS,
+              retries: WALLET_QUERY_RETRIES,
+            },
+          ),
+      inputsExhausted
+        ? Promise.resolve([])
+        : portalFetchRecentRecords(
+            `${PORTAL_URL}/datasets/${dataset}/stream`,
+            {
+              type: 'bitcoin',
+              fromBlock,
+              toBlock: inputCursor?.page_to_block ?? toBlock,
+              fields: {
+                block: { number: true, timestamp: true },
+                input: {
+                  transactionIndex: true,
+                  inputIndex: true,
+                  prevoutValue: true,
+                  prevoutScriptPubKeyAddress: true,
+                },
+                transaction: { transactionIndex: true, hash: true },
+              },
+              inputs: [{ prevoutScriptPubKeyAddress: [address], transaction: true }],
+            },
+            {
+              itemKeys: ['inputs'],
+              countItems: (record) => {
+                const inputs = (record as { inputs?: Array<{ prevoutScriptPubKeyAddress?: string }> })?.inputs
+                return Array.isArray(inputs)
+                  ? inputs.filter((input) => input.prevoutScriptPubKeyAddress === address).length
+                  : 0
+              },
+              limit: limit_per_type + (inputCursor?.skip_inclusive_block ?? 0) + 1,
+              chunkSize: 100,
+              concurrency: 2,
+              timeout: WALLET_QUERY_TIMEOUT_MS,
+              retries: WALLET_QUERY_RETRIES,
+            },
+          ),
     ])
 
-    const matchingOutputs = outputBlocks.flatMap((block: any) => {
-      const transactionHashes = new Map<number, string>(
-        (block.transactions || [])
-          .filter((tx: any) => typeof tx.transactionIndex === 'number' && typeof tx.hash === 'string')
-          .map((tx: any) => [tx.transactionIndex, tx.hash]),
+    const matchingOutputs = outputBlocks
+      .flatMap((block: any) => {
+        const transactionHashes = new Map<number, string>(
+          (block.transactions || [])
+            .filter((tx: any) => typeof tx.transactionIndex === 'number' && typeof tx.hash === 'string')
+            .map((tx: any) => [tx.transactionIndex, tx.hash]),
+        )
+        const blockNumber = block.number ?? block.header?.number
+        const timestamp = block.timestamp ?? block.header?.timestamp
+        return (block.outputs || [])
+          .filter((output: any) => output.scriptPubKeyAddress === address)
+          .map((output: any) =>
+            normalizeBitcoinOutputResult({
+              ...(typeof output.transactionIndex === 'number' ? { transactionIndex: output.transactionIndex } : {}),
+              ...(typeof output.outputIndex === 'number' ? { outputIndex: output.outputIndex } : {}),
+              ...(typeof output.value === 'number' || typeof output.value === 'string' ? { value: output.value } : {}),
+              ...(typeof output.scriptPubKeyAddress === 'string'
+                ? { scriptPubKeyAddress: output.scriptPubKeyAddress }
+                : {}),
+              ...(typeof output.transactionIndex === 'number' && transactionHashes.has(output.transactionIndex)
+                ? { txid: transactionHashes.get(output.transactionIndex) }
+                : {}),
+              ...(blockNumber !== undefined ? { block_number: blockNumber } : {}),
+              ...(timestamp !== undefined ? { timestamp, timestamp_human: formatTimestamp(timestamp) } : {}),
+            }),
+          )
+      })
+      .sort(
+        (left: any, right: any) =>
+          Number(left.block_number || 0) - Number(right.block_number || 0) ||
+          Number(left.transactionIndex || 0) - Number(right.transactionIndex || 0) ||
+          Number(left.outputIndex || 0) - Number(right.outputIndex || 0),
       )
-      const blockNumber = block.number ?? block.header?.number
-      const timestamp = block.timestamp ?? block.header?.timestamp
-      return (block.outputs || []).filter((output: any) => output.scriptPubKeyAddress === address).map((output: any) =>
-        normalizeBitcoinOutputResult({
-          ...(typeof output.transactionIndex === 'number' ? { transactionIndex: output.transactionIndex } : {}),
-          ...(typeof output.outputIndex === 'number' ? { outputIndex: output.outputIndex } : {}),
-          ...(typeof output.value === 'number' || typeof output.value === 'string' ? { value: output.value } : {}),
-          ...(typeof output.scriptPubKeyAddress === 'string' ? { scriptPubKeyAddress: output.scriptPubKeyAddress } : {}),
-          ...(typeof output.transactionIndex === 'number' && transactionHashes.has(output.transactionIndex)
-            ? { txid: transactionHashes.get(output.transactionIndex) }
-            : {}),
-          ...(blockNumber !== undefined ? { block_number: blockNumber } : {}),
-          ...(timestamp !== undefined ? { timestamp, timestamp_human: formatTimestamp(timestamp) } : {}),
-        }),
+    const matchingInputs = inputBlocks
+      .flatMap((block: any) => {
+        const transactionHashes = new Map<number, string>(
+          (block.transactions || [])
+            .filter((tx: any) => typeof tx.transactionIndex === 'number' && typeof tx.hash === 'string')
+            .map((tx: any) => [tx.transactionIndex, tx.hash]),
+        )
+        const blockNumber = block.number ?? block.header?.number
+        const timestamp = block.timestamp ?? block.header?.timestamp
+        return (block.inputs || [])
+          .filter((input: any) => input.prevoutScriptPubKeyAddress === address)
+          .map((input: any) =>
+            normalizeBitcoinInputResult({
+              ...(typeof input.transactionIndex === 'number' ? { transactionIndex: input.transactionIndex } : {}),
+              ...(typeof input.inputIndex === 'number' ? { inputIndex: input.inputIndex } : {}),
+              ...(typeof input.prevoutValue === 'number' || typeof input.prevoutValue === 'string'
+                ? { prevoutValue: input.prevoutValue }
+                : {}),
+              ...(typeof input.prevoutScriptPubKeyAddress === 'string'
+                ? { prevoutScriptPubKeyAddress: input.prevoutScriptPubKeyAddress }
+                : {}),
+              ...(typeof input.transactionIndex === 'number' && transactionHashes.has(input.transactionIndex)
+                ? { txid: transactionHashes.get(input.transactionIndex) }
+                : {}),
+              ...(blockNumber !== undefined ? { block_number: blockNumber } : {}),
+              ...(timestamp !== undefined ? { timestamp, timestamp_human: formatTimestamp(timestamp) } : {}),
+            }),
+          )
+      })
+      .sort(
+        (left: any, right: any) =>
+          Number(left.block_number || 0) - Number(right.block_number || 0) ||
+          Number(left.transactionIndex || 0) - Number(right.transactionIndex || 0) ||
+          Number(left.inputIndex || 0) - Number(right.inputIndex || 0),
       )
-    }).sort((left: any, right: any) =>
-      Number(left.block_number || 0) - Number(right.block_number || 0) ||
-      Number(left.transactionIndex || 0) - Number(right.transactionIndex || 0) ||
-      Number(left.outputIndex || 0) - Number(right.outputIndex || 0),
-    )
-    const matchingInputs = inputBlocks.flatMap((block: any) => {
-      const transactionHashes = new Map<number, string>(
-        (block.transactions || [])
-          .filter((tx: any) => typeof tx.transactionIndex === 'number' && typeof tx.hash === 'string')
-          .map((tx: any) => [tx.transactionIndex, tx.hash]),
-      )
-      const blockNumber = block.number ?? block.header?.number
-      const timestamp = block.timestamp ?? block.header?.timestamp
-      return (block.inputs || []).filter((input: any) => input.prevoutScriptPubKeyAddress === address).map((input: any) =>
-        normalizeBitcoinInputResult({
-          ...(typeof input.transactionIndex === 'number' ? { transactionIndex: input.transactionIndex } : {}),
-          ...(typeof input.inputIndex === 'number' ? { inputIndex: input.inputIndex } : {}),
-          ...(typeof input.prevoutValue === 'number' || typeof input.prevoutValue === 'string' ? { prevoutValue: input.prevoutValue } : {}),
-          ...(typeof input.prevoutScriptPubKeyAddress === 'string' ? { prevoutScriptPubKeyAddress: input.prevoutScriptPubKeyAddress } : {}),
-          ...(typeof input.transactionIndex === 'number' && transactionHashes.has(input.transactionIndex)
-            ? { txid: transactionHashes.get(input.transactionIndex) }
-            : {}),
-          ...(blockNumber !== undefined ? { block_number: blockNumber } : {}),
-          ...(timestamp !== undefined ? { timestamp, timestamp_human: formatTimestamp(timestamp) } : {}),
-        }),
-      )
-    }).sort((left: any, right: any) =>
-      Number(left.block_number || 0) - Number(right.block_number || 0) ||
-      Number(left.transactionIndex || 0) - Number(right.transactionIndex || 0) ||
-      Number(left.inputIndex || 0) - Number(right.inputIndex || 0),
-    )
     const outputPage = paginateAscendingItems<any>(matchingOutputs, limit_per_type, getBlockNumber, outputCursor)
     const inputPage = paginateAscendingItems<any>(matchingInputs, limit_per_type, getBlockNumber, inputCursor)
     const outputsHaveMore = outputPage.hasMore
@@ -2826,38 +2981,42 @@ async function buildNonEvmWalletSummary(params: {
     const totalInBtc = formatSatsAsBtc(totalInSats)
     const totalOutBtc = formatSatsAsBtc(totalOutSats)
     const netBtc = formatSatsAsBtc(netSats)
-    const bitcoinMovements: WalletFlowMovement[] = rankMovementsWithinAssets([
-      ...outputs.map((item) => ({
-        direction: 'in' as const,
-        asset_type: 'btc' as const,
-        asset: 'BTC',
-        amount: `${String(item.value || '0')} BTC`,
-        amount_decimal: String(item.value || '0'),
-        amount_raw: String(item.value_sats || '0'),
-        amount_decimals: 8,
-        counterparty: typeof item.sender === 'string' ? item.sender : undefined,
-        tx_hash: typeof item.tx_hash === 'string' ? item.tx_hash : undefined,
-        block_number: getBlockNumber(item),
-        timestamp: typeof item.timestamp === 'number' ? item.timestamp : undefined,
-        timestamp_human: typeof item.timestamp_human === 'string' ? item.timestamp_human : undefined,
-        record_type: 'output',
-      })),
-      ...inputs.map((item) => ({
-        direction: 'out' as const,
-        asset_type: 'btc' as const,
-        asset: 'BTC',
-        amount: `${String(item.prevoutValue || '0')} BTC`,
-        amount_decimal: String(item.prevoutValue || '0'),
-        amount_raw: String(item.prevout_value_sats || '0'),
-        amount_decimals: 8,
-        counterparty: typeof item.recipient === 'string' ? item.recipient : undefined,
-        tx_hash: typeof item.tx_hash === 'string' ? item.tx_hash : undefined,
-        block_number: getBlockNumber(item),
-        timestamp: typeof item.timestamp === 'number' ? item.timestamp : undefined,
-        timestamp_human: typeof item.timestamp_human === 'string' ? item.timestamp_human : undefined,
-        record_type: 'input',
-      })),
-    ], 10, 10)
+    const bitcoinMovements: WalletFlowMovement[] = rankMovementsWithinAssets(
+      [
+        ...outputs.map((item) => ({
+          direction: 'in' as const,
+          asset_type: 'btc' as const,
+          asset: 'BTC',
+          amount: `${String(item.value || '0')} BTC`,
+          amount_decimal: String(item.value || '0'),
+          amount_raw: String(item.value_sats || '0'),
+          amount_decimals: 8,
+          counterparty: typeof item.sender === 'string' ? item.sender : undefined,
+          tx_hash: typeof item.tx_hash === 'string' ? item.tx_hash : undefined,
+          block_number: getBlockNumber(item),
+          timestamp: typeof item.timestamp === 'number' ? item.timestamp : undefined,
+          timestamp_human: typeof item.timestamp_human === 'string' ? item.timestamp_human : undefined,
+          record_type: 'output',
+        })),
+        ...inputs.map((item) => ({
+          direction: 'out' as const,
+          asset_type: 'btc' as const,
+          asset: 'BTC',
+          amount: `${String(item.prevoutValue || '0')} BTC`,
+          amount_decimal: String(item.prevoutValue || '0'),
+          amount_raw: String(item.prevout_value_sats || '0'),
+          amount_decimals: 8,
+          counterparty: typeof item.recipient === 'string' ? item.recipient : undefined,
+          tx_hash: typeof item.tx_hash === 'string' ? item.tx_hash : undefined,
+          block_number: getBlockNumber(item),
+          timestamp: typeof item.timestamp === 'number' ? item.timestamp : undefined,
+          timestamp_human: typeof item.timestamp_human === 'string' ? item.timestamp_human : undefined,
+          record_type: 'input',
+        })),
+      ],
+      10,
+      10,
+    )
     const fundFlow = {
       definition: 'Bitcoin asset movement derived from wallet-involved outputs and spent prevouts in the current page.',
       ranking_definition: 'largest_movements ranks exact BTC amounts; every row uses the same BTC asset.',
@@ -2887,53 +3046,62 @@ async function buildNonEvmWalletSummary(params: {
       movement_counterparties: [],
       largest_movements: bitcoinMovements.slice(0, 10),
       next_pivots: bitcoinMovements[0]?.tx_hash
-        ? [{ goal: 'Inspect the largest Bitcoin movement', tool: 'portal_bitcoin_query_transactions', tx_hash: bitcoinMovements[0].tx_hash }]
+        ? [
+            {
+              goal: 'Inspect the largest Bitcoin movement',
+              tool: 'portal_bitcoin_query_transactions',
+              tx_hash: bitcoinMovements[0].tx_hash,
+            },
+          ]
         : [],
     }
 
     return formatResult(
-      applyWalletSummaryResponseFormat({
-        overview: {
-          network: dataset,
-          vm: 'bitcoin',
-          address,
-          from_block: requestedFromBlock,
-          to_block: toBlock,
-          analyzed_from_block: fromBlock,
-          result_state: bitcoinCompleteness.state,
+      applyWalletSummaryResponseFormat(
+        {
+          overview: {
+            network: dataset,
+            vm: 'bitcoin',
+            address,
+            from_block: requestedFromBlock,
+            to_block: toBlock,
+            analyzed_from_block: fromBlock,
+            result_state: bitcoinCompleteness.state,
+          },
+          completeness: bitcoinCompleteness,
+          activity: {
+            count: outputs.length + inputs.length,
+            items: [...outputs, ...inputs].sort((a, b) => Number(a.timestamp || 0) - Number(b.timestamp || 0)),
+            ...(bitcoinHasMore
+              ? {
+                  items_sampled: true,
+                  item_sample_size: outputs.length + inputs.length,
+                }
+              : {}),
+          },
+          fund_flow: fundFlow,
+          assets: {
+            total_btc_received: totalInBtc,
+            total_btc_spent: totalOutBtc,
+            total_btc_received_sats: totalInSats.toString(),
+            total_btc_spent_sats: totalOutSats.toString(),
+          },
+          bitcoin: {
+            outputs_count: outputs.length,
+            inputs_count: inputs.length,
+            recent_outputs: outputs,
+            recent_inputs: inputs,
+          },
+          tables: [
+            buildWalletActivityTable('Wallet activity', outputs.length + inputs.length),
+            buildWalletAssetFlowsTable(fundFlow.asset_flows.length),
+            buildWalletLargestMovementsTable(fundFlow.largest_movements.length),
+            buildBitcoinOutputsTable('Recent outputs', outputs.length),
+            buildBitcoinInputsTable('Recent inputs', inputs.length),
+          ],
         },
-        completeness: bitcoinCompleteness,
-        activity: {
-          count: outputs.length + inputs.length,
-          items: [...outputs, ...inputs].sort((a, b) => Number(a.timestamp || 0) - Number(b.timestamp || 0)),
-          ...(bitcoinHasMore
-            ? {
-                items_sampled: true,
-                item_sample_size: outputs.length + inputs.length,
-              }
-            : {}),
-        },
-        fund_flow: fundFlow,
-        assets: {
-          total_btc_received: totalInBtc,
-          total_btc_spent: totalOutBtc,
-          total_btc_received_sats: totalInSats.toString(),
-          total_btc_spent_sats: totalOutSats.toString(),
-        },
-        bitcoin: {
-          outputs_count: outputs.length,
-          inputs_count: inputs.length,
-          recent_outputs: outputs,
-          recent_inputs: inputs,
-        },
-        tables: [
-          buildWalletActivityTable('Wallet activity', outputs.length + inputs.length),
-          buildWalletAssetFlowsTable(fundFlow.asset_flows.length),
-          buildWalletLargestMovementsTable(fundFlow.largest_movements.length),
-          buildBitcoinOutputsTable('Recent outputs', outputs.length),
-          buildBitcoinInputsTable('Recent inputs', inputs.length),
-        ],
-      }, effectiveResponseFormat),
+        effectiveResponseFormat,
+      ),
       `Wallet flow for ${address} on ${networkLabel}: ${outputs.length} inbound outputs, ${inputs.length} outbound inputs, net ${netBtc} BTC (${netSats.toString()} sats).${nextCursor ? ' This is a preview page; continue with the cursor for older rows.' : ''}`,
       {
         toolName: 'portal_get_wallet_summary',
@@ -2963,7 +3131,11 @@ async function buildNonEvmWalletSummary(params: {
           analyzed_blocks: Math.max(0, toBlock - fromBlock + 1),
           estimated_scan_blocks: Math.max(0, toBlock - fromBlock + 1),
           estimated_runtime_class:
-            toBlock - fromBlock + 1 <= 250 ? 'interactive' : toBlock - fromBlock + 1 <= 2_000 ? 'long_window' : 'expensive',
+            toBlock - fromBlock + 1 <= 250
+              ? 'interactive'
+              : toBlock - fromBlock + 1 <= 2_000
+                ? 'long_window'
+                : 'expensive',
           recommended_window: 'Use timeframe="24h" or a cursor continuation for bounded Bitcoin triage.',
           from_block: fromBlock,
           to_block: toBlock,
@@ -3032,7 +3204,13 @@ async function buildNonEvmWalletSummary(params: {
           ],
           followUpActions: [
             ...(nextCursor
-              ? [{ label: 'Load older wallet activity', intent: 'continue' as const, target: '_pagination.next_cursor' }]
+              ? [
+                  {
+                    label: 'Load older wallet activity',
+                    intent: 'continue' as const,
+                    target: '_pagination.next_cursor',
+                  },
+                ]
               : []),
             { label: 'Show raw activity rows', intent: 'show_raw', target: 'activity.items' },
           ],
@@ -3092,30 +3270,35 @@ async function buildNonEvmWalletSummary(params: {
     },
   )
 
-  const allFills = fillBlocks.flatMap((block: any) =>
-    (block.fills || []).map((fill: any) => {
-      const timestamp = block.timestamp ?? block.header?.timestamp
-      return normalizeHyperliquidFillResult({
-        ...(typeof fill.fillIndex === 'number' || typeof fill.fillIndex === 'string' ? { fillIndex: fill.fillIndex } : {}),
-        ...(typeof fill.user === 'string' ? { user: fill.user } : {}),
-        ...(typeof fill.coin === 'string' ? { coin: fill.coin } : {}),
-        ...(typeof fill.px === 'number' || typeof fill.px === 'string' ? { px: fill.px } : {}),
-        ...(typeof fill.sz === 'number' || typeof fill.sz === 'string' ? { sz: fill.sz } : {}),
-        ...(typeof fill.fee === 'number' || typeof fill.fee === 'string' ? { fee: fill.fee } : {}),
-        ...(typeof fill.dir === 'string' ? { dir: fill.dir } : {}),
-        ...(typeof fill.side === 'string' ? { side: fill.side } : {}),
-        ...(typeof fill.hash === 'string' ? { hash: fill.hash } : {}),
-        ...(typeof fill.time === 'number' || typeof fill.time === 'string' ? { time: fill.time } : {}),
-        block_number: block.number ?? block.header?.number,
-        ...(timestamp !== undefined ? { block_timestamp: timestamp } : {}),
-        ...(timestamp !== undefined ? { timestamp_human: formatTimestamp(timestamp) } : {}),
-      })
-    }),
-  ).sort((left: any, right: any) =>
-    Number(left.block_number || 0) - Number(right.block_number || 0) ||
-    Number(left.fillIndex || 0) - Number(right.fillIndex || 0) ||
-    String(left.primary_id || '').localeCompare(String(right.primary_id || '')),
-  )
+  const allFills = fillBlocks
+    .flatMap((block: any) =>
+      (block.fills || []).map((fill: any) => {
+        const timestamp = block.timestamp ?? block.header?.timestamp
+        return normalizeHyperliquidFillResult({
+          ...(typeof fill.fillIndex === 'number' || typeof fill.fillIndex === 'string'
+            ? { fillIndex: fill.fillIndex }
+            : {}),
+          ...(typeof fill.user === 'string' ? { user: fill.user } : {}),
+          ...(typeof fill.coin === 'string' ? { coin: fill.coin } : {}),
+          ...(typeof fill.px === 'number' || typeof fill.px === 'string' ? { px: fill.px } : {}),
+          ...(typeof fill.sz === 'number' || typeof fill.sz === 'string' ? { sz: fill.sz } : {}),
+          ...(typeof fill.fee === 'number' || typeof fill.fee === 'string' ? { fee: fill.fee } : {}),
+          ...(typeof fill.dir === 'string' ? { dir: fill.dir } : {}),
+          ...(typeof fill.side === 'string' ? { side: fill.side } : {}),
+          ...(typeof fill.hash === 'string' ? { hash: fill.hash } : {}),
+          ...(typeof fill.time === 'number' || typeof fill.time === 'string' ? { time: fill.time } : {}),
+          block_number: block.number ?? block.header?.number,
+          ...(timestamp !== undefined ? { block_timestamp: timestamp } : {}),
+          ...(timestamp !== undefined ? { timestamp_human: formatTimestamp(timestamp) } : {}),
+        })
+      }),
+    )
+    .sort(
+      (left: any, right: any) =>
+        Number(left.block_number || 0) - Number(right.block_number || 0) ||
+        Number(left.fillIndex || 0) - Number(right.fillIndex || 0) ||
+        String(left.primary_id || '').localeCompare(String(right.primary_id || '')),
+    )
   const fillPage = paginateAscendingItems(allFills, limit_per_type, getBlockNumber, fillCursor)
   const fills = fillPage.pageItems
   const hasMore = fillPage.hasMore
@@ -3152,10 +3335,7 @@ async function buildNonEvmWalletSummary(params: {
     const price = parseExactDecimal(fill.px)
     const size = parseExactDecimal(fill.sz)
     if (price && size) {
-      byCoin.set(
-        coin,
-        addExactDecimals(byCoin.get(coin) ?? EXACT_DECIMAL_ZERO, multiplyExactDecimals(price, size)),
-      )
+      byCoin.set(coin, addExactDecimals(byCoin.get(coin) ?? EXACT_DECIMAL_ZERO, multiplyExactDecimals(price, size)))
     }
     const fee = parseExactDecimal(fill.fee)
     if (fee) {
@@ -3184,32 +3364,36 @@ async function buildNonEvmWalletSummary(params: {
         netDirection: 'flat',
       }),
     )
-  const fillMovements = fills
-    .map((fill: any) => {
-      const price = parseExactDecimal(fill.px)
-      const size = parseExactDecimal(fill.sz)
-      const volume = price && size ? multiplyExactDecimals(price, size) : EXACT_DECIMAL_ZERO
-      const volumeExact = formatExactDecimal(volume)
-      return {
-          direction: String(fill.side || '').toLowerCase().includes('sell') ? 'out' as const : 'in' as const,
-          asset_type: 'hyperliquid_coin' as const,
-          asset: String(fill.coin || 'UNKNOWN'),
-          amount: `$${volumeExact}`,
-          amount_decimal: volumeExact,
-          tx_hash: typeof fill.hash === 'string' ? fill.hash : undefined,
-          block_number: getBlockNumber(fill),
-          timestamp: typeof fill.timestamp === 'number' ? fill.timestamp : undefined,
-          timestamp_human: typeof fill.timestamp_human === 'string' ? fill.timestamp_human : undefined,
-          record_type: 'fill',
-      }
-    })
+  const fillMovements = fills.map((fill: any) => {
+    const price = parseExactDecimal(fill.px)
+    const size = parseExactDecimal(fill.sz)
+    const volume = price && size ? multiplyExactDecimals(price, size) : EXACT_DECIMAL_ZERO
+    const volumeExact = formatExactDecimal(volume)
+    return {
+      direction: String(fill.side || '')
+        .toLowerCase()
+        .includes('sell')
+        ? ('out' as const)
+        : ('in' as const),
+      asset_type: 'hyperliquid_coin' as const,
+      asset: String(fill.coin || 'UNKNOWN'),
+      amount: `$${volumeExact}`,
+      amount_decimal: volumeExact,
+      tx_hash: typeof fill.hash === 'string' ? fill.hash : undefined,
+      block_number: getBlockNumber(fill),
+      timestamp: typeof fill.timestamp === 'number' ? fill.timestamp : undefined,
+      timestamp_human: typeof fill.timestamp_human === 'string' ? fill.timestamp_human : undefined,
+      record_type: 'fill',
+    }
+  })
   const largestFills = rankMovementsWithinAssets(fillMovements)
   const totalTradedVolume = Array.from(byCoin.values()).reduce(
     (sum, value) => addExactDecimals(sum, value),
     EXACT_DECIMAL_ZERO,
   )
   const fundFlow = {
-    definition: 'Hyperliquid trading activity only. Amounts are exact price-times-size notional values for fills in the current page.',
+    definition:
+      'Hyperliquid trading activity only. Amounts are exact price-times-size notional values for fills in the current page.',
     ranking_definition: 'largest_movements contains up to three largest USD-notional fills per coin.',
     summary: {
       fill_events: fills.length,
@@ -3222,59 +3406,75 @@ async function buildNonEvmWalletSummary(params: {
     movement_counterparties: [],
     largest_movements: largestFills.slice(0, 10),
     next_pivots: largestFills[0]?.tx_hash
-      ? [{ goal: 'Inspect the largest Hyperliquid fill hash', tool: 'portal_hyperliquid_query_fills', hash: largestFills[0].tx_hash }]
+      ? [
+          {
+            goal: 'Inspect the largest Hyperliquid fill hash',
+            tool: 'portal_hyperliquid_query_fills',
+            hash: largestFills[0].tx_hash,
+          },
+        ]
       : [],
   }
 
   return formatResult(
-    applyWalletSummaryResponseFormat({
-      overview: {
-        network: dataset,
-        vm: 'hyperliquid',
-        address,
-        from_block: requestedFromBlock,
-        to_block: toBlock,
-        analyzed_from_block: fromBlock,
-        result_state: hyperliquidCompleteness.state,
-      },
-      completeness: hyperliquidCompleteness,
-      activity: {
-        count: fills.length,
-        items: fills,
-      },
-      fund_flow: fundFlow,
-      assets: {
-        traded_coin_count: byCoin.size,
-        volume_by_coin: Array.from(byCoin.entries())
-          .sort((left, right) => compareExactDecimals(right[1], left[1]))
-          .map(([coin, volume]) => ({ coin, volume_usd: formatExactDecimal(volume) })),
-      },
-      hyperliquid: {
-        fee_summary: {
-          total_fees: formatExactDecimal(totalFees),
+    applyWalletSummaryResponseFormat(
+      {
+        overview: {
+          network: dataset,
+          vm: 'hyperliquid',
+          address,
+          from_block: requestedFromBlock,
+          to_block: toBlock,
+          analyzed_from_block: fromBlock,
+          result_state: hyperliquidCompleteness.state,
         },
-        side_breakdown: sideBreakdown,
+        completeness: hyperliquidCompleteness,
+        activity: {
+          count: fills.length,
+          items: fills,
+        },
+        fund_flow: fundFlow,
+        assets: {
+          traded_coin_count: byCoin.size,
+          volume_by_coin: Array.from(byCoin.entries())
+            .sort((left, right) => compareExactDecimals(right[1], left[1]))
+            .map(([coin, volume]) => ({ coin, volume_usd: formatExactDecimal(volume) })),
+        },
+        hyperliquid: {
+          fee_summary: {
+            total_fees: formatExactDecimal(totalFees),
+          },
+          side_breakdown: sideBreakdown,
+        },
+        tables: [
+          buildWalletActivityTable('Wallet activity', fills.length),
+          buildWalletAssetFlowsTable(fundFlow.asset_flows.length),
+          buildWalletLargestMovementsTable(fundFlow.largest_movements.length),
+          buildTableDescriptor({
+            id: 'volume_by_coin',
+            dataKey: 'assets.volume_by_coin',
+            rowCount: byCoin.size,
+            title: 'Volume by coin',
+            subtitle: 'Coin-level notional volume for this wallet in the selected window',
+            keyField: 'coin',
+            defaultSort: { key: 'volume_usd', direction: 'desc' },
+            dense: true,
+            columns: [
+              { key: 'coin', label: 'Coin', kind: 'dimension' },
+              {
+                key: 'volume_usd',
+                label: 'Volume',
+                kind: 'metric',
+                format: 'currency_usd',
+                unit: 'USD',
+                align: 'right',
+              },
+            ],
+          }),
+        ],
       },
-      tables: [
-        buildWalletActivityTable('Wallet activity', fills.length),
-        buildWalletAssetFlowsTable(fundFlow.asset_flows.length),
-        buildWalletLargestMovementsTable(fundFlow.largest_movements.length),
-        buildTableDescriptor({
-          id: 'volume_by_coin',
-          dataKey: 'assets.volume_by_coin',
-          rowCount: byCoin.size,
-          title: 'Volume by coin',
-          subtitle: 'Coin-level notional volume for this wallet in the selected window',
-          keyField: 'coin',
-          defaultSort: { key: 'volume_usd', direction: 'desc' },
-          dense: true,
-          columns: [
-            { key: 'coin', label: 'Coin', kind: 'dimension' },
-            { key: 'volume_usd', label: 'Volume', kind: 'metric', format: 'currency_usd', unit: 'USD', align: 'right' },
-          ],
-        }),
-      ],
-    }, effectiveResponseFormat),
+      effectiveResponseFormat,
+    ),
     `Wallet flow for ${address} on ${networkLabel}: ${fills.length} recent fills across ${byCoin.size} coins, $${fundFlow.summary.traded_volume_usd} observed notional volume.${nextCursor ? ' This is a preview page; continue with the cursor for older rows.' : ''}`,
     {
       toolName: 'portal_get_wallet_summary',
@@ -3303,7 +3503,11 @@ async function buildNonEvmWalletSummary(params: {
         analyzed_blocks: Math.max(0, toBlock - fromBlock + 1),
         estimated_scan_blocks: Math.max(0, toBlock - fromBlock + 1),
         estimated_runtime_class:
-          toBlock - fromBlock + 1 <= 2_000 ? 'interactive' : toBlock - fromBlock + 1 <= 500_000 ? 'long_window' : 'expensive',
+          toBlock - fromBlock + 1 <= 2_000
+            ? 'interactive'
+            : toBlock - fromBlock + 1 <= 500_000
+              ? 'long_window'
+              : 'expensive',
         recommended_window: 'Use timeframe="1h" for a smaller Hyperliquid trader triage window.',
         from_block: fromBlock,
         to_block: toBlock,

@@ -225,9 +225,7 @@ export function registerInvestigationPromptsAndResources(server: McpServer) {
       const investigation = findInvestigation(investigationName)
       if (!investigation) throw new Error(`Unknown SQD investigation "${investigationName}".`)
       return {
-        contents: [
-          { uri: uri.href, mimeType: 'application/json', text: JSON.stringify(investigation, null, 2) },
-        ],
+        contents: [{ uri: uri.href, mimeType: 'application/json', text: JSON.stringify(investigation, null, 2) }],
       }
     },
   )

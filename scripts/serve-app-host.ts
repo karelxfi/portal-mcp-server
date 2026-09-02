@@ -17,14 +17,64 @@ import { createPortalServer } from '../src/server.ts'
 const PORT = Number(process.env.PORT || 4174)
 
 const PRESETS: Array<{ label: string; name: string; arguments: Record<string, unknown> }> = [
-  { label: 'Recent activity · Base', name: 'portal_get_recent_activity', arguments: { network: 'base-mainnet', timeframe: '1h', limit: 12 } },
-  { label: 'Wallet · Base', name: 'portal_get_wallet_summary', arguments: { network: 'base-mainnet', address: '0x1d7f97d26ae2c01f9b01fc252b73cf0db3397e95', timeframe: '1h', response_format: 'full' } },
-  { label: 'USDC contract · Base', name: 'portal_evm_get_contract_activity', arguments: { network: 'base-mainnet', contract_address: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913', timeframe: '1h' } },
-  { label: 'USDC transfers · Base', name: 'portal_evm_query_token_transfers', arguments: { network: 'base-mainnet', timeframe: '30m', token_symbols: ['USDC'], limit: 10 } },
-  { label: 'Top contracts · Base', name: 'portal_evm_get_analytics', arguments: { network: 'base-mainnet', timeframe: '1h', limit: 50 } },
-  { label: 'Transactions 6h · Base', name: 'portal_get_time_series', arguments: { network: 'base-mainnet', metric: 'transaction_count', duration: '6h', interval: '15m' } },
-  { label: 'BTC candles · Hyperliquid', name: 'portal_hyperliquid_get_ohlc', arguments: { network: 'hyperliquid-fills', coin: 'BTC', duration: '24h', interval: '1h' } },
-  { label: 'cbETH/WETH · Uniswap v3', name: 'portal_evm_get_ohlc', arguments: { network: 'base-mainnet', source: 'uniswap_v3_swap', pool_address: '0x10648ba41b8565907cfa1496765fa4d95390aa0d', duration: '1h', interval: '5m', price_in: 'auto', token0_symbol: 'cbETH', token1_symbol: 'WETH' } },
+  {
+    label: 'Recent activity · Base',
+    name: 'portal_get_recent_activity',
+    arguments: { network: 'base-mainnet', timeframe: '1h', limit: 12 },
+  },
+  {
+    label: 'Wallet · Base',
+    name: 'portal_get_wallet_summary',
+    arguments: {
+      network: 'base-mainnet',
+      address: '0x1d7f97d26ae2c01f9b01fc252b73cf0db3397e95',
+      timeframe: '1h',
+      response_format: 'full',
+    },
+  },
+  {
+    label: 'USDC contract · Base',
+    name: 'portal_evm_get_contract_activity',
+    arguments: {
+      network: 'base-mainnet',
+      contract_address: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913',
+      timeframe: '1h',
+    },
+  },
+  {
+    label: 'USDC transfers · Base',
+    name: 'portal_evm_query_token_transfers',
+    arguments: { network: 'base-mainnet', timeframe: '30m', token_symbols: ['USDC'], limit: 10 },
+  },
+  {
+    label: 'Top contracts · Base',
+    name: 'portal_evm_get_analytics',
+    arguments: { network: 'base-mainnet', timeframe: '1h', limit: 50 },
+  },
+  {
+    label: 'Transactions 6h · Base',
+    name: 'portal_get_time_series',
+    arguments: { network: 'base-mainnet', metric: 'transaction_count', duration: '6h', interval: '15m' },
+  },
+  {
+    label: 'BTC candles · Hyperliquid',
+    name: 'portal_hyperliquid_get_ohlc',
+    arguments: { network: 'hyperliquid-fills', coin: 'BTC', duration: '24h', interval: '1h' },
+  },
+  {
+    label: 'cbETH/WETH · Uniswap v3',
+    name: 'portal_evm_get_ohlc',
+    arguments: {
+      network: 'base-mainnet',
+      source: 'uniswap_v3_swap',
+      pool_address: '0x10648ba41b8565907cfa1496765fa4d95390aa0d',
+      duration: '1h',
+      interval: '5m',
+      price_in: 'auto',
+      token0_symbol: 'cbETH',
+      token1_symbol: 'WETH',
+    },
+  },
 ]
 
 const hostEntry = `
@@ -240,7 +290,12 @@ async function main() {
       response.end(page(PRESETS))
     } catch (error) {
       response.writeHead(500, { 'content-type': 'application/json' })
-      response.end(JSON.stringify({ isError: true, content: [{ type: 'text', text: error instanceof Error ? error.message : String(error) }] }))
+      response.end(
+        JSON.stringify({
+          isError: true,
+          content: [{ type: 'text', text: error instanceof Error ? error.message : String(error) }],
+        }),
+      )
     }
   })
   http.listen(PORT, '127.0.0.1', () => {

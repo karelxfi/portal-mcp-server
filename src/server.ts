@@ -13,6 +13,7 @@ import { attachEvidenceReceipt } from './helpers/evidence-receipt.js'
 import { runWithPortalRequestSignal } from './helpers/request-context.js'
 import { getToolWorkProfile, toolAdmission } from './helpers/tool-admission.js'
 import { formatToolError } from './helpers/tool-error.js'
+import { registerInvestigationPromptsAndResources } from './investigations.js'
 import { toolCallDuration, toolCallsActive, toolCallsTotal } from './metrics.js'
 import {
   type RuntimeRequestContext,
@@ -23,7 +24,6 @@ import {
 import { registerSchemaResource } from './resources/schema.js'
 import { registerAllTools } from './tools/index.js'
 import { npmVersion } from './version.js'
-import { registerInvestigationPromptsAndResources } from './investigations.js'
 
 // ============================================================================
 // Server Factory

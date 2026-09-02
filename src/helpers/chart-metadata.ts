@@ -200,11 +200,7 @@ export function buildTimeSeriesChart(params: {
     data_key: params.dataKey ?? 'time_series',
     recommended_visual: recommendedVisual,
     alternative_visuals:
-      recommendedVisual === 'line'
-        ? ['bar']
-        : recommendedVisual === 'bar'
-          ? ['line']
-          : ['line', 'bar'],
+      recommendedVisual === 'line' ? ['bar'] : recommendedVisual === 'bar' ? ['line'] : ['line', 'bar'],
     x_field: xField,
     ...(params.groupedValueField
       ? {
@@ -218,7 +214,9 @@ export function buildTimeSeriesChart(params: {
     ...(params.unit ? { unit: params.unit } : {}),
     ...(params.title ? { title: params.title } : {}),
     ...(params.subtitle ? { subtitle: params.subtitle } : {}),
-    ...(params.xAxisLabel ? { x_axis_label: params.xAxisLabel } : { x_axis_label: xField === 'timestamp' ? 'Time' : 'Bucket' }),
+    ...(params.xAxisLabel
+      ? { x_axis_label: params.xAxisLabel }
+      : { x_axis_label: xField === 'timestamp' ? 'Time' : 'Bucket' }),
     ...(params.yAxisLabel ? { y_axis_label: params.yAxisLabel } : {}),
     ...(params.valueFormat ? { value_format: params.valueFormat } : {}),
     ...(params.groupedValueField && recommendedVisual === 'stacked_area' ? { stacking: 'stacked' as const } : {}),
@@ -416,17 +414,41 @@ export function buildCandlestickChart(params: {
       title_label: 'Time',
       title_format: 'timestamp_human',
       fields: [
-        { key: 'open', label: 'Open', format: params.priceFormat ?? 'decimal', ...(params.priceUnit ? { unit: params.priceUnit } : {}), emphasis: 'primary' },
-        { key: 'high', label: 'High', format: params.priceFormat ?? 'decimal', ...(params.priceUnit ? { unit: params.priceUnit } : {}) },
-        { key: 'low', label: 'Low', format: params.priceFormat ?? 'decimal', ...(params.priceUnit ? { unit: params.priceUnit } : {}) },
-        { key: 'close', label: 'Close', format: params.priceFormat ?? 'decimal', ...(params.priceUnit ? { unit: params.priceUnit } : {}), emphasis: 'primary' },
+        {
+          key: 'open',
+          label: 'Open',
+          format: params.priceFormat ?? 'decimal',
+          ...(params.priceUnit ? { unit: params.priceUnit } : {}),
+          emphasis: 'primary',
+        },
+        {
+          key: 'high',
+          label: 'High',
+          format: params.priceFormat ?? 'decimal',
+          ...(params.priceUnit ? { unit: params.priceUnit } : {}),
+        },
+        {
+          key: 'low',
+          label: 'Low',
+          format: params.priceFormat ?? 'decimal',
+          ...(params.priceUnit ? { unit: params.priceUnit } : {}),
+        },
+        {
+          key: 'close',
+          label: 'Close',
+          format: params.priceFormat ?? 'decimal',
+          ...(params.priceUnit ? { unit: params.priceUnit } : {}),
+          emphasis: 'primary',
+        },
         ...(params.volumeField
-          ? [{
-              key: params.volumeField,
-              label: 'Volume',
-              format: params.volumeUnit === 'USD' ? 'currency_usd' : 'decimal',
-              ...(params.volumeUnit ? { unit: params.volumeUnit } : {}),
-            } satisfies TooltipFieldDescriptor]
+          ? [
+              {
+                key: params.volumeField,
+                label: 'Volume',
+                format: params.volumeUnit === 'USD' ? 'currency_usd' : 'decimal',
+                ...(params.volumeUnit ? { unit: params.volumeUnit } : {}),
+              } satisfies TooltipFieldDescriptor,
+            ]
           : []),
       ],
     },
@@ -456,10 +478,38 @@ export function buildOhlcTable(params: {
 }): TableDescriptor {
   const columns: TableColumnDescriptor[] = [
     { key: 'timestamp_human', label: 'Time', kind: 'time', format: 'timestamp_human' },
-    { key: 'open', label: 'Open', kind: 'metric', format: params.priceFormat ?? 'decimal', ...(params.priceUnit ? { unit: params.priceUnit } : {}), align: 'right' },
-    { key: 'high', label: 'High', kind: 'metric', format: params.priceFormat ?? 'decimal', ...(params.priceUnit ? { unit: params.priceUnit } : {}), align: 'right' },
-    { key: 'low', label: 'Low', kind: 'metric', format: params.priceFormat ?? 'decimal', ...(params.priceUnit ? { unit: params.priceUnit } : {}), align: 'right' },
-    { key: 'close', label: 'Close', kind: 'metric', format: params.priceFormat ?? 'decimal', ...(params.priceUnit ? { unit: params.priceUnit } : {}), align: 'right' },
+    {
+      key: 'open',
+      label: 'Open',
+      kind: 'metric',
+      format: params.priceFormat ?? 'decimal',
+      ...(params.priceUnit ? { unit: params.priceUnit } : {}),
+      align: 'right',
+    },
+    {
+      key: 'high',
+      label: 'High',
+      kind: 'metric',
+      format: params.priceFormat ?? 'decimal',
+      ...(params.priceUnit ? { unit: params.priceUnit } : {}),
+      align: 'right',
+    },
+    {
+      key: 'low',
+      label: 'Low',
+      kind: 'metric',
+      format: params.priceFormat ?? 'decimal',
+      ...(params.priceUnit ? { unit: params.priceUnit } : {}),
+      align: 'right',
+    },
+    {
+      key: 'close',
+      label: 'Close',
+      kind: 'metric',
+      format: params.priceFormat ?? 'decimal',
+      ...(params.priceUnit ? { unit: params.priceUnit } : {}),
+      align: 'right',
+    },
   ]
 
   if (params.volumeField) {
