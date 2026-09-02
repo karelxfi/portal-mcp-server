@@ -79,6 +79,44 @@ const CASES: NegativeCase[] = [
     },
   })),
   {
+    name: 'Malformed Tron address on the native tool',
+    tool: 'portal_tron_query_transactions',
+    expectedCode: 'invalid_request',
+    args: { network: 'tron-mainnet', timeframe: '5m', from_addresses: ['TExampleAddress'], limit: 1 },
+    expect: (text) => {
+      assert(/Invalid Tron address/i.test(text), 'Malformed Tron address should be named')
+      assert(/Base58|41/i.test(text), 'Malformed Tron address should explain the accepted forms')
+    },
+  },
+  {
+    name: 'Tron address with a wrong checksum',
+    tool: 'portal_tron_query_logs',
+    expectedCode: 'invalid_request',
+    args: { network: 'tron-mainnet', timeframe: '5m', addresses: ['TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6u'], limit: 1 },
+    expect: (text) => {
+      assert(/checksum/i.test(text), 'A wrong Base58 checksum should be reported as such')
+    },
+  },
+  {
+    name: 'Tron filter that does not fit the transaction kind',
+    tool: 'portal_tron_query_transactions',
+    expectedCode: 'invalid_request',
+    args: { network: 'tron-mainnet', timeframe: '5m', kind: 'transfer', method: 'transfer', limit: 1 },
+    expect: (text) => {
+      assert(/cannot be used together with kind=transfer/i.test(text), 'Kind conflicts should name the kind')
+    },
+  },
+  {
+    name: 'Tron tool on an EVM network',
+    tool: 'portal_tron_query_logs',
+    expectedCode: 'unsupported_operation',
+    args: { network: 'base-mainnet', timeframe: '5m', limit: 1 },
+    expect: (text) => {
+      assert(/does not support network 'base-mainnet'/i.test(text), 'Tron tools should refuse EVM networks')
+      assert(/portal_evm_query_logs/i.test(text), 'Tron tools should point at the EVM tool')
+    },
+  },
+  {
     name: 'Conflicting compare/group args',
     tool: 'portal_get_time_series',
     args: {

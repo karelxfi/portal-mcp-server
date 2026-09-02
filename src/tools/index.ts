@@ -39,6 +39,8 @@ import {
   registerSubstrateQueryCallsTool,
   registerSubstrateQueryEventsTool,
 } from './substrate/index.js'
+// Tron
+import { registerTronQueryLogsTool, registerTronQueryTransactionsTool } from './tron/index.js'
 
 export function registerAllTools(server: McpServer) {
   // Public discovery (4)
@@ -79,6 +81,10 @@ export function registerAllTools(server: McpServer) {
   registerQueryHyperliquidFillsTool(server)
   registerHyperliquidAnalyticsTool(server)
   registerHyperliquidOhlcTool(server)
+
+  // Public Tron (2)
+  registerTronQueryTransactionsTool(server)
+  registerTronQueryLogsTool(server)
 
   // Advanced/debug (3)
   registerQueryBlocksTool(server)

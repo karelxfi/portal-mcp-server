@@ -18,6 +18,9 @@ import {
   buildSolanaTransactionFields,
   buildSubstrateBlockFields,
   buildSubstrateEventFields,
+  buildTronBlockFields,
+  buildTronLogFields,
+  buildTronTransactionFields,
 } from '../src/helpers/fields.ts'
 import { assert, assertChatSurface, callToolWithRetry, closeTestClient, connectTestClient } from './test-helpers.ts'
 
@@ -29,6 +32,11 @@ const ETH_TYPE_ONE_BLOCK = 12_244_145
 const ETH_TYPE_ONE_HASH = '0x851bad0415758075a1eb86776749c829b866d43179c57c3e4a4b9359a0358231'
 const POLKADOT_FROM = 30_736_840
 const POLKADOT_TO = 30_736_842
+const TRON_BLOCK = 84_000_000
+const TRON_USDT_HEX41 = '41a614f803b6fd780986a42c78ec9c7f77e6ded13c'
+const TRON_USDT_BASE58 = 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t'
+const TRON_TRX_SENDER_HEX41 = '41a1a0e4644b0bcb247cd36619e1c526c59eff7cc8'
+const TRON_TRX_SENDER_BASE58 = 'TQhpXvhSbXWgdYg8qmK7kQeL3rsfxxojNc'
 
 type JsonRecord = Record<string, any>
 
@@ -329,6 +337,102 @@ async function main() {
     }
     assertComplete(bitcoinData, 'Bitcoin block 170 transactions', directBitcoin.length)
     console.log(`PASS  Bitcoin block 170: all ${directBitcoin.length} transactions and hashes match Portal`)
+
+    const directTronTransfers = flatten(
+      await fetchNdjson('tron-mainnet', {
+        type: 'tron',
+        fromBlock: TRON_BLOCK,
+        toBlock: TRON_BLOCK,
+        fields: { block: buildTronBlockFields(), transaction: buildTronTransactionFields() },
+        transferTransactions: [{ owner: [TRON_TRX_SENDER_HEX41] }],
+      }),
+      'transactions',
+    )
+    assert(directTronTransfers.length > 0, 'Portal should return native TRX transfers for the sample sender')
+    const tronTransfers = await call('portal_tron_query_transactions', {
+      network: 'tron-mainnet',
+      from_block: TRON_BLOCK,
+      to_block: TRON_BLOCK,
+      kind: 'transfer',
+      from_addresses: [TRON_TRX_SENDER_BASE58],
+      response_format: 'full',
+      limit: 25,
+    })
+    assertEqualSet(
+      tronTransfers.items.map((item: JsonRecord) => item.hash),
+      directTronTransfers.map((item) => item.hash),
+      'Tron native TRX transfers from one sender',
+    )
+    for (const item of tronTransfers.items as JsonRecord[]) {
+      const source = directTronTransfers.find((row) => row.hash === item.hash)
+      const amount = String(source?.parameter?.value?.amount)
+      assert(item.amount_sun === amount, 'Tron amount_sun should match Portal parameter.value.amount')
+      const expectedTrx = `${BigInt(amount) / 1_000_000n}${BigInt(amount) % 1_000_000n === 0n ? '' : `.${(BigInt(amount) % 1_000_000n).toString().padStart(6, '0').replace(/0+$/, '')}`}`
+      assert(item.amount_trx === expectedTrx, `Tron amount_trx should be exact (${item.amount_trx} vs ${expectedTrx})`)
+      assert(item.sender === source?.parameter?.value?.owner_address, 'Tron sender should match owner_address')
+      assert(item.recipient === source?.parameter?.value?.to_address, 'Tron recipient should match to_address')
+      assert(item.sender_base58 === TRON_TRX_SENDER_BASE58, 'Tron sender should round-trip to Base58')
+      assert(item.timestamp * 1000 === directTronTransfers[0].timestamp, 'Tron timestamp alias should be block seconds')
+    }
+    assertComplete(tronTransfers, 'Tron native TRX transfers', directTronTransfers.length)
+    console.log(
+      `PASS  Tron block ${TRON_BLOCK}: all ${directTronTransfers.length} TRX transfers, amounts, and addresses match Portal`,
+    )
+
+    const directTronLogs = flatten(
+      await fetchNdjson('tron-mainnet', {
+        type: 'tron',
+        fromBlock: TRON_BLOCK,
+        toBlock: TRON_BLOCK,
+        fields: {
+          block: buildTronBlockFields(),
+          log: buildTronLogFields(),
+          transaction: { transactionIndex: true, hash: true },
+        },
+        logs: [
+          {
+            address: [TRON_USDT_HEX41.slice(2)],
+            topic0: [ERC20_TRANSFER.slice(2)],
+            topic2: [`000000000000000000000000${'5bdb8b4c4a3d0a93df56b88f8e2158cbe788fb39'}`],
+            transaction: true,
+          },
+        ],
+      }),
+      'logs',
+    )
+    assert(directTronLogs.length > 0, 'Portal should return USDT transfer logs for the sample recipient')
+    const tronLogs = await call('portal_tron_query_logs', {
+      network: 'tron-mainnet',
+      from_block: TRON_BLOCK,
+      to_block: TRON_BLOCK,
+      addresses: [TRON_USDT_BASE58],
+      event: 'transfer',
+      topic2: ['TJLuVi6UhS3UTx5EUXNCoz9VNqP2gnPmyf'],
+      response_format: 'full',
+      decode: true,
+      limit: 25,
+    })
+    assertEqualSet(
+      tronLogs.items.map((item: JsonRecord) => `${item.transactionIndex}:${item.logIndex}`),
+      directTronLogs.map((item) => `${item.transactionIndex}:${item.logIndex}`),
+      'Tron USDT transfer logs to one recipient',
+    )
+    for (const item of tronLogs.items as JsonRecord[]) {
+      const source = directTronLogs.find(
+        (row) => row.transactionIndex === item.transactionIndex && row.logIndex === item.logIndex,
+      )
+      assert(source?.data === item.data, 'Tron log data should match Portal byte for byte')
+      assert(JSON.stringify(source?.topics) === JSON.stringify(item.topics), 'Tron log topics should match Portal')
+      assert(/^[0-9a-f]{64}$/.test(item.tx_hash), 'Tron log should carry the joined transaction hash')
+      assert(
+        item.decoded_log?.decoded?.to === 'TJLuVi6UhS3UTx5EUXNCoz9VNqP2gnPmyf',
+        'decoded recipient should be Base58',
+      )
+    }
+    assertComplete(tronLogs, 'Tron USDT transfer logs', directTronLogs.length)
+    console.log(
+      `PASS  Tron block ${TRON_BLOCK}: all ${directTronLogs.length} USDT transfer logs match Portal with joined hashes`,
+    )
 
     const directEvents = flatten(
       await fetchNdjson('polkadot', {

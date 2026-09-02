@@ -40,7 +40,7 @@ Unit tests sit next to the code as `src/**/*.test.ts` and run with the built-in 
 | `test:catalog-tokens` | offline | `tools/list` token cost against the committed baseline |
 | `test:app-contract` | offline | MCP App resource, CSP, metadata, opt-in gate, formatter contracts |
 | `test:app-ui` | offline | Explorer rendering, interactions, accessibility, hostile text, screenshots |
-| `test:mcpb` | offline | Claude Desktop bundle packages, unpacks, and starts with 28 tools |
+| `test:mcpb` | offline | Claude Desktop bundle packages, unpacks, and starts with 30 tools |
 | `test:evidence-receipts` | offline | canonical arguments, digest, replay mode |
 | `test:investigation-prompts` | offline | prompts and guide resources are discoverable |
 | `test:package` | offline | published tarball contains only allowlisted files; no audit findings |
@@ -65,7 +65,7 @@ Unit tests sit next to the code as `src/**/*.test.ts` and run with the built-in 
 ## Available scripts
 
 ### `npm run package:mcpb` and `npm run test:mcpb`
-`package:mcpb` stages the production build, the exact production dependency closure from the local `node_modules` (no network, source maps and type declarations left out), a manifest built from the registered tools and prompts, and the icon; validates the manifest with the official `mcpb` CLI; and zips `dist/mcpb/sqd.mcpb`, failing above 15 MB. `test:mcpb` (offline gate) packages, unpacks into a temporary directory, starts `dist/index.js` from there over stdio, and checks version, 28 tools, 3 prompts, and that the beta app stays off. The release workflow uploads the bundle on every `v*` tag.
+`package:mcpb` stages the production build, the exact production dependency closure from the local `node_modules` (no network, source maps and type declarations left out), a manifest built from the registered tools and prompts, and the icon; validates the manifest with the official `mcpb` CLI; and zips `dist/mcpb/sqd.mcpb`, failing above 15 MB. `test:mcpb` (offline gate) packages, unpacks into a temporary directory, starts `dist/index.js` from there over stdio, and checks version, 30 tools, 3 prompts, and that the beta app stays off. The release workflow uploads the bundle on every `v*` tag.
 
 ### `npm test`
 Builds the server, starts it over stdio, verifies developer guide resources, and runs a fast smoke test over the core discovery tools.

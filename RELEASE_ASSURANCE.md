@@ -26,8 +26,9 @@ Every workflow pins its actions by commit SHA, drops checkout credentials, and s
 | Two CI gates | `npm run test:offline` (build, lint, typecheck, unit tests, and every suite that needs no Portal access) is the required pull-request check and finishes in minutes; `npm run test:live` runs the Portal-dependent suites and reports without blocking; a `v*` tag runs both in full before the image is published | `.github/workflows/ci.yml`, `docker-build.yml` |
 | Style, types, and units | `biome check` and `tsc --noEmit` pass on every pull request; `node --test` unit tests cover timeframe parsing, exact decimals, signed cursors and same-block offsets, address validation, coverage rules, Bitcoin fee accounting, and a wallet-summary characterisation on a recorded response | `lint`, `typecheck`, `test:unit` |
 | Frugal catalog | `tools/list`, `prompts/list`, `resources/list`, and the instructions are measured per tool and per surface on every pull request against a committed baseline; a 5% growth in the total or in any tool fails the offline gate unless the baseline is refreshed with a note and a changelog entry | `test:catalog-tokens` |
-| Claude Desktop bundle | `sqd.mcpb` packaged from the production build and the exact dependency closure, manifest validated by the official CLI, under 15 MB, started from the unpacked bundle over stdio with 28 tools and 3 prompts, uploaded on every `v*` tag and checked by Directory Health | `test:mcpb`, `github-release.yml`, `check:directories` |
+| Claude Desktop bundle | `sqd.mcpb` packaged from the production build and the exact dependency closure, manifest validated by the official CLI, under 15 MB, started from the unpacked bundle over stdio with 30 tools and 3 prompts, uploaded on every `v*` tag and checked by Directory Health | `test:mcpb`, `github-release.yml`, `check:directories` |
 | Toolsets | Every tool has exactly one toolset from one typed list; `MCP_TOOLSETS`, `MCP_TOOLS`, `?toolsets=`, and `X-MCP-Toolsets` only ever narrow; the default catalog is byte-identical to the previous release | `test:unit` (`toolsets`), `test:protocol`, `test:http-runtime`, `test:catalog-tokens` |
+| Native Tron parity | `portal_tron_query_transactions` and `portal_tron_query_logs` return the same rows, amounts, addresses, and joined hashes as direct Portal `type: "tron"` queries at a pinned block; every accepted address form maps to the Portal form for its position; input problems fail before a Portal request | `test:data-integrity`, `test:negative`, `test:unit` (`tron`) |
 | Model-in-the-loop answers | A model answers the pinned questions in `evals/portal-mcp.json` through the server with the full catalog; at least 90% of answers match the Portal-verified value, the negative cases are declined rather than guessed, and the median tool-call count does not rise more than 20% over the previous runs | `eval:model-loop` (nightly `model-eval.yml`; `--model mock` verifies the question set) |
 | Untrusted third-party text | Token-list names and symbols, pallet, call, event, program, and coin labels never reach prose unescaped; the raw value stays byte-identical in structured fields; the Explorer renders them as text; CSV export neutralises formula prefixes | `test:unit` (`untrusted-text`, `export`), `test:app-ui`, `test:negative` |
 | Per-caller fairness | Admission keys work by bounded client family plus a hashed connection; one caller holds at most its share of the weight budget and of the queue, is rejected with `reason: client_share`, and quiet callers keep flowing; slow calls log bounded phase timings; no metric label or log field carries an address | `test:tool-admission`, `test:http-runtime`, `test:unit` (`http-guard`) |
@@ -54,7 +55,7 @@ Every workflow pins its actions by commit SHA, drops checkout credentials, and s
 | Honest app lifecycle | Canonical identity, host-ready wording, no unobservable render claim, stale-data clearing on failure, ten-row local evidence pages | `test:app-contract`, `test:app-ui` |
 | Current MCP publication contract | Stateless `2026-07-28`, `server/discover`, deterministic cache hints, routing headers, strict standard MCP Apps bridge, exact CSP | `test:protocol`, `test:http-runtime`, `test:plugin`, `test:claude-plugin`, `test:app-contract` |
 | Portable MCP App contract | Versioned resource, standard MIME and UI metadata, ChatGPT aliases, exact CSP | `test:app-contract` |
-| Structured fallback parity | All 28 tools remain callable; 21 app-enabled tools keep structured and text results | `test:app-contract`, `test:client-journeys` |
+| Structured fallback parity | All 30 tools remain callable; 21 app-enabled tools keep structured and text results | `test:app-contract`, `test:client-journeys` |
 | App capability handling | Declared, unsupported, and undeclared states without client-name branching | `test:app-contract` |
 | Explorer state coverage | Pinned Hyperliquid candles, non-USD token-ratio candles, continuous and sparse time series, grouped series, mixed-sign bars, activity, large tables, empty, and error fixtures | `test:app-ui` |
 | SQD Design System fidelity | Embedded Inter and JetBrains Mono, semantic dark surfaces, status fills, table type, official black-background symbol, and no horizon gradient | `test:app-contract`, `test:app-ui` |
@@ -77,9 +78,9 @@ Every workflow pins its actions by commit SHA, drops checkout credentials, and s
 | Golden factual investigations | Wallet rows involve the requested wallet, contract aggregations reconcile, and Hyperliquid candles reproduce raw fills and volume | `test:investigation-journeys` |
 | Guided investigations | Wallet, contract, and Hyperliquid prompts are discoverable with their guide resources in all five declared client families | `test:investigation-prompts`, `test:client-journeys` |
 | In-session evidence workspace | Linked overview, chart, evidence, and investigation sections, range-focused follow-ups, session history, and JSON or CSV export without persistent browser storage | `test:app-contract`, `test:app-ui` |
-| Registry and schema discovery | 28/28 tools | `test:protocol`, `test:tools`, `test:lean` |
-| Representative live success | 28/28 tools | `test:tools` |
-| Shared response contract, size, and latency budgets | 28/28 tools, cold and warm | `test:quality` |
+| Registry and schema discovery | 30/30 tools | `test:protocol`, `test:tools`, `test:lean` |
+| Representative live success | 30/30 tools | `test:tools` |
+| Shared response contract, size, and latency budgets | 30/30 tools, cold and warm | `test:quality` |
 | Tool-selection routing | 70/70 declared prompt cases | `test:routing` |
 | Controlled timeout and cancellation paths | Every shared Portal fetch mode | `test:fetch-reliability` |
 | Malformed and prematurely ended response bodies | JSON and NDJSON paths | `test:fetch-reliability` |
@@ -127,7 +128,7 @@ Only `tool_error` and `request_error` increment `mcp_tool_errors_total`. Partial
 
 ## Metric coverage and privacy
 
-All 28 tools pass through one instrumented registration surface. This guarantees the common per-tool series without copying metric code into individual tools:
+All 30 tools pass through one instrumented registration surface. This guarantees the common per-tool series without copying metric code into individual tools:
 
 | Metric | Purpose | Bounded labels |
 |---|---|---|
@@ -181,7 +182,7 @@ GitHub pull requests run `npm run test:ci`. Main-branch and tag image publicatio
 
 ## History
 
-- **v0.8.5**: Explorer host fit and beta opt-in, two CI gates with Biome, typecheck, and unit tests, catalog token gate, model-in-the-loop eval, Claude Desktop bundle, toolsets, untrusted-text policy, hardened HTTP transport, traceable images and SHA-pinned workflows, changelog-driven releases, directory health signal, exact Bitcoin fees.
+- **v0.8.5**: Explorer host fit and beta opt-in, two CI gates with Biome, typecheck, and unit tests, catalog token gate, model-in-the-loop eval, native Tron query tools, Claude Desktop bundle, toolsets, untrusted-text policy, hardened HTTP transport, traceable images and SHA-pinned workflows, changelog-driven releases, directory health signal, exact Bitcoin fees.
 - **v0.8.4**: factual completeness gates: timestamp units and boundaries, stable identities, wallet membership and paging, Bitcoin units, aggregate and OHLC arithmetic, exact cross-surface values, retained installed-client contract, pre-query validation, wire budgets, honest app lifecycle, and the stateless `2026-07-28` publication contract.
 - **v0.8.3**: portable MCP App contract, Explorer state and design-system coverage, accessibility and interaction gates, data-integrity parity, adaptive tool admission and saturation accounting, soak memory budget, cross-client journeys, evidence receipts, guided investigations, and the in-session evidence workspace.
 - **v0.8.2**: the hardening baseline: registry and schema discovery, live success per tool, response budgets, routing cases, fetch reliability, exact continuation, capacity and retry behaviour, terminal metric reconciliation, negative fixtures, VM regression coverage, distribution packages, performance profiles, sustained load, and the published package boundary.

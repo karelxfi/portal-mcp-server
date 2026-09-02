@@ -308,6 +308,30 @@
         "destructive_justification": "Cannot delete, overwrite, revoke, send transactions, place trades, or perform irreversible actions."
       }
     },
+    "portal_tron_query_transactions": {
+      "annotations": {
+        "readOnlyHint": true,
+        "openWorldHint": true,
+        "destructiveHint": false
+      },
+      "justifications": {
+        "read_only_justification": "Retrieves recorded Tron transactions and does not create, update, or delete external state.",
+        "open_world_justification": "Reads current public blockchain or network catalog data through SQD, so results can include external content.",
+        "destructive_justification": "Cannot delete, overwrite, revoke, send transactions, or perform irreversible actions."
+      }
+    },
+    "portal_tron_query_logs": {
+      "annotations": {
+        "readOnlyHint": true,
+        "openWorldHint": true,
+        "destructiveHint": false
+      },
+      "justifications": {
+        "read_only_justification": "Retrieves recorded Tron contract event logs and does not create, update, or delete external state.",
+        "open_world_justification": "Reads current public blockchain or network catalog data through SQD, so results can include external content.",
+        "destructive_justification": "Cannot delete, overwrite, revoke, send transactions, or perform irreversible actions."
+      }
+    },
     "portal_debug_query_blocks": {
       "annotations": {
         "readOnlyHint": true,

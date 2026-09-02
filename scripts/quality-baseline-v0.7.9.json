@@ -179,6 +179,18 @@
       "max_median_chars": 16000,
       "max_p95_chars": 16000,
       "rationale": "One replica action can contain a variable batch of orders and statuses; keep the complete action below a fixed 16k product budget."
+    },
+    "portal_tron_query_transactions": {
+      "median_chars": 11091,
+      "p95_chars": 11092,
+      "max_median_chars": 12159,
+      "max_p95_chars": 12159
+    },
+    "portal_tron_query_logs": {
+      "median_chars": 12249,
+      "p95_chars": 12249,
+      "max_median_chars": 13474,
+      "max_p95_chars": 13474
     }
   }
 }

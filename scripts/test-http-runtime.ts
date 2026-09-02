@@ -220,7 +220,7 @@ async function assertModernHttpProtocol() {
       `HTTP should negotiate 2026-07-28, got ${client.getNegotiatedProtocolVersion()}`,
     )
     const { tools } = await client.listTools()
-    assert(tools.length === 28, `Modern HTTP tools/list expected 28 tools, got ${tools.length}`)
+    assert(tools.length === 30, `Modern HTTP tools/list expected 30 tools, got ${tools.length}`)
     const result = await client.callTool({ name: 'portal_get_head', arguments: { network: 'base' } })
     assert(!result.isError, 'Modern HTTP portal_get_head should succeed')
 
@@ -539,7 +539,7 @@ async function listToolNames(options: { path?: string; headers?: Record<string, 
 
 async function assertToolsetNarrowing() {
   const all = await listToolNames({})
-  assert(all.length === 28, `the default connection lists 28 tools, got ${all.length}`)
+  assert(all.length === 30, `the default connection lists 30 tools, got ${all.length}`)
   const header = await listToolNames({ headers: { 'X-MCP-Toolsets': 'discovery' } })
   assert(
     header.length === 4 && header.includes('portal_list_networks'),
@@ -551,7 +551,7 @@ async function assertToolsetNarrowing() {
     `?toolsets=evm should list the 7 EVM tools, got ${query.join(',')}`,
   )
   const unknown = await listToolNames({ headers: { 'X-MCP-Toolsets': 'nonsense' } })
-  assert(unknown.length === 28, 'an unknown toolset name on a connection is ignored')
+  assert(unknown.length === 30, 'an unknown toolset name on a connection is ignored')
 
   const port = 20_000 + Math.floor(Math.random() * 10_000)
   const restricted = spawn('node', ['dist/http.js'], {

@@ -193,6 +193,18 @@ const EXTRA_ROUTING_CASES: RoutingEvalCase[] = [
     source: 'extra',
   },
   {
+    prompt: 'who sent trx to this tron wallet in the last hour',
+    expected: 'portal_tron_query_transactions',
+    max_rank: 1,
+    source: 'extra',
+  },
+  {
+    prompt: 'recent usdt trc20 transfer events on tron',
+    expected: 'portal_tron_query_logs',
+    max_rank: 1,
+    source: 'extra',
+  },
+  {
     prompt: 'show me raw polkadot events with the parent extrinsic',
     expected: 'portal_substrate_query_events',
     max_rank: 1,

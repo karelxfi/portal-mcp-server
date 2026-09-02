@@ -5,6 +5,8 @@ import { assert, callToolWithRetry, extractJson, getText, isBoundedUpstreamToolE
 
 const POLKADOT_SAMPLE_FROM_BLOCK = 30_736_840
 const POLKADOT_SAMPLE_TO_BLOCK = 30_736_842
+const TRON_SAMPLE_BLOCK = 84_000_000
+const TRON_USDT_BASE58 = 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t'
 const BASE_RPC_URL = 'https://mainnet.base.org'
 const PORTAL_API_URL = 'https://portal.sqd.dev'
 const BASE_UNISWAP_V4_POOL_MANAGER = '0x498581ff718922c3f8e6a244956af099b2652b2b'
@@ -1593,6 +1595,117 @@ export const TOOL_SPECS: ToolSpec[] = [
           data.investigation?.status !== 'partial_page',
           'A complete OHLC window should not be labeled as a partial page',
         )
+      }
+    },
+  },
+  {
+    name: 'portal_tron_query_transactions',
+    prompt: 'show me native TRX transfers and USDT contract calls on tron',
+    args: () => ({
+      network: 'tron-mainnet',
+      from_block: TRON_SAMPLE_BLOCK,
+      to_block: TRON_SAMPLE_BLOCK,
+      kind: 'transfer',
+      limit: 3,
+    }),
+    validate: (text) => {
+      const data = extractJson(text)
+      const items = expectItems(text, 'portal_tron_query_transactions', 1)
+      expectCompactDefault(data, 'portal_tron_query_transactions')
+      expectWindowMetadata(data, 'portal_tron_query_transactions')
+      expectOrdering(data, 'portal_tron_query_transactions')
+      assert(items[0].chain_kind === 'tron', 'Tron transactions should carry chain_kind tron')
+      assert(items[0].type === 'TransferContract', 'kind=transfer should return TransferContract rows')
+      assert(/^41[0-9a-f]{40}$/.test(items[0].sender), 'Tron sender should be 41-prefixed hex')
+      assert(/^T[1-9A-HJ-NP-Za-km-z]{33}$/.test(items[0].sender_base58), 'Tron sender should also be shown as Base58')
+      assert(typeof items[0].amount_trx === 'string', 'Native transfers should carry an exact TRX amount')
+      assert(items[0].timestamp_human?.startsWith('2026-06-28'), 'Tron timestamps should be decoded from milliseconds')
+    },
+    validateFollowUp: async (_text, client) => {
+      const calls = await callToolWithRetry(client, 'portal_tron_query_transactions', {
+        network: 'tron-mainnet',
+        from_block: TRON_SAMPLE_BLOCK,
+        to_block: TRON_SAMPLE_BLOCK,
+        contract_addresses: [TRON_USDT_BASE58],
+        method: 'transfer',
+        include_logs: true,
+        limit: 2,
+      })
+      if (calls.isError) {
+        assert(
+          isBoundedUpstreamToolError(calls),
+          `Expected only a bounded upstream Tron error, got: ${calls.text.slice(0, 240)}`,
+        )
+        return
+      }
+      const items = getItems(calls.data)
+      assert(items.length > 0, 'USDT transfer calls should exist in the sample block')
+      assert(items[0].type === 'TriggerSmartContract', 'contract filter should return TriggerSmartContract rows')
+      assert(items[0].contract_base58 === TRON_USDT_BASE58, 'contract address should round-trip to Base58')
+      assert(items[0].method_sighash === 'a9059cbb', 'method alias transfer should resolve to a9059cbb')
+      assert(Array.isArray(items[0].logs) && items[0].logs.length > 0, 'include_logs should attach the emitted logs')
+      assert(items[0].logs[0].tx_hash === items[0].tx_hash, 'inline logs should carry the parent hash')
+
+      const summary = await callToolWithRetry(client, 'portal_tron_query_transactions', {
+        network: 'tron-mainnet',
+        from_block: TRON_SAMPLE_BLOCK,
+        to_block: TRON_SAMPLE_BLOCK,
+        kind: 'transfer',
+        response_format: 'summary',
+        limit: 25,
+      })
+      if (!summary.isError) {
+        assert(typeof summary.data.total_trx_transferred === 'string', 'summary should total TRX moved')
+        assert(summary.data.type_breakdown?.TransferContract > 0, 'summary should break down by contract type')
+      }
+    },
+  },
+  {
+    name: 'portal_tron_query_logs',
+    prompt: 'show me USDT transfer events on tron with the transaction hash',
+    args: () => ({
+      network: 'tron-mainnet',
+      from_block: TRON_SAMPLE_BLOCK,
+      to_block: TRON_SAMPLE_BLOCK,
+      addresses: [TRON_USDT_BASE58],
+      event: 'transfer',
+      decode: true,
+      limit: 3,
+    }),
+    validate: (text) => {
+      const data = extractJson(text)
+      const items = expectItems(text, 'portal_tron_query_logs', 1)
+      expectCompactDefault(data, 'portal_tron_query_logs')
+      expectWindowMetadata(data, 'portal_tron_query_logs')
+      expectOrdering(data, 'portal_tron_query_logs')
+      assert(items[0].chain_kind === 'tron', 'Tron logs should carry chain_kind tron')
+      assert(/^[0-9a-f]{64}$/.test(items[0].tx_hash), 'every Tron log should carry the parent transaction hash')
+      assert(items[0].contract_base58 === TRON_USDT_BASE58, 'log address should round-trip to Base58')
+      assert(
+        items[0].topic0 === EVENT_SIGNATURES.TRANSFER_ERC20.slice(2),
+        'event alias transfer should resolve to the bare topic0',
+      )
+      assert(items[0].decoded_log?.event_name === 'Transfer', 'decode should name the Transfer event')
+      assert(
+        /^T[1-9A-HJ-NP-Za-km-z]{33}$/.test(items[0].decoded_log?.decoded?.to ?? ''),
+        'decoded addresses should be Base58',
+      )
+    },
+    validateFollowUp: async (text, client) => {
+      const data = extractJson(text)
+      const cursor = data._pagination?.next_cursor
+      assert(typeof cursor === 'string', 'a 3-row page of USDT transfers should offer a cursor')
+      const next = await callToolWithRetry(client, 'portal_tron_query_logs', { cursor })
+      if (next.isError) {
+        assert(
+          isBoundedUpstreamToolError(next),
+          `Expected only a bounded upstream Tron error, got: ${next.text.slice(0, 240)}`,
+        )
+        return
+      }
+      const firstIds = new Set(getItems(data).map((item: any) => item.primary_id))
+      for (const item of getItems(next.data)) {
+        assert(!firstIds.has(item.primary_id), 'continuation must not repeat rows from the first page')
       }
     },
   },

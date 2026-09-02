@@ -116,7 +116,7 @@ async function main() {
   ]
   const stillExposed = tools.map((tool: any) => tool.name).filter((name: string) => legacyNames.includes(name))
   console.log(`Tools registered: ${toolCount} (${publicToolCount} public, ${advancedToolCount} advanced)`)
-  if (toolCount !== 28) fail(`Expected exactly 28 tools, got ${toolCount}`)
+  if (toolCount !== 30) fail(`Expected exactly 30 tools, got ${toolCount}`)
   if (publicToolCount !== 25) fail(`Expected exactly 25 public tools, got ${publicToolCount}`)
   if (advancedToolCount !== 3) fail(`Expected exactly 3 advanced tools, got ${advancedToolCount}`)
   if (stillExposed.length > 0) fail(`Legacy tool names are still exposed: ${stillExposed.join(', ')}`)
@@ -145,7 +145,7 @@ async function main() {
   const toolGuideText = toolGuideResp.result?.contents?.[0]?.text
   if (!toolGuideText) fail('sqd://tools returned empty content')
   const toolGuide = JSON.parse(toolGuideText)
-  if (toolGuide.counts?.tools !== 28) fail(`sqd://tools expected 28 tool guide entries, got ${toolGuide.counts?.tools}`)
+  if (toolGuide.counts?.tools !== 30) fail(`sqd://tools expected 30 tool guide entries, got ${toolGuide.counts?.tools}`)
   if (!toolGuide.categories?.convenience?.includes('portal_get_time_series')) {
     fail('sqd://tools should group portal_get_time_series under convenience')
   }

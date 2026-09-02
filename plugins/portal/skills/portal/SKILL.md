@@ -337,6 +337,8 @@ Current hosted-server behaviors worth relying on:
 |------|----------|
 | `portal_bitcoin_query_transactions` | Raw Bitcoin txs by block/time range; optionally attach inputs and outputs inline (`include_inputs`/`include_outputs`). Use the Stream API for address or type filtering. |
 | `portal_bitcoin_get_analytics` | Bitcoin network snapshot: block cadence, fees, SegWit/Taproot adoption, unique-address activity |
+| `portal_tron_query_transactions` | Raw Tron transactions: native TRX transfers, TRC-10 transfers, or contract calls by contract and method; Base58 or hex addresses; optional inline logs and internal transactions |
+| `portal_tron_query_logs` | Tron TVM event logs (TRC-20 transfers) by contract and topics with the parent transaction hash on every row and optional decoding |
 
 ### Tron Queries
 

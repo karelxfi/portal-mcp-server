@@ -1,5 +1,6 @@
 import { formatExactDecimal, parseExactDecimal } from './exact-decimal.js'
 import { formatTimestamp, normalizeUnixTimestamp } from './format.js'
+import { decodeTronHexText, describeTronAddress, sunToTrx, tronMillisToSeconds } from './tron.js'
 
 type RecordLike = Record<string, unknown>
 
@@ -17,7 +18,7 @@ function usableHash(value: unknown): string | undefined {
 function withCommonAliases(
   item: RecordLike,
   aliases: {
-    chain_kind: 'evm' | 'solana' | 'bitcoin' | 'substrate' | 'hyperliquid'
+    chain_kind: 'evm' | 'solana' | 'bitcoin' | 'substrate' | 'hyperliquid' | 'tron'
     record_type: string
     primary_id?: string
     tx_hash?: string
@@ -517,4 +518,138 @@ export function normalizeHyperliquidReplicaCmdResult(item: RecordLike): RecordLi
     block_number: blockNumber,
     timestamp,
   })
+}
+
+// ============================================================================
+// Tron
+// ============================================================================
+
+function tronRecordAddress(value: unknown): { hex: string; base58: string } | undefined {
+  return describeTronAddress(value)
+}
+
+function tronTransactionSuccess(item: RecordLike): boolean | undefined {
+  const ret = item.ret
+  if (Array.isArray(ret) && ret.length > 0) {
+    const first = ret[0] as RecordLike
+    if (typeof first?.contractRet === 'string') return first.contractRet === 'SUCCESS'
+  }
+  if (typeof item.result === 'string') return item.result === 'SUCCESS'
+  return undefined
+}
+
+/**
+ * Tron transaction rows carry the contract call in `parameter.value` with
+ * fields that depend on the contract type. Surface the common ones as
+ * top-level aliases (sender, recipient, amount in TRX, called contract, method
+ * selector) while keeping the raw parameter intact.
+ */
+export function normalizeTronTransactionResult(item: RecordLike): RecordLike {
+  const txHash = typeof item.hash === 'string' ? item.hash : undefined
+  const blockNumber = typeof item.block_number === 'number' ? item.block_number : undefined
+  const transactionTimestampMs = typeof item.timestamp === 'number' ? item.timestamp : undefined
+  const timestampMs = typeof item.block_timestamp === 'number' ? item.block_timestamp : transactionTimestampMs
+  const timestamp = tronMillisToSeconds(timestampMs)
+  const parameter = item.parameter as RecordLike | undefined
+  const value = (parameter?.value ?? {}) as RecordLike
+  const owner = tronRecordAddress(value.owner_address)
+  const to = tronRecordAddress(value.to_address)
+  const contract = tronRecordAddress(value.contract_address ?? item.contractAddress)
+  const amountSun =
+    typeof value.amount === 'number' || typeof value.amount === 'string' ? String(value.amount) : undefined
+  const callData = typeof value.data === 'string' ? value.data : undefined
+  const assetName = decodeTronHexText(value.asset_name)
+  const success = tronTransactionSuccess(item)
+  const feeTrx = sunToTrx(item.fee)
+
+  return withCommonAliases(
+    {
+      ...item,
+      ...(timestampMs !== undefined ? { timestamp_ms: timestampMs } : {}),
+      ...(transactionTimestampMs !== undefined ? { transaction_timestamp_ms: transactionTimestampMs } : {}),
+      ...(owner ? { sender_base58: owner.base58 } : {}),
+      ...(to ? { recipient_base58: to.base58 } : {}),
+      ...(contract ? { contract_address: contract.hex, contract_base58: contract.base58 } : {}),
+      ...(amountSun !== undefined ? { amount_sun: amountSun, amount_trx: sunToTrx(amountSun) } : {}),
+      ...(callData ? { method_sighash: callData.slice(0, 8), call_data: callData } : {}),
+      ...(assetName ? { asset_name: assetName } : {}),
+      ...(success !== undefined ? { success } : {}),
+      ...(feeTrx !== undefined ? { fee_trx: feeTrx } : {}),
+    },
+    {
+      chain_kind: 'tron',
+      record_type: 'transaction',
+      primary_id: txHash,
+      tx_hash: txHash,
+      sender: owner?.hex,
+      recipient: to?.hex ?? (contract && callData ? contract.hex : undefined),
+      block_number: blockNumber,
+      timestamp,
+    },
+  )
+}
+
+export function normalizeTronLogResult(item: RecordLike): RecordLike {
+  const txHash = typeof item.tx_hash === 'string' ? item.tx_hash : undefined
+  const logIndex = typeof item.logIndex === 'number' ? item.logIndex : undefined
+  const transactionIndex = typeof item.transactionIndex === 'number' ? item.transactionIndex : undefined
+  const blockNumber = typeof item.block_number === 'number' ? item.block_number : undefined
+  const timestamp = tronMillisToSeconds(item.block_timestamp ?? item.timestamp)
+  const contract = tronRecordAddress(item.address)
+  const topics = Array.isArray(item.topics)
+    ? (item.topics as unknown[]).filter((t): t is string => typeof t === 'string')
+    : []
+  const idBase =
+    txHash ??
+    (blockNumber !== undefined && transactionIndex !== undefined ? `${blockNumber}:tx:${transactionIndex}` : undefined)
+
+  return withCommonAliases(
+    {
+      ...item,
+      ...(contract ? { contract_address: contract.hex, contract_base58: contract.base58 } : {}),
+      ...(topics.length > 0 ? { topic0: topics[0] } : {}),
+    },
+    {
+      chain_kind: 'tron',
+      record_type: 'log',
+      primary_id: idBase && logIndex !== undefined ? `${idBase}:${logIndex}` : idBase,
+      tx_hash: txHash,
+      block_number: blockNumber,
+      timestamp,
+    },
+  )
+}
+
+export function normalizeTronInternalTransactionResult(item: RecordLike): RecordLike {
+  const txHash = typeof item.tx_hash === 'string' ? item.tx_hash : undefined
+  const blockNumber = typeof item.block_number === 'number' ? item.block_number : undefined
+  const caller = tronRecordAddress(item.callerAddress)
+  const to = tronRecordAddress(item.transferToAddress)
+  const note = decodeTronHexText(item.note)
+  const index = typeof item.internalTransactionIndex === 'number' ? item.internalTransactionIndex : undefined
+  const callValues = Array.isArray(item.callValueInfo) ? (item.callValueInfo as RecordLike[]) : []
+  const trxValue = callValues.find(
+    (entry) => entry && (entry.tokenId === null || entry.tokenId === undefined),
+  )?.callValue
+  const amountTrx = sunToTrx(trxValue)
+
+  return withCommonAliases(
+    {
+      ...item,
+      ...(caller ? { caller_base58: caller.base58 } : {}),
+      ...(to ? { recipient_base58: to.base58 } : {}),
+      ...(note ? { note_text: note } : {}),
+      ...(amountTrx !== undefined ? { amount_trx: amountTrx } : {}),
+    },
+    {
+      chain_kind: 'tron',
+      record_type: 'internal_transaction',
+      primary_id: txHash && index !== undefined ? `${txHash}:internal:${index}` : txHash,
+      tx_hash: txHash,
+      sender: caller?.hex,
+      recipient: to?.hex,
+      block_number: blockNumber,
+      timestamp: tronMillisToSeconds(item.block_timestamp ?? item.timestamp),
+    },
+  )
 }

@@ -39,6 +39,8 @@ const PORTAL_TOOL_TITLES: Record<string, string> = {
   portal_hyperliquid_query_fills: 'Find Hyperliquid trades',
   portal_hyperliquid_get_analytics: 'Analyze Hyperliquid trading',
   portal_hyperliquid_get_ohlc: 'Chart Hyperliquid prices',
+  portal_tron_query_transactions: 'Find Tron transactions',
+  portal_tron_query_logs: 'Find Tron contract events',
   portal_debug_query_blocks: 'Inspect raw blocks',
   portal_debug_resolve_time_to_block: 'Match a time to a block',
   portal_debug_hyperliquid_query_replica_commands: 'Inspect Hyperliquid command records',
@@ -60,7 +62,7 @@ const READ_ONLY_TOOL_ANNOTATIONS = {
  * while the documented envelope stays stable across the full catalog.
  *
  * This schema is serialised once per tool in tools/list, so every token here
- * is paid 28 times per session. Keep descriptions short and leave free-form
+ * is paid 30 times per session. Keep descriptions short and leave free-form
  * blocks untyped; `npm run test:catalog-tokens` guards the total.
  */
 const PORTAL_TOOL_OUTPUT_SCHEMA = z

@@ -85,8 +85,8 @@ async function assertToolsetSelection() {
 
   const defaults = await listCatalogWithEnv({})
   assert(
-    defaults.tools.length === 28 && defaults.prompts.length === 3,
-    'the default run still lists all 28 tools and 3 prompts',
+    defaults.tools.length === 30 && defaults.prompts.length === 3,
+    'the default run still lists all 30 tools and 3 prompts',
   )
   assert(!defaults.stderr.includes('[mcp:toolsets]'), 'the default run logs no toolset warning')
 }
@@ -130,7 +130,7 @@ async function main() {
     const toolList = await client.listTools()
     const { tools } = toolList
     assertCacheHint(toolList, 'tools/list')
-    assert(tools.length === 28, `expected 28 tools, got ${tools.length}`)
+    assert(tools.length === 30, `expected 30 tools, got ${tools.length}`)
     assert(
       tools.every((tool) => tool.inputSchema?.type === 'object'),
       'every tool should expose an object input schema',
@@ -179,10 +179,10 @@ async function main() {
     console.log('PASS  server/discover negotiates MCP 2026-07-28 over stdio')
     console.log('PASS  server instructions are self-contained for Codex discovery')
     console.log('PASS  every cacheable complete MCP operation exposes a valid cache hint')
-    console.log('PASS  modern tools/resources discovery exposes the complete 28-tool surface with structured outputs')
+    console.log('PASS  modern tools/resources discovery exposes the complete 30-tool surface with structured outputs')
     console.log('PASS  modern tools/call reaches SQD Portal successfully')
     console.log(
-      'PASS  MCP_TOOLSETS and MCP_TOOLS trim the catalog and its prompts; unknown names warn; the default stays 28 tools',
+      'PASS  MCP_TOOLSETS and MCP_TOOLS trim the catalog and its prompts; unknown names warn; the default stays 30 tools',
     )
     console.log('\nMCP 2026 protocol QA passed')
   } finally {

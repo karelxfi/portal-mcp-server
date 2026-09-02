@@ -1,7 +1,16 @@
 type ToolAudience = 'public' | 'advanced'
-type ToolCategory = 'discovery' | 'convenience' | 'evm' | 'solana' | 'bitcoin' | 'substrate' | 'hyperliquid' | 'debug'
+type ToolCategory =
+  | 'discovery'
+  | 'convenience'
+  | 'evm'
+  | 'solana'
+  | 'bitcoin'
+  | 'substrate'
+  | 'hyperliquid'
+  | 'tron'
+  | 'debug'
 type ToolIntent = 'discover' | 'lookup' | 'query' | 'summary' | 'analytics' | 'chart' | 'debug'
-type ToolVm = 'cross-chain' | 'evm' | 'solana' | 'bitcoin' | 'substrate' | 'hyperliquid'
+type ToolVm = 'cross-chain' | 'evm' | 'solana' | 'bitcoin' | 'substrate' | 'hyperliquid' | 'tron'
 type ToolResultKind = 'list' | 'summary' | 'chart' | 'lookup'
 type TimeInput = 'blocks' | 'timeframe' | 'timestamps'
 
@@ -965,6 +974,119 @@ const TOOL_DEFINITIONS: Record<string, ToolDefinition> = {
     supports: {
       pagination: true,
       time_inputs: ['timeframe'],
+    },
+  },
+  portal_tron_query_transactions: {
+    name: 'portal_tron_query_transactions',
+    audience: 'public',
+    category: 'tron',
+    intent: 'query',
+    vm: ['tron'],
+    result_kind: 'list',
+    normalized_output: true,
+    first_choice_for: [
+      'native TRX transfers, TRC-10 transfers, and smart-contract calls on Tron',
+      'who sent TRX to an address on Tron, or which wallets called a Tron contract',
+    ],
+    summary:
+      'Query raw Tron transactions: native TRX transfers, TRC-10 asset transfers, TriggerSmartContract calls by contract and method, or any contract type, with optional inline logs and internal transactions.',
+    when_to_use: [
+      'You need raw Tron transaction records with sender, recipient, amount in TRX, fee, energy, and success.',
+      'You want native TRX transfers to or from a wallet in a bounded window.',
+      'You want calls to a Tron contract such as USDT filtered by method (transfer, approve) or caller.',
+      'You want TRC-10 asset transfers by asset id.',
+    ],
+    avoid_when: [
+      'You need TRC-20 token events; those are logs, so use portal_tron_query_logs.',
+      'You need an Ethereum-compatible network; use portal_evm_query_transactions.',
+    ],
+    examples: [
+      {
+        label: 'Recent native TRX transfers',
+        input: { network: 'tron-mainnet', timeframe: '5m', kind: 'transfer', limit: 20 },
+      },
+      {
+        label: 'USDT transfer calls in a block window',
+        input: {
+          network: 'tron-mainnet',
+          from_block: 84000000,
+          to_block: 84000010,
+          contract_addresses: ['TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t'],
+          method: 'transfer',
+          limit: 20,
+        },
+      },
+      {
+        label: 'TRX sent from one wallet',
+        input: {
+          network: 'tron-mainnet',
+          timeframe: '1h',
+          kind: 'transfer',
+          from_addresses: ['TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t'],
+          limit: 20,
+        },
+      },
+    ],
+    supports: {
+      pagination: true,
+      response_formats: ['full', 'compact', 'summary'],
+      time_inputs: ['blocks', 'timeframe', 'timestamps'],
+    },
+  },
+  portal_tron_query_logs: {
+    name: 'portal_tron_query_logs',
+    audience: 'public',
+    category: 'tron',
+    intent: 'query',
+    vm: ['tron'],
+    result_kind: 'list',
+    normalized_output: true,
+    first_choice_for: [
+      'TRC-20 token transfer events on Tron such as USDT',
+      'contract event evidence on Tron with the parent transaction hash',
+    ],
+    summary:
+      'Query raw Tron (TVM) event logs by contract address and topics with common event aliases, the parent transaction hash on every row, and optional inline decoding.',
+    when_to_use: [
+      'You need TRC-20 Transfer or Approval events for a token such as USDT on Tron.',
+      'You need event logs from a Tron contract filtered by topic signature or indexed address.',
+      'You want the exact transaction hash behind each Tron event.',
+    ],
+    avoid_when: [
+      'You want native TRX transfers or contract calls; use portal_tron_query_transactions.',
+      'You need an Ethereum-compatible network; use portal_evm_query_logs.',
+    ],
+    examples: [
+      {
+        label: 'Recent USDT transfers on Tron',
+        input: {
+          network: 'tron-mainnet',
+          timeframe: '5m',
+          addresses: ['TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t'],
+          event: 'transfer',
+          decode: true,
+          limit: 20,
+        },
+      },
+      {
+        label: 'USDT transfers received by one wallet',
+        input: {
+          network: 'tron-mainnet',
+          from_block: 84000000,
+          to_block: 84000100,
+          addresses: ['TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t'],
+          event: 'transfer',
+          topic2: ['TJLuVi6UhS3UTx5EUXNCoz9VNqP2gnPmyf'],
+          decode: true,
+          limit: 20,
+        },
+      },
+    ],
+    supports: {
+      pagination: true,
+      response_formats: ['full', 'compact', 'summary'],
+      time_inputs: ['blocks', 'timeframe', 'timestamps'],
+      decode: true,
     },
   },
   portal_debug_query_blocks: {
