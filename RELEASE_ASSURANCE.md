@@ -1,8 +1,19 @@
 # MCP Release Assurance
 
-## v0.8.5 additions
+This document is the current release contract: what a release must prove, which gate proves it, and how a release is cut. The history section at the end records when each gate arrived. A release means every applicable cell passes on the exact release commit; it does not mean upstream data services or networks can never fail.
 
-v0.8.5 keeps every earlier gate and adds Explorer gates for the host-fit beta.
+## How a release happens
+
+1. The release pull request carries the `## [X.Y.Z] - Unreleased` changelog entry and merges to `main` with the full `test:ci` gate green. A `main` push publishes `subsquid/portal-mcp-server:edge` and `:sha-<commit>`, never `latest`.
+2. On `main`, `npm run release:patch` (or `minor`, `major`) dates the changelog entry, bumps `package.json`, `package-lock.json`, `server.json`, and every plugin manifest, commits, and creates the annotated `vX.Y.Z` tag. It refuses to run without the changelog entry or with a dirty tree.
+3. `git push origin HEAD && git push origin vX.Y.Z`. The tag runs three workflows: GitHub Release (release body is the changelog section, then the Gemini archive and the Claude Desktop bundle `sqd.mcpb` are packaged and uploaded), Publish MCP Registry, and Build Docker Image (`latest`, `X.Y.Z`, `X.Y`, `sha-<commit>`, with the commit in the image labels, in `/health`, and in every tool result). Re-running any of them on the same tag is safe.
+4. npm publication is a separate manual step. The hosted deployment should pin a version tag rather than `latest`.
+
+The pull-request check is `npm run test:offline`; `npm run test:live` runs the same tree against Portal and reports without blocking. A `main` push publishes `edge` from a green offline gate; a `v*` tag runs the full matrix first.
+
+Every workflow pins its actions by commit SHA, drops checkout credentials, and starts from an empty permission set; `npm run test:workflow-pins` fails a pull request that regresses this. Node 22 is the one runtime across `.nvmrc`, `.mise.toml`, the Dockerfile, the workflows, and the `engines` field.
+
+## Current contract
 
 | Release property | Required coverage | Automated gate |
 |---|---:|---|
@@ -24,34 +35,6 @@ v0.8.5 keeps every earlier gate and adds Explorer gates for the host-fit beta.
 | Release automation | A `v*` tag creates the GitHub release from the dated `CHANGELOG.md` section, publishes the registry entry and the Docker image, and uploads the Gemini archive; re-running on an existing tag is a no-op | `github-release.yml`, `scripts/extract-changelog-section.mjs` |
 | Directory health signal | The daily job reads the Smithery registry API instead of a client-rendered page, treats pending review queues as non-failing, and fails only on a required target | `check:directories` |
 | Bitcoin fee truth | Fees summed in exact satoshis per block from inputs and outputs; the analytics fee section names its exact block set and marks sample scope in the answer, notices, coverage sections, execution notes, and receipt; `fees_btc` buckets are non-zero and reconcile to the window total; generic series and OHLC candles declare their bucket alignment | `test:bitcoin-fees` |
-
-### Untrusted text policy
-
-Some strings in a result were written by someone other than SQD: token names and symbols from open token lists, Substrate pallet, call, and event names, Solana program labels, Hyperliquid coin names, protocol names and slugs, and any label copied from on-chain data. Every tool result names those fields in `_tool_contract.untrusted_fields` so an agent knows which values are third-party names. The rules, enforced by `src/helpers/untrusted-text.ts`:
-
-- The raw value is preserved exactly in `structuredContent` (`items`, `matches`, `summary`, `_evidence`, and every other data field). Factuality never depends on a cleaned copy.
-- A third-party value enters prose (`answer`, `_summary`, `_notice`, `_notices`, `_ui.headline`, panel titles, `next_steps` labels, error summaries and suggestions) only through `quoteUntrusted` or `untrustedLabel`: control, zero-width, and bidirectional override characters are removed, whitespace is collapsed, the length is capped, and the value is wrapped in double quotes unless it is a plain ticker such as `USDC`. `IGNORE PREVIOUS INSTRUCTIONS` therefore reads as a quoted name.
-- Every prose field is cleaned once more in the shared formatter and in the error envelope, so a tool that forgets the helper still cannot ship invisible characters.
-- The Explorer renders every value as a text node (the only `innerHTML` in the app is the static SQD mark) and its CSV export prefixes cells that start with `=`, `+`, `-`, or `@` with a quote so spreadsheets do not evaluate them.
-- The server never fetches behavioural instructions from external sources; token lists supply names and addresses only.
-
-### How a release happens
-
-1. The release pull request carries the `## [X.Y.Z] - Unreleased` changelog entry and merges to `main` with the full `test:ci` gate green. A `main` push publishes `subsquid/portal-mcp-server:edge` and `:sha-<commit>`, never `latest`.
-2. On `main`, `npm run release:patch` (or `minor`, `major`) dates the changelog entry, bumps `package.json`, `package-lock.json`, `server.json`, and every plugin manifest, commits, and creates the annotated `vX.Y.Z` tag. It refuses to run without the changelog entry or with a dirty tree.
-3. `git push origin HEAD && git push origin vX.Y.Z`. The tag runs three workflows: GitHub Release (release body is the changelog section, then the Gemini archive and the Claude Desktop bundle `sqd.mcpb` are packaged and uploaded), Publish MCP Registry, and Build Docker Image (`latest`, `X.Y.Z`, `X.Y`, `sha-<commit>`, with the commit in the image labels, in `/health`, and in every tool result). Re-running any of them on the same tag is safe.
-4. npm publication is a separate manual step. The hosted deployment should pin a version tag rather than `latest`.
-
-The pull-request check is `npm run test:offline`; `npm run test:live` runs the same tree against Portal and reports without blocking. A `main` push publishes `edge` from a green offline gate; a `v*` tag runs the full matrix first.
-
-Every workflow pins its actions by commit SHA, drops checkout credentials, and starts from an empty permission set; `npm run test:workflow-pins` fails a pull request that regresses this. Node 22 is the one runtime across `.nvmrc`, `.mise.toml`, the Dockerfile, the workflows, and the `engines` field.
-
-## v0.8.4 additions
-
-v0.8.4 keeps every v0.8.2 and v0.8.3 gate and adds factuality checks for the defects confirmed during the v0.8.3 review. The exact release candidate must pass every applicable cell before publication.
-
-| Release property | Required coverage | Automated gate |
-|---|---:|---|
 | Timestamp units and boundaries | EVM, Solana, Bitcoin, Substrate, Hyperliquid, and Tron metadata paths; nearest observed boundary; future-window rejection | `test:timestamps`, `test:substrate`, `test:v084-factuality` |
 | Stable primary identities | 10,000 generated rows per Solana, Bitcoin, Substrate, and Hyperliquid family; nested Substrate evidence; no missing or duplicate IDs | `test:v084-factuality`, `test:data-integrity` |
 | Wallet membership and paging | Exact requested wallet membership, five-row page size, signed continuation, and zero page overlap for supported live families | `test:v084-factuality`, `test:reliability-live` |
@@ -68,13 +51,6 @@ v0.8.4 keeps every v0.8.2 and v0.8.3 gate and adds factuality checks for the def
 | Wire response budget | Compact wire encoding, measured per-tool public limits, no silent evidence truncation, bounded replica scans | `test:quality`, `test:v084-factuality`, `test:fetch-reliability` |
 | Honest app lifecycle | Canonical identity, host-ready wording, no unobservable render claim, stale-data clearing on failure, ten-row local evidence pages | `test:app-contract`, `test:app-ui` |
 | Current MCP publication contract | Stateless `2026-07-28`, `server/discover`, deterministic cache hints, routing headers, strict standard MCP Apps bridge, exact CSP | `test:protocol`, `test:http-runtime`, `test:plugin`, `test:claude-plugin`, `test:app-contract` |
-
-## v0.8.3 additions
-
-v0.8.3 keeps the complete v0.8.2 hardening baseline and adds the following required cells. The release must pass every cell on one exact commit before publication.
-
-| Release property | Required coverage | Automated gate |
-|---|---:|---|
 | Portable MCP App contract | Versioned resource, standard MIME and UI metadata, ChatGPT aliases, exact CSP | `test:app-contract` |
 | Structured fallback parity | All 28 tools remain callable; 21 app-enabled tools keep structured and text results | `test:app-contract`, `test:client-journeys` |
 | App capability handling | Declared, unsupported, and undeclared states without client-name branching | `test:app-contract` |
@@ -99,17 +75,6 @@ v0.8.3 keeps the complete v0.8.2 hardening baseline and adds the following requi
 | Golden factual investigations | Wallet rows involve the requested wallet, contract aggregations reconcile, and Hyperliquid candles reproduce raw fills and volume | `test:investigation-journeys` |
 | Guided investigations | Wallet, contract, and Hyperliquid prompts are discoverable with their guide resources in all five declared client families | `test:investigation-prompts`, `test:client-journeys` |
 | In-session evidence workspace | Linked overview, chart, evidence, and investigation sections, range-focused follow-ups, session history, and JSON or CSV export without persistent browser storage | `test:app-contract`, `test:app-ui` |
-
-Installed-host proof uses an exact temporary release package that swaps only the MCP endpoint for the current built stdio server and records a package digest. Codex, Claude Code, and Grok Build must each complete a real tool call with evidence and a supported install lifecycle before release. Gemini CLI and Cursor runtime calls are required when those clients are authenticated in the test environment; if local client authentication is unavailable, the release record must say package-validated rather than runtime-passed. The local release package proves the protocol resource contract, browser rendering, fallback behavior, and client-declared journeys without changing production. Declared-client tests also replay a pre-upgrade fixture with retained resource and schema values, but they do not replace visible host evidence.
-
-## v0.8.2 baseline
-
-This document defines the bounded meaning of “100% hardened and measured” for v0.8.2. It means every applicable cell in the declared release matrix passes on the exact release commit. It does not mean upstream data services or networks can never fail.
-
-## Declared hardening matrix
-
-| Release property | Required coverage | Automated gate |
-|---|---:|---|
 | Registry and schema discovery | 28/28 tools | `test:protocol`, `test:tools`, `test:lean` |
 | Representative live success | 28/28 tools | `test:tools` |
 | Shared response contract, size, and latency budgets | 28/28 tools, cold and warm | `test:quality` |
@@ -133,6 +98,18 @@ This document defines the bounded meaning of “100% hardened and measured” fo
 | Pull requests and image publication | Full gate passes before merge or Docker publication | GitHub `CI` and `Build Docker Image` workflows |
 
 `npm run test:release` runs the deterministic and live functional matrix. Adding a tool without adding it to the registry-derived manifests fails the release gate. A release candidate also requires clean-commit benchmark comparison, the 60-minute soak, and installed-host evidence. Those artifacts are intentionally separate because they take longer and must identify the exact commit under test.
+
+Installed-host proof uses an exact temporary release package that swaps only the MCP endpoint for the current built stdio server and records a package digest. Codex, Claude Code, and Grok Build must each complete a real tool call with evidence and a supported install lifecycle before release. Gemini CLI and Cursor runtime calls are required when those clients are authenticated in the test environment; if local client authentication is unavailable, the release record must say package-validated rather than runtime-passed. The local release package proves the protocol resource contract, browser rendering, fallback behavior, and client-declared journeys without changing production. Declared-client tests also replay a pre-upgrade fixture with retained resource and schema values, but they do not replace visible host evidence.
+
+## Untrusted text policy
+
+Some strings in a result were written by someone other than SQD: token names and symbols from open token lists, Substrate pallet, call, and event names, Solana program labels, Hyperliquid coin names, protocol names and slugs, and any label copied from on-chain data. Every tool result names those fields in `_tool_contract.untrusted_fields` so an agent knows which values are third-party names. The rules, enforced by `src/helpers/untrusted-text.ts`:
+
+- The raw value is preserved exactly in `structuredContent` (`items`, `matches`, `summary`, `_evidence`, and every other data field). Factuality never depends on a cleaned copy.
+- A third-party value enters prose (`answer`, `_summary`, `_notice`, `_notices`, `_ui.headline`, panel titles, `next_steps` labels, error summaries and suggestions) only through `quoteUntrusted` or `untrustedLabel`: control, zero-width, and bidirectional override characters are removed, whitespace is collapsed, the length is capped, and the value is wrapped in double quotes unless it is a plain ticker such as `USDC`. `IGNORE PREVIOUS INSTRUCTIONS` therefore reads as a quoted name.
+- Every prose field is cleaned once more in the shared formatter and in the error envelope, so a tool that forgets the helper still cannot ship invisible characters.
+- The Explorer renders every value as a text node (the only `innerHTML` in the app is the static SQD mark) and its CSV export prefixes cells that start with `=`, `+`, `-`, or `@` with a quote so spreadsheets do not evaluate them.
+- The server never fetches behavioural instructions from external sources; token lists supply names and addresses only.
 
 ## Terminal outcome contract
 
@@ -165,7 +142,7 @@ All 28 tools pass through one instrumented registration surface. This guarantees
 | `mcp_portal_admission_rejected_total` | Requests rejected before upstream work | bounded reason |
 | `mcp_portal_admission_wait_seconds` | Time spent waiting for upstream capacity | none |
 | `mcp_dataset_queries_total` | Canonical dataset usage | dataset, VM |
-| `mcp_tool_client_calls_total` | Protocol-declared client usage | transport, bounded client family, major version |
+| `mcp_tool_client_calls_total` | Protocol-declared client usage | transport, bounded client family, major version, active toolset (`all`, one toolset name, or `custom`) |
 
 Metric labels never contain wallet addresses, transaction hashes, free-form prompts, authorization values, request bodies, raw error messages, or arbitrary client headers. Structured event export records bounded client identity and failure attribution but never captures forwarded user questions.
 
@@ -197,3 +174,10 @@ The exact release commit must have all of these artifacts:
 5. Installed Claude, Codex, and Grok hosts each complete a real tool call against the exact candidate. Gemini and Cursor complete runtime calls when their local clients are authenticated; otherwise the evidence must record them as package-validated with authentication unavailable. `test:client-journeys` verifies protocol identity and behavior, but does not replace or overstate installed-host proof.
 
 GitHub pull requests run `npm run test:ci`. Main-branch and tag image publication runs the same gate before Docker login, build, or push, so failed code cannot publish a new image.
+
+## History
+
+- **v0.8.5**: Explorer host fit and beta opt-in, two CI gates with Biome, typecheck, and unit tests, catalog token gate, Claude Desktop bundle, toolsets, untrusted-text policy, hardened HTTP transport, traceable images and SHA-pinned workflows, changelog-driven releases, directory health signal, exact Bitcoin fees.
+- **v0.8.4**: factual completeness gates: timestamp units and boundaries, stable identities, wallet membership and paging, Bitcoin units, aggregate and OHLC arithmetic, exact cross-surface values, retained installed-client contract, pre-query validation, wire budgets, honest app lifecycle, and the stateless `2026-07-28` publication contract.
+- **v0.8.3**: portable MCP App contract, Explorer state and design-system coverage, accessibility and interaction gates, data-integrity parity, adaptive tool admission and saturation accounting, soak memory budget, cross-client journeys, evidence receipts, guided investigations, and the in-session evidence workspace.
+- **v0.8.2**: the hardening baseline: registry and schema discovery, live success per tool, response budgets, routing cases, fetch reliability, exact continuation, capacity and retry behaviour, terminal metric reconciliation, negative fixtures, VM regression coverage, distribution packages, performance profiles, sustained load, and the published package boundary.

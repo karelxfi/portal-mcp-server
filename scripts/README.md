@@ -20,6 +20,43 @@ Unit tests sit next to the code as `src/**/*.test.ts` and run with the built-in 
 
 `src/generated/activity-explorer.generated.ts` and `activity-explorer.version.ts` are build outputs and are not tracked in git. `npm run build` always regenerates them. Every entry point that imports the bundle from source runs `scripts/ensure-app-bundle.mjs` first (`predev`, `predev:http`, `pretypecheck`, `pretest:unit`, `pretest:app-contract`, `pretest:app-ui`, `pretest:catalog-tokens`, `preapp:host`), which rebuilds only when the outputs are missing or older than `src/app-ui/**`, the build scripts, or `package.json`. A fresh clone followed by `npm ci && npm run dev` therefore works with no manual step, and `git status` stays clean after a build.
 
+## Every suite and its gate
+
+| Script | Gate | What it checks |
+|---|---|---|
+| `test:unit` | offline | `node --test` unit tests in `src/**/*.test.ts` |
+| `test:lockfiles` | offline | `package.json`, `package-lock.json`, and `pnpm-lock.yaml` agree |
+| `test:workflow-pins` | offline | every GitHub Action pinned by SHA, no checkout credentials, empty default permissions |
+| `test:lean` | offline | one registry, instrumented registrations, no legacy surfaces, bounded source |
+| `test:distribution` | offline | distribution and submission manifests share the release version |
+| `test:fetch-reliability` | offline | Portal fetch timeouts, malformed bodies, cancellation, retry budget |
+| `test:stdio-backpressure` | offline | large results over stdio without stalls |
+| `test:performance-harness` | offline | repeated EVM candle requests reuse one snapshot |
+| `test:tool-admission` | offline | weighted work classes, fair promotion, overload, capacity release |
+| `test:catalog-tokens` | offline | `tools/list` token cost against the committed baseline |
+| `test:app-contract` | offline | MCP App resource, CSP, metadata, opt-in gate, formatter contracts |
+| `test:app-ui` | offline | Explorer rendering, interactions, accessibility, hostile text, screenshots |
+| `test:mcpb` | offline | Claude Desktop bundle packages, unpacks, and starts with 28 tools |
+| `test:evidence-receipts` | offline | canonical arguments, digest, replay mode |
+| `test:investigation-prompts` | offline | prompts and guide resources are discoverable |
+| `test:package` | offline | published tarball contains only allowlisted files; no audit findings |
+| `npm test` | live | stdio smoke test over the discovery tools |
+| `test:protocol` | live | MCP `2026-07-28` negotiation, cache hints, catalog, toolsets |
+| `test:tools` | live | one representative successful call per tool |
+| `test:routing` | live | prompt-to-tool routing cases |
+| `test:substrate`, `test:timestamps` | live | Substrate paths; timestamp units and window boundaries |
+| `test:http-runtime` | live | HTTP surface, allowlist, limits, readiness, metrics, toolsets (Portal is a local fixture; the token-list check reaches the network) |
+| `test:pagination` | live | exact continuation inside dense blocks |
+| `test:reliability-live`, `test:evm-investigator` | live | live regression paths per family |
+| `test:v084-factuality`, `test:v084-acceptance-regressions`, `test:data-integrity` | live | factual completeness against direct Portal evidence |
+| `test:bitcoin-fees` | live | exact satoshi fee accounting parity |
+| `test:app-host` | live | every Explorer action through the official AppBridge |
+| `test:investigation-journeys`, `test:client-journeys`, `test:conversations`, `test:realistic-prompts` | live | guided investigations and declared-client journeys |
+| `test:plugin`, `test:claude-plugin`, `test:grok-plugin`, `test:gemini-extension`, `test:cursor-plugin` | live | distribution packages |
+| `test:negative` | live | invalid and unsupported requests, injection prompts |
+| `test:quality` | live | per-tool response contract, size, and latency budgets |
+| `test:live-cooldown` | live | a pause between heavy live suites |
+
 ## Available scripts
 
 ### `npm run package:mcpb` and `npm run test:mcpb`

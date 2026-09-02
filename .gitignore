@@ -63,16 +63,14 @@ examples/
 cache/
 data/
 
-# Markdown files (except selected public docs)
-*.md
-!README.md
-!CHANGELOG.md
-!THIRD_PARTY_NOTICES.md
-!RELEASE_ASSURANCE.md
-!LICENSE.md
-!CONTRIBUTING.md
-!plugins/*/skills/**/*.md
-!plugins/*/skills/**/*.log
+# Local planning and working notes (public Markdown is tracked)
+CLAUDE.md
+plans/
+docs/
+V*_SCOPE.md
+test-report-*.md
+NOTES*.md
+TODO*.md
 
 # Environment files with secrets
 .env
@@ -86,9 +84,8 @@ data/
 !.agents/plugins/
 !.agents/plugins/marketplace.json
 
-# Package manager lock files (keep package-lock.json, ignore others)
+# Package manager lock files (package-lock.json and pnpm-lock.yaml are tracked and kept in sync)
 yarn.lock
-pnpm-lock.yaml
 
 # Coverage reports
 coverage/

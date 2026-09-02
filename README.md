@@ -2,9 +2,9 @@
 
 [![SQD Portal MCP server](https://glama.ai/mcp/servers/subsquid-labs/portal-mcp-server/badges/score.svg)](https://glama.ai/mcp/servers/subsquid-labs/portal-mcp-server)
 
-Thin MCP wrapper around the [SQD Portal API](https://portal.sqd.dev) for blockchain data queries.
+An MCP server that answers blockchain questions from [SQD Portal](https://portal.sqd.dev) data: transactions, logs, token transfers, wallets, analytics, time series, and candles across EVM, Solana, Bitcoin, Substrate, and Hyperliquid networks, with an optional in-host Explorer.
 
-This server does not index chains itself. It validates user input, maps it onto Portal requests, and returns MCP-friendly responses.
+The server does not index chains itself. It validates input, plans bounded Portal queries, and returns results with coverage, freshness, pagination, and evidence metadata so an assistant can say exactly what it saw. See `CONTRIBUTING.md` to work on it and `SECURITY.md` to report a vulnerability.
 
 The current v0.8.5 release supports the stateless MCP `2026-07-28` protocol over HTTP and stdio, while retaining the SDK-managed legacy negotiation path for clients still rolling out the revision. No SQD account, API key, or client credential is required.
 

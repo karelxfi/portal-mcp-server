@@ -83,7 +83,7 @@ OpenAI uses one Plugins Directory for both ChatGPT and Codex. Submit SQD as a pl
 
 Import the repository-root `chatgpt-app-submission.json` file into the submission form. It covers all 28 public tools, their safety labels and justifications, five positive review tests, and three negative review tests.
 
-The 28 tools do not currently declare MCP `outputSchema` values. OpenAI does not require them for submission, and the submission JSON must not invent them. Add real schemas in a future release only together with matching structured tool results.
+All 28 tools declare one shared MCP `outputSchema` (the result envelope: `answer`, `items` or `value`, `error`, `_coverage`, `_pagination`, `_execution`, `_server`, and the other metadata blocks) and return matching `structuredContent`. The submission JSON does not repeat the schema; the server publishes it in `tools/list`.
 
 OpenAI submission values:
 
