@@ -223,7 +223,9 @@ button { color: inherit; }
 
 /* ── Key metrics · one row of instrument readouts ───────────────────────── */
 .sqd-metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0 16px; }
-.sqd-metric { min-width: 0; padding: 8px 0 9px; border-bottom: 1px solid var(--edge); }
+/* One vertical hairline separates readouts; no rule under each card, the
+   hero hairline above and the panel head below already frame the row. */
+.sqd-metric { min-width: 0; padding: 8px 0 4px; }
 .sqd-metric + .sqd-metric { border-left: 1px solid var(--edge); padding-left: 16px; }
 .sqd-metric-label { color: var(--fg-muted); font: 500 10.5px/15px var(--sqd-font-mono); text-transform: uppercase; letter-spacing: 0.06em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .sqd-metric-value { margin-top: 3px; color: var(--fg-value); font: 500 17px/24px var(--sqd-font-mono); letter-spacing: -0.01em; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
