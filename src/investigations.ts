@@ -2,6 +2,7 @@ import { type McpServer, ResourceTemplate, completable } from '@modelcontextprot
 import { z } from 'zod'
 
 import { detectChainType } from './helpers/chain.js'
+import { isToolActive } from './toolsets.js'
 import { npmVersion } from './version.js'
 
 const WALLET_NETWORKS = [
@@ -196,6 +197,12 @@ function promptText(params: {
   ].join('\n')
 }
 
+/* A prompt that names a tool outside the active toolset selection is not
+   offered, so prompts/list never points at a missing tool. */
+function promptToolsActive(tools: string[]): boolean {
+  return tools.every((tool) => isToolActive(tool))
+}
+
 export function registerInvestigationPromptsAndResources(server: McpServer) {
   server.registerResource(
     'investigation-guide',
@@ -226,99 +233,124 @@ export function registerInvestigationPromptsAndResources(server: McpServer) {
     },
   )
 
-  server.registerPrompt(
-    'investigate-wallet',
-    {
-      title: 'Investigate a wallet incident',
-      description: 'Trace wallet activity, token flows, counterparties, and exact blockchain evidence.',
-      argsSchema: z.object({
-        network: walletNetworkArgument,
-        address: z.string().min(1).describe('Wallet address to investigate'),
-        timeframe: timeframeArgument,
-        question: z.string().optional().describe('Optional incident question or concern'),
-      }),
-    },
-    ({ network, address, timeframe, question }) => ({
-      description: `Investigate ${address} on ${network}`,
-      messages: [
-        {
-          role: 'user' as const,
-          content: {
-            type: 'text' as const,
-            text: promptText({
-              investigation: INVESTIGATIONS[0],
-              network,
-              subject: address,
-              timeframe,
-              question,
-            }),
+  if (promptToolsActive(['portal_list_networks', 'portal_get_network_info', 'portal_get_wallet_summary'])) {
+    server.registerPrompt(
+      'investigate-wallet',
+      {
+        title: 'Investigate a wallet incident',
+        description: 'Trace wallet activity, token flows, counterparties, and exact blockchain evidence.',
+        argsSchema: z.object({
+          network: walletNetworkArgument,
+          address: z.string().min(1).describe('Wallet address to investigate'),
+          timeframe: timeframeArgument,
+          question: z.string().optional().describe('Optional incident question or concern'),
+        }),
+      },
+      ({ network, address, timeframe, question }) => ({
+        description: `Investigate ${address} on ${network}`,
+        messages: [
+          {
+            role: 'user' as const,
+            content: {
+              type: 'text' as const,
+              text: promptText({
+                investigation: INVESTIGATIONS[0],
+                network,
+                subject: address,
+                timeframe,
+                question,
+              }),
+            },
           },
-        },
-      ],
-    }),
-  )
+        ],
+      }),
+    )
+  }
 
-  server.registerPrompt(
-    'investigate-contract',
-    {
-      title: 'Investigate a smart contract',
-      description: 'Explain deployment, calls, events, token flows, actors, and changes over time.',
-      argsSchema: z.object({
-        network: contractNetworkArgument,
-        contract: z.string().min(1).describe('Contract address, token, or protocol name'),
-        timeframe: timeframeArgument,
-        question: z.string().optional().describe('Optional behavior or event to explain'),
-      }),
-    },
-    ({ network, contract, timeframe, question }) => ({
-      description: `Investigate ${contract} on ${network}`,
-      messages: [
-        {
-          role: 'user' as const,
-          content: {
-            type: 'text' as const,
-            text: promptText({
-              investigation: INVESTIGATIONS[1],
-              network,
-              subject: contract,
-              timeframe,
-              question,
-            }),
+  if (
+    promptToolsActive([
+      'portal_resolve_entity',
+      'portal_evm_get_contract_deployment',
+      'portal_evm_get_contract_activity',
+      'portal_get_time_series',
+      'portal_evm_query_transactions',
+      'portal_evm_query_logs',
+      'portal_evm_query_token_transfers',
+    ])
+  ) {
+    server.registerPrompt(
+      'investigate-contract',
+      {
+        title: 'Investigate a smart contract',
+        description: 'Explain deployment, calls, events, token flows, actors, and changes over time.',
+        argsSchema: z.object({
+          network: contractNetworkArgument,
+          contract: z.string().min(1).describe('Contract address, token, or protocol name'),
+          timeframe: timeframeArgument,
+          question: z.string().optional().describe('Optional behavior or event to explain'),
+        }),
+      },
+      ({ network, contract, timeframe, question }) => ({
+        description: `Investigate ${contract} on ${network}`,
+        messages: [
+          {
+            role: 'user' as const,
+            content: {
+              type: 'text' as const,
+              text: promptText({
+                investigation: INVESTIGATIONS[1],
+                network,
+                subject: contract,
+                timeframe,
+                question,
+              }),
+            },
           },
-        },
-      ],
-    }),
-  )
+        ],
+      }),
+    )
+  }
 
-  server.registerPrompt(
-    'investigate-market',
-    {
-      title: 'Investigate blockchain market activity',
-      description: 'Analyze Hyperliquid or onchain price, volume, fills, swaps, and exact market evidence.',
-      argsSchema: z.object({
-        network: marketNetworkArgument,
-        market: z.string().min(1).describe('Coin, token, pool, or market to investigate'),
-        timeframe: timeframeArgument,
-        question: z.string().optional().describe('Optional price or trading question'),
-      }),
-    },
-    ({ network, market, timeframe, question }) => ({
-      description: `Investigate ${market} on ${network}`,
-      messages: [
-        {
-          role: 'user' as const,
-          content: {
-            type: 'text' as const,
-            text: promptText({
-              investigation: INVESTIGATIONS[2],
-              network,
-              subject: market,
-              timeframe,
-              question,
-            }),
+  if (
+    promptToolsActive([
+      'portal_resolve_entity',
+      'portal_evm_get_ohlc',
+      'portal_hyperliquid_get_ohlc',
+      'portal_get_time_series',
+      'portal_hyperliquid_get_analytics',
+      'portal_hyperliquid_query_fills',
+    ])
+  ) {
+    server.registerPrompt(
+      'investigate-market',
+      {
+        title: 'Investigate blockchain market activity',
+        description: 'Analyze Hyperliquid or onchain price, volume, fills, swaps, and exact market evidence.',
+        argsSchema: z.object({
+          network: marketNetworkArgument,
+          market: z.string().min(1).describe('Coin, token, pool, or market to investigate'),
+          timeframe: timeframeArgument,
+          question: z.string().optional().describe('Optional price or trading question'),
+        }),
+      },
+      ({ network, market, timeframe, question }) => ({
+        description: `Investigate ${market} on ${network}`,
+        messages: [
+          {
+            role: 'user' as const,
+            content: {
+              type: 'text' as const,
+              text: promptText({
+                investigation: INVESTIGATIONS[2],
+                network,
+                subject: market,
+                timeframe,
+                question,
+              }),
+            },
           },
-        },
-      ],
-    }),
-  )
+        ],
+      }),
+    )
+  }
 }

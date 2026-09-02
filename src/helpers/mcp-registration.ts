@@ -8,6 +8,7 @@ import type {
 import { type ZodRawShape, z } from 'zod'
 
 import { getActivityExplorerToolMeta } from '../apps/activity-explorer.js'
+import { isToolActive } from '../toolsets.js'
 import { runWithPortalRequestDeadline } from './request-context.js'
 
 type PortalToolResult = CallToolResult | InputRequiredResult
@@ -42,6 +43,9 @@ const PORTAL_TOOL_TITLES: Record<string, string> = {
   portal_debug_resolve_time_to_block: 'Match a time to a block',
   portal_debug_hyperliquid_query_replica_commands: 'Inspect Hyperliquid command records',
 }
+
+/** Every public tool name, the one list toolset coverage is checked against. */
+export const PORTAL_TOOL_NAMES: readonly string[] = Object.keys(PORTAL_TOOL_TITLES)
 
 const READ_ONLY_TOOL_ANNOTATIONS = {
   readOnlyHint: true,
@@ -127,7 +131,10 @@ export function registerPortalTool<InputShape extends ZodRawShape>(
     context: ServerContext,
   ) => PortalToolResult | Promise<PortalToolResult>,
   options?: { deadlineMs?: number },
-): RegisteredTool {
+): RegisteredTool | undefined {
+  // A tool outside the active toolset selection is never registered, so
+  // discovery still comes from this one registry.
+  if (!isToolActive(name)) return undefined
   const deadlineMs = options?.deadlineMs
   const activityExplorerMeta = getActivityExplorerToolMeta(name)
   const boundedHandler =

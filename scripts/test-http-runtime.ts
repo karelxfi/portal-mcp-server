@@ -398,12 +398,13 @@ function rawRequest(options: {
   headers?: Record<string, string>
   body?: string
   chunked?: boolean
+  port?: number
 }): Promise<RawResponse> {
   return new Promise((resolve, reject) => {
     const req = httpRequest(
       {
         host: '127.0.0.1',
-        port: PORT,
+        port: options.port ?? PORT,
         method: options.method ?? 'GET',
         path: options.path,
         headers: options.headers,
@@ -513,6 +514,63 @@ async function assertRequestLimits() {
   )
 }
 
+async function listToolNames(options: { path?: string; headers?: Record<string, string>; port?: number }) {
+  const response = await rawRequest({
+    method: 'POST',
+    path: options.path ?? '/mcp',
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'application/json, text/event-stream',
+      ...(options.headers ?? {}),
+    },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 905, method: 'tools/list', params: {} }),
+    port: options.port,
+  })
+  assert(response.status === 200, `tools/list should be 200, got ${response.status}`)
+  const parsed = response.body.trimStart().startsWith('{') ? JSON.parse(response.body) : parseSseJson(response.body)
+  return (parsed.result.tools as { name: string }[]).map((tool) => tool.name).sort()
+}
+
+async function assertToolsetNarrowing() {
+  const all = await listToolNames({})
+  assert(all.length === 28, `the default connection lists 28 tools, got ${all.length}`)
+  const header = await listToolNames({ headers: { 'X-MCP-Toolsets': 'discovery' } })
+  assert(
+    header.length === 4 && header.includes('portal_list_networks'),
+    `X-MCP-Toolsets: discovery should list 4 tools, got ${header.length}`,
+  )
+  const query = await listToolNames({ path: '/mcp?toolsets=evm' })
+  assert(
+    query.length === 7 && query.every((name) => name.startsWith('portal_evm_')),
+    `?toolsets=evm should list the 7 EVM tools, got ${query.join(',')}`,
+  )
+  const unknown = await listToolNames({ headers: { 'X-MCP-Toolsets': 'nonsense' } })
+  assert(unknown.length === 28, 'an unknown toolset name on a connection is ignored')
+
+  const port = 20_000 + Math.floor(Math.random() * 10_000)
+  const restricted = spawn('node', ['dist/http.js'], {
+    cwd: process.cwd(),
+    env: { ...process.env, PORT: String(port), PORTAL_URL: portalFixtureUrl, MCP_TOOLSETS: 'discovery' },
+    stdio: ['pipe', 'pipe', 'pipe'],
+  })
+  try {
+    const deadline = Date.now() + 10_000
+    let ready = false
+    while (Date.now() < deadline && !ready) {
+      try {
+        ready = (await fetch(`http://127.0.0.1:${port}/health`)).ok
+      } catch {
+        await sleep(100)
+      }
+    }
+    assert(ready, 'the restricted server should start')
+    const widened = await listToolNames({ headers: { 'X-MCP-Toolsets': 'discovery,evm' }, port })
+    assert(widened.length === 4, `a connection must not widen the deployment set, got ${widened.length} tools`)
+  } finally {
+    restricted.kill()
+  }
+}
+
 async function assertReadinessBeforeCatalog() {
   const notReady = await fetch(`${BASE_URL}/ready`)
   assert(notReady.status === 503, `/ready before the catalog loads should be 503, got ${notReady.status}`)
@@ -548,7 +606,12 @@ async function assertPublicBindWarning() {
   const warned = await new Promise<string>((resolve, reject) => {
     const probe = spawn('node', ['dist/http.js'], {
       cwd: process.cwd(),
-      env: { ...process.env, PORT: '3198', PORTAL_URL: portalFixtureUrl, MCP_BIND: '0.0.0.0' },
+      env: {
+        ...process.env,
+        PORT: String(20_000 + Math.floor(Math.random() * 10_000)),
+        PORTAL_URL: portalFixtureUrl,
+        MCP_BIND: '0.0.0.0',
+      },
       stdio: ['pipe', 'pipe', 'pipe'],
     })
     let stderr = ''
@@ -606,6 +669,7 @@ async function main() {
   await assertReadinessAfterCatalog()
   await assertRequestGuard()
   await assertRequestLimits()
+  await assertToolsetNarrowing()
   await assertPublicBindWarning()
   await assertPublicHttpSurface()
   await assertModernHttpProtocol()
@@ -699,6 +763,7 @@ async function main() {
   console.log('PASS  foreign Host and Origin are 403 on every route; loopback and missing Origin pass')
   console.log('PASS  oversized bodies are 413, chunked bodies 411, slow-header clients are disconnected')
   console.log('PASS  binding 0.0.0.0 without an allowlist logs a startup error; loopback needs no configuration')
+  console.log('PASS  ?toolsets= and X-MCP-Toolsets narrow a connection and never widen the deployment set')
   console.log('\nHTTP runtime QA passed')
 }
 

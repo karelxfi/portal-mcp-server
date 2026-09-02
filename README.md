@@ -74,6 +74,8 @@ Advanced/debug:
 - `portal_debug_resolve_time_to_block`
 - `portal_debug_hyperliquid_query_replica_commands`
 
+These groups are also the toolsets (`discovery`, `convenience`, `evm`, `solana`, `bitcoin`, `substrate`, `hyperliquid`, `debug`). A deployment can trim the catalog with `MCP_TOOLSETS` or `MCP_TOOLS`, and an HTTP connection can narrow it further with `?toolsets=` or an `X-MCP-Toolsets` header; see the HTTP deployment notes. With nothing configured the full 28-tool surface is served, and the hosted endpoint keeps that default.
+
 ## Supported data
 
 - EVM networks indexed by Portal, including Base, Ethereum, Optimism, Arbitrum, Monad, Hyperliquid EVM, and many others
@@ -235,6 +237,9 @@ HTTP mode exposes MCP at `/` and `/mcp`, liveness at `/health`, and readiness at
 Useful environment variables:
 
 - `MCP_CURSOR_SECRET` to sign pagination cursors
+- `MCP_TOOLSETS` comma-separated toolsets to serve (`discovery`, `convenience`, `evm`, `solana`, `bitcoin`, `substrate`, `hyperliquid`, `debug`; `all` or `default` for everything). Unknown names are ignored with a startup error. Wins over `MCP_TOOLS`. Default: all eight, the same 28 tools as before.
+- `MCP_TOOLS` comma-separated exact tool names to serve when `MCP_TOOLSETS` is unset.
+- Per connection, `?toolsets=evm` on the endpoint URL or an `X-MCP-Toolsets: evm` header narrows the deployment's set for that connection only; it can never add a toolset. Prompts that reference a tool outside the active set are not offered. The active set is a bounded label (`all`, one toolset name, or `custom`) on `mcp_tool_client_calls_total`.
 - `MCP_BIND` interface to listen on, default `127.0.0.1` (`0.0.0.0` in the Docker image)
 - `MCP_ALLOWED_HOSTS` comma-separated hostnames accepted in `Host` (port ignored) on top of loopback; `*` disables the check. Required for a non-loopback bind.
 - `MCP_ALLOWED_ORIGINS` comma-separated hostnames accepted in `Origin` on top of loopback; `*` disables the check. Required for a non-loopback bind.

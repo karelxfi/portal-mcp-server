@@ -29,6 +29,10 @@ export type RuntimeRequestContext = {
   protocolVersion?: string
   /** Whether this connection opted into the beta SQD Explorer app surface. */
   appEnabled?: boolean
+  /** Toolsets this connection asked for (`?toolsets=` or `X-MCP-Toolsets`); only ever narrows the deployment. */
+  toolsets?: string[]
+  /** Bounded label of the active selection: `all`, one toolset name, or `custom`. */
+  toolsetLabel?: string
 }
 
 export type ToolEventStatus = 'success' | 'partial' | 'tool_error' | 'request_error' | 'cancelled'
@@ -541,6 +545,7 @@ export function recordToolOutcome(params: {
     transport: runtime.transport,
     client_family: client.family,
     client_major: client.major,
+    toolset: runtime.toolsetLabel ?? 'all',
   })
 
   if (toolContract?.intent) {

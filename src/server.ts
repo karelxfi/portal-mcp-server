@@ -23,6 +23,14 @@ import {
 } from './observability.js'
 import { registerSchemaResource } from './resources/schema.js'
 import { registerAllTools } from './tools/index.js'
+import {
+  type ToolSelection,
+  getActiveToolSelection,
+  isToolEnabled,
+  narrowToolSelection,
+  resolveDeploymentToolSelection,
+  runWithToolSelection,
+} from './toolsets.js'
 import { npmVersion } from './version.js'
 
 // ============================================================================
@@ -39,17 +47,36 @@ const PORTAL_APP_INSTRUCTIONS =
 const PORTAL_NETWORK_INSTRUCTIONS =
   ' Chain-specific MCP query tools cover Ethereum-compatible networks, Solana, Bitcoin, Polkadot and other Substrate networks, and Hyperliquid. Tron is available for network discovery, head, freshness, and timestamp-to-block lookups; use the bundled SQD Portal skill for native Tron Stream API queries. Prefer timeframe for recent windows and from_block/to_block for exact evidence. No authentication is required.'
 
-export function getPortalServerInstructions(): string {
+const PORTAL_TRIMMED_BASE_INSTRUCTIONS =
+  'SQD provides read-only blockchain data from SQD Portal. This connection exposes a subset of the SQD tool catalog. Check _coverage and _pagination before claiming completeness, and reuse _pagination.next_cursor when present.'
+
+export function getPortalServerInstructions(selection: ToolSelection = getActiveToolSelection()): string {
   return (
-    PORTAL_BASE_INSTRUCTIONS +
+    (selection.toolsets.has('discovery') && isToolEnabled(selection, 'portal_list_networks')
+      ? PORTAL_BASE_INSTRUCTIONS
+      : PORTAL_TRIMMED_BASE_INSTRUCTIONS) +
     (isActivityExplorerEnabled() ? PORTAL_APP_INSTRUCTIONS : '') +
     PORTAL_NETWORK_INSTRUCTIONS
   )
 }
 
+/* Resolved once per process; a connection may only narrow it. */
+const DEPLOYMENT_TOOL_SELECTION = resolveDeploymentToolSelection(process.env)
+for (const warning of DEPLOYMENT_TOOL_SELECTION.warnings) {
+  console.error(`[mcp:toolsets] ${warning}`)
+}
+
+export function getDeploymentToolSelection(): ToolSelection {
+  return DEPLOYMENT_TOOL_SELECTION
+}
+
 export function createPortalServer(runtimeContext: RuntimeRequestContext = { transport: 'stdio' }): McpServer {
   const appEnabled = runtimeContext.appEnabled ?? isActivityExplorerEnabledByDeployment()
-  return runWithActivityExplorerSurface(appEnabled, () => buildPortalServer(runtimeContext, appEnabled))
+  const selection = narrowToolSelection(DEPLOYMENT_TOOL_SELECTION, runtimeContext.toolsets)
+  const context: RuntimeRequestContext = { ...runtimeContext, toolsetLabel: selection.label }
+  return runWithActivityExplorerSurface(appEnabled, () =>
+    runWithToolSelection(selection, () => buildPortalServer(context, appEnabled)),
+  )
 }
 
 function buildPortalServer(runtimeContext: RuntimeRequestContext, appEnabled: boolean): McpServer {

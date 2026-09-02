@@ -10,6 +10,7 @@ import { register } from './metrics.js'
 import { type RuntimeRequestContext, getObservabilityStatus } from './observability.js'
 import { createReadinessTracker } from './readiness.js'
 import { createPortalServer } from './server.js'
+import { requestedToolsetsFromRequest } from './toolsets.js'
 import { gitCommit, npmVersion } from './version.js'
 
 // ============================================================================
@@ -74,6 +75,7 @@ function runtimeContextFromRequest(ctx: McpRequestContext): RuntimeRequestContex
     requestId: headers?.get('x-request-id') || undefined,
     protocolVersion: ctx.era === 'modern' ? '2026-07-28' : undefined,
     appEnabled: resolveActivityExplorerSurface(ctx.requestInfo),
+    toolsets: requestedToolsetsFromRequest(ctx.requestInfo),
   }
 }
 

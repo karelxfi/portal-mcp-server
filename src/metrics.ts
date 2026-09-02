@@ -181,8 +181,8 @@ export const datasetQueriesTotal = new Counter({
 
 export const toolClientCallsTotal = new Counter({
   name: 'mcp_tool_client_calls_total',
-  help: 'Total tool calls by bounded MCP client family and major version',
-  labelNames: ['transport', 'client_family', 'client_major'] as const,
+  help: 'Total tool calls by bounded MCP client family, major version, and active toolset',
+  labelNames: ['transport', 'client_family', 'client_major', 'toolset'] as const,
   registers: [register],
 })
 
