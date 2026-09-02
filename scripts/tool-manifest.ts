@@ -1527,6 +1527,31 @@ export const TOOL_SPECS: ToolSpec[] = [
       const traderItems = getItems(traderResult.data)
       assert(traderItems.length > 0, 'Expected Hyperliquid trader fill rows')
       expectWindowMetadata(traderResult.data, 'portal_hyperliquid_query_fills trader')
+
+      const summaryResult = await callToolWithRetry(client, 'portal_hyperliquid_query_fills', {
+        network: 'hyperliquid-fills',
+        timeframe: '1h',
+        coin: ['BTC'],
+        response_format: 'summary',
+        limit: 25,
+      })
+      const summary = summaryResult.data
+      assert(summary.error === undefined, 'Hyperliquid fill summaries should not fail')
+      assert(summary.items === undefined, 'Hyperliquid fill summaries should replace rows with aggregates')
+      assert(typeof summary.total_fills === 'number' && summary.total_fills > 0, 'Expected a fill count in the summary')
+      for (const key of ['total_volume_usd', 'total_fees_usd', 'total_realized_pnl']) {
+        assert(
+          typeof summary[key] === 'number' && Number.isFinite(summary[key]),
+          `Expected a finite ${key} in the Hyperliquid fill summary`,
+        )
+      }
+      assert(
+        typeof summary.direction_breakdown === 'object' && summary.direction_breakdown !== null,
+        'Expected a direction breakdown in the Hyperliquid fill summary',
+      )
+      assert(summary._execution?.response_format === 'summary', 'Expected the summary response format to be reported')
+      assert(summary._pagination?.returned > 0, 'Expected the summary response to keep its _pagination block')
+      expectWindowMetadata(summary, 'portal_hyperliquid_query_fills summary')
     },
   },
   {

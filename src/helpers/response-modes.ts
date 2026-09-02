@@ -25,6 +25,26 @@ function isNumber(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value)
 }
 
+/**
+ * Coerce a numeric field to a finite number for aggregation.
+ *
+ * Normalizers emit exact decimal amounts as text (`px`, `sz`, `fee`,
+ * `closedPnl`, Bitcoin values), so `total += item.field || 0` silently turns an
+ * accumulator into a string and the later `toFixed` call throws. Every summary
+ * aggregate goes through this helper; unparseable or missing values count as 0
+ * instead of poisoning the total with NaN.
+ */
+function toFiniteNumber(value: unknown): number {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : 0
+  if (typeof value === 'string') {
+    const trimmed = value.trim()
+    if (trimmed === '') return 0
+    const parsed = Number(trimmed)
+    return Number.isFinite(parsed) ? parsed : 0
+  }
+  return 0
+}
+
 function pickCommonAliases(item: any): Record<string, unknown> {
   const aliases: Record<string, unknown> = {}
 
@@ -240,20 +260,18 @@ export function summarizeHyperliquidFills(fills: any[]): any {
     totalFees = 0,
     totalPnl = 0
 
+  const byCoin = new Map<string, number>()
   fills.forEach((fill) => {
     if (fill.user) traders.add(fill.user)
     if (fill.coin) coins.add(fill.coin)
-    totalVolume += (fill.px || 0) * (fill.sz || 0)
-    totalFees += Math.abs(fill.fee || 0)
-    totalPnl += fill.closedPnl || 0
+    const notional = toFiniteNumber(fill.px) * toFiniteNumber(fill.sz)
+    totalVolume += notional
+    totalFees += Math.abs(toFiniteNumber(fill.fee))
+    totalPnl += toFiniteNumber(fill.closedPnl)
     const dir = fill.dir || 'Unknown'
     dirCounts[dir] = (dirCounts[dir] || 0) + 1
-  })
-
-  const byCoin = new Map<string, number>()
-  fills.forEach((f) => {
-    const c = f.coin || 'unknown'
-    byCoin.set(c, (byCoin.get(c) || 0) + (f.px || 0) * (f.sz || 0))
+    const coin = fill.coin || 'unknown'
+    byCoin.set(coin, (byCoin.get(coin) || 0) + notional)
   })
   const topCoins = Array.from(byCoin.entries())
     .sort((a, b) => b[1] - a[1])
@@ -581,7 +599,7 @@ export function summarizeBitcoinInputs(inputs: any[]): any {
     scriptTypes.set(sType, (scriptTypes.get(sType) || 0) + 1)
     const iType = input.type || 'tx'
     types.set(iType, (types.get(iType) || 0) + 1)
-    totalValue += input.prevoutValue || 0
+    totalValue += toFiniteNumber(input.prevoutValue)
   })
 
   return {
@@ -623,7 +641,7 @@ export function summarizeBitcoinOutputs(outputs: any[]): any {
     if (output.scriptPubKeyAddress) addresses.add(output.scriptPubKeyAddress)
     const sType = output.scriptPubKeyType || 'unknown'
     scriptTypes.set(sType, (scriptTypes.get(sType) || 0) + 1)
-    totalValue += output.value || 0
+    totalValue += toFiniteNumber(output.value)
   })
 
   return {
