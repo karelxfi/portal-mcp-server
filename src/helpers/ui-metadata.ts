@@ -34,6 +34,13 @@ export interface UiTimelinePanel extends BaseUiPanel {
   title_key: string
   subtitle_keys?: string[]
   badge_key?: string
+  /* Optional row fields: direction relative to the subject ('in' | 'out'),
+     a numeric amount, and the unit that amount is denominated in. */
+  direction_key?: string
+  value_key?: string
+  value_format?: TableValueFormat
+  unit_key?: string
+  unit?: string
 }
 
 export interface UiRankedBarsPanel extends BaseUiPanel {
@@ -84,6 +91,9 @@ export interface PortalUiSpec {
   metric_cards?: UiMetricCard[]
   panels: UiPanel[]
   follow_up_actions?: UiFollowUpAction[]
+  /* Plain-language notices for people reading a rendered App. When present
+     they replace _notice/_notices, which stay written for tool callers. */
+  notices?: string[]
 }
 
 export function buildMetricCard(params: UiMetricCard): UiMetricCard {

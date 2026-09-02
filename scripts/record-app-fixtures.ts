@@ -58,8 +58,21 @@ async function loadJson(directory: string, names: string[]): Promise<Record<stri
 async function main() {
   const requests = JSON.parse(await readFile(REQUESTS, 'utf8')) as Record<string, FixtureRequest>
   const fromIndex = process.argv.indexOf('--from-json')
-  const recorded =
-    fromIndex >= 0 ? await loadJson(process.argv[fromIndex + 1], Object.keys(requests)) : await recordLive(requests)
+  const refreshIndex = process.argv.indexOf('--refresh')
+  let recorded: Record<string, Record<string, unknown>>
+  if (fromIndex >= 0) {
+    const directory = process.argv[fromIndex + 1]
+    if (refreshIndex >= 0) {
+      /* Re-record only the named fixtures into the JSON directory. */
+      const names = process.argv[refreshIndex + 1].split(',')
+      const fresh = await recordLive(Object.fromEntries(names.map((name) => [name, requests[name]])))
+      for (const [name, payload] of Object.entries(fresh))
+        await writeFile(path.join(directory, `${name}.json`), JSON.stringify(payload, null, 2))
+    }
+    recorded = await loadJson(directory, Object.keys(requests))
+  } else {
+    recorded = await recordLive(requests)
+  }
   const recordedAt = new Date().toISOString()
   const requestLines = Object.entries(requests).map(
     ([name, request]) => `//   ${name}: ${request.tool} ${JSON.stringify(request.arguments)}`,

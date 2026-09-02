@@ -58,6 +58,7 @@ import {
   buildPortalUi,
   buildStatListPanel,
   buildTablePanel,
+  buildRankedBarsPanel,
   buildTimelinePanel,
 } from '../../helpers/ui-metadata.js'
 import {
@@ -370,6 +371,47 @@ async function fetchCachedWalletSection(params: {
   return value
 }
 
+/* Rows carry their direction relative to the wallet and, for token
+   transfers, a numeric amount and asset, so a renderer can show what moved
+   without interpreting the row. */
+function annotateWalletDirection<
+  T extends {
+    sender?: string
+    recipient?: string
+    record_type?: string
+    value?: unknown
+    value_decimal?: unknown
+    token_symbol?: string
+    direction?: unknown
+  },
+>(item: T, wallet: string) {
+  const subject = wallet.toLowerCase()
+  const sender = String(item.sender ?? '').toLowerCase()
+  const recipient = String(item.recipient ?? '').toLowerCase()
+  const direction =
+    typeof item.direction === 'string'
+      ? item.direction
+      : sender === subject && recipient === subject
+        ? 'self'
+        : sender === subject
+          ? 'out'
+          : recipient === subject
+            ? 'in'
+            : undefined
+  const transfer = item.record_type === 'token_transfer'
+  return {
+    ...item,
+    ...(direction ? { direction } : {}),
+    /* value is the exact human amount with its symbol ("2.5 USDC");
+       amount_value is its numeric part for renderers, value_decimal stays
+       the raw token units. */
+    ...(transfer && typeof item.value === 'string' && /^-?\d/.test(item.value)
+      ? { amount: item.value, amount_value: item.value.split(' ')[0] }
+      : {}),
+    ...(transfer && item.token_symbol ? { asset: item.token_symbol } : {}),
+  }
+}
+
 function compactWalletTransactionItem(tx: WalletTransactionItem) {
   const txHash =
     typeof tx['hash'] === 'string'
@@ -435,6 +477,29 @@ function compactWalletNftTransferItem(item: WalletLogItem) {
     contract_address: typeof item['contract_address'] === 'string' ? String(item['contract_address']) : undefined,
     token_id: item['token_id'],
   }
+}
+
+function buildEvmWalletActivityTable(rowCount: number) {
+  return buildTableDescriptor({
+    id: 'activity',
+    dataKey: 'activity.items',
+    rowCount,
+    title: 'Wallet activity',
+    subtitle: 'Normalized wallet activity rows across the selected window',
+    keyField: 'primary_id',
+    defaultSort: { key: 'timestamp', direction: 'asc' },
+    dense: true,
+    columns: [
+      { key: 'timestamp_human', label: 'Time', kind: 'time', format: 'timestamp_human' },
+      { key: 'record_type', label: 'Type', kind: 'dimension' },
+      { key: 'direction', label: 'Direction', kind: 'dimension' },
+      { key: 'amount', label: 'Amount', kind: 'metric', align: 'right' },
+      { key: 'sender', label: 'Sender', kind: 'dimension', format: 'address' },
+      { key: 'recipient', label: 'Recipient', kind: 'dimension', format: 'address' },
+      { key: 'tx_hash', label: 'Tx hash', kind: 'dimension', format: 'identifier' },
+      { key: 'block_number', label: 'Block', kind: 'metric', format: 'integer', align: 'right' },
+    ],
+  })
 }
 
 function buildWalletActivityTable(title: string, rowCount: number) {
@@ -1098,9 +1163,13 @@ function buildWalletUi(params: {
   primaryUnit?: string
   secondaryCards?: Array<ReturnType<typeof buildMetricCard>>
   panels?: Array<
-    ReturnType<typeof buildTablePanel> | ReturnType<typeof buildTimelinePanel> | ReturnType<typeof buildStatListPanel>
+    | ReturnType<typeof buildTablePanel>
+    | ReturnType<typeof buildTimelinePanel>
+    | ReturnType<typeof buildStatListPanel>
+    | ReturnType<typeof buildRankedBarsPanel>
   >
   followUpActions?: Array<{ label: string; intent: 'continue' | 'show_raw' | 'drilldown'; target?: string }>
+  notices?: string[]
 }) {
   return buildPortalUi({
     version: 'portal_ui_v1',
@@ -1135,11 +1204,6 @@ function buildWalletUi(params: {
           ]
         : []),
       ...(params.secondaryCards ?? []),
-      buildMetricCard({
-        id: 'result-state',
-        label: 'Result state',
-        value_path: 'completeness.state',
-      }),
     ],
     panels: params.panels ?? [
       buildTimelinePanel({
@@ -1163,6 +1227,7 @@ function buildWalletUi(params: {
       }),
     ],
     follow_up_actions: params.followUpActions,
+    ...(params.notices ? { notices: params.notices } : {}),
   })
 }
 
@@ -1922,8 +1987,8 @@ export function registerGetWalletSummaryTool(server: McpServer) {
       notices.push(...(transactionSection.notices ?? []))
       notices.push(...(tokenSection.notices ?? []))
       notices.push(...(nftSection.notices ?? []))
+      const limitedItems: string[] = []
       if (hasMore) {
-        const limitedItems = []
         if (txHasMore) limitedItems.push('transactions')
         if (tokenHasMore) limitedItems.push('token transfers')
         if (nftHasMore) limitedItems.push('NFT transfers')
@@ -1937,12 +2002,23 @@ export function registerGetWalletSummaryTool(server: McpServer) {
         )
       }
 
+      /* The same facts for people reading a rendered App, without tool
+         parameter names. The notices above stay written for tool callers. */
+      const userNotices = [
+        ...notices.filter(
+          (notice) => !notice.startsWith('Accepted the retained') && !notice.startsWith('Showing the latest'),
+        ),
+        ...(hasMore
+          ? [`Showing the latest ${limit_per_type} ${limitedItems.join(' and ')} in this page. Load older wallet activity to continue.`]
+          : []),
+      ]
+
       const compactTransactions = transactions.map(compactWalletTransactionItem)
       const compactTokenTransfers = tokenTransfers.map(compactWalletTokenTransferItem)
       const compactNftTransfers = nftTransfers.map(compactWalletNftTransferItem)
-      const combinedActivity = [...compactTransactions, ...compactTokenTransfers, ...compactNftTransfers].sort(
-        (left, right) => Number(left.timestamp || 0) - Number(right.timestamp || 0),
-      )
+      const combinedActivity = [...compactTransactions, ...compactTokenTransfers, ...compactNftTransfers]
+        .sort((left, right) => Number(left.timestamp || 0) - Number(right.timestamp || 0))
+        .map((item) => annotateWalletDirection(item, normalizedAddress))
       const topCounterparties = buildTopCounterparties(combinedActivity, normalizedAddress)
       const fundFlow = buildEvmFundFlow({
         walletAddress: normalizedAddress,
@@ -1950,7 +2026,7 @@ export function registerGetWalletSummaryTool(server: McpServer) {
         tokenTransfers,
       })
       const tables = [
-        buildWalletActivityTable('Wallet activity', combinedActivity.length),
+        buildEvmWalletActivityTable(combinedActivity.length),
         ...(fundFlow.asset_flows.length > 0 ? [buildWalletAssetFlowsTable(fundFlow.asset_flows.length)] : []),
         ...(fundFlow.movement_counterparties.length > 0
           ? [buildWalletFlowCounterpartiesTable(fundFlow.movement_counterparties.length)]
@@ -1964,19 +2040,37 @@ export function registerGetWalletSummaryTool(server: McpServer) {
           id: 'wallet-timeline',
           kind: 'timeline_panel',
           title: 'Activity timeline',
-          subtitle: 'Chronological wallet activity with timestamps and normalized labels.',
+          subtitle: 'Every row in this page, oldest first, with direction and amount where an asset moved.',
           data_key: 'activity.items',
           timestamp_key: 'timestamp_human',
-          title_key: 'primary_id',
-          subtitle_keys: ['record_type', 'sender', 'recipient'],
+          title_key: 'record_type',
+          subtitle_keys: ['sender', 'recipient'],
+          direction_key: 'direction',
+          value_key: 'amount_value',
+          value_format: 'decimal',
+          unit_key: 'asset',
           badge_key: 'record_type',
           emphasis: 'primary',
         }),
+        ...(fundFlow.movement_counterparties.length > 0
+          ? [
+              buildRankedBarsPanel({
+                id: 'wallet-flow-counterparties',
+                kind: 'ranked_bars_panel',
+                title: 'Asset movement counterparties',
+                subtitle: 'Addresses ranked by observed asset movements with this wallet.',
+                data_key: 'fund_flow.movement_counterparties',
+                category_key: 'address',
+                value_key: 'activity_count',
+                value_format: 'integer',
+              }),
+            ]
+          : []),
         buildTablePanel({
           id: 'wallet-table',
           kind: 'table_panel',
           title: 'Activity table',
-          subtitle: 'Exact normalized rows for the selected wallet window.',
+          subtitle: 'Exact rows for the selected wallet window.',
           table_id: 'activity',
         }),
         ...(fundFlow.asset_flows.length > 0
@@ -1987,17 +2081,6 @@ export function registerGetWalletSummaryTool(server: McpServer) {
                 title: 'Asset flow',
                 subtitle: 'Inbound, outbound, and net observed movement by asset.',
                 table_id: 'asset_flows',
-              }),
-            ]
-          : []),
-        ...(fundFlow.movement_counterparties.length > 0
-          ? [
-              buildTablePanel({
-                id: 'wallet-flow-counterparties',
-                kind: 'table_panel',
-                title: 'Asset movement counterparties',
-                subtitle: 'Counterparties ranked by observed inbound and outbound asset movements.',
-                table_id: 'flow_counterparties',
               }),
             ]
           : []),
@@ -2149,7 +2232,8 @@ export function registerGetWalletSummaryTool(server: McpServer) {
         }),
         pipes: pipesRecipe,
         ui: buildWalletUi({
-          title: `Wallet summary: ${normalizedAddress}`,
+          notices: userNotices,
+          title: normalizedAddress,
           subtitle: `${describeWalletWindow(windowDescription)} on ${networkLabel}`,
           activityCountPath: 'activity.count',
           primaryValuePath: 'evm.transactions.count',
@@ -2534,7 +2618,7 @@ async function buildNonEvmWalletSummary(params: {
         }),
         pipes: pipesRecipe,
         ui: buildWalletUi({
-          title: `Wallet summary: ${address}`,
+          title: address,
           subtitle: `${describeWalletWindow(timeframe)} on ${networkLabel}`,
           activityCountPath: 'activity.count',
           primaryValuePath: 'solana.fee_summary.total_fees_lamports',
@@ -2888,7 +2972,7 @@ async function buildNonEvmWalletSummary(params: {
         }),
         pipes: pipesRecipe,
         ui: buildWalletUi({
-          title: `Wallet summary: ${address}`,
+          title: address,
           subtitle: `${describeWalletWindow(timeframe)} on ${networkLabel}`,
           activityCountPath: 'activity.count',
           primaryValuePath: 'assets.total_btc_received',
@@ -3228,7 +3312,7 @@ async function buildNonEvmWalletSummary(params: {
       }),
       pipes: pipesRecipe,
       ui: buildWalletUi({
-        title: `Wallet summary: ${address}`,
+        title: address,
         subtitle: `${describeWalletWindow(timeframe)} on ${networkLabel}`,
         activityCountPath: 'activity.count',
         primaryValuePath: 'hyperliquid.fee_summary.total_fees',

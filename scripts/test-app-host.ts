@@ -93,8 +93,8 @@ async function main() {
     const structured = toolResult.structuredContent as Record<string, any> | undefined
     assert(toolResult.isError !== true, 'the live recent activity result must succeed before host rendering')
     assert(structured?._ui?.design_intent === 'activity_investigator', 'the live result must contain its App UI contract')
-    const expectedHeading = String(structured?.answer ?? '')
-    assert(expectedHeading.length > 0, 'the live result must include a factual answer for the App heading')
+    const expectedHeading = String(structured?._ui?.headline?.title ?? structured?.display?.title ?? structured?.answer ?? '')
+    assert(expectedHeading.length > 0, 'the live result must include a subject for the App heading')
 
     await writeFile(hostSource, hostEntry)
     await build({

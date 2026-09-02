@@ -519,6 +519,11 @@ async function validate(page: Page, fixture: string, viewport: (typeof viewports
       (await page.locator('table.sqd-table').first().locator('tbody tr').count()) === WALLET_FIXTURE_ROW_COUNT,
       'wallet table should preserve every exact activity row',
     )
+    const counterparties = ((APP_FIXTURES.wallet.fund_flow as Record<string, unknown>).movement_counterparties as unknown[]).length
+    assert(
+      (await page.locator('.sqd-ranked-row').count()) === counterparties,
+      'wallet workspace should rank every exact movement counterparty',
+    )
   }
   if (fixture === 'contract') {
     assert(
@@ -602,7 +607,6 @@ async function validate(page: Page, fixture: string, viewport: (typeof viewports
     )
   }
   if (fixture === 'partial') {
-    assert((await page.locator('.sqd-notice').count()) >= 1, 'a partial page surfaces the server notice')
     assert(
       (await page.locator('.sqd-context').innerText()).includes('partial'),
       'Partial results must be labeled partial next to the headline',

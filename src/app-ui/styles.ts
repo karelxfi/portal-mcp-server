@@ -208,6 +208,8 @@ button { color: inherit; }
    lines at 760px and one at 1440px, never a ragged stack of four. */
 .sqd-title { grid-column: 1; margin: 4px 0 0; max-width: 80ch; overflow-wrap: anywhere; font-size: clamp(17px, 2.3cqi, 22px); line-height: 1.22; font-weight: 510; letter-spacing: -0.02em; text-wrap: pretty; }
 .sqd-app[data-mode='fullscreen'] .sqd-title { font-size: clamp(20px, 1.8cqi, 24px); line-height: 1.2; }
+.sqd-title--id { font-family: var(--sqd-font-mono); font-weight: 510; letter-spacing: 0; font-size: clamp(15px, 1.7cqi, 19px); }
+.sqd-app[data-mode='fullscreen'] .sqd-title--id { font-size: clamp(16px, 1.4cqi, 20px); }
 .sqd-subtitle { grid-column: 1; max-width: 74ch; overflow-wrap: anywhere; margin: 6px 0 0; color: var(--fg-secondary); font-size: 13px; line-height: 19px; }
 .sqd-hero-figure { grid-column: 2; grid-row: 2 / span 2; justify-self: end; text-align: right; padding-top: 4px; }
 .sqd-hero-value { display: inline-block; padding-bottom: 6px; border-bottom: 1.5px dashed var(--accent-line); color: var(--fg); font: 500 28px/1.05 var(--sqd-font-mono); letter-spacing: -0.01em; font-variant-numeric: tabular-nums; white-space: nowrap; }

@@ -423,15 +423,19 @@ function masthead(payload: Record<string, unknown>): HTMLElement {
   section.append(eyebrow)
 
   const error = isRecord(payload.error) ? payload.error : undefined
+  /* The heading names the subject (an address, a coin, a network window).
+     The tool's narrative answer is for the conversation, not the App. */
+  const answer = text(payload.answer)
   const claim = text(
-    payload.answer ?? headline.title ?? display.title ?? error?.summary ?? payload._summary ?? 'Blockchain activity',
+    headline.title ?? display.title ?? error?.summary ?? payload._summary ?? payload.answer ?? 'Blockchain activity',
   )
-  const title = element('h1', 'sqd-title', claim)
+  const title = element('h1', `sqd-title${isHexIdentifier(claim) ? ' sqd-title--id' : ''}`, claim)
   title.id = 'sqd-result-title'
   section.append(title)
 
   const subtitleText = text(headline.subtitle ?? display.subtitle)
-  if (subtitleText && subtitleText !== claim) section.append(element('p', 'sqd-subtitle', subtitleText))
+  if (subtitleText && subtitleText !== claim && subtitleText !== answer && subtitleText.length <= 140)
+    section.append(element('p', 'sqd-subtitle', subtitleText))
 
   const heroSpec = primaryMetric(payload)
   if (heroSpec) {
@@ -563,12 +567,13 @@ function metricCards(payload: Record<string, unknown>): HTMLElement | null {
   for (const spec of cards.slice(0, 8)) {
     const card = element('article', `sqd-metric${spec.emphasis === 'primary' ? ' sqd-metric--primary' : ''}`)
     card.append(element('div', 'sqd-metric-label', text(spec.label ?? 'Metric')))
+    /* A unit the label already names ("Average transactions" + "transactions")
+       would only crowd the value. */
+    const label = text(spec.label ?? 'Metric')
+    const unit = text(spec.unit)
+    const cardUnit = unit && label.toLowerCase().includes(unit.toLowerCase()) ? '' : unit
     card.append(
-      element(
-        'div',
-        'sqd-metric-value',
-        formatValue(getByPath(payload, text(spec.value_path)), text(spec.format), text(spec.unit)),
-      ),
+      element('div', 'sqd-metric-value', formatValue(getByPath(payload, text(spec.value_path)), text(spec.format), cardUnit)),
     )
     if (spec.subtitle) card.append(element('div', 'sqd-metric-subtitle', text(spec.subtitle)))
     grid.append(card)
@@ -1773,7 +1778,9 @@ function tablePanel(payload: Record<string, unknown>, panel: Panel, options: Pan
         const td = element('td')
         td.dataset.align = column.align ?? 'left'
         const rawValue = getByPath(row, column.path ?? column.key)
-        const formatted = formatValue(rawValue, column.format, column.unit)
+        const missing = rawValue === null || rawValue === undefined || rawValue === ''
+        const formatted = missing ? '' : formatValue(rawValue, column.format, column.unit)
+        if (missing) td.setAttribute('aria-label', 'Not available')
         if (isIdentifierColumn(column, rawValue)) td.classList.add('sqd-hash')
         td.textContent = formatted
         td.title = formatted
@@ -1901,7 +1908,9 @@ function tablePanel(payload: Record<string, unknown>, panel: Panel, options: Pan
         const td = element('td')
         td.dataset.align = column.align ?? 'left'
         const rawValue = getByPath(row, column.path ?? column.key)
-        const formatted = formatValue(rawValue, column.format, column.unit)
+        const missing = rawValue === null || rawValue === undefined || rawValue === ''
+        const formatted = missing ? '' : formatValue(rawValue, column.format, column.unit)
+        if (missing) td.setAttribute('aria-label', 'Not available')
         if (isIdentifierColumn(column, rawValue)) td.classList.add('sqd-hash')
         if (column.format === 'signed' || /^(direction|change|net)/.test(column.key)) {
           const signedValue = numeric(rawValue)
@@ -1979,7 +1988,8 @@ function timelinePanel(payload: Record<string, unknown>, panel: Panel, options: 
     const dotTone = direction === 'in' ? ' sqd-event-dot--in' : direction === 'out' ? ' sqd-event-dot--out' : ''
     event.append(element('span', `sqd-event-dot${dotTone}`))
     const copy = element('div')
-    copy.append(element('div', 'sqd-event-title', text(getByPath(row, text(panel.title_key)) ?? 'Activity')))
+    const rawTitle = text(getByPath(row, text(panel.title_key)) ?? 'Activity')
+    copy.append(element('div', 'sqd-event-title', /^[a-z0-9]+(?:_[a-z0-9]+)*$/.test(rawTitle) ? humanize(rawTitle) : rawTitle))
     const subtitleParts = asArray(panel.subtitle_keys)
       .map((key) => text(getByPath(row, text(key))))
       .filter(Boolean)
@@ -1996,11 +2006,12 @@ function timelinePanel(payload: Record<string, unknown>, panel: Panel, options: 
       if (amount !== undefined) {
         const tone = direction === 'in' ? 'in' : direction === 'out' ? 'out' : 'flat'
         const sign = direction === 'in' ? '+' : direction === 'out' ? '-' : ''
+        const unit = panel.unit_key ? text(getByPath(row, text(panel.unit_key))) || text(panel.unit) : text(panel.unit)
         event.append(
           element(
             'span',
             `sqd-event-value sqd-event-value--${tone}`,
-            `${sign}${formatValue(amount, text(panel.value_format), text(panel.unit))}`,
+            `${sign}${formatValue(amount, text(panel.value_format), unit)}`,
           ),
         )
       }
@@ -2218,7 +2229,17 @@ function notices(
   state: ExplorerState,
   tiers: NoticeTier[] = ['danger', 'caution', 'info'],
 ): HTMLElement | null {
-  const values = [payload._notice, ...asArray(payload._notices)].map(text).filter(Boolean)
+  /* A tool may write App-facing notices separately from the ones meant for
+     its caller; use them when they exist. */
+  const ui = isRecord(payload._ui) ? payload._ui : {}
+  const pagination = isRecord(payload._pagination) ? payload._pagination : {}
+  const source = Array.isArray(ui.notices) ? ui.notices : [payload._notice, ...asArray(payload._notices)]
+  /* A notice that only points at the continuation cursor duplicates the
+     continue action that sits under the result. */
+  const values = source
+    .map(text)
+    .filter(Boolean)
+    .filter((copy) => !(pagination.has_more && /_pagination\.next_cursor/.test(copy)))
   const error = tiers.includes('danger') && isRecord(payload.error) ? payload.error : undefined
   const entries: HTMLElement[] = []
   if (error) {
