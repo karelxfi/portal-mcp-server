@@ -16,6 +16,10 @@ Unit tests sit next to the code as `src/**/*.test.ts` and run with the built-in 
 
 `npm run test:catalog-tokens` (part of the offline gate) starts the server in-process for both surfaces (App disabled and App enabled), lists tools, prompts, and resources, counts tokens per tool component with the `o200k_base` tokenizer, and compares the result with `scripts/catalog-token-baseline.json`. It fails when the catalog total or any single tool grows more than 5% and prints the top ten tools to the job summary. Refresh the baseline deliberately with `npm run baseline:catalog-tokens -- --note "<why the cost changed>"` and record the new totals in `CHANGELOG.md`. With `ANTHROPIC_API_KEY` set, the Anthropic token-count API is queried for the same surfaces and printed beside the local count; the gate always uses the local count.
 
+## Generated Explorer bundle
+
+`src/generated/activity-explorer.generated.ts` and `activity-explorer.version.ts` are build outputs and are not tracked in git. `npm run build` always regenerates them. Every entry point that imports the bundle from source runs `scripts/ensure-app-bundle.mjs` first (`predev`, `predev:http`, `pretypecheck`, `pretest:unit`, `pretest:app-contract`, `pretest:app-ui`, `pretest:catalog-tokens`, `preapp:host`), which rebuilds only when the outputs are missing or older than `src/app-ui/**`, the build scripts, or `package.json`. A fresh clone followed by `npm ci && npm run dev` therefore works with no manual step, and `git status` stays clean after a build.
+
 ## Available scripts
 
 ### `npm test`

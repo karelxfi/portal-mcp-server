@@ -105,3 +105,6 @@ coverage/
 mcp-config.json
 charts-demo.html
 V*_SCOPE.md
+
+# Generated Explorer bundle: built by scripts/ensure-app-bundle.mjs and npm run build
+src/generated/
