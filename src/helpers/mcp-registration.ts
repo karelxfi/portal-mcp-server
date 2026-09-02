@@ -116,9 +116,10 @@ const PORTAL_TOOL_OUTPUT_SCHEMA = z
       .object({
         name: z.string(),
         version: z.string(),
+        commit: z.string(),
       })
       .optional()
-      .describe('Observable SQD server identity and exact release version.'),
+      .describe('Observable SQD server identity, exact release version, and the git commit it was built from.'),
     pipes_handoff: z.unknown().optional().describe('Optional SQD Pipes guidance for custom data needs.'),
     _notice: z.string().optional().describe('Important limitation or truncation notice.'),
     _notices: z.array(z.string()).optional().describe('Important limitations or truncation notices.'),

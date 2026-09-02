@@ -8,7 +8,7 @@ import { resolveActivityExplorerSurface } from './apps/activity-explorer.js'
 import { register } from './metrics.js'
 import { type RuntimeRequestContext, getObservabilityStatus } from './observability.js'
 import { createPortalServer } from './server.js'
-import { npmVersion } from './version.js'
+import { gitCommit, npmVersion } from './version.js'
 
 // ============================================================================
 // SQD Portal MCP Server - Node.js HTTP Entry Point
@@ -76,7 +76,9 @@ const server = createServer(async (req, res) => {
 
   if (url.pathname === '/health') {
     res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' })
-    res.end(JSON.stringify({ status: 'ok', version: npmVersion, observability: getObservabilityStatus() }))
+    res.end(
+      JSON.stringify({ status: 'ok', version: npmVersion, commit: gitCommit, observability: getObservabilityStatus() }),
+    )
     return
   }
 

@@ -227,6 +227,7 @@ HTTP mode exposes MCP at `/` and `/mcp`, with local health state at `/health`. T
 - MCP and health are public in v0.8.x. User authentication is deferred to a unified `auth.sqd.dev` flow in v0.9.0.
 - Tool and resource discovery use the MCP protocol; retired `/tools` and `/tools.json` routes return `404`.
 - Set `MCP_CURSOR_SECRET` in production so pagination cursors are signed with a deployment-specific secret. Local development uses a deterministic fallback for convenience.
+- `/health` reports `version` and `commit`, the git commit the image was built from, and every tool result repeats both in `_server`. Docker Hub tags: `latest`, `X.Y.Z`, and `X.Y` come only from a `v*` release tag; `edge` and `sha-<commit>` come from every `main` push. Pin a version tag in production.
 
 Useful environment variables:
 

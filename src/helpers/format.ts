@@ -14,7 +14,7 @@ import {
   ACTIVITY_EXPLORER_TOOLS,
   isActivityExplorerEnabled,
 } from '../apps/activity-explorer.js'
-import { npmVersion } from '../version.js'
+import { gitCommit, npmVersion } from '../version.js'
 import { formatIntegerUnitsExact } from './exact-decimal.js'
 
 const MAX_RESPONSE_BYTES = 50_000
@@ -1356,6 +1356,7 @@ export function formatResult(
     payloadRecord._server = {
       name: 'SQD',
       version: npmVersion,
+      commit: gitCommit,
     }
     payloadRecord._pagination = options?.pagination ?? buildDefaultPagination()
     payloadRecord._ordering = options?.ordering ?? buildDefaultOrdering()

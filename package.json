@@ -4,6 +4,10 @@
   "description": "MCP server wrapping SQD Portal API",
   "license": "MIT",
   "type": "module",
+  "engines": {
+    "node": ">=22 <23"
+  },
+  "packageManager": "pnpm@10.32.1",
   "main": "dist/index.js",
   "bin": {
     "sqd-portal-mcp": "dist/index.js"
@@ -39,6 +43,7 @@
     "test:timestamps": "tsx scripts/test-timestamps.ts",
     "test:http-runtime": "tsx scripts/test-http-runtime.ts",
     "test:lockfiles": "node scripts/check-lockfile-sync.mjs",
+    "test:workflow-pins": "node scripts/check-workflow-pins.mjs",
     "test:lean": "node scripts/test-lean-surface.mjs",
     "test:fetch-reliability": "tsx scripts/test-fetch-reliability.ts",
     "test:stdio-backpressure": "tsx scripts/test-stdio-backpressure.ts",
@@ -77,7 +82,7 @@
     "test:negative": "tsx scripts/test-negative.ts",
     "test:quality": "tsx scripts/test-quality.ts",
     "test:package": "tsx scripts/test-package-contents.ts",
-    "test:all": "npm run build && npm run test:lockfiles && npm run test:lean && npm run test:distribution && npm run test:fetch-reliability && npm run test:stdio-backpressure && npm run test:performance-harness && npm run test:tool-admission && npm run test:app-contract && npm run test:app-host && npm run test:app-ui && npm run test:evidence-receipts && npm run test:investigation-prompts && npm run test:investigation-journeys && npm run test:pagination && npm test && npm run test:protocol && npm run test:tools && npm run test:live-cooldown && npm run test:v084-factuality && npm run test:bitcoin-fees && npm run test:v084-acceptance-regressions && npm run test:data-integrity && npm run test:live-cooldown && npm run test:reliability-live && npm run test:evm-investigator && npm run test:routing && npm run test:substrate && npm run test:timestamps && npm run test:http-runtime && npm run test:plugin && npm run test:claude-plugin && npm run test:grok-plugin && npm run test:gemini-extension && npm run test:cursor-plugin && npm run test:client-journeys && npm run test:conversations && npm run test:realistic-prompts && npm run test:negative && npm run test:quality && npm run test:package",
+    "test:all": "npm run build && npm run test:lockfiles && npm run test:workflow-pins && npm run test:lean && npm run test:distribution && npm run test:fetch-reliability && npm run test:stdio-backpressure && npm run test:performance-harness && npm run test:tool-admission && npm run test:app-contract && npm run test:app-host && npm run test:app-ui && npm run test:evidence-receipts && npm run test:investigation-prompts && npm run test:investigation-journeys && npm run test:pagination && npm test && npm run test:protocol && npm run test:tools && npm run test:live-cooldown && npm run test:v084-factuality && npm run test:bitcoin-fees && npm run test:v084-acceptance-regressions && npm run test:data-integrity && npm run test:live-cooldown && npm run test:reliability-live && npm run test:evm-investigator && npm run test:routing && npm run test:substrate && npm run test:timestamps && npm run test:http-runtime && npm run test:plugin && npm run test:claude-plugin && npm run test:grok-plugin && npm run test:gemini-extension && npm run test:cursor-plugin && npm run test:client-journeys && npm run test:conversations && npm run test:realistic-prompts && npm run test:negative && npm run test:quality && npm run test:package",
     "test:ci": "npm run test:all",
     "test:release": "npm run test:ci",
     "release:patch": "./scripts/release.sh patch",

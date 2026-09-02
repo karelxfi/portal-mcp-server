@@ -69,10 +69,11 @@ function validateMetadata() {
     'default-branch Docker builds must not overwrite an immutable semantic-version image tag',
   )
   assert(
-    dockerWorkflow.includes('type=raw,value=latest,enable={{is_default_branch}}') &&
+    dockerWorkflow.includes('type=raw,value=edge,enable={{is_default_branch}}') &&
+      dockerWorkflow.includes("type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}") &&
       dockerWorkflow.includes('type=semver,pattern={{version}}') &&
       dockerWorkflow.includes('type=sha'),
-    'Docker builds must keep latest for main, semantic versions for release tags, and immutable SHA tags',
+    'Docker builds must publish edge for main, latest only for release tags, semantic versions, and immutable SHA tags',
   )
 
   assert(targets.repository === REPOSITORY, 'distribution repository must use the canonical GitHub URL')
@@ -211,15 +212,23 @@ async function checkAwesomeList() {
   return result('Awesome MCP Servers', 'pass', 'canonical repository is listed')
 }
 
+/* The listing page is rendered in the browser, so the check reads the
+   registry API. Smithery fronts the server with its own remote URL. */
 async function checkSmithery() {
-  const body = await fetchText('https://smithery.ai/servers/sqd/sqd')
-  if (!body.includes('Connect AI agents to live blockchain data across 130+ networks')) {
-    return result('Smithery', 'fail', 'official listing metadata is missing')
+  const body = await fetchText('https://registry.smithery.ai/servers/sqd/sqd')
+  const listing = JSON.parse(body)
+  if (listing.qualifiedName !== 'sqd/sqd' || listing.displayName !== 'SQD') {
+    return result('Smithery', 'fail', 'official sqd/sqd listing metadata is missing')
   }
-  if (!body.includes(SERVER_URL)) {
-    return result('Smithery', 'fail', 'hosted MCP endpoint is missing')
+  if (!/SQD Portal/.test(listing.description ?? '') || !/blockchain/i.test(listing.description ?? '')) {
+    return result('Smithery', 'fail', 'listing description no longer names SQD Portal blockchain data')
   }
-  return result('Smithery', 'pass', 'official sqd/sqd listing is live')
+  const remote = listing.remote === true && (listing.connections ?? []).some((connection) => connection.type === 'http')
+  if (!remote) return result('Smithery', 'fail', 'hosted MCP connection is missing')
+  if (!Array.isArray(listing.tools) || listing.tools.length < 20) {
+    return result('Smithery', 'fail', `listing exposes ${listing.tools?.length ?? 0} tools, expected the public catalog`)
+  }
+  return result('Smithery', 'pass', `official sqd/sqd listing is live with ${listing.tools.length} tools`)
 }
 
 async function checkGrokPullRequest() {
@@ -273,5 +282,12 @@ const report = {
 if (outputPath) writeFileSync(outputPath, `${JSON.stringify(report, null, 2)}\n`)
 if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, renderMarkdown(version, results))
 
+/* pending means a review queue or an open marketplace pull request; it is
+   reported but only a failed required target turns the run red. */
+const required = new Set(
+  readJson('distribution/targets.json')
+    .targets.filter((target) => target.required !== false)
+    .map((target) => target.name),
+)
 for (const entry of results) console.log(`${entry.status.toUpperCase()} ${entry.target}: ${entry.detail}`)
-if (results.some((entry) => entry.status === 'fail')) process.exitCode = 1
+if (results.some((entry) => entry.status === 'fail' && required.has(entry.target))) process.exitCode = 1

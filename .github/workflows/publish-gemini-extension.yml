@@ -1,6 +1,15 @@
 name: Publish Gemini Extension
 
+# Called by github-release.yml after it creates the release (a release
+# created with GITHUB_TOKEN does not fire release:published), and still
+# available for a manually created release or a repair.
 on:
+  workflow_call:
+    inputs:
+      tag:
+        description: Release tag to package, for example v0.8.5
+        required: true
+        type: string
   release:
     types:
       - published
@@ -11,8 +20,7 @@ on:
         required: true
         type: string
 
-permissions:
-  contents: write
+permissions: {}
 
 concurrency:
   group: gemini-extension-${{ inputs.tag || github.event.release.tag_name }}
@@ -21,16 +29,19 @@ concurrency:
 jobs:
   publish:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - name: Check out release
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           ref: ${{ inputs.tag || github.event.release.tag_name }}
+          persist-credentials: false
 
       - name: Set up Node.js
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
-          node-version: 22
+          node-version-file: .nvmrc
           cache: npm
 
       - name: Install dependencies

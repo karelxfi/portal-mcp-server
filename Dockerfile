@@ -1,4 +1,4 @@
-FROM node:24-alpine AS build
+FROM node:22-alpine AS build
 
 WORKDIR /app
 
@@ -11,7 +11,17 @@ RUN corepack enable \
 COPY . .
 RUN pnpm run build
 
-FROM node:24-alpine
+FROM node:22-alpine
+
+# The build passes the exact commit and build time so /health and every tool
+# result can name the running code.
+ARG GIT_SHA=unknown
+ARG BUILD_TIME=unknown
+ENV SQD_GIT_SHA=$GIT_SHA
+ENV SQD_BUILD_TIME=$BUILD_TIME
+LABEL org.opencontainers.image.source="https://github.com/subsquid-labs/portal-mcp-server"
+LABEL org.opencontainers.image.revision=$GIT_SHA
+LABEL org.opencontainers.image.created=$BUILD_TIME
 
 RUN apk add --no-cache curl
 

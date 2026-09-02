@@ -163,6 +163,10 @@ async function assertPublicHttpSurface() {
     healthPayload.observability?.captures_user_content === false,
     'Runtime should explicitly report that observability does not capture user content',
   )
+  assert(
+    typeof healthPayload.commit === 'string' && /^(unknown|[0-9a-f]{7,40})$/.test(healthPayload.commit),
+    '/health must name the exact commit the server was built from, or unknown outside an image build',
+  )
 
   const tools = await fetch(`${BASE_URL}/tools`)
   assert(tools.status === 404, `Retired duplicate /tools endpoint should return 404, got ${tools.status}`)

@@ -12,7 +12,20 @@ v0.8.5 keeps every earlier gate and adds Explorer gates for the host-fit beta.
 | Chain identity and links | Network logo and display name from SQD metadata, one explorer link per identifier kind, CSP limited to the two logo origins | `test:app-ui`, `test:app-contract` |
 | Beta labelling and opt-in | Beta tag in the widget, `_app.stage`, deployment and per-connection gate | `test:app-contract`, `test:app-ui` |
 | Bundle budget | Self-contained resource under 720,000 bytes | `test:app-contract` |
+| Traceable runtime identity | `/health` and every tool result's `_server` carry the git commit the image was built from; `latest` on Docker Hub is only produced by a `v*` tag, main pushes produce `edge` and `sha-*` | `test:http-runtime`, `test:distribution` |
+| Workflow supply chain | Every third-party action pinned to a full commit SHA with a version comment, `persist-credentials: false` on every checkout, `permissions: {}` at workflow level with per-job grants, no shared layer cache between edge and release images, Renovate keeps the pins current | `test:workflow-pins` |
+| Release automation | A `v*` tag creates the GitHub release from the dated `CHANGELOG.md` section, publishes the registry entry and the Docker image, and uploads the Gemini archive; re-running on an existing tag is a no-op | `github-release.yml`, `scripts/extract-changelog-section.mjs` |
+| Directory health signal | The daily job reads the Smithery registry API instead of a client-rendered page, treats pending review queues as non-failing, and fails only on a required target | `check:directories` |
 | Bitcoin fee truth | Fees summed in exact satoshis per block from inputs and outputs; the analytics fee section names its exact block set and marks sample scope in the answer, notices, coverage sections, execution notes, and receipt; `fees_btc` buckets are non-zero and reconcile to the window total; generic series and OHLC candles declare their bucket alignment | `test:bitcoin-fees` |
+
+### How a release happens
+
+1. The release pull request carries the `## [X.Y.Z] - Unreleased` changelog entry and merges to `main` with the full `test:ci` gate green. A `main` push publishes `subsquid/portal-mcp-server:edge` and `:sha-<commit>`, never `latest`.
+2. On `main`, `npm run release:patch` (or `minor`, `major`) dates the changelog entry, bumps `package.json`, `package-lock.json`, `server.json`, and every plugin manifest, commits, and creates the annotated `vX.Y.Z` tag. It refuses to run without the changelog entry or with a dirty tree.
+3. `git push origin HEAD && git push origin vX.Y.Z`. The tag runs three workflows: GitHub Release (release body is the changelog section, then the Gemini archive is packaged and uploaded), Publish MCP Registry, and Build Docker Image (`latest`, `X.Y.Z`, `X.Y`, `sha-<commit>`, with the commit in the image labels, in `/health`, and in every tool result). Re-running any of them on the same tag is safe.
+4. npm publication is a separate manual step. The hosted deployment should pin a version tag rather than `latest`.
+
+Every workflow pins its actions by commit SHA, drops checkout credentials, and starts from an empty permission set; `npm run test:workflow-pins` fails a pull request that regresses this. Node 22 is the one runtime across `.nvmrc`, `.mise.toml`, the Dockerfile, the workflows, and the `engines` field.
 
 ## v0.8.4 additions
 
