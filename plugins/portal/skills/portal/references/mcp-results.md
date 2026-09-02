@@ -32,6 +32,7 @@ Treat timestamps as half-open windows `[from, to)`. Numeric bounds, human labels
 ## SQD Explorer
 
 - `_app` and `_ui` describe App delivery and proposed charts, dashboards, timelines, tables, wallet views, exports, pagination, and follow-up actions.
+- `_app.stage` is `"beta"`. The Explorer is off by default; `MCP_APP_ENABLED=true` opts a deployment in, and `?app=1` or `?app=0` on the connection overrides that.
 - Tool results cannot observe whether the host rendered the App. `host_render_state: "not_observable_from_tool_result"` is not a render confirmation.
 - Count a surface as rendered only when the host visibly shows it or an AppBridge test proves it.
 - If the client cannot render MCP Apps, mark App rendering blocked for that client. Do not call the underlying data tool broken solely for that limitation.

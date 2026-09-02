@@ -1,5 +1,18 @@
 # MCP Release Assurance
 
+## v0.8.5 additions
+
+v0.8.5 keeps every earlier gate and adds Explorer gates for the host-fit beta.
+
+| Release property | Required coverage | Automated gate |
+|---|---:|---|
+| Host-fit inline card | Exact content height reported through `size-changed`; inline and full-screen layouts from 320 px in light and dark, including Claude's published style variables | `test:app-host`, `test:app-ui` |
+| Host-verified actions | Load older, Back, Forward, JSON and CSV downloads, receipt and row dialogs, explorer links, filter, sort, and Exit full screen through the official AppBridge | `test:app-host` |
+| Real recorded data | Every preview and screenshot cell renders recorded Portal responses; only sparse, mixed, and error cells are synthetic | `test:app-ui` |
+| Chain identity and links | Network logo and display name from SQD metadata, one explorer link per identifier kind, CSP limited to the two logo origins | `test:app-ui`, `test:app-contract` |
+| Beta labelling and opt-in | Beta tag in the widget, `_app.stage`, deployment and per-connection gate | `test:app-contract`, `test:app-ui` |
+| Bundle budget | Self-contained resource under 720,000 bytes | `test:app-contract` |
+
 ## v0.8.4 additions
 
 v0.8.4 keeps every v0.8.2 and v0.8.3 gate and adds factuality checks for the defects confirmed during the v0.8.3 review. The exact release candidate must pass every applicable cell before publication.
@@ -20,7 +33,7 @@ v0.8.4 keeps every v0.8.2 and v0.8.3 gate and adds factuality checks for the def
 | Observable candidate identity | Every tool response reports SQD and exact server version; App identity uses the canonical product name | `test:v084-factuality`, `test:app-contract`, `test:protocol` |
 | Pre-query validation | Solana, Bitcoin, Hyperliquid, and Tron identifiers plus exact Solana discriminator widths | `test:v084-factuality`, `test:negative` |
 | Wire response budget | Compact wire encoding, measured per-tool public limits, no silent evidence truncation, bounded replica scans | `test:quality`, `test:v084-factuality`, `test:fetch-reliability` |
-| Honest app lifecycle | Canonical identity, host-ready wording, no unobservable render claim, stale-data clearing on failure, 20-row local evidence pages | `test:app-contract`, `test:app-ui` |
+| Honest app lifecycle | Canonical identity, host-ready wording, no unobservable render claim, stale-data clearing on failure, ten-row local evidence pages | `test:app-contract`, `test:app-ui` |
 | Current MCP publication contract | Stateless `2026-07-28`, `server/discover`, deterministic cache hints, routing headers, strict standard MCP Apps bridge, exact CSP | `test:protocol`, `test:http-runtime`, `test:plugin`, `test:claude-plugin`, `test:app-contract` |
 
 ## v0.8.3 additions

@@ -9,6 +9,10 @@ import {
   normalizeSubstrateCallResult,
 } from '../dist/helpers/normalized-results.js'
 import { assertUniqueNormalizedIds } from '../dist/helpers/format.js'
+import { readFileSync } from 'node:fs'
+
+/* The exact released version, so a release bump cannot silently drift from this gate. */
+const npmVersion: string = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version
 import { buildLlmHints } from '../dist/helpers/llm-hints.js'
 import { calculatePercentile } from '../dist/helpers/statistics.js'
 import {
@@ -398,7 +402,7 @@ async function assertLiveAggregateAndOhlcParity() {
     }, { retries: 0 })
     assert(!compatibleWalletPage.isError, 'retained wallet limits must remain callable by installed clients')
     assert(
-      compatibleWalletPage.data?._server?.name === 'SQD' && compatibleWalletPage.data?._server?.version === '0.8.4',
+      compatibleWalletPage.data?._server?.name === 'SQD' && compatibleWalletPage.data?._server?.version === npmVersion,
       'every tool response must make the exact SQD server version observable in-session',
     )
     assert(compatibleWalletPage.data?._pagination?.page_size === 4, 'retained wallet limits must adapt to the verified safe page size')

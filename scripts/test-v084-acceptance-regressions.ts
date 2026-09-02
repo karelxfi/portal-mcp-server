@@ -1,6 +1,10 @@
 #!/usr/bin/env tsx
 
 import { assert, callToolWithRetry, closeTestClient, connectTestClient } from './test-helpers.js'
+import { readFileSync } from 'node:fs'
+
+/* The exact released version, so a release bump cannot silently drift from this gate. */
+const npmVersion: string = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version
 
 const POLKADOT_SAMPLE_FROM_BLOCK = 30_736_840
 const POLKADOT_SAMPLE_TO_BLOCK = 30_736_842
@@ -53,7 +57,7 @@ async function main() {
     assert(invalidNetwork.isError, 'the negative fixture must return a structured error')
     assert(
       invalidNetwork.structuredContent?._server?.name === 'SQD' &&
-        invalidNetwork.structuredContent?._server?.version === '0.8.4',
+        invalidNetwork.structuredContent?._server?.version === npmVersion,
       'structured errors must identify the exact server version',
     )
 

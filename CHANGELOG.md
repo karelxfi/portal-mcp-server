@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.8.5] - Unreleased
+
+Portal MCP v0.8.5 turns the SQD Explorer into a data-first beta app that fits its host and is clearly opt-in. Tool answers are unchanged.
+
+### Highlights
+- **Beta, opt in**: the Explorer is labelled Beta in the widget, in the resource description, and as `_app.stage`. It stays off by default. `MCP_APP_ENABLED=true` enables it for a deployment; `?app=1` and `?app=0` on the connection override that in either direction.
+- **Fits the host**: the inline card reports its exact content height, so hosts no longer pad it with blank space. Structural colours follow the host's MCP Apps style variables in light and dark with SQD design-system fallbacks, and full screen opens a two-column workspace.
+- **Data, not narrative**: each result is headed by its subject (address, market, or network window) and the primary number leads the metric row. Receipt lines, context chips, caller-facing notices, and chart range sliders leave the view; the JSON keeps them.
+- **Explorer links and chain identity**: addresses, transaction hashes, and blocks link to the public explorer for their network (Etherscan family, Solscan, mempool.space, Subscan, Hyperliquid, Tronscan). Network chips show the chain logo and display name from SQD network metadata, regenerated with `npm run sync:chains`.
+- **Readable charts**: candle charts use a fixed two-line readout (time and OHLCV, then fills, VWAP, size, and open or partial bucket state) instead of a floating tooltip, so hovering never resizes the chart. Line and bar tooltips stay inside the plot. Labels render at native size in the terminal palette.
+- **Short pages, full data**: ranked and timeline panels show ten rows with one Show all control, tables page ten rows with search across every row, identifier cells link out, and missing values are blank rather than "n/a".
+- **Every action verified in a host**: Load older, Back, Forward, JSON and CSV downloads through the host download request, Full receipt, row dialogs, explorer links, filter, sort, and Exit full screen are driven through the official AppBridge in `test:app-host`.
+- **Real data everywhere**: UI fixtures are recorded Portal responses (`scripts/record-app-fixtures.ts`), and `npm run app:host` runs a local MCP Apps host with live tool calls for trying the Explorer.
+
+**Full Changelog**: https://github.com/subsquid-labs/portal-mcp-server/compare/v0.8.4...v0.8.5
+
 ## [0.8.4] - 2026-08-31
 
 Portal MCP v0.8.4 makes factual completeness a release requirement across every supported data family. It fixes confirmed timestamp, identity, pagination, aggregate, wallet, candle, validation, and response-budget defects, then checks the same answers against direct SQD Portal evidence.
