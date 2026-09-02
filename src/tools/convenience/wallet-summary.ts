@@ -1491,7 +1491,7 @@ export function registerGetWalletSummaryTool(server: McpServer) {
               ? [
                   'Use portal_get_network_info for Tron availability and freshness.',
                   'Use portal_debug_resolve_time_to_block for Tron timestamp-to-block lookups.',
-                  'Use the native Tron Stream API examples in the bundled SQD Portal skill for wallet-filtered Tron records.',
+                  'Use portal_tron_query_transactions with from_addresses or to_addresses for TRX sent or received by the wallet, and portal_tron_query_logs with topic1 or topic2 set to the wallet for TRC-20 transfers.',
                 ]
               : [
                   'Use portal_debug_query_blocks plus a Substrate-specific event or call query for now.',

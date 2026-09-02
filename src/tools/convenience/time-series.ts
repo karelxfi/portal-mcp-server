@@ -758,7 +758,7 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
           suggestions: [
             'Use portal_get_network_info for Tron availability and freshness.',
             'Use portal_debug_resolve_time_to_block for Tron timestamp-to-block lookups.',
-            'Use the native Tron Stream API examples in the bundled SQD Portal skill for custom Tron time series.',
+            'Use portal_tron_query_transactions or portal_tron_query_logs with response_format=summary for bounded Tron counts, or the Stream API examples in the bundled SQD Portal skill for custom time series.',
           ],
         })
       }

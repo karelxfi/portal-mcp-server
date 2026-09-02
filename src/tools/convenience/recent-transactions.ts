@@ -298,7 +298,7 @@ export function registerGetRecentTransactionsTool(server: McpServer) {
           suggestions: [
             'Use portal_get_network_info for Tron availability and freshness.',
             'Use portal_debug_resolve_time_to_block for Tron timestamp-to-block lookups.',
-            'Use the native Tron Stream API examples in the bundled SQD Portal skill for raw Tron records.',
+            'Use portal_tron_query_transactions for native TRX transfers, TRC-10 transfers, and contract calls, and portal_tron_query_logs for TRC-20 events.',
           ],
         })
       }
