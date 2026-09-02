@@ -41,6 +41,7 @@ import {
 } from '../../helpers/timeframe.js'
 import { buildExecutionMetadata, buildToolDescription } from '../../helpers/tool-ux.js'
 import { buildChartPanel, buildMetricCard, buildPortalUi, buildTablePanel } from '../../helpers/ui-metadata.js'
+import { untrustedLabel } from '../../helpers/untrusted-text.js'
 import { normalizeEvmAddress } from '../../helpers/validation.js'
 
 type OhlcDuration = '1h' | '6h' | '12h' | '24h' | '7d' | '30d'
@@ -405,7 +406,7 @@ function shortenAddressLabel(address: string) {
 }
 
 function resolveTokenLabel(side: BaseTokenSide, symbol?: string, address?: string) {
-  return symbol || (address ? shortenAddressLabel(address) : side)
+  return untrustedLabel(symbol) || (address ? shortenAddressLabel(address) : side)
 }
 
 function isStableLikeLabel(label: string) {

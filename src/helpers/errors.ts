@@ -1,3 +1,5 @@
+import { cleanProse } from './untrusted-text.js'
+
 // ============================================================================
 // Error Handling with Actionable Messages
 // ============================================================================
@@ -71,7 +73,7 @@ function sanitizeUrl(value: string): string {
 }
 
 export function sanitizeText(value: string): string {
-  return value
+  return cleanProse(value, Number.MAX_SAFE_INTEGER)
     .replace(/Bearer\s+[A-Za-z0-9._~+/\-=]+/gi, `Bearer ${REDACTED_VALUE}`)
     .replace(
       /\b(authorization|proxy-authorization|x-api-key|api[_-]?key|access[_-]?token|refresh[_-]?token|id[_-]?token|client[_-]?secret|password|secret|token)\s*[:=]\s*["']?[^"',\s}\]]+/gi,

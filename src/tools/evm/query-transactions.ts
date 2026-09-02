@@ -43,6 +43,7 @@ import {
 } from '../../helpers/result-metadata.js'
 import { type TimestampInput, getTimestampWindowNotices, resolveTimeframeOrBlocks } from '../../helpers/timeframe.js'
 import { buildExecutionMetadata, buildToolDescription } from '../../helpers/tool-ux.js'
+import { quoteUntrusted } from '../../helpers/untrusted-text.js'
 import {
   getQueryExamples,
   getValidationNotices,
@@ -173,12 +174,12 @@ function buildTokenResolutionNotices(
   for (const resolution of resolutions) {
     if (resolution.matches.length > 1) {
       notices.push(
-        `${fieldName} ${resolution.symbol} resolved to ${resolution.matches.length} token-list matches; all selected addresses were included. Use from_addresses/to_addresses for deterministic single-contract filters.`,
+        `${fieldName} ${quoteUntrusted(resolution.symbol)} resolved to ${resolution.matches.length} token-list matches; all selected addresses were included. Use from_addresses/to_addresses for deterministic single-contract filters.`,
       )
     }
     if (resolution.truncated) {
       notices.push(
-        `${fieldName} ${resolution.symbol} had more matches than max_token_symbol_matches; results were capped.`,
+        `${fieldName} ${quoteUntrusted(resolution.symbol)} had more matches than max_token_symbol_matches; results were capped.`,
       )
     }
   }
@@ -854,7 +855,7 @@ export function registerQueryTransactionsTool(server: McpServer) {
         fromTokenSymbolLookup = resolvedSymbols.lookup
         if (resolvedFromTokenSymbolAddresses.length === 0 && normalizedFromAddressFilters.length === 0) {
           throw new Error(
-            `No token-list matches found for from_token_symbols: ${from_token_symbols.join(', ')}. Use portal_resolve_entity to inspect matches or pass from_addresses directly.`,
+            `No token-list matches found for from_token_symbols: ${from_token_symbols.map((symbol) => quoteUntrusted(symbol)).join(', ')}. Use portal_resolve_entity to inspect matches or pass from_addresses directly.`,
           )
         }
       }
@@ -870,7 +871,7 @@ export function registerQueryTransactionsTool(server: McpServer) {
         toTokenSymbolLookup = resolvedSymbols.lookup
         if (resolvedToTokenSymbolAddresses.length === 0 && normalizedToAddressFilters.length === 0) {
           throw new Error(
-            `No token-list matches found for to_token_symbols: ${to_token_symbols.join(', ')}. Use portal_resolve_entity to inspect matches or pass to_addresses directly.`,
+            `No token-list matches found for to_token_symbols: ${to_token_symbols.map((symbol) => quoteUntrusted(symbol)).join(', ')}. Use portal_resolve_entity to inspect matches or pass to_addresses directly.`,
           )
         }
       }

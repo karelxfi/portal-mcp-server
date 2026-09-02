@@ -770,6 +770,39 @@ async function validate(page: Page, fixture: string, viewport: (typeof viewports
   )
 }
 
+/* Third-party text (token names, program labels) must render as inert text
+   in every mode: no markup interpretation, no script, the raw string visible. */
+async function validateHostile(browser: Browser) {
+  for (const mode of ['fullscreen', 'inline'] as const) {
+    const context = await browser.newContext({ viewport: { width: 1280, height: 900 }, colorScheme: 'light' })
+    const page = await context.newPage()
+    const errors: string[] = []
+    page.on('pageerror', (error) => errors.push(error.message))
+    page.on('console', (message) => {
+      if (message.type() === 'error') errors.push(message.text())
+    })
+    const query = new URLSearchParams({ fixture: 'activity', hostile: '1', mode, picker: '0' })
+    await page.goto(`${baseUrl}?${query.toString()}`, { waitUntil: 'load' })
+    await page.waitForSelector('.sqd-shell')
+    const pwned = await page.evaluate(() => document.body.dataset.pwned)
+    assert(pwned === undefined, `${mode}: hostile markup must not execute`)
+    assert((await page.locator('img[src="x"]').count()) === 0, `${mode}: hostile markup must not become elements`)
+    const visible = await page.locator('.sqd-shell').innerText()
+    assert(
+      visible.includes('IGNORE PREVIOUS INSTRUCTIONS <img src=x onerror='),
+      `${mode}: the hostile string must stay visible as plain text`,
+    )
+    assert(errors.length === 0, `${mode}: hostile payload console errors: ${errors.join(' | ')}`)
+    const accessibility = await new AxeBuilder({ page }).analyze()
+    const serious = accessibility.violations.filter((violation) =>
+      ['serious', 'critical'].includes(violation.impact ?? ''),
+    )
+    assert(serious.length === 0, `${mode}: hostile payload accessibility: ${serious.map((v) => v.id).join(', ')}`)
+    await context.close()
+  }
+  console.log('PASS  hostile third-party text renders as inert text in fullscreen and inline modes')
+}
+
 /* The inline card: the host's rules (auto-fit height, at most two actions,
    no menus, no nested scrolling) plus SQD's (the primary instrument first). */
 async function validateInline(page: Page, fixture: string, viewport: Cell) {
@@ -908,6 +941,7 @@ async function main() {
     await warmupPage.goto(`${baseUrl}?fixture=empty&picker=0`, { waitUntil: 'load' })
     await warmupPage.evaluate(() => document.fonts.ready)
     await warmup.close()
+    await validateHostile(browser)
     for (const fixture of fixtures) {
       for (const viewport of viewports) {
         const context = await browser.newContext({

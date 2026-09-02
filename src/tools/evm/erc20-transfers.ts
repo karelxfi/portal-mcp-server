@@ -36,6 +36,7 @@ import {
 import { type TimestampInput, getTimestampWindowNotices, resolveTimeframeOrBlocks } from '../../helpers/timeframe.js'
 import { buildExecutionMetadata, buildToolDescription } from '../../helpers/tool-ux.js'
 import { buildMetricCard, buildPortalUi, buildTimelinePanel } from '../../helpers/ui-metadata.js'
+import { quoteUntrusted } from '../../helpers/untrusted-text.js'
 import { normalizeAddresses, normalizeEvmAddress } from '../../helpers/validation.js'
 import type { BlockHead } from '../../types/index.js'
 
@@ -132,12 +133,12 @@ export function registerGetErc20TransfersTool(server: McpServer) {
     for (const resolution of resolutions) {
       if (resolution.matches.length > 1) {
         notices.push(
-          `Token symbol ${resolution.symbol} resolved to ${resolution.matches.length} token-list matches; all selected addresses were included. Use token_addresses for a single deterministic contract.`,
+          `Token symbol ${quoteUntrusted(resolution.symbol)} resolved to ${resolution.matches.length} token-list matches; all selected addresses were included. Use token_addresses for a single deterministic contract.`,
         )
       }
       if (resolution.truncated) {
         notices.push(
-          `Token symbol ${resolution.symbol} had more matches than max_token_symbol_matches; results were capped.`,
+          `Token symbol ${quoteUntrusted(resolution.symbol)} had more matches than max_token_symbol_matches; results were capped.`,
         )
       }
     }
@@ -335,11 +336,14 @@ export function registerGetErc20TransfersTool(server: McpServer) {
         resolvedTokenSymbolAddresses = resolvedSymbols.addresses
         tokenSymbolLookup = resolvedSymbols.lookup
         if (resolvedTokenSymbolAddresses.length === 0 && normalizedTokenAddressFilters.length === 0) {
-          throw new ActionableError(`No token-list matches found for token_symbols: ${token_symbols.join(', ')}.`, [
-            'Use portal_resolve_entity to inspect available token-list matches.',
-            'Pass token_addresses directly if you know the exact contract address.',
-            'Check the network name; token symbols can differ across chains.',
-          ])
+          throw new ActionableError(
+            `No token-list matches found for token_symbols: ${token_symbols.map((symbol) => quoteUntrusted(symbol)).join(', ')}.`,
+            [
+              'Use portal_resolve_entity to inspect available token-list matches.',
+              'Pass token_addresses directly if you know the exact contract address.',
+              'Check the network name; supported token symbols differ across chains.',
+            ],
+          )
         }
       }
       const normalizedTokens = uniqueStrings([...normalizedTokenAddressFilters, ...resolvedTokenSymbolAddresses])

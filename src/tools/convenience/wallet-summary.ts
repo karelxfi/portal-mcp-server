@@ -67,6 +67,7 @@ import {
   buildTablePanel,
   buildTimelinePanel,
 } from '../../helpers/ui-metadata.js'
+import { untrustedLabel } from '../../helpers/untrusted-text.js'
 import {
   isValidBitcoinAddress,
   isValidEvmAddress,
@@ -726,7 +727,8 @@ function parseBigIntAmount(value: unknown): bigint {
 
 function formatDecimalAmount(value: bigint, decimals: number, symbol?: string): string {
   const exact = formatDecimalAmountExact(value, decimals)
-  return symbol ? `${exact} ${symbol}` : exact
+  const label = untrustedLabel(symbol)
+  return label ? `${exact} ${label}` : exact
 }
 
 export function formatDecimalAmountExact(value: bigint, decimals: number): string {

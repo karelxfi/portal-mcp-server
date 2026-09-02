@@ -13,6 +13,7 @@ import { ActionableError } from '../../helpers/errors.js'
 import { formatResult } from '../../helpers/format.js'
 import { registerPortalTool } from '../../helpers/mcp-registration.js'
 import { buildExecutionMetadata, buildToolDescription } from '../../helpers/tool-ux.js'
+import { quoteUntrusted } from '../../helpers/untrusted-text.js'
 
 export function registerResolveEntityTool(server: McpServer) {
   registerPortalTool(
@@ -188,8 +189,8 @@ export function registerResolveEntityTool(server: McpServer) {
           ...(suggestedArguments ? { suggested_arguments: suggestedArguments } : {}),
         },
         matches.length === 1
-          ? `Resolved ${result.query} to 1 ${effectiveKind} match`
-          : `Resolved ${result.query} to ${matches.length} ${effectiveKind} matches`,
+          ? `Resolved ${quoteUntrusted(result.query)} to 1 ${effectiveKind} match`
+          : `Resolved ${quoteUntrusted(result.query)} to ${matches.length} ${effectiveKind} matches`,
         {
           toolName: 'portal_resolve_entity',
           notices,

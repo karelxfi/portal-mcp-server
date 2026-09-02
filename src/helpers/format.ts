@@ -17,6 +17,7 @@ import { buildLlmHints } from './llm-hints.js'
 import type { PipesRecipe } from './pipes-recipe.js'
 import { getToolContract } from './tool-ux.js'
 import type { UiFollowUpAction } from './ui-metadata.js'
+import { UNTRUSTED_FIELDS, cleanProseFields, untrustedLabel } from './untrusted-text.js'
 
 const MAX_RESPONSE_BYTES = 50_000
 
@@ -448,7 +449,8 @@ export function weiToGwei(wei: string | bigint): string {
 
 export function formatTokenAmount(value: string, decimals: number = 18, symbol?: string): string {
   const formatted = weiToEth(value, decimals)
-  return symbol ? `${formatted} ${symbol}` : formatted
+  const label = untrustedLabel(symbol)
+  return label ? `${formatted} ${label}` : formatted
 }
 
 export function formatTokenValue(
@@ -464,7 +466,8 @@ export function formatTokenValue(
   const bigIntValue = BigInt(decimal)
   let formatted = formatIntegerUnitsExact(bigIntValue, decimals)
 
-  if (symbol) formatted += ` ${symbol}`
+  const label = untrustedLabel(symbol)
+  if (label) formatted += ` ${label}`
 
   return {
     raw: hexValue,
@@ -1344,7 +1347,7 @@ export function formatResult(data: unknown, message?: string, options?: FormatOp
       payloadRecord._summary = message.trim()
     }
     if (toolContract) {
-      payloadRecord._tool_contract = toolContract
+      payloadRecord._tool_contract = { ...toolContract, untrusted_fields: UNTRUSTED_FIELDS }
     }
     payloadRecord._server = {
       name: 'SQD',
@@ -1383,12 +1386,16 @@ export function formatResult(data: unknown, message?: string, options?: FormatOp
       payloadRecord._notices = notices
     }
 
+    // Third-party names may already sit in the summary, notices, and headline.
+    // Clean the prose copies before they feed the answer; structured data stays exact.
+    cleanProseFields(payloadRecord)
     const answer = buildChatAnswer(payloadRecord)
     const display = buildDisplay(payloadRecord)
     const nextSteps = buildNextSteps(payloadRecord) ?? { actions: [] }
     if (answer) payloadRecord.answer = answer
     if (display) payloadRecord.display = display
     payloadRecord.next_steps = nextSteps
+    cleanProseFields(payloadRecord)
 
     payloadRecord.investigation = buildInvestigationGuide(payloadRecord)
     payloadRecord._llm = buildLlmHints(payloadRecord, options?.llm)
