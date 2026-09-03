@@ -1,6 +1,6 @@
 #!/usr/bin/env tsx
 
-import { mkdir, readFile } from 'node:fs/promises'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import path from 'node:path'
 
@@ -93,6 +93,138 @@ const interactionTimings: number[] = []
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message)
+}
+
+/*
+ * A layout baseline, not a pixel one. The token assertions above cannot see a
+ * chart drawn short or two cards overlapping, and a folder of PNGs cannot be
+ * read in a pull request: 81 full-page images are 7.7 MB, and every deliberate
+ * design change rewrites all of them into the history. Recording the box of
+ * every structural element instead catches the same regressions — anything
+ * that moves, grows, shrinks or collides — in a file a reviewer can read as a
+ * diff. What it cannot see is paint inside a box that keeps its size; the
+ * colour and typography assertions cover that.
+ *
+ * Refresh deliberately with `npm run baseline:app-ui`, and say in the pull
+ * request why the boxes moved.
+ */
+/* Text metrics are the platform's, not the app's: the same CSS wraps to
+   different heights on Linux and on a Mac, so one baseline cannot serve both.
+   The file is keyed by platform, only the CI platform's is committed, and a
+   run on any other platform says it skipped rather than failing on a
+   difference that is the font stack rather than the design. */
+const baselinePlatform = process.env.SQD_BASELINE_PLATFORM || process.platform
+const baselineFile = path.resolve(`scripts/app-ui-baselines/layout-${baselinePlatform}.json`)
+const updatingBaseline = process.env.SQD_UPDATE_BASELINE === '1'
+let baselineSkipped = ''
+/* Half a pixel of jitter is font rasterisation; the issue asks for a 2px
+   regression to fail, so anything at or past 1px is reported. */
+const LAYOUT_TOLERANCE = 1
+const LOCKED_SELECTORS = [
+  '.sqd-shell',
+  '.sqd-topbar',
+  '.sqd-hero',
+  '.sqd-metrics',
+  '.sqd-workspace-main',
+  '.sqd-workspace-side',
+  '.sqd-workspace-ledger',
+  '.sqd-card',
+  '.sqd-card-head',
+  '.sqd-card-body',
+  '.sqd-chart-wrap',
+  '.sqd-chart',
+  '.sqd-candle-terminal',
+  '.sqd-candle-chart',
+  '.sqd-chart-toolbar',
+  '.sqd-chart-legend',
+  '.sqd-table-wrap',
+  '.sqd-table',
+  '.sqd-table-pagination',
+  '.sqd-timeline',
+  '.sqd-ranked',
+  '.sqd-stat-list',
+  '.sqd-notice-copy',
+  '.sqd-receipt',
+  '.sqd-actions',
+  '.sqd-empty',
+]
+type CellLayout = Record<string, number[][]>
+const capturedLayouts: Record<string, CellLayout> = {}
+let recordedBaseline: Record<string, CellLayout> = {}
+try {
+  recordedBaseline = JSON.parse(await readFile(baselineFile, 'utf8'))
+} catch {
+  baselineSkipped = `no layout baseline for ${baselinePlatform}; run npm run baseline:app-ui to record one locally`
+}
+
+async function checkLayout(page: Page, cell: string) {
+  /* No named function may appear inside page.evaluate: the tsx transform gives
+     one a __name helper that does not exist in the browser. */
+  const measured: CellLayout = await page.evaluate((selectors) => {
+    const out: Record<string, number[][]> = {}
+    for (const selector of selectors) {
+      const boxes = [...document.querySelectorAll(selector)].map((node) => {
+        const box = node.getBoundingClientRect()
+        return [
+          Math.round((box.left + scrollX) * 2) / 2,
+          Math.round((box.top + scrollY) * 2) / 2,
+          Math.round(box.width * 2) / 2,
+          Math.round(box.height * 2) / 2,
+        ]
+      })
+      if (boxes.length) out[selector] = boxes
+    }
+    return out
+  }, LOCKED_SELECTORS)
+  capturedLayouts[cell] = measured
+  if (updatingBaseline || baselineSkipped) return
+
+  const expected = recordedBaseline[cell]
+  assert(expected !== undefined, `${cell} has no layout baseline; run npm run baseline:app-ui`)
+  const drifted: string[] = []
+  for (const selector of new Set([...Object.keys(expected), ...Object.keys(measured)])) {
+    const before = expected[selector] ?? []
+    const after = measured[selector] ?? []
+    if (before.length !== after.length) {
+      drifted.push(`${selector}: ${before.length} element(s) became ${after.length}`)
+      continue
+    }
+    before.forEach((box, index) => {
+      const moved = box
+        .map((value, axis) => [['x', 'y', 'w', 'h'][axis], value, after[index][axis]] as const)
+        .filter(([, was, now]) => Math.abs(now - was) >= LAYOUT_TOLERANCE)
+      if (moved.length) {
+        drifted.push(`${selector}[${index}] ${moved.map(([axis, was, now]) => `${axis} ${was} -> ${now}`).join(', ')}`)
+      }
+    })
+  }
+  assert(
+    drifted.length === 0,
+    `${cell} layout moved against the baseline:\n    ${drifted.slice(0, 8).join('\n    ')}${
+      drifted.length > 8 ? `\n    ...and ${drifted.length - 8} more` : ''
+    }\n  If this is intended, run npm run baseline:app-ui and say why in the pull request.`,
+  )
+}
+
+async function writeLayoutBaseline() {
+  await mkdir(path.dirname(baselineFile), { recursive: true })
+  /* One box per line, so a reviewer reads "this card moved 4px down" from the
+     diff instead of counting brackets. */
+  const cells = Object.keys(capturedLayouts).sort()
+  const lines = cells.map((cell) => {
+    const selectors = Object.keys(capturedLayouts[cell]).sort()
+    const body = selectors
+      .map(
+        (selector) =>
+          `  ${JSON.stringify(selector)}: [${capturedLayouts[cell][selector]
+            .map((box) => `[${box.join(', ')}]`)
+            .join(', ')}]`,
+      )
+      .join(',\n')
+    return ` ${JSON.stringify(cell)}: {\n${body}\n }`
+  })
+  await writeFile(baselineFile, `{\n${lines.join(',\n')}\n}\n`)
+  console.log(`Layout baseline written: ${cells.length} cells in ${path.relative(process.cwd(), baselineFile)}`)
 }
 
 async function validate(page: Page, fixture: string, viewport: (typeof viewports)[number]) {
@@ -259,6 +391,7 @@ async function validate(page: Page, fixture: string, viewport: (typeof viewports
     .evaluateAll((cards) => cards.filter((card) => card.getBoundingClientRect().height < 40).length)
   assert(emptyCards === 0, `${fixture} ${viewport.name} has collapsed evidence cards`)
   await page.screenshot({ path: path.join(screenshots, `${viewport.name}-${fixture}.png`), fullPage: true })
+  await checkLayout(page, `${viewport.name}-${fixture}`)
   if (viewport.mode === 'inline') {
     await validateInline(page, fixture, viewport)
     return
@@ -1187,6 +1320,9 @@ async function main() {
   )
   console.log(`Interaction latency: p95 ${percentile(sortedInteractions, 0.95).toFixed(0)}ms`)
   console.log(`UI screenshots: ${path.relative(process.cwd(), screenshots)}`)
+  if (updatingBaseline) await writeLayoutBaseline()
+  else if (baselineSkipped) console.log(`Layout baseline: ${baselineSkipped}`)
+  else console.log(`Layout baseline: ${Object.keys(capturedLayouts).length} cells matched on ${baselinePlatform}`)
 }
 
 main().catch((error) => {

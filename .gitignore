@@ -105,3 +105,7 @@ V*_SCOPE.md
 
 # Generated Explorer bundle: built by scripts/ensure-app-bundle.mjs and npm run build
 src/generated/
+
+# Layout baselines are recorded per platform; only the CI platform is committed.
+scripts/app-ui-baselines/layout-*.json
+!scripts/app-ui-baselines/layout-linux.json

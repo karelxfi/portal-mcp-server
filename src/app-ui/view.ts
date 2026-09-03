@@ -1386,6 +1386,11 @@ function buildCandleTerminal(
   const TERMINAL_COLORS = terminalColors()
   const chartApi = createChart(mount, {
     autoSize: true,
+    /* Every number the app formats goes through en-US, and the chart has to
+       agree. Left to itself lightweight-charts takes the browser's locale,
+       which on a host whose environment reports something like `en_US@posix`
+       is not a valid language tag and throws out of the axis formatter. */
+    localization: { locale: 'en-US' },
     layout: {
       background: { type: ColorType.Solid, color: 'transparent' },
       textColor: TERMINAL_COLORS.ink,
