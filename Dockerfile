@@ -2,14 +2,15 @@ FROM node:22-alpine AS build
 
 WORKDIR /app
 
-# Enable a pinned pnpm via corepack so Docker builds are reproducible.
-COPY package.json pnpm-lock.yaml ./
-RUN corepack enable \
-  && corepack prepare pnpm@10.32.1 --activate \
-  && pnpm install --frozen-lockfile
+# The image installs from package-lock.json, the same lockfile CI installs
+# from, so the published image is built against the tree the gates tested. A
+# second lockfile for this stage would drift silently: nothing in CI installs
+# it, so a version difference only ever surfaces as a broken image build.
+COPY package.json package-lock.json .npmrc ./
+RUN npm ci
 
 COPY . .
-RUN pnpm run build
+RUN npm run build
 
 FROM node:22-alpine
 

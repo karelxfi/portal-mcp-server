@@ -84,7 +84,7 @@ TODO*.md
 !.agents/plugins/
 !.agents/plugins/marketplace.json
 
-# Package manager lock files (package-lock.json and pnpm-lock.yaml are tracked and kept in sync)
+# Package manager lock files (package-lock.json is tracked; it is the only lockfile)
 yarn.lock
 
 # Coverage reports

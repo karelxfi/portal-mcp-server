@@ -1759,10 +1759,9 @@ export const TOOL_SPECS: ToolSpec[] = [
         response_format: 'summary',
         limit: 25,
       })
-      if (!summary.isError) {
-        assert(typeof summary.data.total_trx_transferred === 'string', 'summary should total TRX moved')
-        assert(summary.data.type_breakdown?.TransferContract > 0, 'summary should break down by contract type')
-      }
+      assert(!summary.isError, `Tron transaction summaries should not fail: ${summary.text.slice(0, 200)}`)
+      assert(typeof summary.data.total_trx_transferred === 'string', 'summary should total TRX moved')
+      assert(summary.data.type_breakdown?.TransferContract > 0, 'summary should break down by contract type')
     },
   },
   {

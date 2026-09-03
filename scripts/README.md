@@ -29,7 +29,7 @@ Unit tests sit next to the code as `src/**/*.test.ts` and run with the built-in 
 | Script | Gate | What it checks |
 |---|---|---|
 | `test:unit` | offline | `node --test` unit tests in `src/**/*.test.ts` |
-| `test:lockfiles` | offline | `package.json`, `package-lock.json`, and `pnpm-lock.yaml` agree |
+| `test:lockfiles` | offline | `package-lock.json` is the only lockfile, matches `package.json`, and is what the image installs |
 | `test:workflow-pins` | offline | every GitHub Action pinned by SHA, no checkout credentials, empty default permissions |
 | `test:lean` | offline | one registry, instrumented registrations, no legacy surfaces, bounded source |
 | `test:distribution` | offline | distribution and submission manifests share the release version |

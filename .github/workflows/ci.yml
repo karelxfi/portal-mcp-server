@@ -5,11 +5,13 @@ name: CI
 # tree against Portal and reports without blocking, because a transient
 # upstream latency spike is not a code defect. Both run in full on a v* tag
 # (see docker-build.yml).
+#
+# Every pull request runs it, with no path filter. A filtered trigger left a
+# documentation-only change with no checks at all, and the gate reads Markdown
+# anyway: the tool counts, the CHANGELOG entry, and the packaged file list are
+# all asserted against the docs.
 on:
   pull_request:
-    paths-ignore:
-      - "**.md"
-      - "plans/**"
 
 permissions: {}
 
