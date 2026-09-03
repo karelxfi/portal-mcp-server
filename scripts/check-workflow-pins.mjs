@@ -38,23 +38,36 @@ function trailingComment(pair, step) {
   return [pair?.value?.comment, pair?.comment, step?.comment].filter(Boolean).join(' ')
 }
 
-function checkStep(file, lineCounter, step, errors) {
-  const usesPair = pairFor(step, 'uses')
-  if (!usesPair || !isScalar(usesPair.value)) return
-  const reference = String(usesPair.value.value ?? '')
-  const line = lineOf(lineCounter, usesPair.value)
+/*
+ * `resolved` is the step as plain JavaScript, which is where the checks read
+ * their values: it has anchors, aliases and merge keys already applied, so a
+ * `with: *defaults` block is the mapping it stands for rather than an alias
+ * node the AST walk would find empty. `node` is the same step in the syntax
+ * tree, used only for the line number and for the version comment, which the
+ * plain value cannot carry.
+ */
+function checkStep(file, lineCounter, resolved, node, errors) {
+  if (!resolved || typeof resolved !== 'object') return
+  const reference = typeof resolved.uses === 'string' ? resolved.uses.trim() : undefined
+  if (reference === undefined) return
+
+  const usesPair = pairFor(node, 'uses')
+  const line = lineOf(lineCounter, usesPair?.value ?? node)
   if (reference.startsWith('./')) return
 
-  if (!/@[0-9a-f]{40}$/.test(reference) || !/(^|\s)v\d+/.test(trailingComment(usesPair, step))) {
+  if (!/@[0-9a-f]{40}$/.test(reference) || !/(^|\s)v\d+/.test(trailingComment(usesPair, node))) {
     errors.push(`${file}:${line}: ${reference} must be pinned to a 40-character commit SHA with a # vX.Y.Z comment`)
   }
 
   // GitHub resolves owner/repo case-insensitively, so the check has to as well.
   if (!reference.toLowerCase().startsWith('actions/checkout@')) return
 
-  const withMap = pairFor(step, 'with')?.value
-  const persist = pairFor(withMap, 'persist-credentials')?.value
-  const declared = isScalar(persist) ? String(persist.value) : undefined
+  const withBlock = resolved.with
+  const persist =
+    withBlock && typeof withBlock === 'object' && !Array.isArray(withBlock)
+      ? withBlock['persist-credentials']
+      : undefined
+  const declared = persist === undefined || persist === null ? undefined : String(persist)
   if (declared === undefined || !DISABLED_CREDENTIALS.has(declared)) {
     errors.push(
       `${file}:${line}: actions/checkout must set persist-credentials: false in its own with: block${
@@ -66,31 +79,39 @@ function checkStep(file, lineCounter, step, errors) {
 
 function checkWorkflow(file, text, errors) {
   const lineCounter = new LineCounter()
-  const doc = parseDocument(text, { lineCounter })
+  const doc = parseDocument(text, { lineCounter, merge: true })
   if (doc.errors.length > 0) {
     errors.push(`${file}: is not valid YAML (${doc.errors[0].message})`)
     return
   }
 
-  const permissions = doc.get('permissions', true)
-  if (!isMap(permissions) || permissions.items.length > 0) {
+  const workflow = doc.toJS({ maxAliasCount: -1 }) ?? {}
+  const permissions = workflow.permissions
+  const empty =
+    permissions !== null &&
+    typeof permissions === 'object' &&
+    !Array.isArray(permissions) &&
+    Object.keys(permissions).length === 0
+  if (!empty) {
     errors.push(`${file}: workflow must start from permissions: {} and grant per job`)
   }
 
-  const jobs = doc.get('jobs', true)
-  if (!isMap(jobs)) return
-  for (const jobPair of jobs.items) {
-    const job = jobPair.value
-    if (!isMap(job)) continue
+  const jobs = workflow.jobs
+  if (!jobs || typeof jobs !== 'object') return
+  const jobsNode = doc.get('jobs', true)
+
+  for (const [jobId, job] of Object.entries(jobs)) {
+    if (!job || typeof job !== 'object') continue
+    const jobNode = isMap(jobsNode) ? pairFor(jobsNode, jobId)?.value : undefined
 
     // A reusable workflow is referenced by the job's own `uses`.
-    checkStep(file, lineCounter, job, errors)
+    checkStep(file, lineCounter, job, jobNode, errors)
 
-    const steps = pairFor(job, 'steps')?.value
-    if (!isSeq(steps)) continue
-    for (const step of steps.items) {
-      if (isMap(step)) checkStep(file, lineCounter, step, errors)
-    }
+    if (!Array.isArray(job.steps)) continue
+    const stepsNode = pairFor(jobNode, 'steps')?.value
+    job.steps.forEach((step, index) => {
+      checkStep(file, lineCounter, step, isSeq(stepsNode) ? stepsNode.items[index] : undefined, errors)
+    })
   }
 }
 
