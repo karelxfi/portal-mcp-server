@@ -528,9 +528,20 @@ async function fetchTransactionsByScanOrder({
   })
 
   const ordered = orderTransactionsForOutput(collected, orderBy)
+  // A 'latest' scan accumulates candidates from the newest end, while the
+  // chronological output is oldest-first. Offsetting from the oldest end then
+  // moved the window by exactly as many rows as each new page added, so every
+  // continuation returned the same page and the newest match was never shown.
+  // Rank-ordered output is genuinely offset from its top, so it keeps slicing
+  // from the front.
+  const chronological = !orderBy || orderBy === 'chronological'
+  const items =
+    chronological && scanOrder === 'latest'
+      ? ordered.slice(Math.max(0, ordered.length - offset - limit), Math.max(0, ordered.length - offset))
+      : ordered.slice(offset, offset + limit)
   return {
     ...scan,
-    items: ordered.slice(offset, offset + limit),
+    items,
     candidates: ordered,
     hasMore: collected.length > offset + limit,
     candidateCount: collected.length,
