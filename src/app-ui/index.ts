@@ -2,7 +2,7 @@ import { App, applyDocumentTheme, applyHostFonts, applyHostStyleVariables } from
 
 import { buildEvidenceExport, downloadEvidence } from './export.js'
 import { evidenceArguments, planFollowup } from './followup-state.js'
-import { type ExplorerActions, type ExplorerState, isRecord, renderExplorer } from './view.js'
+import { type ChartView, type ExplorerActions, type ExplorerState, isRecord, renderExplorer } from './view.js'
 
 declare const __SQD_APP_VERSION__: string
 
@@ -101,7 +101,48 @@ function applyHostContext(context: ReturnType<typeof app.getHostContext>) {
   update({ displayMode: context.displayMode, availableDisplayModes: context.availableDisplayModes })
 }
 
+/*
+ * What the reader has zoomed to is worth telling the model, because the next
+ * question is usually about the part they are looking at. It goes to the host
+ * as context rather than a message, so it waits for their next turn instead of
+ * interrupting; only the newest one survives, which is why a burst of wheel
+ * events is collapsed into one send. The text describes the view and nothing
+ * else: it never restates coverage, which belongs to the tool result.
+ */
+let contextTimer: ReturnType<typeof setTimeout> | undefined
+let lastContext = ''
+let chartView = ''
+let pinned = ''
+
+function sendViewContext() {
+  if (!app.getHostCapabilities()?.updateModelContext) return
+  const text = [chartView, pinned].filter(Boolean).join(' ')
+  if (!text || text === lastContext) return
+  lastContext = text
+  if (contextTimer) clearTimeout(contextTimer)
+  contextTimer = setTimeout(() => {
+    app.updateModelContext({ content: [{ type: 'text', text }] }).catch(() => {
+      /* A host that declines the update leaves the chart working. */
+    })
+  }, 400)
+}
+
+function sendChartView(view: ChartView) {
+  chartView =
+    view.shown >= view.total
+      ? `The reader has the whole returned series in view: all ${view.total} points of "${view.chart}".`
+      : `The reader has zoomed "${view.chart}" to ${view.shown} of the ${view.total} returned points, ${view.firstLabel} through ${view.lastLabel}. This is a view of the same result, not a new query.`
+  sendViewContext()
+}
+
+function sendSelection(selection: string | null) {
+  pinned = selection ? `They have pinned the point ${selection}.` : ''
+  sendViewContext()
+}
+
 const actions: ExplorerActions = {
+  reportChartView: sendChartView,
+  reportSelection: sendSelection,
   async runFollowup(intent, target, action) {
     if ((intent === 'drilldown' || intent === 'show_raw') && target) {
       const value = state.payload

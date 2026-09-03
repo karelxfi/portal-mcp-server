@@ -48,7 +48,10 @@ export interface ChartInteractionsDescriptor {
   }
   toolbar?: {
     enabled: boolean
-    actions: Array<'reset_zoom' | 'toggle_visual' | 'download_png'>
+    /* Only what the app actually offers. Resetting the view is the one
+       toolbar action it implements; a descriptor that named a PNG export or a
+       visual switch would be describing a control that is not there. */
+    actions: 'reset_zoom'[]
   }
 }
 

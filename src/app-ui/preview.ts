@@ -128,6 +128,12 @@ function show(name: string) {
     openLink(url) {
       document.body.dataset.openedLink = url
     },
+    reportChartView(view) {
+      document.body.dataset.chartView = `${view.shown}/${view.total}`
+    },
+    reportSelection(selection) {
+      document.body.dataset.pinnedPoint = selection ?? ''
+    },
   })
   document.body.dataset.fixture = name
   document.body.dataset.mode = mode

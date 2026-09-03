@@ -268,7 +268,6 @@ button { color: inherit; }
    as an accent pill on a dashed reference line. Gaps stay gaps; the forming
    candle stays hollow and labelled. */
 .sqd-chart-wrap { position: relative; width: 100%; }
-.sqd-range { width: 100%; accent-color: var(--accent); }
 .sqd-chart { display: block; width: 100%; height: auto; overflow: visible; }
 .sqd-app[data-mode='inline'] .sqd-chart-grid { stroke: var(--grid); stroke-width: 1; }
 .sqd-chart-axis { stroke: var(--axis); stroke-width: 1; }
@@ -297,6 +296,19 @@ button { color: inherit; }
 .sqd-chart-legend-swatch { width: 9px; height: 9px; flex: 0 0 9px; border-radius: 2px; }
 .sqd-chart-empty { min-height: 160px; display: grid; place-items: center; color: var(--fg-muted); text-align: center; }
 
+/* Zoom controls sit with the legend, not over the plot: the reader keeps the
+   whole chart, and the status says how much of the returned series is in view
+   without ever implying something about how much of the chain was searched. */
+.sqd-chart-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; margin-top: 8px; }
+.sqd-chart-range-preset, .sqd-chart-range-reset { min-height: 28px; display: inline-flex; align-items: center; border: 1px solid var(--edge); border-radius: var(--radius-md); padding: 4px 9px; background: transparent; color: var(--fg); cursor: pointer; font: 400 12px/16px var(--font-sans); letter-spacing: -0.006em; transition: background-color var(--duration-normal) var(--ease-soft); }
+.sqd-chart-range-preset:hover:not(:disabled), .sqd-chart-range-reset:hover:not(:disabled) { background: var(--edge-subtle); }
+.sqd-chart-range-preset[aria-pressed='true'] { border-color: var(--accent); background: var(--accent-subtle); color: var(--accent); }
+.sqd-chart-range-preset:focus-visible, .sqd-chart-range-reset:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.sqd-chart-range-reset:disabled { border-color: var(--edge-subtle); color: var(--fg-disabled); cursor: default; }
+.sqd-chart-range-status { margin-left: auto; color: var(--fg-muted); font: 400 11px/16px var(--sqd-font-mono); font-variant-numeric: tabular-nums; }
+.sqd-chart-panning { cursor: grabbing; }
+.sqd-chart-panning .sqd-chart-hit, .sqd-chart-panning button.sqd-chart-hit { cursor: grabbing; }
+
 /* ── Market terminal · the dominant price chart ─────────────────────────── */
 .sqd-candle-terminal { position: relative; width: 100%; }
 .sqd-candle-readout { display: grid; gap: 3px; min-width: 0; margin-bottom: 10px; padding: 6px 10px; border: 1px solid var(--edge); border-radius: var(--radius-md); background: var(--surface); font: 500 11.5px/16px var(--sqd-font-mono); font-variant-numeric: tabular-nums; color: var(--fg-value); overflow: hidden; }
@@ -312,7 +324,7 @@ button { color: inherit; }
 .sqd-candle-chart { position: relative; width: 100%; height: 260px; }
 .sqd-app[data-mode='fullscreen'] .sqd-candle-chart { height: 420px; }
 .sqd-candle-canvas { position: absolute; inset: 0; }
-.sqd-chart-hits { position: absolute; inset: 0 0 26px 0; z-index: 2; }
+.sqd-chart-hits { position: absolute; inset: 0 0 26px 0; z-index: 2; overflow: hidden; }
 button.sqd-chart-hit { position: absolute; top: 0; height: 100%; margin: 0; border: 0; border-radius: 3px; padding: 0; background: transparent; cursor: pointer; outline: none; }
 button.sqd-chart-hit:focus-visible { background: var(--accent-subtle); box-shadow: inset 0 0 0 1.5px var(--accent); }
 button.sqd-chart-hit[aria-pressed='true'] { background: var(--accent-subtle); box-shadow: inset 0 0 0 1px var(--accent-line); }

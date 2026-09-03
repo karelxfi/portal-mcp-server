@@ -873,6 +873,116 @@ async function validateKeyboardJourney(browser: Browser) {
   console.log('PASS  the app can be driven end to end from the keyboard')
 }
 
+/*
+ * Zoom is a claim the descriptor makes about the app, so the app has to keep
+ * it. Both engines are driven the same way here: the toolbar, the keyboard and
+ * the wheel each narrow the view, Reset puts it back, and the evidence receipt
+ * says exactly what it said before, because zoom shows less of the same result
+ * rather than asking for a different one.
+ */
+async function validateChartRange(browser: Browser) {
+  /* hyperliquid is the lightweight-charts terminal, timeseries the SVG plot. */
+  for (const fixture of ['hyperliquid', 'timeseries'] as const) {
+    const context = await browser.newContext({ viewport: { width: 1280, height: 900 } })
+    const page = await context.newPage()
+    const errors: string[] = []
+    page.on('pageerror', (error) => errors.push(error.message))
+    try {
+      await page.goto(`${baseUrl}?fixture=${fixture}&picker=0`, { waitUntil: 'load' })
+      await page.evaluate(() => document.fonts.ready)
+      await page.waitForSelector('.sqd-chart-toolbar')
+
+      const status = page.locator('.sqd-chart-range-status').first()
+      const reset = page.locator('.sqd-chart-range-reset').first()
+      const receiptBefore = await page.locator('.sqd-receipt, .sqd-evidence-receipt').first().innerText()
+      const full = await status.innerText()
+      assert(await reset.isDisabled(), `${fixture}: Reset view should be inert while the whole series is in view`)
+
+      // A preset narrows the view and wakes the reset control.
+      const preset = page.locator('.sqd-chart-range-preset', { hasText: 'Last quarter' }).first()
+      assert(await preset.count(), `${fixture}: the chart should offer a range preset`)
+      await preset.click()
+      await page.waitForTimeout(120)
+      const narrowed = await status.innerText()
+      assert(narrowed !== full, `${fixture}: a preset should change the reported view (${full} -> ${narrowed})`)
+      assert(/\bof\b/.test(narrowed), `${fixture}: a narrowed view should say how many of the points it shows`)
+      assert(!(await reset.isDisabled()), `${fixture}: Reset view should be live once the view is narrowed`)
+
+      // Reset puts the whole series back.
+      await reset.click()
+      await page.waitForTimeout(120)
+      assert((await status.innerText()) === full, `${fixture}: Reset view should restore the whole series`)
+
+      // The keyboard reaches zoom from the chart itself, and Home resets it.
+      const surface = fixture === 'hyperliquid' ? '.sqd-candle-chart' : '.sqd-chart-wrap'
+      const box = await page.locator(surface).first().boundingBox()
+      assert(box, `${fixture}: the chart should have a box`)
+      await page.locator(surface).first().dispatchEvent('keydown', { key: '+', bubbles: true })
+      await page.waitForTimeout(120)
+      assert((await status.innerText()) !== full, `${fixture}: pressing + on the chart should narrow the view`)
+      await page.locator(surface).first().dispatchEvent('keydown', { key: 'Home', bubbles: true })
+      await page.waitForTimeout(120)
+      assert((await status.innerText()) === full, `${fixture}: Home should reset the view`)
+
+      // A bare wheel keeps scrolling the page; alt+wheel is what zooms.
+      await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2)
+      await page.mouse.wheel(0, 120)
+      await page.waitForTimeout(120)
+      assert(
+        (await status.innerText()) === full,
+        `${fixture}: a bare wheel must leave the chart alone so the page can scroll`,
+      )
+      await page.keyboard.down('Alt')
+      await page.mouse.wheel(0, -240)
+      await page.keyboard.up('Alt')
+      await page.waitForTimeout(150)
+      assert((await status.innerText()) !== full, `${fixture}: alt and the wheel should zoom the view`)
+
+      // Panning across the plot must not be read as picking a point.
+      const selectedBefore = await page.locator('[aria-pressed="true"].sqd-chart-hit, .sqd-chart-hit--selected').count()
+      await page.mouse.move(box!.x + box!.width * 0.6, box!.y + box!.height / 2)
+      await page.mouse.down()
+      await page.mouse.move(box!.x + box!.width * 0.3, box!.y + box!.height / 2, { steps: 8 })
+      await page.mouse.up()
+      await page.waitForTimeout(120)
+      assert(
+        (await page.locator('[aria-pressed="true"].sqd-chart-hit, .sqd-chart-hit--selected').count()) ===
+          selectedBefore,
+        `${fixture}: dragging to pan must not select a point as evidence`,
+      )
+
+      // What the reader is looking at reaches the model-context channel.
+      const reported = await page.evaluate(() => document.body.dataset.chartView ?? '')
+      const [shownRaw, totalRaw] = reported.split('/')
+      assert(
+        Number(totalRaw) > 0 && Number(shownRaw) > 0 && Number(shownRaw) < Number(totalRaw),
+        `${fixture}: a narrowed view should be reported for the model context (got "${reported}")`,
+      )
+
+      // Clicking a point pins it, and the pin is reported too.
+      const inView = page.locator('.sqd-chart-hit:not([hidden])')
+      const inViewCount = await inView.count()
+      assert(inViewCount > 0, `${fixture}: a zoomed chart should still offer its visible points`)
+      await inView.nth(Math.floor(inViewCount / 2)).click()
+      await page.waitForTimeout(120)
+      assert(
+        (await page.evaluate(() => document.body.dataset.pinnedPoint ?? '')).length > 0,
+        `${fixture}: clicking a point should pin it and report the pin`,
+      )
+
+      // None of it touched what the tool said it returned.
+      assert(
+        (await page.locator('.sqd-receipt, .sqd-evidence-receipt').first().innerText()) === receiptBefore,
+        `${fixture}: the evidence receipt must not change when the view does`,
+      )
+      assert(errors.length === 0, `${fixture}: chart range raised page errors: ${errors.join('; ')}`)
+    } finally {
+      await context.close()
+    }
+    console.log(`PASS  ${fixture} charts zoom, pan and reset without changing the receipt`)
+  }
+}
+
 async function validateHostile(browser: Browser) {
   for (const mode of ['fullscreen', 'inline'] as const) {
     const context = await browser.newContext({ viewport: { width: 1280, height: 900 }, colorScheme: 'light' })
@@ -1044,6 +1154,7 @@ async function main() {
     await warmup.close()
     await validateHostile(browser)
     await validateKeyboardJourney(browser)
+    await validateChartRange(browser)
     for (const fixture of fixtures) {
       for (const viewport of viewports) {
         const context = await browser.newContext({

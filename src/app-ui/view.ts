@@ -24,8 +24,19 @@ export type ExplorerState = {
   historyLength?: number
 }
 
+/** What the reader currently has in view on a chart, for the model context. */
+export type ChartView = {
+  chart: string
+  shown: number
+  total: number
+  firstLabel: string
+  lastLabel: string
+}
+
 export type ExplorerActions = {
   runFollowup: (intent: string, target?: string, action?: Record<string, unknown>) => void
+  reportChartView?: (view: ChartView) => void
+  reportSelection?: (selection: string | null) => void
   requestFullscreen?: () => void
   requestInline?: () => void
   goBack?: () => void
@@ -112,6 +123,13 @@ export function disposeActiveCharts() {
   for (const dispose of activeChartDisposers.splice(0)) dispose()
 }
 
+/* SVG panels hold no canvas, but they do hold gesture listeners, and a render
+   throws the panel away. Their teardown joins the same list. */
+function registerSurfaceDisposer(panelRoot: HTMLElement, dispose: () => void) {
+  panelChartDisposers.set(panelRoot, dispose)
+  activeChartDisposers.push(dispose)
+}
+
 function registerChartDisposer(panelRoot: HTMLElement, chart: IChartApi, extra: () => void) {
   let disposed = false
   const dispose = () => {
@@ -137,6 +155,268 @@ function chartGeometry() {
   const chrome = appRoot?.dataset.mode === 'fullscreen' ? 66 : 32
   const plotWidth = Math.min(1400, Math.max(640, width - chrome))
   return { width: plotWidth, height: 320, pad: { left: 26, right: 76, top: 14, bottom: 32 }, axisTitles: true }
+}
+
+/*
+ * One zoom-and-pan vocabulary for both chart engines. The candle terminal
+ * drives lightweight-charts' logical range; the SVG chart drives the slice of
+ * points it draws. Both are view-only: narrowing the view never changes which
+ * rows the tool returned, so _coverage and the evidence receipt keep saying
+ * exactly what the tool said.
+ */
+export type RangeWindow = { from: number; to: number }
+
+export type RangeController = {
+  /* Lowest allowed `from` and highest allowed `to`. lightweight-charts places
+     index i at logical i and pads half a slot at each end, so the candle
+     terminal passes -0.5 and count - 0.5; the SVG chart passes 0 and count-1.
+     `total` closes the gap: the padding either end follows from the three, so
+     the controls can count points rather than guess from the span. */
+  min: number
+  max: number
+  total: number
+  minimumSpan: number
+  read: () => RangeWindow
+  write: (window: RangeWindow) => void
+}
+
+/** Half a slot for lightweight-charts, nothing for the SVG plot. */
+function edgePad(controller: RangeController): number {
+  return controller.total > 1 ? (controller.max - controller.min - (controller.total - 1)) / 2 : 0
+}
+
+/** How many of the returned points a window actually covers. */
+export function pointsInWindow(window: RangeWindow, controller: RangeController): number {
+  const origin = controller.min + edgePad(controller)
+  const first = Math.max(0, Math.ceil(window.from - origin - 1e-6))
+  const last = Math.min(controller.total - 1, Math.floor(window.to - origin + 1e-6))
+  return Math.max(0, last - first + 1)
+}
+
+/** The window that ends on the last point and covers `count` of them. */
+export function windowOfLast(count: number, controller: RangeController): RangeWindow {
+  const wanted = Math.min(Math.max(count, 1), controller.total)
+  return clampWindow({ from: controller.max - (wanted - 1) - 2 * edgePad(controller), to: controller.max }, controller)
+}
+
+export function clampWindow(window: RangeWindow, controller: RangeController): RangeWindow {
+  const limit = controller.max - controller.min
+  const span = Math.min(Math.max(window.to - window.from, Math.min(controller.minimumSpan, limit)), limit)
+  const from = Math.max(controller.min, Math.min(window.from, controller.max - span))
+  return { from, to: from + span }
+}
+
+/** `anchor` is where the pointer sits in the window, 0 at the left edge and 1 at the right. */
+export function zoomWindow(
+  window: RangeWindow,
+  anchor: number,
+  factor: number,
+  controller: RangeController,
+): RangeWindow {
+  const span = window.to - window.from
+  const pivot = window.from + span * anchor
+  const next = span * factor
+  return clampWindow({ from: pivot - next * anchor, to: pivot + next * (1 - anchor) }, controller)
+}
+
+export function panWindow(window: RangeWindow, fractionOfSpan: number, controller: RangeController): RangeWindow {
+  const shift = (window.to - window.from) * fractionOfSpan
+  return clampWindow({ from: window.from + shift, to: window.to + shift }, controller)
+}
+
+const ZOOM_STEP = 1.25
+const DRAG_THRESHOLD = 4
+
+/*
+ * Wheel, drag and keyboard all move the same window. The surface sits above
+ * the plot and already carries the per-point hit targets, so a drag has to be
+ * told apart from a click: nothing moves until the pointer travels far enough
+ * to mean it, and the click that ends a real drag is swallowed so panning
+ * across a point never selects it as evidence.
+ */
+function attachRangeGestures(surface: HTMLElement, controller: RangeController, onChange: () => void): () => void {
+  const apply = (next: RangeWindow) => {
+    controller.write(next)
+    onChange()
+  }
+  const anchorOf = (clientX: number) => {
+    const box = surface.getBoundingClientRect()
+    return box.width > 0 ? Math.min(1, Math.max(0, (clientX - box.left) / box.width)) : 0.5
+  }
+
+  /*
+   * The chart lives inside a page the reader is scrolling, so a bare wheel has
+   * to keep scrolling it. Zoom takes alt or the platform meta key, the way an
+   * embedded map does; a sideways wheel pans, but only once the view is
+   * already narrower than the data, where it cannot be a mis-aimed page
+   * scroll. ctrl+wheel is left to the browser's own page zoom.
+   */
+  const onWheel = (event: WheelEvent) => {
+    if (event.ctrlKey) return
+    const window = controller.read()
+    const zoomed = window.to - window.from < controller.max - controller.min - 1e-6
+    if (event.altKey || event.metaKey) {
+      apply(zoomWindow(window, anchorOf(event.clientX), event.deltaY > 0 ? ZOOM_STEP : 1 / ZOOM_STEP, controller))
+    } else if (zoomed && (event.shiftKey || Math.abs(event.deltaX) > Math.abs(event.deltaY))) {
+      apply(panWindow(window, (event.shiftKey ? event.deltaY : event.deltaX) / 400, controller))
+    } else {
+      return
+    }
+    event.preventDefault()
+  }
+
+  let origin: { x: number; window: RangeWindow; moved: boolean; pointerId: number } | null = null
+  let swallowClick = false
+  const onPointerDown = (event: PointerEvent) => {
+    if (event.button !== 0 || !event.isPrimary) return
+    origin = { x: event.clientX, window: controller.read(), moved: false, pointerId: event.pointerId }
+  }
+  const onPointerMove = (event: PointerEvent) => {
+    if (!origin || event.pointerId !== origin.pointerId) return
+    const box = surface.getBoundingClientRect()
+    if (!box.width) return
+    const travelled = event.clientX - origin.x
+    if (!origin.moved) {
+      if (Math.abs(travelled) < DRAG_THRESHOLD) return
+      origin.moved = true
+      surface.classList.add('sqd-chart-panning')
+      try {
+        surface.setPointerCapture(event.pointerId)
+      } catch {
+        /* Capture is a convenience; the document-level listeners still track the drag. */
+      }
+    }
+    apply(clampWindow(panWindow(origin.window, -travelled / box.width, controller), controller))
+    event.preventDefault()
+  }
+  const onPointerUp = (event: PointerEvent) => {
+    if (!origin || event.pointerId !== origin.pointerId) return
+    swallowClick = origin.moved
+    if (origin.moved) {
+      surface.classList.remove('sqd-chart-panning')
+      try {
+        surface.releasePointerCapture(event.pointerId)
+      } catch {
+        /* Already released, or never captured. */
+      }
+    }
+    origin = null
+  }
+  const onClick = (event: MouseEvent) => {
+    if (!swallowClick) return
+    swallowClick = false
+    event.preventDefault()
+    event.stopPropagation()
+  }
+
+  const onKeyDown = (event: KeyboardEvent) => {
+    if (event.altKey || event.ctrlKey || event.metaKey) return
+    const window = controller.read()
+    const full = { from: controller.min, to: controller.max }
+    const moves: Record<string, () => RangeWindow> = {
+      ArrowLeft: () => panWindow(window, -0.2, controller),
+      ArrowRight: () => panWindow(window, 0.2, controller),
+      ArrowUp: () => zoomWindow(window, 0.5, 1 / ZOOM_STEP, controller),
+      ArrowDown: () => zoomWindow(window, 0.5, ZOOM_STEP, controller),
+      '+': () => zoomWindow(window, 0.5, 1 / ZOOM_STEP, controller),
+      '=': () => zoomWindow(window, 0.5, 1 / ZOOM_STEP, controller),
+      '-': () => zoomWindow(window, 0.5, ZOOM_STEP, controller),
+      _: () => zoomWindow(window, 0.5, ZOOM_STEP, controller),
+      Home: () => full,
+      '0': () => full,
+    }
+    const move = moves[event.key]
+    if (!move) return
+    apply(move())
+    event.preventDefault()
+  }
+
+  surface.addEventListener('wheel', onWheel, { passive: false })
+  surface.addEventListener('pointerdown', onPointerDown)
+  surface.addEventListener('pointermove', onPointerMove)
+  surface.addEventListener('pointerup', onPointerUp)
+  surface.addEventListener('pointercancel', onPointerUp)
+  surface.addEventListener('click', onClick, true)
+  surface.addEventListener('keydown', onKeyDown)
+  return () => {
+    surface.removeEventListener('wheel', onWheel)
+    surface.removeEventListener('pointerdown', onPointerDown)
+    surface.removeEventListener('pointermove', onPointerMove)
+    surface.removeEventListener('pointerup', onPointerUp)
+    surface.removeEventListener('pointercancel', onPointerUp)
+    surface.removeEventListener('click', onClick, true)
+    surface.removeEventListener('keydown', onKeyDown)
+  }
+}
+
+/*
+ * The toolbar is the visible half of the same window: presets jump to a share
+ * of the returned points, Reset returns to all of them, and the status line
+ * says how many of the returned points the view currently covers. It reports
+ * the view, never the query, so it can never be read as a claim about how much
+ * of the chain was searched.
+ */
+function chartRangeToolbar(
+  controller: RangeController,
+  totalPoints: number,
+  focusPrefix: string,
+  onChange?: () => void,
+): { node: HTMLElement; sync: () => void } {
+  const node = element('div', 'sqd-chart-toolbar')
+  node.setAttribute('role', 'group')
+  node.setAttribute('aria-label', 'Chart range')
+  node.title =
+    'Drag the chart to pan. Hold alt or command with the wheel to zoom. From the chart, arrow keys pan, + and - zoom, Home resets.'
+  const status = element('span', 'sqd-chart-range-status')
+  status.setAttribute('role', 'status')
+  status.setAttribute('aria-live', 'polite')
+  const presets: Array<{ node: HTMLButtonElement; count: number }> = []
+
+  for (const { label, share } of [
+    { label: 'All', share: 1 },
+    { label: 'Last half', share: 0.5 },
+    { label: 'Last quarter', share: 0.25 },
+  ]) {
+    const count = share === 1 ? totalPoints : Math.ceil(totalPoints * share)
+    if (share !== 1 && (count < 2 || count >= totalPoints)) continue
+    const button = withFocusKey(
+      element('button', 'sqd-chart-range-preset', label) as HTMLButtonElement,
+      `${focusPrefix}-${label}`,
+    )
+    button.type = 'button'
+    button.setAttribute('aria-pressed', 'false')
+    button.addEventListener('click', () => {
+      controller.write(windowOfLast(count, controller))
+      sync()
+      onChange?.()
+    })
+    node.append(button)
+    presets.push({ node: button, count })
+  }
+
+  const reset = withFocusKey(
+    element('button', 'sqd-chart-range-reset', 'Reset view') as HTMLButtonElement,
+    `${focusPrefix}-reset`,
+  )
+  reset.type = 'button'
+  reset.addEventListener('click', () => {
+    controller.write({ from: controller.min, to: controller.max })
+    sync()
+    onChange?.()
+  })
+  node.append(reset, status)
+
+  const sync = () => {
+    const shown = pointsInWindow(controller.read(), controller)
+    const full = shown >= totalPoints
+    reset.disabled = full
+    /* lightweight-charts pins the right edge, so a preset can settle a point
+       either side of what it asked for; that is still the preset in force. */
+    for (const preset of presets) preset.node.setAttribute('aria-pressed', String(Math.abs(preset.count - shown) <= 1))
+    status.textContent = full ? `${totalPoints} points` : `${shown} of ${totalPoints} points in view`
+  }
+  sync()
+  return { node, sync }
 }
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
@@ -855,8 +1135,16 @@ function evidenceIdentity(row: Record<string, unknown>): string {
 
 type EvidencePager = HTMLElement & { __sqdShowEvidence?: (identity: string) => void }
 
+/* Set once per render so a point anywhere in the tree can report a pin without
+   every chart having to carry the actions object down to its hit targets. */
+let reportSelection: ExplorerActions['reportSelection']
+
 function selectEvidenceRow(row: Record<string, unknown>, selectedHit: Element) {
   const identity = evidenceIdentity(row)
+  /* Only the row's own identity and its time go to the model. A free-text
+     field from a third party has no business being restated as context. */
+  const when = text(row.timestamp_human ?? row.timestamp ?? '')
+  reportSelection?.([identity, when].filter(Boolean).join(' at ').slice(0, 200) || null)
   document.querySelectorAll<Element>('.sqd-chart-hit[aria-pressed]').forEach((hit) => {
     hit.setAttribute('aria-pressed', String(hit === selectedHit))
   })
@@ -981,6 +1269,7 @@ function buildCandleTerminal(
   rows: Record<string, unknown>[],
   chartTitle: string,
   finalBucketForming: boolean,
+  onViewChange?: (view: ChartView) => void,
 ): HTMLElement | null {
   const candleFields = isRecord(chart.candle_fields) ? chart.candle_fields : {}
   const openField = text(candleFields.open || 'open')
@@ -1136,8 +1425,17 @@ function buildCandleTerminal(
         labelBackgroundColor: TERMINAL_COLORS.crosshairLabel,
       },
     },
-    handleScroll: false,
-    handleScale: false,
+    /* Zoom and pan are view-only. lightweight-charts handles the gestures it
+       owns (axis drags, pinch); the overlay forwards wheel and drag, which
+       would otherwise stop at the hit targets sitting above the canvas. */
+    handleScroll: { mouseWheel: false, pressedMouseMove: false, horzTouchDrag: true, vertTouchDrag: false },
+    handleScale: {
+      mouseWheel: false,
+      pinch: true,
+      axisPressedMouseMove: { time: true, price: false },
+      axisDoubleClickReset: { time: true, price: false },
+    },
+    kineticScroll: { mouse: false, touch: false },
   })
   const candleSeries = chartApi.addSeries(CandlestickSeries, {
     upColor: TERMINAL_COLORS.up,
@@ -1265,6 +1563,18 @@ function buildCandleTerminal(
     button.addEventListener('focus', hover)
     button.addEventListener('blur', unhover)
     button.addEventListener('click', () => selectEvidenceRow(point.row, button))
+    /* Left and right step between candles, which is what a keyboard user
+       expects from a row of them; the chart's own zoom and pan keys stay on
+       the surface underneath. */
+    button.addEventListener('keydown', (event) => {
+      if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
+      const step = event.key === 'ArrowLeft' ? -1 : 1
+      const next = buttons.slice(index + step, index + step + 1).find((candidate) => !candidate.hidden)
+      if (!next) return
+      event.preventDefault()
+      event.stopPropagation()
+      next.focus()
+    })
     hits.append(button)
     buttons.push(button)
   })
@@ -1280,36 +1590,108 @@ function buildCandleTerminal(
       button.style.left = `${xs[index] - slot / 2}px`
       button.style.width = `${slot}px`
     })
+    const paneWidth = mount.clientWidth
+    const candleVisible = (index: number) =>
+      !(paneWidth > 0 && (xs[index] < -slot / 2 || xs[index] > paneWidth + slot / 2))
+    buttons.forEach((button, index) => {
+      /* A candle scrolled out of the pane must leave the tab order too, or a
+         keyboard user lands on a target with nothing under it. */
+      button.hidden = !candleVisible(index)
+    })
     const pillY = candleSeries.priceToCoordinate(finalClose)
     if (pillY !== null) {
       pill.style.top = `${pillY}px`
       pill.hidden = false
     }
     if (volumeSeries && volumeCaption) {
-      const bandTop = volumeSeries.priceToCoordinate(volumeMax)
+      /* The volume scale fits the bars on screen, so the caption follows the
+         tallest visible one; pinned to the whole series it drifted into the
+         price panel as soon as the reader zoomed into a quieter stretch. */
+      const visibleMax = Math.max(
+        0,
+        ...parsed.flatMap((point, index) => (candleVisible(index) && point.volume !== undefined ? [point.volume] : [])),
+      )
+      const bandTop = volumeSeries.priceToCoordinate(visibleMax || volumeMax)
       if (bandTop !== null) {
         volumeCaption.style.top = `${bandTop - 17}px`
         volumeCaption.hidden = false
       }
     }
   }
+  /* fitContent is the right answer only while the view is still the whole
+     series. Once the reader has zoomed, a resize must keep their window or
+     the chart snaps back under them. */
+  let viewAdjusted = false
   const scheduleSync = () =>
     requestAnimationFrame(() => {
-      chartApi.timeScale().fitContent()
+      if (!viewAdjusted) chartApi.timeScale().fitContent()
       requestAnimationFrame(sync)
     })
   chartApi.timeScale().subscribeVisibleLogicalRangeChange(() => requestAnimationFrame(sync))
+
+  const controller: RangeController = {
+    min: -0.5,
+    max: parsed.length - 0.5,
+    total: parsed.length,
+    minimumSpan: Math.min(4, parsed.length),
+    read: () => {
+      const range = chartApi.timeScale().getVisibleLogicalRange()
+      return range ? { from: range.from, to: range.to } : { from: -0.5, to: parsed.length - 0.5 }
+    },
+    write: (window) => {
+      viewAdjusted = window.to - window.from < parsed.length - 1e-6
+      chartApi.timeScale().setVisibleLogicalRange(window)
+    },
+  }
+  const reportView = () => {
+    const window = controller.read()
+    const first = Math.max(0, Math.ceil(window.from))
+    const last = Math.min(parsed.length - 1, Math.floor(window.to))
+    onViewChange?.({
+      chart: chartTitle,
+      shown: Math.max(0, last - first + 1),
+      total: parsed.length,
+      firstLabel: fullLabels[first] ?? '',
+      lastLabel: fullLabels[last] ?? '',
+    })
+  }
+  /* Below nine candles there is nothing to zoom into, which is also what the
+     descriptor declares, so the controls are not offered. */
+  const zoomable = parsed.length > 8
+  const toolbar = zoomable ? chartRangeToolbar(controller, parsed.length, 'candles') : undefined
+  if (toolbar) terminal.insertBefore(toolbar.node, chartBox)
+  const detachGestures = zoomable
+    ? attachRangeGestures(chartBox, controller, () => {
+        toolbar?.sync()
+        requestAnimationFrame(sync)
+        reportView()
+      })
+    : () => {}
+  if (zoomable) {
+    chartApi.timeScale().subscribeVisibleLogicalRangeChange(() => {
+      toolbar?.sync()
+      reportView()
+    })
+  }
+
   const observer = typeof ResizeObserver === 'function' ? new ResizeObserver(scheduleSync) : undefined
   observer?.observe(chartBox)
   scheduleSync()
   if (typeof document !== 'undefined' && document.fonts?.ready) {
     document.fonts.ready.then(scheduleSync).catch(() => {})
   }
-  registerChartDisposer(panelRoot, chartApi, () => observer?.disconnect())
+  registerChartDisposer(panelRoot, chartApi, () => {
+    detachGestures()
+    observer?.disconnect()
+  })
   return terminal
 }
 
-function chartPanel(payload: Record<string, unknown>, panel: Panel): HTMLElement {
+function chartPanel(
+  payload: Record<string, unknown>,
+  panel: Panel,
+  onViewChange?: (view: ChartView) => void,
+): HTMLElement {
   const descriptor = getByPath(payload, text(panel.chart_key))
   const chart = isRecord(descriptor) ? descriptor : {}
   const { root, body } = card(
@@ -1322,14 +1704,7 @@ function chartPanel(payload: Record<string, unknown>, panel: Panel): HTMLElement
   const CHART_WIDTH = geometry.width
   const CHART_HEIGHT = geometry.height
   const CHART_PAD = geometry.pad
-  const allRows = sortRowsByX(numberRows(payload, chart), chart)
-  const requestedStart = Number(panel.__range_start)
-  const requestedEnd = Number(panel.__range_end)
-  const rangeStart = Number.isInteger(requestedStart) ? Math.max(0, Math.min(requestedStart, allRows.length - 1)) : 0
-  const rangeEnd = Number.isInteger(requestedEnd)
-    ? Math.max(rangeStart, Math.min(requestedEnd, allRows.length - 1))
-    : Math.max(0, allRows.length - 1)
-  const rows = allRows.slice(rangeStart, rangeEnd + 1)
+  const rows = sortRowsByX(numberRows(payload, chart), chart)
   if (!rows.length) {
     wrap.append(element('div', 'sqd-chart-empty', 'No chart points were returned for this window.'))
     body.append(wrap)
@@ -1341,7 +1716,8 @@ function chartPanel(payload: Record<string, unknown>, panel: Panel): HTMLElement
       chart,
       rows,
       text(panel.title ?? chart.title ?? 'Blockchain activity chart'),
-      rangeEnd === allRows.length - 1 && finalCandleStillForming(payload),
+      finalCandleStillForming(payload),
+      onViewChange,
     )
     if (!terminal) {
       wrap.append(element('div', 'sqd-chart-empty', 'The result did not include numeric candle values.'))
@@ -1408,39 +1784,88 @@ function chartPanel(payload: Record<string, unknown>, panel: Panel): HTMLElement
   tooltip.setAttribute('role', 'status')
   tooltip.setAttribute('aria-live', 'polite')
   tooltip.hidden = true
-  const crosshair = add('line', {
-    x1: '0',
-    x2: '0',
-    y1: String(CHART_PAD.top),
-    y2: String(CHART_HEIGHT - CHART_PAD.bottom),
-    class: 'sqd-chart-crosshair',
-  }) as SVGLineElement
-  crosshair.style.display = 'none'
+  let crosshair: SVGLineElement | undefined
   const showTooltip = (cx: number, label: string, values: string[]) => {
     renderTooltip(tooltip, label, values.map(splitTooltipValue))
     tooltip.hidden = false
     placeTooltip(tooltip, (cx / CHART_WIDTH) * (tooltip.parentElement?.clientWidth ?? CHART_WIDTH))
-    crosshair.setAttribute('x1', String(cx))
-    crosshair.setAttribute('x2', String(cx))
-    crosshair.style.display = ''
+    crosshair?.setAttribute('x1', String(cx))
+    crosshair?.setAttribute('x2', String(cx))
+    if (crosshair) crosshair.style.display = ''
   }
   const hideTooltip = () => {
     tooltip.hidden = true
-    crosshair.style.display = 'none'
+    if (crosshair) crosshair.style.display = 'none'
   }
 
-  {
-    const normalized = normalizeSeries(rows, chart)
-    const values = normalized.points.flatMap((point) => point.values).filter((value): value is number => value !== null)
-    if (!values.length || !normalized.series.length) {
-      wrap.append(element('div', 'sqd-chart-empty', 'The result did not include numeric chart values.'))
-      body.append(wrap)
-      return root
+  const normalized = normalizeSeries(rows, chart)
+  if (!normalized.series.length || !normalized.points.some((point) => point.values.some((value) => value !== null))) {
+    wrap.append(element('div', 'sqd-chart-empty', 'The result did not include numeric chart values.'))
+    body.append(wrap)
+    return root
+  }
+
+  /* A redraw replaces the whole plot, so what the reader has changed about it
+     has to live outside: which series the legend has switched off, and the
+     labeller the legend calls after a toggle. */
+  const visibleSeries = new Set(normalized.series.map((_series, index) => index))
+  let seriesNodes = new Map<number, SVGElement[]>()
+  let updatePointLabels = () => {}
+
+  if (normalized.series.length > 1) {
+    const legend = element('div', 'sqd-chart-legend')
+    legend.setAttribute('aria-label', 'Chart series')
+    normalized.series.forEach((series, seriesIndex) => {
+      const button = element('button', 'sqd-chart-legend-item')
+      button.type = 'button'
+      button.setAttribute('aria-pressed', 'true')
+      const swatch = element('span', 'sqd-chart-legend-swatch')
+      swatch.style.background = series.color
+      button.append(swatch, document.createTextNode(series.label))
+      button.addEventListener('click', () => {
+        const visible = button.getAttribute('aria-pressed') !== 'true'
+        button.setAttribute('aria-pressed', String(visible))
+        if (visible) visibleSeries.add(seriesIndex)
+        else visibleSeries.delete(seriesIndex)
+        seriesNodes.get(seriesIndex)?.forEach((node) => {
+          node.style.display = visible ? '' : 'none'
+        })
+        updatePointLabels()
+      })
+      legend.append(button)
+    })
+    body.append(legend)
+  }
+
+  const drawPlot = (window: RangeWindow) => {
+    svg.replaceChildren()
+    crosshair = add('line', {
+      x1: '0',
+      x2: '0',
+      y1: String(CHART_PAD.top),
+      y2: String(CHART_HEIGHT - CHART_PAD.bottom),
+      class: 'sqd-chart-crosshair',
+    }) as SVGLineElement
+    crosshair.style.display = 'none'
+    hideTooltip()
+    const first = Math.max(0, Math.round(window.from))
+    const last = Math.min(normalized.points.length - 1, Math.max(first, Math.round(window.to)))
+    const view = { series: normalized.series, points: normalized.points.slice(first, last + 1) }
+    const values = view.points.flatMap((point) => point.values).filter((value): value is number => value !== null)
+    if (!values.length) {
+      const note = add('text', {
+        x: String(CHART_WIDTH / 2),
+        y: String(CHART_HEIGHT / 2),
+        'text-anchor': 'middle',
+        class: 'sqd-chart-label',
+      })
+      note.textContent = 'No numeric values in this range.'
+      return
     }
     const plotH = CHART_HEIGHT - CHART_PAD.top - CHART_PAD.bottom
     const plotBottom = CHART_PAD.top + plotH
-    const stacked = chart.recommended_visual === 'stacked_area' && normalized.series.length > 1
-    const stackTotals = normalized.points.map((point) =>
+    const stacked = chart.recommended_visual === 'stacked_area' && view.series.length > 1
+    const stackTotals = view.points.map((point) =>
       point.values.reduce<number>((sum, value) => sum + Math.max(0, value ?? 0), 0),
     )
     const isBar = chart.recommended_visual === 'bar'
@@ -1451,23 +1876,29 @@ function chartPanel(payload: Record<string, unknown>, panel: Panel): HTMLElement
     const range = domainMax - domainMin
     const y = (value: number) => CHART_PAD.top + (1 - (value - domainMin) / range) * plotH
     const xField = text(chart.x_field || 'timestamp')
-    const optionalXValues = normalized.points.map((point) => numeric(getByPath(point.row, xField)))
+    const optionalXValues = view.points.map((point) => numeric(getByPath(point.row, xField)))
     const xValues = optionalXValues.every((value) => value !== undefined) ? (optionalXValues as number[]) : undefined
     const numericX = Boolean(xValues && Math.max(...xValues) > Math.min(...xValues))
     const minX = numericX && xValues ? Math.min(...xValues) : 0
-    const maxX = numericX && xValues ? Math.max(...xValues) : Math.max(normalized.points.length - 1, 1)
+    const maxX = numericX && xValues ? Math.max(...xValues) : Math.max(view.points.length - 1, 1)
     const x = (index: number) => {
-      if (normalized.points.length === 1) return CHART_PAD.left + plotW / 2
+      if (view.points.length === 1) return CHART_PAD.left + plotW / 2
       const value = numericX && xValues ? xValues[index] : index
       return CHART_PAD.left + ((value - minX) / (maxX - minX)) * plotW
     }
+    /* Bars occupy a slot rather than sitting on a point: on a value scale the
+       first and last bar would be half outside the plot, and the last one
+       painted over the tick labels. Their hit targets follow the same slots so
+       the tooltip lands on the bar the reader is pointing at. */
+    const slotWidth = plotW / Math.max(view.points.length, 1)
+    const xCentre = (index: number) => (isBar ? CHART_PAD.left + (index + 0.5) * slotWidth : x(index))
     const expectedStep = xField === 'bucket_index' ? 1 : intervalSeconds(chart.interval)
     const gapBetween = (previousIndex: number, currentIndex: number) => {
       if (!expectedStep || !numericX) return false
       return Boolean(xValues && xValues[currentIndex] - xValues[previousIndex] > expectedStep * 1.5)
     }
-    const lastPointValue = normalized.points.at(-1)?.values[0] ?? null
-    const showPill = !stacked && normalized.series.length === 1 && lastPointValue !== null
+    const lastPointValue = view.points.at(-1)?.values[0] ?? null
+    const showPill = !stacked && view.series.length === 1 && lastPointValue !== null
     const finalValue = showPill ? lastPointValue : undefined
     const pillY = finalValue === undefined ? undefined : y(finalValue)
     for (const tick of scale.ticks) {
@@ -1511,18 +1942,17 @@ function chartPanel(payload: Record<string, unknown>, panel: Panel): HTMLElement
       })
     }
 
-    const seriesNodes = new Map<number, SVGElement[]>()
-    const visibleSeries = new Set(normalized.series.map((_series, index) => index))
+    seriesNodes = new Map<number, SVGElement[]>()
     const pointHits: Array<{ node: SVGElement; point: ChartPoint; timeLabel: string; cx: number }> = []
     const valuesForPoint = (point: ChartPoint) =>
-      normalized.series.flatMap((series, seriesIndex) => {
+      view.series.flatMap((series, seriesIndex) => {
         if (!visibleSeries.has(seriesIndex)) return []
         const value = point.values[seriesIndex]
         return [
           `${series.label} ${value === null ? 'not available' : formatValue(value, text(chart.value_format), text(chart.unit))}`,
         ]
       })
-    const updatePointLabels = () => {
+    updatePointLabels = () => {
       pointHits.forEach(({ node, point, timeLabel }) => {
         const values = valuesForPoint(point)
         node.setAttribute('aria-label', `${timeLabel}. ${values.length ? values.join('. ') : 'No visible series'}.`)
@@ -1533,37 +1963,38 @@ function chartPanel(payload: Record<string, unknown>, panel: Panel): HTMLElement
       nodes.push(node)
       seriesNodes.set(seriesIndex, nodes)
       node.setAttribute('data-series-index', String(seriesIndex))
-      node.setAttribute('data-series', normalized.series[seriesIndex]?.key ?? String(seriesIndex))
+      node.setAttribute('data-series', view.series[seriesIndex]?.key ?? String(seriesIndex))
     }
 
     if (isBar) {
-      const singleSigned = normalized.series.length === 1 && hasNegative
-      const groupWidth = plotW / Math.max(normalized.points.length, 1)
-      const barWidth = Math.max(2, Math.min(22, (groupWidth * 0.72) / normalized.series.length))
-      normalized.points.forEach((point, pointIndex) => {
+      const singleSigned = view.series.length === 1 && hasNegative
+      /* The cap keeps wide windows from drawing slabs; zoomed to a handful of
+         buckets the old 22px left hairlines with acres of space between them. */
+      const barWidth = Math.max(2, Math.min(44, (slotWidth * 0.72) / view.series.length))
+      view.points.forEach((point, pointIndex) => {
         point.values.forEach((value, seriesIndex) => {
           if (value === null) return
-          const offset = (seriesIndex - (normalized.series.length - 1) / 2) * barWidth
+          const offset = (seriesIndex - (view.series.length - 1) / 2) * barWidth
           const baseline = y(0)
           const valueY = y(value)
           const polarity = singleSigned ? (value >= 0 ? ' sqd-chart-bar--up' : ' sqd-chart-bar--down') : ''
           const bar = add('rect', {
-            x: String(x(pointIndex) + offset - barWidth / 2),
+            x: String(xCentre(pointIndex) + offset - barWidth / 2),
             y: String(Math.min(valueY, baseline)),
             width: String(Math.max(1, barWidth - 1)),
             height: String(Math.max(1, Math.abs(baseline - valueY))),
             rx: '1.5',
             class: `sqd-chart-bar${polarity}`,
-            ...(singleSigned ? {} : { fill: normalized.series[seriesIndex].color }),
+            ...(singleSigned ? {} : { fill: view.series[seriesIndex].color }),
             'data-value': String(value),
           })
           trackSeriesNode(seriesIndex, bar)
         })
       })
     } else if (stacked) {
-      const bottoms = new Array(normalized.points.length).fill(0) as number[]
-      normalized.series.forEach((series, seriesIndex) => {
-        const topValues = normalized.points.map(
+      const bottoms = new Array(view.points.length).fill(0) as number[]
+      view.series.forEach((series, seriesIndex) => {
+        const topValues = view.points.map(
           (point, index) => bottoms[index] + Math.max(0, point.values[seriesIndex] ?? 0),
         )
         const top = topValues.map((value, index) => `${x(index)},${y(value)}`).join(' ')
@@ -1575,9 +2006,7 @@ function chartPanel(payload: Record<string, unknown>, panel: Panel): HTMLElement
           points: `${top} ${bottom}`,
           class: 'sqd-chart-series-area',
           fill: series.color,
-          'data-series-total': String(
-            normalized.points.reduce((sum, point) => sum + (point.values[seriesIndex] ?? 0), 0),
-          ),
+          'data-series-total': String(view.points.reduce((sum, point) => sum + (point.values[seriesIndex] ?? 0), 0)),
         })
         trackSeriesNode(seriesIndex, area)
         topValues.forEach((value, index) => {
@@ -1585,10 +2014,10 @@ function chartPanel(payload: Record<string, unknown>, panel: Panel): HTMLElement
         })
       })
     } else {
-      normalized.series.forEach((series, seriesIndex) => {
+      view.series.forEach((series, seriesIndex) => {
         const segments: Array<Array<{ x: number; y: number; value: number; index: number }>> = []
         let segment: Array<{ x: number; y: number; value: number; index: number }> = []
-        normalized.points.forEach((point, index) => {
+        view.points.forEach((point, index) => {
           const value = point.values[seriesIndex]
           if (value === null || (segment.length > 0 && gapBetween(segment.at(-1)!.index, index))) {
             if (segment.length) segments.push(segment)
@@ -1599,7 +2028,7 @@ function chartPanel(payload: Record<string, unknown>, panel: Panel): HTMLElement
         if (segment.length) segments.push(segment)
         if (!segments.length) return
         segments.forEach((points) => {
-          if (normalized.series.length === 1 && points.length > 1 && domainMin === 0) {
+          if (view.series.length === 1 && points.length > 1 && domainMin === 0) {
             const baseline = y(0)
             const area = add('polygon', {
               points: `${points[0].x},${baseline} ${points.map((point) => `${point.x},${point.y}`).join(' ')} ${points.at(-1)!.x},${baseline}`,
@@ -1620,44 +2049,19 @@ function chartPanel(payload: Record<string, unknown>, panel: Panel): HTMLElement
       })
     }
 
-    if (normalized.series.length > 1) {
-      const legend = element('div', 'sqd-chart-legend')
-      legend.setAttribute('aria-label', 'Chart series')
-      normalized.series.forEach((series, seriesIndex) => {
-        const button = element('button', 'sqd-chart-legend-item')
-        button.type = 'button'
-        button.setAttribute('aria-pressed', 'true')
-        const swatch = element('span', 'sqd-chart-legend-swatch')
-        swatch.style.background = series.color
-        button.append(swatch, document.createTextNode(series.label))
-        button.addEventListener('click', () => {
-          const visible = button.getAttribute('aria-pressed') !== 'true'
-          button.setAttribute('aria-pressed', String(visible))
-          if (visible) visibleSeries.add(seriesIndex)
-          else visibleSeries.delete(seriesIndex)
-          seriesNodes.get(seriesIndex)?.forEach((node) => {
-            node.style.display = visible ? '' : 'none'
-          })
-          updatePointLabels()
-        })
-        legend.append(button)
-      })
-      body.append(legend)
-    }
-
-    normalized.points.forEach((point, index) => {
+    view.points.forEach((point, index) => {
       const timeLabel = text(
         point.row.timestamp_human ?? point.row.timestamp ?? point.row.bucket_index ?? `Point ${index + 1}`,
       )
-      const cx = x(index)
+      const cx = xCentre(index)
       const hit = add('rect', {
-        x: String(Math.max(CHART_PAD.left, cx - plotW / Math.max(normalized.points.length, 1) / 2)),
+        x: String(Math.max(CHART_PAD.left, cx - slotWidth / 2)),
         y: String(CHART_PAD.top),
-        width: String(Math.max(6, plotW / Math.max(normalized.points.length, 1))),
+        width: String(Math.max(6, slotWidth)),
         height: String(plotH),
         class: 'sqd-chart-hit',
         tabindex: '0',
-        'data-point-index': String(index),
+        'data-point-index': String(first + index),
         'data-x-value': text(getByPath(point.row, xField)),
         'aria-label': '',
       })
@@ -1702,21 +2106,68 @@ function chartPanel(payload: Record<string, unknown>, panel: Panel): HTMLElement
       finalLabel.textContent = finalText
     }
     addAxisTitle(
-      text(chart.y_axis_label ?? (normalized.series.length === 1 ? normalized.series[0].label : chart.unit)),
+      text(chart.y_axis_label ?? (view.series.length === 1 ? view.series[0].label : chart.unit)),
       CHART_PAD.top + plotH / 2,
     )
     addXLabels(
       [
-        rowTimeLabel(normalized.points[0]?.row),
-        rowTimeLabel(normalized.points[Math.floor((normalized.points.length - 1) / 2)]?.row),
-        rowTimeLabel(normalized.points.at(-1)?.row),
+        rowTimeLabel(view.points[0]?.row),
+        rowTimeLabel(view.points[Math.floor((view.points.length - 1) / 2)]?.row),
+        rowTimeLabel(view.points.at(-1)?.row),
       ],
       CHART_HEIGHT - 8,
     )
     svg.setAttribute(
       'aria-label',
-      `${chartTitle}. ${normalized.points.length} data points across ${normalized.series.length} series.`,
+      `${chartTitle}. ${view.points.length} data points across ${view.series.length} series.`,
     )
+
+    for (const [seriesIndex, nodes] of seriesNodes) {
+      if (visibleSeries.has(seriesIndex)) continue
+      for (const node of nodes) node.style.display = 'none'
+    }
+  }
+
+  const controller: RangeController = {
+    min: 0,
+    max: normalized.points.length - 1,
+    total: normalized.points.length,
+    minimumSpan: Math.min(2, Math.max(0, normalized.points.length - 1)),
+    read: () => ({ ...svgWindow }),
+    write: (next) => {
+      svgWindow = next
+      drawPlot(svgWindow)
+    },
+  }
+  let svgWindow: RangeWindow = { from: 0, to: Math.max(0, normalized.points.length - 1) }
+  drawPlot(svgWindow)
+
+  if (normalized.points.length > 8) {
+    const reportView = () => {
+      const firstIndex = Math.max(0, Math.ceil(svgWindow.from - 1e-6))
+      const lastIndex = Math.min(normalized.points.length - 1, Math.floor(svgWindow.to + 1e-6))
+      onViewChange?.({
+        chart: chartTitle,
+        shown: pointsInWindow(svgWindow, controller),
+        total: normalized.points.length,
+        firstLabel: rowTimeLabel(normalized.points[firstIndex]?.row),
+        lastLabel: rowTimeLabel(normalized.points[lastIndex]?.row),
+      })
+    }
+    const toolbar = chartRangeToolbar(
+      controller,
+      normalized.points.length,
+      `chart-${text(panel.chart_key)}`,
+      reportView,
+    )
+    body.append(toolbar.node)
+    const detach = attachRangeGestures(wrap, controller, () => {
+      toolbar.sync()
+      reportView()
+    })
+    /* The panel is thrown away and rebuilt on every render, so the listeners
+       have to go with it or they pile up on detached nodes. */
+    registerSurfaceDisposer(root, detach)
   }
 
   wrap.append(svg)
@@ -2295,7 +2746,8 @@ function panels(payload: Record<string, unknown>, options: PanelOptions): PanelS
   const built: Array<{ panel: Panel; node: HTMLElement; table: boolean }> = []
   const build = (panel: Panel) => {
     const kind = text(panel.kind)
-    if (kind === 'chart_panel') built.push({ panel, node: chartPanel(payload, panel), table: false })
+    if (kind === 'chart_panel')
+      built.push({ panel, node: chartPanel(payload, panel, options.actions?.reportChartView), table: false })
     else if (kind === 'table_panel') built.push({ panel, node: tablePanel(payload, panel, options), table: true })
     else if (kind === 'timeline_panel')
       built.push({ panel, node: timelinePanel(payload, panel, options), table: false })
@@ -2589,6 +3041,7 @@ const EVIDENCE_ANCHOR_ID = 'sqd-evidence'
 
 export function renderExplorer(root: HTMLElement, state: ExplorerState, actions: ExplorerActions) {
   disposeActiveCharts()
+  reportSelection = actions.reportSelection
   injectStyle()
   const mode = displayModeOf(state)
   appRoot = root
