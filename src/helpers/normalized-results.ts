@@ -555,8 +555,15 @@ export function normalizeTronTransactionResult(item: RecordLike): RecordLike {
   const owner = tronRecordAddress(value.owner_address)
   const to = tronRecordAddress(value.to_address)
   const contract = tronRecordAddress(value.contract_address ?? item.contractAddress)
-  const amountSun =
+  const rawAmount =
     typeof value.amount === 'number' || typeof value.amount === 'string' ? String(value.amount) : undefined
+  // `parameter.value.amount` means SUN only on a native TRX transfer. On a
+  // TransferAssetContract it is a TRC-10 amount in that asset's own units, so
+  // labelling it amount_sun/amount_trx presented a token transfer as TRX.
+  const contractType = typeof item.type === 'string' ? item.type : undefined
+  const isAssetTransfer = contractType === 'TransferAssetContract' || value.asset_name !== undefined
+  const amountSun = isAssetTransfer ? undefined : rawAmount
+  const assetAmount = isAssetTransfer ? rawAmount : undefined
   const callData = typeof value.data === 'string' ? value.data : undefined
   const assetName = decodeTronHexText(value.asset_name)
   const success = tronTransactionSuccess(item)
@@ -570,7 +577,17 @@ export function normalizeTronTransactionResult(item: RecordLike): RecordLike {
       ...(owner ? { sender_base58: owner.base58 } : {}),
       ...(to ? { recipient_base58: to.base58 } : {}),
       ...(contract ? { contract_address: contract.hex, contract_base58: contract.base58 } : {}),
-      ...(amountSun !== undefined ? { amount_sun: amountSun, amount_trx: sunToTrx(amountSun) } : {}),
+      ...(amountSun !== undefined
+        ? { amount_sun: amountSun, amount_trx: sunToTrx(amountSun), amount_unit: 'TRX' }
+        : {}),
+      ...(assetAmount !== undefined
+        ? {
+            asset_amount: assetAmount,
+            // TRC-10 decimals are a property of the asset, not of the chain, so
+            // the raw integer is the only exact value available here.
+            asset_amount_unit: assetName ? `TRC-10 asset ${assetName} base units` : 'TRC-10 asset base units',
+          }
+        : {}),
       ...(callData ? { method_sighash: callData.slice(0, 8), call_data: callData } : {}),
       ...(assetName ? { asset_name: assetName } : {}),
       ...(success !== undefined ? { success } : {}),

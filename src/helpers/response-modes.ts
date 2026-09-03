@@ -709,6 +709,8 @@ export function summarizeTronTransactions(txs: any[]): any {
     type_breakdown: Object.fromEntries(byType),
     successful_transactions: successCount,
     failed_transactions: failedCount,
+    // Only native TRX transfers carry amount_sun, so TRC-10 amounts no longer
+    // inflate this total.
     total_trx_transferred: trx(amountSun),
     total_fees_trx: trx(feeSun),
     unique_senders: bySender.size,
@@ -730,6 +732,9 @@ export function compactTronTransactions(txs: any[]): any[] {
     ...(tx.contract_base58 !== undefined ? { contract_base58: tx.contract_base58 } : {}),
     ...(tx.method_sighash !== undefined ? { method_sighash: tx.method_sighash } : {}),
     ...(tx.amount_trx !== undefined ? { amount_trx: tx.amount_trx, amount_sun: tx.amount_sun } : {}),
+    ...(tx.asset_amount !== undefined
+      ? { asset_amount: tx.asset_amount, asset_amount_unit: tx.asset_amount_unit }
+      : {}),
     ...(tx.asset_name !== undefined ? { asset_name: tx.asset_name } : {}),
     ...(tx.success !== undefined ? { success: tx.success } : {}),
     ...(tx.result !== undefined && tx.result !== null ? { result: tx.result } : {}),

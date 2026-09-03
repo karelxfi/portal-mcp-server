@@ -1720,6 +1720,10 @@ export const TOOL_SPECS: ToolSpec[] = [
       assert(/^41[0-9a-f]{40}$/.test(items[0].sender), 'Tron sender should be 41-prefixed hex')
       assert(/^T[1-9A-HJ-NP-Za-km-z]{33}$/.test(items[0].sender_base58), 'Tron sender should also be shown as Base58')
       assert(typeof items[0].amount_trx === 'string', 'Native transfers should carry an exact TRX amount')
+      assert(
+        items.every((item: any) => item.asset_amount === undefined),
+        'A native TRX transfer must not carry a TRC-10 asset amount',
+      )
       assert(items[0].timestamp_human?.startsWith('2026-06-28'), 'Tron timestamps should be decoded from milliseconds')
     },
     validateFollowUp: async (_text, client) => {
