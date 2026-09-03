@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
-import { applyResponseFormat, summarizeBitcoinOutputs, summarizeHyperliquidFills } from './response-modes.js'
+import {
+  applyResponseFormat,
+  summarizeBitcoinOutputs,
+  summarizeHyperliquidFills,
+  summarizeTraces,
+} from './response-modes.js'
 
 /**
  * Normalized Hyperliquid fills carry exact decimal amounts as text, the shape
@@ -58,8 +63,8 @@ describe('summarizeHyperliquidFills', () => {
     assert.equal(summary.unique_coins, 2)
     // 95000 * 0.1 + 95100 * 0.2 + 3000 * 1
     assert.equal(summary.total_volume_usd, 31520)
-    // absolute fees: 0.95 + 1.9 + 3
-    assert.equal(summary.total_fees_usd, 5.85)
+    // signed fees: 0.95 - 1.9 + 3, because a negative fee is a maker rebate
+    assert.equal(summary.total_fees_usd, 2.05)
     // 12.5 - 2.5, with the third fill carrying no closedPnl
     assert.equal(summary.total_realized_pnl, 10)
     assert.deepEqual(summary.direction_breakdown, { 'Close Long': 2, 'Open Long': 1 })
@@ -114,5 +119,22 @@ describe('summarizeBitcoinOutputs', () => {
 
     assert.equal(summary.total_value_btc, 0.75)
     assert.equal(summary.unique_addresses, 2)
+  })
+})
+
+describe('summarizeTraces', () => {
+  it('counts a self-destruct balance in the value total', () => {
+    const summary = summarizeTraces([
+      { type: 'call', call_value: '0xde0b6b3a7640000', tx_hash: '0xaa' },
+      { type: 'suicide', suicide_balance: '0x1bc16d674ec80000', tx_hash: '0xbb' },
+    ])
+
+    // 1 ETH forwarded by the call, 2 ETH swept by the self-destruct
+    assert.equal(summary.total_value_eth, '3')
+    assert.equal(summary.total_traces, 2)
+  })
+
+  it('reports an empty page instead of aggregates', () => {
+    assert.deepEqual(summarizeTraces([]), { count: 0, summary: 'No traces found' })
   })
 })

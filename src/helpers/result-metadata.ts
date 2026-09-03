@@ -215,6 +215,12 @@ export function buildQueryCoverage<T>(params: {
   getBlockNumber: (item: T) => number | undefined
   hasMore: boolean
   windowComplete?: boolean
+  /**
+   * Override when more rows exist but this tool cannot hand out a cursor for
+   * them. Defaults to 'cursor', which is only true if the caller actually
+   * emitted one; claiming a cursor that does not exist makes a client stop.
+   */
+  continuation?: 'cursor' | 'none'
 }): QueryCoverage {
   const blockNumbers = params.items
     .map((item) => params.getBlockNumber(item))
@@ -227,7 +233,7 @@ export function buildQueryCoverage<T>(params: {
     kind: 'block_window',
     window_complete: params.windowComplete ?? true,
     result_complete: !params.hasMore,
-    continuation: params.hasMore ? 'cursor' : 'none',
+    continuation: params.hasMore ? (params.continuation ?? 'cursor') : 'none',
     window_from_block: params.windowFromBlock,
     window_to_block: params.windowToBlock,
     page_to_block: params.pageToBlock,

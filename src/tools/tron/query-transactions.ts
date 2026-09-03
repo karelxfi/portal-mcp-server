@@ -429,6 +429,10 @@ export function registerTronQueryTransactionsTool(server: McpServer) {
         items: page.pageItems,
         getBlockNumber: getTronBlockNumber,
         hasMore,
+        // A bounded scan only reads back to scannedFromBlock, so the requested
+        // window was not fully analyzed. buildQueryCoverage defaults this to
+        // true, which claimed complete coverage of a window it never read.
+        windowComplete: scannedFromBlock <= resolvedFromBlock,
       })
       const label = KIND_LABELS[request.kind]
       const message =

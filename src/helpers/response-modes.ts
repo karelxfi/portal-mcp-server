@@ -266,7 +266,7 @@ export function summarizeHyperliquidFills(fills: any[]): any {
     if (fill.coin) coins.add(fill.coin)
     const notional = toFiniteNumber(fill.px) * toFiniteNumber(fill.sz)
     totalVolume += notional
-    totalFees += Math.abs(toFiniteNumber(fill.fee))
+    totalFees += toFiniteNumber(fill.fee)
     totalPnl += toFiniteNumber(fill.closedPnl)
     const dir = fill.dir || 'Unknown'
     dirCounts[dir] = (dirCounts[dir] || 0) + 1
@@ -283,6 +283,8 @@ export function summarizeHyperliquidFills(fills: any[]): any {
     unique_traders: traders.size,
     unique_coins: coins.size,
     total_volume_usd: parseFloat(totalVolume.toFixed(2)),
+    // Signed: Hyperliquid maker rebates are negative fees. Summing absolute
+    // values reported a trader who only earned rebates as having paid fees.
     total_fees_usd: parseFloat(totalFees.toFixed(2)),
     total_realized_pnl: parseFloat(totalPnl.toFixed(2)),
     direction_breakdown: dirCounts,
@@ -790,7 +792,7 @@ export function summarizeTraces(traces: any[]): any {
       bySighash.set(trace.call_sighash, (bySighash.get(trace.call_sighash) || 0) + 1)
     if (typeof trace.tx_hash === 'string') transactions.add(trace.tx_hash)
     if (trace.success === false) failed += 1
-    const value = trace.call_value ?? trace.create_value ?? trace.reward_value
+    const value = trace.call_value ?? trace.create_value ?? trace.reward_value ?? trace.suicide_balance
     if (typeof value === 'string' && /^0x[0-9a-fA-F]+$/.test(value)) wei += BigInt(value)
   }
   const eth = (value: bigint) => {

@@ -247,13 +247,21 @@ export function buildPaginationInfo(
   pageSize: number,
   returned: number,
   nextCursor?: string,
-  options?: { continuationScope?: 'remaining_results' | 'adjacent_window' },
+  options?: {
+    continuationScope?: 'remaining_results' | 'adjacent_window'
+    /**
+     * Set when more rows exist that this response cannot hand out a cursor for.
+     * Without it has_more is derived from the cursor, which reads as "you have
+     * everything" on a page that is knowingly incomplete.
+     */
+    hasMoreWithoutCursor?: boolean
+  },
 ): PaginationInfo {
   return {
     type: 'cursor',
     page_size: pageSize,
     returned,
-    has_more: Boolean(nextCursor),
+    has_more: Boolean(nextCursor) || options?.hasMoreWithoutCursor === true,
     ...(nextCursor ? { next_cursor: nextCursor } : {}),
     ...(nextCursor ? { continuation_scope: options?.continuationScope ?? 'remaining_results' } : {}),
   }

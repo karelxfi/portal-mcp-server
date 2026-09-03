@@ -386,9 +386,12 @@ export function registerQueryTracesTool(server: McpServer) {
       const pageToBlock = paginationCursor?.page_to_block ?? endBlock
       const windowBlocks = pageToBlock - resolvedFromBlock + 1
 
+      // `type` is not a narrowing filter: every EVM block is mostly call traces,
+      // so a type-only query gets the unfiltered budget and chunk size. Granting
+      // it the filtered budget invited 5,000-block scans that always died on the
+      // response size limit.
       const hasPortalFilters = Boolean(
-        request.type?.length ||
-          request.call_from ||
+        request.call_from ||
           request.call_to ||
           request.call_sighash ||
           request.create_from ||
@@ -432,7 +435,13 @@ export function registerQueryTracesTool(server: McpServer) {
       if (request.create_result_address) traceFilter.createResultAddress = request.create_result_address
       if (request.include_subtraces) traceFilter.subtraces = true
 
-      const presetFields = getTraceFields(request.field_preset) as { trace: Record<string, boolean> }
+      // A summary aggregates value, selector and endpoint fields. The 'minimal'
+      // preset does not request them, which produced a confident total_value_eth
+      // of 0 for pages that moved real value, so summaries read at least the
+      // standard field set.
+      const effectiveFieldPreset =
+        effectiveResponseFormat === 'summary' && request.field_preset === 'minimal' ? 'standard' : request.field_preset
+      const presetFields = getTraceFields(effectiveFieldPreset) as { trace: Record<string, boolean> }
       const query = {
         type: 'evm',
         fields: {
@@ -444,7 +453,7 @@ export function registerQueryTracesTool(server: McpServer) {
             transactionIndex: true,
             type: true,
             error: true,
-            ...(request.field_preset === 'full'
+            ...(effectiveFieldPreset === 'full'
               ? { callInput: true, callResultOutput: true, createResultCode: true }
               : {}),
           },
@@ -559,6 +568,9 @@ export function registerQueryTracesTool(server: McpServer) {
         getBlockNumber,
         hasMore,
         windowComplete: !scan.hasUnscannedBlocks,
+        // The earliest-order path builds no cursor, so saying 'cursor' here
+        // would point a client at a continuation that does not exist.
+        ...(request.scan_order === 'earliest' ? { continuation: 'none' as const } : {}),
       })
       const subject = request.transaction_hash
         ? `traces of transaction ${request.transaction_hash}`
@@ -573,10 +585,15 @@ export function registerQueryTracesTool(server: McpServer) {
       return formatResult(formattedData, message, {
         toolName: TOOL_NAME,
         notices,
-        pagination: buildPaginationInfo(request.limit, pageItems.length, nextCursor),
+        pagination: buildPaginationInfo(request.limit, pageItems.length, nextCursor, {
+          ...(request.scan_order === 'earliest' && hasMore ? { hasMoreWithoutCursor: true } : {}),
+        }),
         ordering: buildChronologicalPageOrdering({
           sortedBy: 'block_number',
           tieBreakers: ['transactionIndex', 'traceAddress'],
+          ...(request.scan_order === 'earliest'
+            ? { windowFocus: 'oldest_matches' as const, continuation: 'newer' as const }
+            : {}),
         }),
         freshness,
         coverage,
