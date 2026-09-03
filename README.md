@@ -258,7 +258,7 @@ Useful environment variables:
 - `MCP_TOOL_MAX_QUEUE` to bound queued tool calls, default `64`
 - `MCP_TOOL_QUEUE_TIMEOUT_MS` to bound tool admission wait time, default `5000`
 - `MCP_TOOL_CLIENT_WEIGHT_SHARE` percent of the weight budget one caller (bounded client family plus connection) may hold at once, default `50`; never below the heaviest single tool so every tool stays schedulable. `MCP_TOOL_CLIENT_MAX_QUEUE` bounds one caller's queued calls, default `16`. A caller over its share gets the retryable `overloaded` result with `reason: client_share` while others keep flowing.
-- `MCP_TRUST_PROXY` set to `1` to key fairness on the first `X-Forwarded-For` hop instead of the socket address; the address is hashed and never stored or labelled.
+- `MCP_TRUST_PROXY` set to `1` (or to the number of proxies in front of the server) to key fairness on the address those proxies observed instead of the socket address. The hop is counted from the right of `X-Forwarded-For`, because a caller can write anything to the left of it; the address is hashed and never stored or labelled.
 - `MCP_SLOW_REQUEST_MS` threshold for one JSON line on stderr per slow tool call with admission wait and execution timings and the bounded client family, default `5000`.
 
 ## Tests

@@ -17,6 +17,7 @@ import {
   buildSolanaTransactionFields,
 } from '../helpers/fields.js'
 import { type ToolGuideEntry, getToolGuideEntries, getToolGuideEntry } from '../helpers/tool-ux.js'
+import { captureToolActivePredicate } from '../toolsets.js'
 import type { BlockHead, DatasetMetadata } from '../types/index.js'
 import { npmVersion } from '../version.js'
 
@@ -32,8 +33,21 @@ function groupToolsByCategory(tools: ToolGuideEntry[]) {
   }, {})
 }
 
-function buildDeveloperToolGuide() {
-  const tools = getToolGuideEntries()
+/* A route is only worth reading when the tool it starts from is registered,
+   and the tools it hands off to are filtered to the ones this deployment
+   serves. Without this the guide read as though the full catalog were
+   available and sent callers at tools that are not there. */
+function activeRoutes<T extends { start_with: string; then_use: string[] }>(
+  routes: T[],
+  isActive: (toolName: string) => boolean,
+): T[] {
+  return routes
+    .filter((route) => isActive(route.start_with))
+    .map((route) => ({ ...route, then_use: route.then_use.filter((tool) => isActive(tool)) }))
+}
+
+function buildDeveloperToolGuide(isActive: (toolName: string) => boolean) {
+  const tools = getToolGuideEntries().filter((tool) => isActive(tool.name))
   const publicTools = tools.filter((tool) => tool.audience === 'public')
   const advancedTools = tools.filter((tool) => tool.audience === 'advanced')
 
@@ -78,49 +92,53 @@ function buildDeveloperToolGuide() {
         tool: 'portal_get_time_series',
         reason: 'Use when the developer or model needs time-series, grouped trend, or compare-previous output.',
       },
-    ],
-    common_question_routes: [
-      {
-        ask: 'Investigate this wallet or suspicious address',
-        start_with: 'portal_get_wallet_summary',
-        then_use: [
-          'portal_evm_query_transactions',
-          'portal_evm_query_token_transfers',
-          'portal_evm_query_traces',
-          'portal_solana_query_transactions',
-          'portal_hyperliquid_query_fills',
-        ],
-        reason:
-          'Wallet summary returns fund_flow, separate activity and asset-movement counterparties, largest movements within each asset, and investigation pivots before raw record drill-down.',
-      },
-      {
-        ask: 'Trace USDC or token outflows',
-        start_with: 'portal_resolve_entity',
-        then_use: ['portal_evm_query_token_transfers', 'portal_get_wallet_summary'],
-        reason:
-          'Resolve the token symbol first, then query exact transfer evidence and summarize the sender or recipient wallet.',
-      },
-      {
-        ask: 'Explain why network or contract activity spiked',
-        start_with: 'portal_get_time_series',
-        then_use: ['portal_evm_query_logs', 'portal_evm_query_transactions', 'portal_evm_get_contract_activity'],
-        reason:
-          'Use complete buckets to find the spike, then pivot into exact logs, transactions, or contract activity.',
-      },
-      {
-        ask: 'What did this contract do recently?',
-        start_with: 'portal_evm_get_contract_activity',
-        then_use: ['portal_evm_query_logs', 'portal_evm_query_transactions', 'portal_evm_query_traces'],
-        reason: 'Contract activity gives the overview; raw logs, transactions, and traces provide exact evidence rows.',
-      },
-      {
-        ask: 'What did this transaction call internally?',
-        start_with: 'portal_evm_query_traces',
-        then_use: ['portal_evm_query_logs', 'portal_evm_get_contract_deployment'],
-        reason:
-          'Traces filtered by transaction_hash return every internal call, creation, and value move with a deterministic id; logs and deployment lookups add the emitted events and creation context.',
-      },
-    ],
+    ].filter((entry) => isActive(entry.tool)),
+    common_question_routes: activeRoutes(
+      [
+        {
+          ask: 'Investigate this wallet or suspicious address',
+          start_with: 'portal_get_wallet_summary',
+          then_use: [
+            'portal_evm_query_transactions',
+            'portal_evm_query_token_transfers',
+            'portal_evm_query_traces',
+            'portal_solana_query_transactions',
+            'portal_hyperliquid_query_fills',
+          ],
+          reason:
+            'Wallet summary returns fund_flow, separate activity and asset-movement counterparties, largest movements within each asset, and investigation pivots before raw record drill-down.',
+        },
+        {
+          ask: 'Trace USDC or token outflows',
+          start_with: 'portal_resolve_entity',
+          then_use: ['portal_evm_query_token_transfers', 'portal_get_wallet_summary'],
+          reason:
+            'Resolve the token symbol first, then query exact transfer evidence and summarize the sender or recipient wallet.',
+        },
+        {
+          ask: 'Explain why network or contract activity spiked',
+          start_with: 'portal_get_time_series',
+          then_use: ['portal_evm_query_logs', 'portal_evm_query_transactions', 'portal_evm_get_contract_activity'],
+          reason:
+            'Use complete buckets to find the spike, then pivot into exact logs, transactions, or contract activity.',
+        },
+        {
+          ask: 'What did this contract do recently?',
+          start_with: 'portal_evm_get_contract_activity',
+          then_use: ['portal_evm_query_logs', 'portal_evm_query_transactions', 'portal_evm_query_traces'],
+          reason:
+            'Contract activity gives the overview; raw logs, transactions, and traces provide exact evidence rows.',
+        },
+        {
+          ask: 'What did this transaction call internally?',
+          start_with: 'portal_evm_query_traces',
+          then_use: ['portal_evm_query_logs', 'portal_evm_get_contract_deployment'],
+          reason:
+            'Traces filtered by transaction_hash return every internal call, creation, and value move with a deterministic id; logs and deployment lookups add the emitted events and creation context.',
+        },
+      ],
+      isActive,
+    ),
     integration_notes: [
       'Prefer public tools for normal agent flows; advanced tools are for debugging Portal coverage or exact block resolution.',
       'Use network parameters in public APIs. Raw Portal dataset names are resolved internally.',
@@ -136,6 +154,8 @@ function buildDeveloperToolGuide() {
 }
 
 export function registerSchemaResource(server: McpServer) {
+  const isActive = captureToolActivePredicate()
+
   server.registerResource(
     'tool-guide',
     'sqd://tools',
@@ -146,7 +166,7 @@ export function registerSchemaResource(server: McpServer) {
           {
             uri: uri.href,
             mimeType: 'application/json',
-            text: JSON.stringify(buildDeveloperToolGuide(), null, 2),
+            text: JSON.stringify(buildDeveloperToolGuide(isActive), null, 2),
           },
         ],
       }
@@ -160,7 +180,7 @@ export function registerSchemaResource(server: McpServer) {
     async (uri, { name }) => {
       const toolName = Array.isArray(name) ? name[0] : name
       const tool = getToolGuideEntry(toolName)
-      if (!tool) {
+      if (!tool || !isActive(tool.name)) {
         throw new Error(`Unknown Portal MCP tool "${toolName}". Read sqd://tools for the current tool guide.`)
       }
 

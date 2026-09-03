@@ -130,7 +130,11 @@ function buildPortalServer(runtimeContext: RuntimeRequestContext, appEnabled: bo
       /* stdio has exactly one caller, so it is counted but never share-limited;
          the fair share protects the hosted HTTP endpoint. */
       const caller = {
-        key: `${clientFamily}:${runtimeContext.connectionKey ?? runtimeContext.transport}`,
+        /* Keyed on the connection alone. The family is what the client calls
+           itself, so including it let one connection claim a share per name
+           it declared. It stays on the metric label, where it is a bounded
+           description of the traffic rather than a claim to more budget. */
+        key: runtimeContext.connectionKey ?? runtimeContext.transport,
         family: clientFamily,
         exempt: runtimeContext.transport === 'stdio',
       }

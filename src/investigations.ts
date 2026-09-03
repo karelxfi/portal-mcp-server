@@ -2,7 +2,7 @@ import { type McpServer, ResourceTemplate, completable } from '@modelcontextprot
 import { z } from 'zod'
 
 import { detectChainType } from './helpers/chain.js'
-import { isToolActive } from './toolsets.js'
+import { captureToolActivePredicate } from './toolsets.js'
 import { npmVersion } from './version.js'
 
 const WALLET_NETWORKS = [
@@ -53,13 +53,26 @@ const timeframeArgument = completable(
   (value) => TIMEFRAMES.filter((timeframe) => timeframe.startsWith(String(value ?? '').toLowerCase())),
 )
 
+/* A workflow step names either tools or a prose instruction, never both.
+   `tools` is the source of truth: the step's text is rendered from the tools
+   that are actually registered, so a step can never name a tool this
+   deployment does not serve. Any one of the listed tools carries the step;
+   `optional` marks a pivot the investigation can be run without. */
+type InvestigationStep = {
+  step: number
+  use?: string
+  tools?: string[]
+  optional?: boolean
+  purpose: string
+}
+
 type InvestigationDefinition = {
   name: string
   title: string
   description: string
   outcome: string
   required_evidence: string[]
-  workflow: Array<{ step: number; use: string; purpose: string }>
+  workflow: InvestigationStep[]
   completion_contract: string[]
 }
 
@@ -77,9 +90,9 @@ export const INVESTIGATIONS: InvestigationDefinition[] = [
       'Coverage, freshness, pagination, ordering, and the evidence receipt',
     ],
     workflow: [
-      { step: 1, use: 'portal_list_networks', purpose: 'Resolve a fuzzy network name if needed.' },
-      { step: 2, use: 'portal_get_network_info', purpose: 'Check indexed coverage and freshness.' },
-      { step: 3, use: 'portal_get_wallet_summary', purpose: 'Build the wallet overview and identify pivots.' },
+      { step: 1, tools: ['portal_list_networks'], purpose: 'Resolve a fuzzy network name if needed.' },
+      { step: 2, tools: ['portal_get_network_info'], purpose: 'Check indexed coverage and freshness.' },
+      { step: 3, tools: ['portal_get_wallet_summary'], purpose: 'Build the wallet overview and identify pivots.' },
       {
         step: 4,
         use: 'chain-specific transaction, transfer, instruction, or fill tools',
@@ -87,7 +100,8 @@ export const INVESTIGATIONS: InvestigationDefinition[] = [
       },
       {
         step: 5,
-        use: 'portal_evm_query_traces',
+        tools: ['portal_evm_query_traces'],
+        optional: true,
         purpose:
           'Pivot from a suspicious transaction hash to its internal calls, created contracts, and value moved below the top-level transaction.',
       },
@@ -113,18 +127,19 @@ export const INVESTIGATIONS: InvestigationDefinition[] = [
       'Coverage, freshness, pagination, ordering, and the evidence receipt',
     ],
     workflow: [
-      { step: 1, use: 'portal_resolve_entity', purpose: 'Resolve the protocol, token, or contract name.' },
-      { step: 2, use: 'portal_evm_get_contract_deployment', purpose: 'Find deployment evidence.' },
-      { step: 3, use: 'portal_evm_get_contract_activity', purpose: 'Measure calls, events, actors, and flows.' },
-      { step: 4, use: 'portal_get_time_series', purpose: 'Compare the current and previous periods.' },
+      { step: 1, tools: ['portal_resolve_entity'], purpose: 'Resolve the protocol, token, or contract name.' },
+      { step: 2, tools: ['portal_evm_get_contract_deployment'], purpose: 'Find deployment evidence.' },
+      { step: 3, tools: ['portal_evm_get_contract_activity'], purpose: 'Measure calls, events, actors, and flows.' },
+      { step: 4, tools: ['portal_get_time_series'], purpose: 'Compare the current and previous periods.' },
       {
         step: 5,
-        use: 'portal_evm_query_logs, portal_evm_query_transactions, or portal_evm_query_token_transfers',
+        tools: ['portal_evm_query_logs', 'portal_evm_query_transactions', 'portal_evm_query_token_transfers'],
         purpose: 'Verify the explanation with exact records.',
       },
       {
         step: 6,
-        use: 'portal_evm_query_traces',
+        tools: ['portal_evm_query_traces'],
+        optional: true,
         purpose:
           'Follow one transaction into its internal calls and contract creations when logs alone do not explain it.',
       },
@@ -150,21 +165,21 @@ export const INVESTIGATIONS: InvestigationDefinition[] = [
       'Coverage, freshness, pagination, ordering, and the evidence receipt',
     ],
     workflow: [
-      { step: 1, use: 'portal_resolve_entity', purpose: 'Resolve a coin, token, pool, or contract name.' },
+      { step: 1, tools: ['portal_resolve_entity'], purpose: 'Resolve a coin, token, pool, or contract name.' },
       {
         step: 2,
-        use: 'portal_hyperliquid_get_ohlc or portal_evm_get_ohlc',
+        tools: ['portal_hyperliquid_get_ohlc', 'portal_evm_get_ohlc'],
         purpose: 'Build complete price and volume buckets.',
       },
       {
         step: 3,
-        use: 'portal_hyperliquid_get_analytics or portal_get_time_series',
+        tools: ['portal_hyperliquid_get_analytics', 'portal_get_time_series'],
         purpose: 'Measure volume, fills, participants, and period change.',
       },
       {
         step: 4,
-        use: 'portal_hyperliquid_query_fills or exact EVM query tools',
-        purpose: 'Verify peaks and outliers with exact market records.',
+        tools: ['portal_hyperliquid_query_fills'],
+        purpose: 'Verify peaks and outliers with exact market records, alongside the exact EVM query tools.',
       },
     ],
     completion_contract: [
@@ -180,14 +195,58 @@ function findInvestigation(name: string): InvestigationDefinition | undefined {
   return INVESTIGATIONS.find((investigation) => investigation.name === name)
 }
 
+function joinToolNames(tools: string[]): string {
+  if (tools.length <= 1) return tools[0] ?? ''
+  if (tools.length === 2) return `${tools[0]} or ${tools[1]}`
+  return `${tools.slice(0, -1).join(', ')}, or ${tools[tools.length - 1]}`
+}
+
+/* The workflow as this deployment can actually run it: a step is kept when at
+   least one of the tools it names is registered, its text lists only those
+   tools, and the surviving steps are renumbered so the sequence has no holes.
+   A step with no tools is prose and always survives. */
+function activeWorkflow(
+  investigation: InvestigationDefinition,
+  isActive: (toolName: string) => boolean,
+): Array<{ step: number; use: string; purpose: string }> {
+  const steps: Array<{ step: number; use: string; purpose: string }> = []
+  for (const step of investigation.workflow) {
+    if (!step.tools) {
+      if (step.use) steps.push({ step: steps.length + 1, use: step.use, purpose: step.purpose })
+      continue
+    }
+    const active = step.tools.filter((tool) => isActive(tool))
+    if (active.length === 0) continue
+    steps.push({ step: steps.length + 1, use: joinToolNames(active), purpose: step.purpose })
+  }
+  return steps
+}
+
+/* An investigation is offered only when every step it cannot be run without
+   has a registered tool. A prompt that survives this still names no missing
+   tool, because its text is rendered from the active workflow. */
+function investigationAvailable(
+  investigation: InvestigationDefinition,
+  isActive: (toolName: string) => boolean,
+): boolean {
+  return investigation.workflow.every(
+    (step) => step.optional || !step.tools || step.tools.some((tool) => isActive(tool)),
+  )
+}
+
+function asServedInvestigation(investigation: InvestigationDefinition, isActive: (toolName: string) => boolean) {
+  return { ...investigation, workflow: activeWorkflow(investigation, isActive) }
+}
+
 function promptText(params: {
   investigation: InvestigationDefinition
   network: string
   subject: string
   timeframe: string
   question?: string
+  isActive: (toolName: string) => boolean
 }): string {
-  const { investigation, network, subject, timeframe, question } = params
+  const { investigation, network, subject, timeframe, question, isActive } = params
   return [
     `Run the SQD ${investigation.title.toLowerCase()} workflow.`,
     '',
@@ -199,7 +258,7 @@ function promptText(params: {
     `Outcome: ${investigation.outcome}`,
     '',
     'Work through these steps:',
-    ...investigation.workflow.map((step) => `${step.step}. Use ${step.use}. ${step.purpose}`),
+    ...activeWorkflow(investigation, isActive).map((step) => `${step.step}. Use ${step.use}. ${step.purpose}`),
     '',
     'Factual contract:',
     ...investigation.completion_contract.map((rule) => `- ${rule}`),
@@ -209,13 +268,9 @@ function promptText(params: {
   ].join('\n')
 }
 
-/* A prompt that names a tool outside the active toolset selection is not
-   offered, so prompts/list never points at a missing tool. */
-function promptToolsActive(tools: string[]): boolean {
-  return tools.every((tool) => isToolActive(tool))
-}
-
 export function registerInvestigationPromptsAndResources(server: McpServer) {
+  const isActive = captureToolActivePredicate()
+
   server.registerResource(
     'investigation-guide',
     'sqd://investigations',
@@ -225,7 +280,14 @@ export function registerInvestigationPromptsAndResources(server: McpServer) {
         {
           uri: uri.href,
           mimeType: 'application/json',
-          text: JSON.stringify({ version: npmVersion, investigations: INVESTIGATIONS }, null, 2),
+          text: JSON.stringify(
+            {
+              version: npmVersion,
+              investigations: INVESTIGATIONS.map((item) => asServedInvestigation(item, isActive)),
+            },
+            null,
+            2,
+          ),
         },
       ],
     }),
@@ -240,12 +302,18 @@ export function registerInvestigationPromptsAndResources(server: McpServer) {
       const investigation = findInvestigation(investigationName)
       if (!investigation) throw new Error(`Unknown SQD investigation "${investigationName}".`)
       return {
-        contents: [{ uri: uri.href, mimeType: 'application/json', text: JSON.stringify(investigation, null, 2) }],
+        contents: [
+          {
+            uri: uri.href,
+            mimeType: 'application/json',
+            text: JSON.stringify(asServedInvestigation(investigation, isActive), null, 2),
+          },
+        ],
       }
     },
   )
 
-  if (promptToolsActive(['portal_list_networks', 'portal_get_network_info', 'portal_get_wallet_summary'])) {
+  if (investigationAvailable(INVESTIGATIONS[0], isActive)) {
     server.registerPrompt(
       'investigate-wallet',
       {
@@ -267,6 +335,7 @@ export function registerInvestigationPromptsAndResources(server: McpServer) {
               type: 'text' as const,
               text: promptText({
                 investigation: INVESTIGATIONS[0],
+                isActive,
                 network,
                 subject: address,
                 timeframe,
@@ -279,17 +348,7 @@ export function registerInvestigationPromptsAndResources(server: McpServer) {
     )
   }
 
-  if (
-    promptToolsActive([
-      'portal_resolve_entity',
-      'portal_evm_get_contract_deployment',
-      'portal_evm_get_contract_activity',
-      'portal_get_time_series',
-      'portal_evm_query_transactions',
-      'portal_evm_query_logs',
-      'portal_evm_query_token_transfers',
-    ])
-  ) {
+  if (investigationAvailable(INVESTIGATIONS[1], isActive)) {
     server.registerPrompt(
       'investigate-contract',
       {
@@ -311,6 +370,7 @@ export function registerInvestigationPromptsAndResources(server: McpServer) {
               type: 'text' as const,
               text: promptText({
                 investigation: INVESTIGATIONS[1],
+                isActive,
                 network,
                 subject: contract,
                 timeframe,
@@ -323,16 +383,7 @@ export function registerInvestigationPromptsAndResources(server: McpServer) {
     )
   }
 
-  if (
-    promptToolsActive([
-      'portal_resolve_entity',
-      'portal_evm_get_ohlc',
-      'portal_hyperliquid_get_ohlc',
-      'portal_get_time_series',
-      'portal_hyperliquid_get_analytics',
-      'portal_hyperliquid_query_fills',
-    ])
-  ) {
+  if (investigationAvailable(INVESTIGATIONS[2], isActive)) {
     server.registerPrompt(
       'investigate-market',
       {
@@ -354,6 +405,7 @@ export function registerInvestigationPromptsAndResources(server: McpServer) {
               type: 'text' as const,
               text: promptText({
                 investigation: INVESTIGATIONS[2],
+                isActive,
                 network,
                 subject: market,
                 timeframe,

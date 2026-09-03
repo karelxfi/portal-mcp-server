@@ -10,6 +10,7 @@ import {
   isLoopbackBind,
   parseHostList,
   readPositiveInt,
+  readTrustedProxyCount,
   resolveRequestGuardPolicy,
 } from './http-guard.js'
 
@@ -127,22 +128,65 @@ describe('resolveRequestGuardPolicy', () => {
 })
 
 describe('connectionKeyFromRequest', () => {
-  it('hashes the socket address, or the first proxy hop only when trusted', () => {
-    const direct = connectionKeyFromRequest(
-      { remoteAddress: '203.0.113.9', forwardedFor: '198.51.100.7, 10.0.0.1' },
-      false,
-    )
+  it('hashes the socket address, and a proxy hop only when a proxy is trusted', () => {
+    const direct = connectionKeyFromRequest({ remoteAddress: '203.0.113.9', forwardedFor: '198.51.100.7, 10.0.0.1' }, 0)
     const trusted = connectionKeyFromRequest(
       { remoteAddress: '203.0.113.9', forwardedFor: '198.51.100.7, 10.0.0.1' },
-      true,
+      1,
     )
-    const hop = connectionKeyFromRequest({ remoteAddress: '203.0.113.9', forwardedFor: '198.51.100.7' }, true)
-    assert.equal(direct, connectionKeyFromRequest({ remoteAddress: '203.0.113.9' }, false))
+    assert.equal(direct, connectionKeyFromRequest({ remoteAddress: '203.0.113.9' }, 0))
     assert.notEqual(direct, trusted)
-    assert.equal(trusted, hop)
     assert.match(direct, /^[0-9a-f]{16}$/)
     assert.equal(direct.includes('203'), false)
-    assert.equal(connectionKeyFromRequest({}, false), connectionKeyFromRequest({ remoteAddress: undefined }, true))
+    assert.equal(connectionKeyFromRequest({}, 0), connectionKeyFromRequest({ remoteAddress: undefined }, 1))
+  })
+
+  it('takes the hop the proxy wrote, not the one the caller chose', () => {
+    // One proxy in front. The caller controls everything to the left of the
+    // hop that proxy appends, so a key read from the front changes on every
+    // request and the per-caller share stops limiting anything.
+    const forged = (claim: string) =>
+      connectionKeyFromRequest({ remoteAddress: '10.0.0.1', forwardedFor: `${claim}, 198.51.100.7` }, 1)
+
+    assert.equal(forged('1.2.3.4'), forged('5.6.7.8'))
+    assert.equal(forged('1.2.3.4'), connectionKeyFromRequest({ remoteAddress: '198.51.100.7' }, 0))
+  })
+
+  it('counts the trusted hops from the right', () => {
+    const twoProxies = connectionKeyFromRequest(
+      { remoteAddress: '10.0.0.1', forwardedFor: 'forged, 198.51.100.7, 10.0.0.2' },
+      2,
+    )
+
+    assert.equal(twoProxies, connectionKeyFromRequest({ remoteAddress: '198.51.100.7' }, 0))
+  })
+
+  it('falls back to the socket when the header is shorter than the trusted chain', () => {
+    // A request that did not come through the expected proxies carries no hop
+    // this deployment can trust, so the socket address is the only usable key.
+    assert.equal(
+      connectionKeyFromRequest({ remoteAddress: '203.0.113.9', forwardedFor: '198.51.100.7' }, 2),
+      connectionKeyFromRequest({ remoteAddress: '203.0.113.9' }, 0),
+    )
+    assert.equal(
+      connectionKeyFromRequest({ remoteAddress: '203.0.113.9', forwardedFor: '  ,  ' }, 1),
+      connectionKeyFromRequest({ remoteAddress: '203.0.113.9' }, 0),
+    )
+  })
+})
+
+describe('readTrustedProxyCount', () => {
+  it('reads a switch or a hop count and refuses anything else', () => {
+    assert.equal(readTrustedProxyCount('1'), 1)
+    assert.equal(readTrustedProxyCount('true'), 1)
+    assert.equal(readTrustedProxyCount('TRUE'), 1)
+    assert.equal(readTrustedProxyCount('3'), 3)
+    assert.equal(readTrustedProxyCount('0'), 0)
+    assert.equal(readTrustedProxyCount('false'), 0)
+    assert.equal(readTrustedProxyCount(undefined), 0)
+    assert.equal(readTrustedProxyCount(''), 0)
+    assert.equal(readTrustedProxyCount('yes'), 0)
+    assert.equal(readTrustedProxyCount('-2'), 0)
   })
 })
 

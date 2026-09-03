@@ -185,3 +185,16 @@ export function getActiveToolSelection(): ToolSelection {
 export function isToolActive(toolName: string): boolean {
   return isToolEnabled(getActiveToolSelection(), toolName)
 }
+
+/**
+ * The active selection lives in an AsyncLocalStorage scope that wraps
+ * registration only. A callback invoked later, such as a resource read or a
+ * prompt render, runs in a different async context, where `isToolActive`
+ * reports the full catalog no matter what the deployment selected. Anything
+ * that must respect the selection after registration captures it here, while
+ * still inside that scope.
+ */
+export function captureToolActivePredicate(): (toolName: string) => boolean {
+  const selection = getActiveToolSelection()
+  return (toolName: string) => isToolEnabled(selection, toolName)
+}

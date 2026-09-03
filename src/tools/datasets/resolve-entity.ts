@@ -71,6 +71,12 @@ export function registerResolveEntityTool(server: McpServer) {
       }
 
       const matches = result.matches
+      // Every resolver ranks its candidates and then cuts the list to `limit`.
+      // Reporting only the returned rows as `match_count`, under the default
+      // coverage that declares a result complete, told the caller that the
+      // list it received was the whole list.
+      const totalMatches = result.total_matches
+      const truncated = totalMatches > matches.length
       const tokenAddresses =
         effectiveKind === 'token' ? matches.flatMap((match) => ('address' in match ? [match.address] : [])) : []
       const contractAddresses =
@@ -155,7 +161,13 @@ export function registerResolveEntityTool(server: McpServer) {
                   ? 'No Hyperliquid coin candidate could be normalized from the query.'
                   : 'No protocol match found from DeFi Llama protocol metadata.',
         )
-      } else if (matches.length > 1) {
+      }
+      if (truncated) {
+        notices.push(
+          `Showing the ${matches.length} best of ${totalMatches} ${effectiveKind} matches. Raise limit (max 50) or narrow the query to see the rest.`,
+        )
+      }
+      if (matches.length > 1) {
         notices.push(
           effectiveKind === 'token'
             ? 'Multiple token-list matches were found. Use token_addresses for deterministic queries when bridged variants matter.'
@@ -183,17 +195,26 @@ export function registerResolveEntityTool(server: McpServer) {
           query: result.query,
           ...('dataset' in result ? { network: result.dataset } : {}),
           match_count: matches.length,
+          ...(truncated ? { total_match_count: totalMatches } : {}),
           source: result.source,
           matches,
           ...('lookup' in result ? { token_list_lookup: result.lookup } : {}),
           ...(suggestedArguments ? { suggested_arguments: suggestedArguments } : {}),
         },
-        matches.length === 1
-          ? `Resolved ${quoteUntrusted(result.query)} to 1 ${effectiveKind} match`
-          : `Resolved ${quoteUntrusted(result.query)} to ${matches.length} ${effectiveKind} matches`,
+        truncated
+          ? `Resolved ${quoteUntrusted(result.query)} to ${totalMatches} ${effectiveKind} matches, showing the best ${matches.length}`
+          : matches.length === 1
+            ? `Resolved ${quoteUntrusted(result.query)} to 1 ${effectiveKind} match`
+            : `Resolved ${quoteUntrusted(result.query)} to ${matches.length} ${effectiveKind} matches`,
         {
           toolName: 'portal_resolve_entity',
           notices,
+          coverage: {
+            kind: 'entity_resolution',
+            result_complete: !truncated,
+            ...(truncated ? { returned: matches.length, matching: totalMatches, continuation: 'none' } : {}),
+          },
+          pagination: { has_more: truncated },
           execution: buildExecutionMetadata({
             limit,
             normalized_output: true,

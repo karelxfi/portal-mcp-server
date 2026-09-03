@@ -350,8 +350,15 @@ function makeCompletenessAwareAnswer(answer: string, payload: RecordLike): strin
   }
 
   if (coverage?.result_complete === false) {
-    if (!/\b(preview|cursor|continue|more matching|older results|limited to)\b/i.test(answer)) {
-      suffixes.push('Preview page: continue with the cursor for remaining rows.')
+    if (!/\b(preview|cursor|continue|more matching|older results|limited to|showing the best)\b/i.test(answer)) {
+      // A result can be incomplete with nothing to continue from: a ranked
+      // list cut to `limit` has no cursor, and telling the caller to use one
+      // sends them after a field that is not in the response.
+      suffixes.push(
+        coverage.continuation === 'none'
+          ? 'Preview page: raise the limit or narrow the query for the remaining rows.'
+          : 'Preview page: continue with the cursor for remaining rows.',
+      )
     }
   }
 

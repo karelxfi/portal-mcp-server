@@ -162,17 +162,41 @@ export function evaluateBodyLimit(
 
 /**
  * A stable, non-reversible key for the connection behind a request, used only
- * to give each caller a fair share of tool admission. With `trustProxy` the
- * first hop of `X-Forwarded-For` is used, otherwise the socket address. The
- * raw address is hashed and never stored, logged, or labelled.
+ * to give each caller a fair share of tool admission. The raw address is
+ * hashed and never stored, logged, or labelled.
+ *
+ * `trustedProxies` is how many of this deployment's own proxies append to
+ * `X-Forwarded-For`; 0 means the header is not trusted and the socket address
+ * is used. The hop is counted from the right, because a client can put
+ * anything it likes at the front of that header: reading the leftmost entry
+ * let one caller pick a new identity per request and take the whole budget.
+ * Counting from the right lands on the address the outermost trusted proxy
+ * observed, which the caller cannot choose. A header shorter than the trusted
+ * hop count is not from that proxy chain, so the socket address is used.
  */
 export function connectionKeyFromRequest(
   source: { remoteAddress?: string; forwardedFor?: string },
-  trustProxy: boolean,
+  trustedProxies: number,
 ): string {
-  const forwarded = trustProxy ? source.forwardedFor?.split(',')[0]?.trim() : undefined
+  let forwarded: string | undefined
+  if (trustedProxies > 0 && source.forwardedFor) {
+    const hops = source.forwardedFor
+      .split(',')
+      .map((hop) => hop.trim())
+      .filter((hop) => hop !== '')
+    if (hops.length >= trustedProxies) forwarded = hops[hops.length - trustedProxies]
+  }
   const address = (forwarded || source.remoteAddress || 'unknown').toLowerCase()
   return createHash('sha256').update(address).digest('hex').slice(0, 16)
+}
+
+/** `MCP_TRUST_PROXY`: `1`/`true` for one proxy, or how many are in front. */
+export function readTrustedProxyCount(raw: string | undefined): number {
+  const value = raw?.trim().toLowerCase()
+  if (!value || value === '0' || value === 'false') return 0
+  if (value === 'true') return 1
+  const parsed = Number(value)
+  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : 0
 }
 
 export function readPositiveInt(raw: string | undefined, fallback: number): number {

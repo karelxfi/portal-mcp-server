@@ -5,11 +5,14 @@ import { PORTAL_TOOL_NAMES } from './helpers/mcp-registration.js'
 import {
   FULL_TOOL_SELECTION,
   TOOLSETS,
+  captureToolActivePredicate,
+  isToolActive,
   isToolEnabled,
   narrowToolSelection,
   parseToolsetList,
   requestedToolsetsFromRequest,
   resolveDeploymentToolSelection,
+  runWithToolSelection,
   toolsetOf,
 } from './toolsets.js'
 
@@ -110,5 +113,31 @@ describe('request parsing', () => {
     assert.equal(requestedToolsetsFromRequest(undefined), undefined)
     assert.deepEqual(parseToolsetList(' evm , Solana,,x '), { toolsets: ['evm', 'solana'], unknown: ['x'], all: false })
     assert.equal(FULL_TOOL_SELECTION.label, 'all')
+  })
+})
+
+describe('the selection outlives the registration scope', () => {
+  it('keeps reporting the selected tools from a callback that runs later', () => {
+    const selection = resolveDeploymentToolSelection({ MCP_TOOLSETS: 'discovery,convenience' })
+
+    // Registration happens inside the scope; a resource read or prompt render
+    // happens outside it, in a different async context. A predicate captured
+    // during registration must answer for the deployment's selection there,
+    // where isToolActive can only see the full catalog.
+    const isActive = runWithToolSelection(selection, () => {
+      assert.equal(isToolActive('portal_evm_query_traces'), false)
+      return captureToolActivePredicate()
+    })
+
+    assert.equal(isToolActive('portal_evm_query_traces'), true)
+    assert.equal(isActive('portal_evm_query_traces'), false)
+    assert.equal(isActive('portal_get_wallet_summary'), true)
+  })
+
+  it('reports the whole catalog when nothing was selected', () => {
+    const isActive = runWithToolSelection(FULL_TOOL_SELECTION, () => captureToolActivePredicate())
+
+    assert.equal(isActive('portal_evm_query_traces'), true)
+    assert.equal(isActive('portal_get_wallet_summary'), true)
   })
 })
