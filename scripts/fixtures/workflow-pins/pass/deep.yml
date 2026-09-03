@@ -1,0 +1,13 @@
+permissions: {}
+jobs:
+  a:
+    steps:
+      - uses: actions/checkout@1111111111111111111111111111111111111111 # v5
+        with:
+          fetch-depth: 0
+          submodules: false
+          sparse-checkout: docs
+          lfs: false
+          clean: true
+          ref: main
+          persist-credentials: false

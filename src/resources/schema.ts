@@ -44,10 +44,35 @@ function activeRoutes<T extends { start_with: string; then_use: string[] }>(
   return routes
     .filter((route) => isActive(route.start_with))
     .map((route) => ({ ...route, then_use: route.then_use.filter((tool) => isActive(tool)) }))
+    .filter((route) => !('reason' in route) || mentionsOnlyActiveTools(String(route.reason), isActive))
+}
+
+/*
+ * Prose in the guide names tools too, in `integration_notes`, in a route's
+ * `reason`, and in a tool entry's own advice. Filtering the lists while
+ * leaving the sentences alone still pointed a trimmed connection at tools it
+ * does not serve, so a sentence is dropped when a tool it names is absent.
+ */
+function mentionsOnlyActiveTools(text: string, isActive: (toolName: string) => boolean): boolean {
+  return (text.match(/portal_[a-z0-9_]+/g) ?? []).every((tool) => isActive(tool))
+}
+
+function activeNotes(notes: string[], isActive: (toolName: string) => boolean): string[] {
+  return notes.filter((note) => mentionsOnlyActiveTools(note, isActive))
+}
+
+function pruneToolEntryProse(tool: ToolGuideEntry, isActive: (toolName: string) => boolean): ToolGuideEntry {
+  return {
+    ...tool,
+    when_to_use: activeNotes(tool.when_to_use, isActive),
+    ...(tool.avoid_when ? { avoid_when: activeNotes(tool.avoid_when, isActive) } : {}),
+  }
 }
 
 function buildDeveloperToolGuide(isActive: (toolName: string) => boolean) {
-  const tools = getToolGuideEntries().filter((tool) => isActive(tool.name))
+  const tools = getToolGuideEntries()
+    .filter((tool) => isActive(tool.name))
+    .map((tool) => pruneToolEntryProse(tool, isActive))
   const publicTools = tools.filter((tool) => tool.audience === 'public')
   const advancedTools = tools.filter((tool) => tool.audience === 'advanced')
 
@@ -139,15 +164,18 @@ function buildDeveloperToolGuide(isActive: (toolName: string) => boolean) {
       ],
       isActive,
     ),
-    integration_notes: [
-      'Prefer public tools for normal agent flows; advanced tools are for debugging Portal coverage or exact block resolution.',
-      'Use network parameters in public APIs. Raw Portal dataset names are resolved internally.',
-      'Most query tools support timeframe or timestamp inputs, so clients rarely need to calculate block ranges themselves.',
-      'Use portal_resolve_entity or token_symbols on supported EVM tools instead of hardcoding entity identifiers in client code.',
-      'Raw query tools default to compact output. Use response_format: "full" only when the caller needs chain-specific raw fields.',
-      'Wallet investigations should start from fund_flow and investigation.pivots, then use raw tools only for evidence drill-down.',
-      'For chartable responses, read chart and tables metadata before inferring visual structure from raw arrays.',
-    ],
+    integration_notes: activeNotes(
+      [
+        'Prefer public tools for normal agent flows; advanced tools are for debugging Portal coverage or exact block resolution.',
+        'Use network parameters in public APIs. Raw Portal dataset names are resolved internally.',
+        'Most query tools support timeframe or timestamp inputs, so clients rarely need to calculate block ranges themselves.',
+        'Use portal_resolve_entity or token_symbols on supported EVM tools instead of hardcoding entity identifiers in client code.',
+        'Raw query tools default to compact output. Use response_format: "full" only when the caller needs chain-specific raw fields.',
+        'Wallet investigations should start from fund_flow and investigation.pivots, then use raw tools only for evidence drill-down.',
+        'For chartable responses, read chart and tables metadata before inferring visual structure from raw arrays.',
+      ],
+      isActive,
+    ),
     categories: groupToolsByCategory(tools),
     tools,
   }
@@ -156,10 +184,13 @@ function buildDeveloperToolGuide(isActive: (toolName: string) => boolean) {
 export function registerSchemaResource(server: McpServer) {
   const isActive = captureToolActivePredicate()
 
+  /* These four resources now vary with the connection's toolset selection, so a
+   response cached for one caller must never be replayed to another. `public`
+   invited exactly that: a full-catalog client's copy served to a trimmed one. */
   server.registerResource(
     'tool-guide',
     'sqd://tools',
-    { mimeType: 'application/json', cacheHint: { ttlMs: 300_000, cacheScope: 'public' } },
+    { mimeType: 'application/json', cacheHint: { ttlMs: 300_000, cacheScope: 'private' } },
     async (uri) => {
       return {
         contents: [
@@ -176,7 +207,7 @@ export function registerSchemaResource(server: McpServer) {
   server.registerResource(
     'tool-guide-entry',
     new ResourceTemplate('sqd://tools/{name}', { list: undefined }),
-    { mimeType: 'application/json', cacheHint: { ttlMs: 300_000, cacheScope: 'public' } },
+    { mimeType: 'application/json', cacheHint: { ttlMs: 300_000, cacheScope: 'private' } },
     async (uri, { name }) => {
       const toolName = Array.isArray(name) ? name[0] : name
       const tool = getToolGuideEntry(toolName)

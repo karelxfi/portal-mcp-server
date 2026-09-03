@@ -9,6 +9,7 @@ import {
   connectionKeyFromRequest,
   evaluateBodyLimit,
   evaluateRequestGuard,
+  parseTrustedProxyPrefixes,
   readPositiveInt,
   readTrustedProxyCount,
   resolveRequestGuardPolicy,
@@ -37,6 +38,7 @@ const MAX_BODY_BYTES = readPositiveInt(process.env.MCP_MAX_BODY_BYTES, 1024 * 10
 const READY_PROBE_INTERVAL_MS = readPositiveInt(process.env.MCP_READY_PROBE_INTERVAL_MS, 30_000)
 const READY_MAX_AGE_MS = readPositiveInt(process.env.MCP_READY_MAX_AGE_MS, 90_000)
 const TRUSTED_PROXIES = readTrustedProxyCount(process.env.MCP_TRUST_PROXY)
+const TRUSTED_PROXY_PREFIXES = parseTrustedProxyPrefixes(process.env.MCP_TRUSTED_PROXY_PREFIXES)
 // Internal header carrying the hashed connection key from the Node layer to the
 // MCP handler; any client-supplied value is overwritten.
 const CONNECTION_KEY_HEADER = 'x-sqd-connection-key'
@@ -119,6 +121,7 @@ const server = createServer(
     req.headers[CONNECTION_KEY_HEADER] = connectionKeyFromRequest(
       { remoteAddress: req.socket.remoteAddress, forwardedFor: readHeader(req, 'x-forwarded-for') },
       TRUSTED_PROXIES,
+      TRUSTED_PROXY_PREFIXES,
     )
 
     // Host and Origin allowlist first, on every route, so a DNS-rebound browser page

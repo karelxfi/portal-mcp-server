@@ -1,0 +1,5 @@
+permissions: {}
+jobs:
+  a:
+    steps:
+      - uses: Actions/Checkout@1111111111111111111111111111111111111111 # v5

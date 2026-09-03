@@ -650,6 +650,11 @@ export async function resolvePoolQuery({
   query: string
   matches: ResolvedPoolEntity[]
   total_matches: number
+  /* False when the candidate space was not searched to the end: the pair
+     lookup is bounded to a few token variants and a failed lookup is skipped.
+     `total_matches` then counts what was searched, not what exists, so the
+     caller must not be told the answer is complete. */
+  search_complete: boolean
   source: 'user_input_format' | 'dexscreener_pair_metadata'
 }> {
   const dataset = await resolveDataset(network)
@@ -679,6 +684,7 @@ export async function resolvePoolQuery({
             query: trimmed,
             matches: [asResolvedPool(dataset, pair)],
             total_matches: 1,
+            search_complete: true,
             source: 'dexscreener_pair_metadata',
           }
         }
@@ -701,17 +707,32 @@ export async function resolvePoolQuery({
         },
       ],
       total_matches: 1,
+      search_complete: true,
       source: 'user_input_format',
     }
   }
 
   if (!dexChain) {
-    return { dataset, query: trimmed, matches: [], total_matches: 0, source: 'user_input_format' }
+    return {
+      dataset,
+      query: trimmed,
+      matches: [],
+      total_matches: 0,
+      search_complete: true,
+      source: 'user_input_format',
+    }
   }
 
   const parsed = parsePoolQuery(trimmed)
   if (parsed.symbols.length < 2) {
-    return { dataset, query: trimmed, matches: [], total_matches: 0, source: 'user_input_format' }
+    return {
+      dataset,
+      query: trimmed,
+      matches: [],
+      total_matches: 0,
+      search_complete: true,
+      source: 'user_input_format',
+    }
   }
 
   const symbolResolution = await resolveTokenSymbolsForQuery({
@@ -725,15 +746,28 @@ export async function resolvePoolQuery({
     (symbolResolution.resolutions[1]?.selected_addresses ?? []).map((address) => address.toLowerCase()),
   )
   if (firstAddresses.length === 0 || secondAddresses.size === 0) {
-    return { dataset, query: trimmed, matches: [], total_matches: 0, source: 'user_input_format' }
+    return {
+      dataset,
+      query: trimmed,
+      matches: [],
+      total_matches: 0,
+      search_complete: true,
+      source: 'user_input_format',
+    }
   }
 
+  const MAX_SEARCHED_ADDRESSES = 3
+  const searchedAddresses = firstAddresses.slice(0, MAX_SEARCHED_ADDRESSES)
+  let searchComplete = searchedAddresses.length === firstAddresses.length
   const candidates: DexScreenerPair[] = []
-  for (const address of firstAddresses.slice(0, 3)) {
+  for (const address of searchedAddresses) {
     try {
       candidates.push(...(await getDexScreenerTokenPairs(dexChain, address)))
     } catch (error) {
       if (error instanceof RequestCancelledError) throw error
+      // A lookup that failed searched nothing, so the candidate space is not
+      // covered and no total taken from it is exact.
+      searchComplete = false
     }
   }
 
@@ -766,6 +800,7 @@ export async function resolvePoolQuery({
     query: trimmed,
     matches,
     total_matches: poolCandidates.length,
+    search_complete: searchComplete,
     source: matches.length > 0 ? 'dexscreener_pair_metadata' : 'user_input_format',
   }
 }

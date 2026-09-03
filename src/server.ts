@@ -10,6 +10,7 @@ import {
 } from './apps/activity-explorer.js'
 import { RequestCancelledError } from './helpers/errors.js'
 import { attachEvidenceReceipt } from './helpers/evidence-receipt.js'
+import { PORTAL_TOOL_NAMES } from './helpers/mcp-registration.js'
 import { runWithPortalRequestSignal } from './helpers/request-context.js'
 import { getToolWorkProfile, toolAdmission } from './helpers/tool-admission.js'
 import { formatToolError } from './helpers/tool-error.js'
@@ -28,11 +29,13 @@ import { registerSchemaResource } from './resources/schema.js'
 import { registerAllTools } from './tools/index.js'
 import {
   type ToolSelection,
+  type Toolset,
   getActiveToolSelection,
   isToolEnabled,
   narrowToolSelection,
   resolveDeploymentToolSelection,
   runWithToolSelection,
+  toolsetOf,
 } from './toolsets.js'
 import { npmVersion } from './version.js'
 
@@ -45,22 +48,73 @@ const PORTAL_BASE_INSTRUCTIONS =
 
 /* Only an opted-in deployment may point the model at the beta App. */
 const PORTAL_APP_INSTRUCTIONS =
-  ' Its MCP App is named SQD Explorer. A successful result from any tool whose _meta carries ui.resourceUri can open in the Explorer with exact charts, tables, timelines, coverage, freshness, and safe follow-ups; a result being App-ready is not proof that the host rendered it. To demonstrate the App, run a successful App-enabled tool and only say it rendered when the host confirms a render. Use portal_get_recent_activity for the activity view, portal_hyperliquid_get_ohlc for the market chart, portal_evm_get_analytics for the analytics dashboard, and portal_get_wallet_summary for the wallet view.'
+  ' Its MCP App is named SQD Explorer. A successful result from any tool whose _meta carries ui.resourceUri can open in the Explorer with exact charts, tables, timelines, coverage, freshness, and safe follow-ups; a result being App-ready is not proof that the host rendered it. To demonstrate the App, run a successful App-enabled tool and only say it rendered when the host confirms a render.'
 
-const PORTAL_NETWORK_INSTRUCTIONS =
-  ' Chain-specific MCP query tools cover Ethereum-compatible networks, Solana, Bitcoin, Polkadot and other Substrate networks, Hyperliquid, and Tron (native TRX transfers, TRC-10 transfers, contract calls, and TRC-20 event logs through portal_tron_query_transactions and portal_tron_query_logs; addresses may be given as Base58 or hex). Prefer timeframe for recent windows and from_block/to_block for exact evidence. No authentication is required.'
+/* Every example the App paragraph can offer, in the order it offers them. */
+const PORTAL_APP_EXAMPLES: Array<[tool: string, view: string]> = [
+  ['portal_get_recent_activity', 'the activity view'],
+  ['portal_hyperliquid_get_ohlc', 'the market chart'],
+  ['portal_evm_get_analytics', 'the analytics dashboard'],
+  ['portal_get_wallet_summary', 'the wallet view'],
+]
+
+/* The chain families the instructions can describe, each with the toolset that
+   has to be registered for the claim to be true. */
+const PORTAL_CHAIN_FAMILIES: Array<[toolset: Toolset, description: string]> = [
+  ['evm', 'Ethereum-compatible networks'],
+  ['solana', 'Solana'],
+  ['bitcoin', 'Bitcoin'],
+  ['substrate', 'Polkadot and other Substrate networks'],
+  ['hyperliquid', 'Hyperliquid'],
+  ['tron', 'Tron'],
+]
 
 const PORTAL_TRIMMED_BASE_INSTRUCTIONS =
   'SQD provides read-only blockchain data from SQD Portal. This connection exposes a subset of the SQD tool catalog. Check _coverage and _pagination before claiming completeness, and reuse _pagination.next_cursor when present.'
 
+function joinPhrases(items: string[]): string {
+  if (items.length <= 1) return items[0] ?? ''
+  if (items.length === 2) return `${items[0]} and ${items[1]}`
+  return `${items.slice(0, -1).join(', ')}, and ${items[items.length - 1]}`
+}
+
+/*
+ * The instructions are the first thing a model reads, and a tool named here
+ * that this connection does not serve sends it straight into a
+ * method-not-found. Every tool name below is emitted only when the selection
+ * registers that tool, and every chain family only when the selection
+ * registers at least one tool from it.
+ */
 export function getPortalServerInstructions(selection: ToolSelection = getActiveToolSelection()): string {
-  return (
-    (selection.toolsets.has('discovery') && isToolEnabled(selection, 'portal_list_networks')
+  const enabled = (tool: string) => isToolEnabled(selection, tool)
+
+  const base =
+    enabled('portal_list_networks') && enabled('portal_get_network_info')
       ? PORTAL_BASE_INSTRUCTIONS
-      : PORTAL_TRIMMED_BASE_INSTRUCTIONS) +
-    (isActivityExplorerEnabled() ? PORTAL_APP_INSTRUCTIONS : '') +
-    PORTAL_NETWORK_INSTRUCTIONS
+      : PORTAL_TRIMMED_BASE_INSTRUCTIONS
+
+  const appExamples = PORTAL_APP_EXAMPLES.filter(([tool]) => enabled(tool))
+  const app = isActivityExplorerEnabled()
+    ? PORTAL_APP_INSTRUCTIONS +
+      (appExamples.length > 0 ? ` Use ${joinPhrases(appExamples.map(([tool, view]) => `${tool} for ${view}`))}.` : '')
+    : ''
+
+  // A toolset being in the selection is not the same as a tool from it being
+  // registered: an exact-name MCP_TOOLS deployment keeps every toolset while
+  // narrowing to a handful of tools, and the families were claimed anyway.
+  const familyHasATool = (toolset: Toolset) =>
+    PORTAL_TOOL_NAMES.some((tool) => toolsetOf(tool) === toolset && isToolEnabled(selection, tool))
+  const families = PORTAL_CHAIN_FAMILIES.filter(([toolset]) => familyHasATool(toolset)).map(([toolset, description]) =>
+    toolset === 'tron' && enabled('portal_tron_query_transactions') && enabled('portal_tron_query_logs')
+      ? `${description} (native TRX transfers, TRC-10 transfers, contract calls, and TRC-20 event logs through portal_tron_query_transactions and portal_tron_query_logs; addresses may be given as Base58 or hex)`
+      : description,
   )
+  const network =
+    families.length > 0
+      ? ` Chain-specific MCP query tools cover ${joinPhrases(families)}. Prefer timeframe for recent windows and from_block/to_block for exact evidence. No authentication is required.`
+      : ' Prefer timeframe for recent windows and from_block/to_block for exact evidence. No authentication is required.'
+
+  return base + app + network
 }
 
 /* Resolved once per process; a connection may only narrow it. */

@@ -28,9 +28,11 @@ export type ToolAdmissionSnapshot = {
 }
 
 /**
- * Who is asking. `key` is a bounded client family plus a connection identifier
- * (a hashed address on HTTP, the literal `stdio` on stdio); it is only ever a
- * map key, never a metric label or a log field. `family` is the bounded family.
+ * Who is asking. `key` is the connection identifier alone (a hashed address on
+ * HTTP, the literal `stdio` on stdio); it is only ever a map key, never a
+ * metric label or a log field. `family` is the bounded client family, used for
+ * the metric label only: it is whatever the client calls itself, so keying a
+ * share on it let one connection hold a share per name it declared.
  */
 export type ToolCaller = {
   key: string

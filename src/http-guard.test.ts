@@ -2,13 +2,16 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
 import {
+  canonicalizeAddress,
   connectionKeyFromRequest,
   evaluateBodyLimit,
   evaluateRequestGuard,
   hostnameFromHostHeader,
   hostnameFromOriginHeader,
   isLoopbackBind,
+  isTrustedPeer,
   parseHostList,
+  parseTrustedProxyPrefixes,
   readPositiveInt,
   readTrustedProxyCount,
   resolveRequestGuardPolicy,
@@ -129,15 +132,12 @@ describe('resolveRequestGuardPolicy', () => {
 
 describe('connectionKeyFromRequest', () => {
   it('hashes the socket address, and a proxy hop only when a proxy is trusted', () => {
-    const direct = connectionKeyFromRequest({ remoteAddress: '203.0.113.9', forwardedFor: '198.51.100.7, 10.0.0.1' }, 0)
-    const trusted = connectionKeyFromRequest(
-      { remoteAddress: '203.0.113.9', forwardedFor: '198.51.100.7, 10.0.0.1' },
-      1,
-    )
-    assert.equal(direct, connectionKeyFromRequest({ remoteAddress: '203.0.113.9' }, 0))
+    const direct = connectionKeyFromRequest({ remoteAddress: '10.0.0.1', forwardedFor: '198.51.100.7, 10.0.0.2' }, 0)
+    const trusted = connectionKeyFromRequest({ remoteAddress: '10.0.0.1', forwardedFor: '198.51.100.7, 10.0.0.2' }, 1)
+    assert.equal(direct, connectionKeyFromRequest({ remoteAddress: '10.0.0.1' }, 0))
     assert.notEqual(direct, trusted)
     assert.match(direct, /^[0-9a-f]{16}$/)
-    assert.equal(direct.includes('203'), false)
+    assert.equal(direct.includes('10.'), false)
     assert.equal(connectionKeyFromRequest({}, 0), connectionKeyFromRequest({ remoteAddress: undefined }, 1))
   })
 
@@ -165,12 +165,12 @@ describe('connectionKeyFromRequest', () => {
     // A request that did not come through the expected proxies carries no hop
     // this deployment can trust, so the socket address is the only usable key.
     assert.equal(
-      connectionKeyFromRequest({ remoteAddress: '203.0.113.9', forwardedFor: '198.51.100.7' }, 2),
-      connectionKeyFromRequest({ remoteAddress: '203.0.113.9' }, 0),
+      connectionKeyFromRequest({ remoteAddress: '10.0.0.1', forwardedFor: '198.51.100.7' }, 2),
+      connectionKeyFromRequest({ remoteAddress: '10.0.0.1' }, 0),
     )
     assert.equal(
-      connectionKeyFromRequest({ remoteAddress: '203.0.113.9', forwardedFor: '  ,  ' }, 1),
-      connectionKeyFromRequest({ remoteAddress: '203.0.113.9' }, 0),
+      connectionKeyFromRequest({ remoteAddress: '10.0.0.1', forwardedFor: '  ,  ' }, 1),
+      connectionKeyFromRequest({ remoteAddress: '10.0.0.1' }, 0),
     )
   })
 })
@@ -219,5 +219,63 @@ describe('evaluateBodyLimit', () => {
     assert.equal(readPositiveInt('-1', 7), 7)
     assert.equal(readPositiveInt('nope', 7), 7)
     assert.equal(readPositiveInt(undefined, 7), 7)
+  })
+})
+
+describe('the forwarding header needs a trusted peer', () => {
+  it('ignores X-Forwarded-For from a caller that reached the origin directly', () => {
+    // MCP_TRUST_PROXY is set, but this request did not come through the proxy.
+    // Reading its header would hand the caller a new admission identity, and a
+    // fresh share of the budget, on every request.
+    const forged = (claim: string) => connectionKeyFromRequest({ remoteAddress: '203.0.113.9', forwardedFor: claim }, 1)
+
+    assert.equal(forged('1.2.3.4'), forged('5.6.7.8'))
+    assert.equal(forged('1.2.3.4'), connectionKeyFromRequest({ remoteAddress: '203.0.113.9' }, 0))
+  })
+
+  it('reads it from a proxy on the private network, and from a configured prefix', () => {
+    const viaPrivateProxy = connectionKeyFromRequest({ remoteAddress: '10.0.0.1', forwardedFor: '198.51.100.7' }, 1)
+    assert.equal(viaPrivateProxy, connectionKeyFromRequest({ remoteAddress: '198.51.100.7' }, 0))
+
+    const publicProxy = { remoteAddress: '203.0.113.9', forwardedFor: '198.51.100.7' }
+    assert.equal(
+      connectionKeyFromRequest(publicProxy, 1),
+      connectionKeyFromRequest({ remoteAddress: '203.0.113.9' }, 0),
+    )
+    assert.equal(
+      connectionKeyFromRequest(publicProxy, 1, ['203.0.113.']),
+      connectionKeyFromRequest({ remoteAddress: '198.51.100.7' }, 0),
+    )
+  })
+
+  it('recognises the peer forms Node actually reports', () => {
+    assert.equal(isTrustedPeer('::1', []), true)
+    assert.equal(isTrustedPeer('::ffff:127.0.0.1', []), true)
+    assert.equal(isTrustedPeer('172.16.0.4', []), true)
+    assert.equal(isTrustedPeer('172.32.0.4', []), false)
+    assert.equal(isTrustedPeer('203.0.113.9', []), false)
+    assert.equal(isTrustedPeer(undefined, []), false)
+    assert.equal(isTrustedPeer('203.0.113.9', ['203.0.113.']), true)
+    assert.deepEqual(parseTrustedProxyPrefixes(' 203.0.113. , ,10. '), ['203.0.113.', '10.'])
+    assert.deepEqual(parseTrustedProxyPrefixes(undefined), [])
+  })
+})
+
+describe('one address, one key', () => {
+  it('collapses the spellings that would otherwise split a caller in two', () => {
+    assert.equal(canonicalizeAddress('::ffff:203.0.113.9'), '203.0.113.9')
+    assert.equal(canonicalizeAddress('203.0.113.9:51234'), '203.0.113.9')
+    assert.equal(canonicalizeAddress('[2001:DB8::1]:443'), '2001:db8::1')
+    assert.equal(canonicalizeAddress('[2001:db8::1]'), '2001:db8::1')
+    assert.equal(canonicalizeAddress('2001:db8::1'), '2001:db8::1')
+    assert.equal(canonicalizeAddress('  _hidden  '), '_hidden')
+    assert.equal(canonicalizeAddress(''), '')
+
+    // A caller behind one proxy cannot multiply its share by varying the
+    // spelling of its own address in the header.
+    const key = (hop: string) => connectionKeyFromRequest({ remoteAddress: '10.0.0.1', forwardedFor: hop }, 1)
+    assert.equal(key('203.0.113.9'), key('::ffff:203.0.113.9'))
+    assert.equal(key('203.0.113.9'), key('203.0.113.9:51234'))
+    assert.equal(key('2001:db8::1'), key('[2001:DB8::1]:443'))
   })
 })

@@ -12,6 +12,7 @@ import {
 import { ActionableError } from '../../helpers/errors.js'
 import { formatResult } from '../../helpers/format.js'
 import { registerPortalTool } from '../../helpers/mcp-registration.js'
+import { buildPaginationInfo } from '../../helpers/pagination.js'
 import { buildExecutionMetadata, buildToolDescription } from '../../helpers/tool-ux.js'
 import { quoteUntrusted } from '../../helpers/untrusted-text.js'
 
@@ -77,6 +78,9 @@ export function registerResolveEntityTool(server: McpServer) {
       // list it received was the whole list.
       const totalMatches = result.total_matches
       const truncated = totalMatches > matches.length
+      // Pool resolution bounds its own candidate search, so its total counts
+      // what was searched rather than what exists.
+      const searchComplete = 'search_complete' in result ? result.search_complete : true
       const tokenAddresses =
         effectiveKind === 'token' ? matches.flatMap((match) => ('address' in match ? [match.address] : [])) : []
       const contractAddresses =
@@ -167,6 +171,11 @@ export function registerResolveEntityTool(server: McpServer) {
           `Showing the ${matches.length} best of ${totalMatches} ${effectiveKind} matches. Raise limit (max 50) or narrow the query to see the rest.`,
         )
       }
+      if (!searchComplete) {
+        notices.push(
+          'The pool search was bounded and did not cover every token variant, so this is not a complete list of matching pools. Pass the pool address or pool id for a deterministic answer.',
+        )
+      }
       if (matches.length > 1) {
         notices.push(
           effectiveKind === 'token'
@@ -211,10 +220,18 @@ export function registerResolveEntityTool(server: McpServer) {
           notices,
           coverage: {
             kind: 'entity_resolution',
-            result_complete: !truncated,
-            ...(truncated ? { returned: matches.length, matching: totalMatches, continuation: 'none' } : {}),
+            result_complete: !truncated && searchComplete,
+            // `continuation` belongs on every incomplete result, not only a
+            // truncated one: without it the formatter falls back to telling
+            // the caller to continue with a cursor this tool never issues.
+            ...(truncated || !searchComplete ? { continuation: 'none' } : {}),
+            ...(truncated ? { returned: matches.length, matching: totalMatches } : {}),
+            ...(searchComplete ? {} : { candidate_search: 'bounded' }),
           },
-          pagination: { has_more: truncated },
+          // The shared shape, so a truncated ranked list reads like every
+          // other incomplete page: has_more with no cursor, which the
+          // coverage block already explains has none to give.
+          pagination: buildPaginationInfo(limit, matches.length, undefined, { hasMoreWithoutCursor: truncated }),
           execution: buildExecutionMetadata({
             limit,
             normalized_output: true,

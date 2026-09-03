@@ -1,0 +1,8 @@
+permissions: {}
+jobs:
+  a:
+    steps:
+      - name: Check out
+        with:
+          persist-credentials: false
+        uses: actions/checkout@1111111111111111111111111111111111111111 # v5

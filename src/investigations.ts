@@ -179,7 +179,7 @@ export const INVESTIGATIONS: InvestigationDefinition[] = [
       {
         step: 4,
         tools: ['portal_hyperliquid_query_fills'],
-        purpose: 'Verify peaks and outliers with exact market records, alongside the exact EVM query tools.',
+        purpose: 'Verify peaks and outliers with exact market records.',
       },
     ],
     completion_contract: [
@@ -274,7 +274,7 @@ export function registerInvestigationPromptsAndResources(server: McpServer) {
   server.registerResource(
     'investigation-guide',
     'sqd://investigations',
-    { mimeType: 'application/json', cacheHint: { ttlMs: 300_000, cacheScope: 'public' } },
+    { mimeType: 'application/json', cacheHint: { ttlMs: 300_000, cacheScope: 'private' } },
     async (uri) => ({
       contents: [
         {
@@ -283,7 +283,12 @@ export function registerInvestigationPromptsAndResources(server: McpServer) {
           text: JSON.stringify(
             {
               version: npmVersion,
-              investigations: INVESTIGATIONS.map((item) => asServedInvestigation(item, isActive)),
+              // An investigation this connection cannot run is not published.
+              // Serving its remaining steps described a workflow the server
+              // will not offer as a prompt and cannot carry out.
+              investigations: INVESTIGATIONS.filter((item) => investigationAvailable(item, isActive)).map((item) =>
+                asServedInvestigation(item, isActive),
+              ),
             },
             null,
             2,
@@ -296,11 +301,13 @@ export function registerInvestigationPromptsAndResources(server: McpServer) {
   server.registerResource(
     'investigation-guide-entry',
     new ResourceTemplate('sqd://investigations/{name}', { list: undefined }),
-    { mimeType: 'application/json', cacheHint: { ttlMs: 300_000, cacheScope: 'public' } },
+    { mimeType: 'application/json', cacheHint: { ttlMs: 300_000, cacheScope: 'private' } },
     async (uri, { name }) => {
       const investigationName = Array.isArray(name) ? name[0] : name
       const investigation = findInvestigation(investigationName)
-      if (!investigation) throw new Error(`Unknown SQD investigation "${investigationName}".`)
+      if (!investigation || !investigationAvailable(investigation, isActive)) {
+        throw new Error(`Unknown SQD investigation "${investigationName}".`)
+      }
       return {
         contents: [
           {
