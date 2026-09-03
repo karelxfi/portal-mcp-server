@@ -33,6 +33,7 @@ import {
 } from '../../helpers/timeframe.js'
 import { buildExecutionMetadata, buildToolDescription } from '../../helpers/tool-ux.js'
 import { buildChartPanel, buildMetricCard, buildPortalUi, buildTablePanel } from '../../helpers/ui-metadata.js'
+import { quoteUntrusted, untrustedLabel } from '../../helpers/untrusted-text.js'
 import { visitHyperliquidFillBlocks } from './fill-stream.js'
 
 type OhlcDuration = '1h' | '6h' | '12h' | '24h' | '7d' | '30d'
@@ -472,7 +473,7 @@ export function registerHyperliquidOhlcTool(server: McpServer) {
 
       if ((latestTimestamp === 0 || totalFills === 0) && seriesEndExclusive === 0) {
         throw new Error(
-          `No Hyperliquid fills found for ${coin}${user ? ` and user ${user}` : ''} in the requested window`,
+          `No Hyperliquid fills found for ${quoteUntrusted(coin)}${user ? ` and user ${user}` : ''} in the requested window`,
         )
       }
 
@@ -676,7 +677,7 @@ export function registerHyperliquidOhlcTool(server: McpServer) {
           { key: 'low', label: 'Low', format: 'currency_usd', unit: 'USD' },
           { key: 'close', label: 'Close', format: 'currency_usd', unit: 'USD', emphasis: 'primary' },
           { key: 'volume', label: 'Volume', format: 'currency_usd', unit: 'USD' },
-          { key: 'base_volume', label: `${coin} size`, format: 'decimal', unit: coin },
+          { key: 'base_volume', label: `${untrustedLabel(coin)} size`, format: 'decimal', unit: untrustedLabel(coin) },
           { key: 'fill_count', label: 'Fills', format: 'integer' },
           { key: 'bucket_complete', label: 'Closed candle' },
           { key: 'vwap', label: 'VWAP', format: 'currency_usd', unit: 'USD' },
@@ -689,7 +690,7 @@ export function registerHyperliquidOhlcTool(server: McpServer) {
         density: 'compact',
         design_intent: 'market_terminal',
         headline: {
-          title: `${coin} Hyperliquid candles`,
+          title: `${untrustedLabel(coin)} Hyperliquid candles`,
           subtitle: `${resolvedInterval} candles over ${durationLabel}${user ? ` for ${user.toLowerCase()}` : ''}`,
         },
         metric_cards: [
@@ -720,7 +721,7 @@ export function registerHyperliquidOhlcTool(server: McpServer) {
           buildChartPanel({
             id: 'candles',
             kind: 'chart_panel',
-            title: `${coin} price action`,
+            title: `${untrustedLabel(coin)} price action`,
             subtitle: 'Hover or focus a candle for OHLC, volume, fills, and VWAP.',
             chart_key: 'chart',
             emphasis: 'primary',
@@ -749,7 +750,7 @@ export function registerHyperliquidOhlcTool(server: McpServer) {
             dataKey: 'ohlc',
             interval: resolvedInterval,
             totalCandles: ohlc.length,
-            title: `${coin} Hyperliquid candles`,
+            title: `${untrustedLabel(coin)} Hyperliquid candles`,
             subtitle: 'Interactive OHLC chart with exact point labels and candle table',
             volumePanel: true,
             volumeField: 'volume',
@@ -762,7 +763,7 @@ export function registerHyperliquidOhlcTool(server: McpServer) {
             buildOhlcTable({
               id: 'ohlc',
               rowCount: ohlc.length,
-              title: `${coin} candle table`,
+              title: `${untrustedLabel(coin)} candle table`,
               subtitle: 'Bucket-aligned OHLC candles with USD volume and fill counts available in the rows',
               volumeField: 'volume',
               volumeLabel: 'Volume',
@@ -776,7 +777,7 @@ export function registerHyperliquidOhlcTool(server: McpServer) {
           gap_diagnostics: gapDiagnostics,
           ohlc,
         },
-        `Built ${resolvedInterval} ${coin} Hyperliquid candles over ${durationLabel}. ${filledBuckets}/${ohlc.length} buckets contain trades.`,
+        `Built ${resolvedInterval} ${untrustedLabel(coin)} Hyperliquid candles over ${durationLabel}. ${filledBuckets}/${ohlc.length} buckets contain trades.`,
         {
           toolName: 'portal_hyperliquid_get_ohlc',
           ...(notices.length > 0 ? { notices } : {}),

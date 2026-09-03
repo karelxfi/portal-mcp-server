@@ -32,15 +32,23 @@ export const UNTRUSTED_FIELDS = [
   'program_label',
   'protocol_name',
   'slug',
+  // Contract- and asset-authored strings on the newest row shapes.
+  'asset',
+  'asset_name',
+  'note_text',
+  'revert_reason',
+  'revertReason',
 ] as const
 
 export const UNTRUSTED_TEXT_MAX_LENGTH = 64
 
 // C0 and C1 control characters except tab, newline, and carriage return, plus
 // DEL, zero-width and joiner characters, bidi embedding and override marks,
-// and the byte-order mark.
+// U+061C ARABIC LETTER MARK (a bidi control in the same class as U+200E/F),
+// the byte-order mark, and the Unicode Tags block U+E0000-U+E007F, which is
+// the standard channel for smuggling invisible ASCII through a visible label.
 const CONTROL_AND_INVISIBLE =
-  /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F\u200B-\u200F\u202A-\u202E\u2060-\u2064\u2066-\u2069\uFEFF]/g
+  /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F\u061C\u200B-\u200F\u202A-\u202E\u2060-\u2064\u2066-\u2069\uFEFF]|[\u{E0000}-\u{E007F}]/gu
 
 /**
  * Remove characters that could hide or reorder text, collapse whitespace to
@@ -81,7 +89,11 @@ export function untrustedLabel(value: unknown, maxLength = UNTRUSTED_TEXT_MAX_LE
  * so only the invisible-character rule applies, with a generous cap.
  */
 export function cleanProse(value: string, maxLength = 2_000): string {
-  const cleaned = value.replace(CONTROL_AND_INVISIBLE, '')
+  // Line terminators are collapsed to a space. A prose field is one line, and
+  // leaving them intact meant a value that reached prose without
+  // quoteUntrusted could present itself as a separate labelled line of the
+  // response rather than as mangled text inside one.
+  const cleaned = value.replace(CONTROL_AND_INVISIBLE, '').replace(/[\r\n\u2028\u2029]+/g, ' ')
   return cleaned.length <= maxLength ? cleaned : `${cleaned.slice(0, maxLength - 1)}…`
 }
 
