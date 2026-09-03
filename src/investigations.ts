@@ -90,8 +90,13 @@ export const INVESTIGATIONS: InvestigationDefinition[] = [
       'Coverage, freshness, pagination, ordering, and the evidence receipt',
     ],
     workflow: [
-      { step: 1, tools: ['portal_list_networks'], purpose: 'Resolve a fuzzy network name if needed.' },
-      { step: 2, tools: ['portal_get_network_info'], purpose: 'Check indexed coverage and freshness.' },
+      { step: 1, tools: ['portal_list_networks'], optional: true, purpose: 'Resolve a fuzzy network name if needed.' },
+      {
+        step: 2,
+        tools: ['portal_get_network_info'],
+        optional: true,
+        purpose: 'Check indexed coverage and freshness.',
+      },
       { step: 3, tools: ['portal_get_wallet_summary'], purpose: 'Build the wallet overview and identify pivots.' },
       {
         step: 4,
@@ -130,7 +135,12 @@ export const INVESTIGATIONS: InvestigationDefinition[] = [
       { step: 1, tools: ['portal_resolve_entity'], purpose: 'Resolve the protocol, token, or contract name.' },
       { step: 2, tools: ['portal_evm_get_contract_deployment'], purpose: 'Find deployment evidence.' },
       { step: 3, tools: ['portal_evm_get_contract_activity'], purpose: 'Measure calls, events, actors, and flows.' },
-      { step: 4, tools: ['portal_get_time_series'], purpose: 'Compare the current and previous periods.' },
+      {
+        step: 4,
+        tools: ['portal_get_time_series'],
+        optional: true,
+        purpose: 'Compare the current and previous periods.',
+      },
       {
         step: 5,
         tools: ['portal_evm_query_logs', 'portal_evm_query_transactions', 'portal_evm_query_token_transfers'],
@@ -174,6 +184,7 @@ export const INVESTIGATIONS: InvestigationDefinition[] = [
       {
         step: 3,
         tools: ['portal_hyperliquid_get_analytics', 'portal_get_time_series'],
+        optional: true,
         purpose: 'Measure volume, fills, participants, and period change.',
       },
       {
@@ -223,8 +234,11 @@ function activeWorkflow(
 }
 
 /* An investigation is offered only when every step it cannot be run without
-   has a registered tool. A prompt that survives this still names no missing
-   tool, because its text is rendered from the active workflow. */
+   has a registered tool. `optional` marks the steps that enrich it — a
+   name lookup, a period comparison, a pivot into traces — so losing one of
+   those narrows the workflow instead of withdrawing the investigation. A
+   prompt that survives this still names no missing tool, because its text is
+   rendered from the active workflow. */
 function investigationAvailable(
   investigation: InvestigationDefinition,
   isActive: (toolName: string) => boolean,

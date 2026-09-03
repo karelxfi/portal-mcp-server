@@ -35,6 +35,19 @@ describe('incomplete results say how to get the rest', () => {
     )
   })
 
+  it('does not offer to raise a limit that truncated nothing', () => {
+    // A bounded candidate search returns an incomplete result without having
+    // cut anything, so "raise the limit" is advice that would not help.
+    const answer = answerOf(
+      { kind: 'entity_resolution', result_complete: false, continuation: 'none', candidate_search: 'bounded' },
+      'Resolved "WETH/USDC" to 2 pool matches from a bounded search',
+    )
+
+    assert.equal(answer, 'Resolved "WETH/USDC" to 2 pool matches from a bounded search')
+    assert.equal(answer.includes('raise the limit'), false)
+    assert.equal(answer.includes('cursor'), false)
+  })
+
   it('leaves a complete result alone', () => {
     assert.equal(answerOf({ kind: 'query', result_complete: true }), 'Found 3 matches')
   })

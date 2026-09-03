@@ -350,7 +350,11 @@ function makeCompletenessAwareAnswer(answer: string, payload: RecordLike): strin
   }
 
   if (coverage?.result_complete === false) {
-    if (!/\b(preview|cursor|continue|more matching|older results|limited to|showing the best)\b/i.test(answer)) {
+    if (
+      !/\b(preview|cursor|continue|more matching|older results|limited to|showing the best|bounded search)\b/i.test(
+        answer,
+      )
+    ) {
       // A result can be incomplete with nothing to continue from: a ranked
       // list cut to `limit` has no cursor, and telling the caller to use one
       // sends them after a field that is not in the response.

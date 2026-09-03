@@ -44,6 +44,7 @@ function activeRoutes<T extends { start_with: string; then_use: string[] }>(
   return routes
     .filter((route) => isActive(route.start_with))
     .map((route) => ({ ...route, then_use: route.then_use.filter((tool) => isActive(tool)) }))
+    .filter((route) => route.then_use.length > 0)
     .filter((route) => !('reason' in route) || mentionsOnlyActiveTools(String(route.reason), isActive))
 }
 
@@ -220,7 +221,10 @@ export function registerSchemaResource(server: McpServer) {
           {
             uri: uri.href,
             mimeType: 'application/json',
-            text: JSON.stringify(tool, null, 2),
+            // Pruned the same way the guide's own list is: this entry's
+            // advice names other tools, and serving it raw put back exactly
+            // the prose the list had already filtered out.
+            text: JSON.stringify(pruneToolEntryProse(tool, isActive), null, 2),
           },
         ],
       }

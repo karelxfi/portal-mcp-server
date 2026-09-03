@@ -212,9 +212,11 @@ export function registerResolveEntityTool(server: McpServer) {
         },
         truncated
           ? `Resolved ${quoteUntrusted(result.query)} to ${totalMatches} ${effectiveKind} matches, showing the best ${matches.length}`
-          : matches.length === 1
-            ? `Resolved ${quoteUntrusted(result.query)} to 1 ${effectiveKind} match`
-            : `Resolved ${quoteUntrusted(result.query)} to ${matches.length} ${effectiveKind} matches`,
+          : !searchComplete
+            ? `Resolved ${quoteUntrusted(result.query)} to ${matches.length} ${effectiveKind} matches from a bounded search`
+            : matches.length === 1
+              ? `Resolved ${quoteUntrusted(result.query)} to 1 ${effectiveKind} match`
+              : `Resolved ${quoteUntrusted(result.query)} to ${matches.length} ${effectiveKind} matches`,
         {
           toolName: 'portal_resolve_entity',
           notices,
