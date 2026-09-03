@@ -2,7 +2,8 @@ import { type McpServer, ResourceTemplate, completable } from '@modelcontextprot
 import { z } from 'zod'
 
 import { detectChainType } from './helpers/chain.js'
-import { captureToolActivePredicate } from './toolsets.js'
+import { PORTAL_TOOL_NAMES } from './helpers/mcp-registration.js'
+import { type Toolset, captureToolActivePredicate, toolsetOf } from './toolsets.js'
 import { npmVersion } from './version.js'
 
 const WALLET_NETWORKS = [
@@ -21,32 +22,49 @@ const MARKET_NETWORKS = [...CONTRACT_NETWORKS, 'hyperliquid-fills']
 
 const TIMEFRAMES = ['1h', '6h', '24h', '7d', '30d']
 
-function networkArgument(networks: string[], supported: ReturnType<typeof detectChainType>[], description: string) {
-  return completable(
-    z
-      .string()
-      .min(1)
-      .refine((network) => supported.includes(detectChainType(network)), description)
-      .describe(description),
-    (value) => networks.filter((network) => network.includes(String(value ?? '').toLowerCase())).slice(0, 10),
-  )
+/* The toolset that carries a chain family's query tools. */
+const CHAIN_TOOLSET: Partial<Record<ReturnType<typeof detectChainType>, Toolset>> = {
+  evm: 'evm',
+  solana: 'solana',
+  bitcoin: 'bitcoin',
+  substrate: 'substrate',
+  hyperliquidFills: 'hyperliquid',
 }
 
-const walletNetworkArgument = networkArgument(
-  WALLET_NETWORKS,
-  ['evm', 'solana', 'bitcoin', 'hyperliquidFills'],
-  'Network supported by the wallet investigation: EVM, Solana, Bitcoin, or Hyperliquid fills',
-)
-const contractNetworkArgument = networkArgument(
-  CONTRACT_NETWORKS,
-  ['evm'],
-  'EVM network supported by the smart-contract investigation',
-)
-const marketNetworkArgument = networkArgument(
-  MARKET_NETWORKS,
-  ['evm', 'hyperliquidFills'],
-  'EVM or Hyperliquid fills network supported by the market investigation',
-)
+function chainFamilyActive(kind: ReturnType<typeof detectChainType>, isActive: (toolName: string) => boolean): boolean {
+  const toolset = CHAIN_TOOLSET[kind]
+  return toolset === undefined ? false : PORTAL_TOOL_NAMES.some((tool) => toolsetOf(tool) === toolset && isActive(tool))
+}
+
+/*
+ * The network argument is built per connection, not once per process. The
+ * static lists offered every network the investigation supports in principle,
+ * so a Hyperliquid-only deployment still suggested `ethereum-mainnet` for the
+ * market investigation, accepted it, and rendered a Hyperliquid-only workflow
+ * beside it; the first tool call then failed against a dataset with no fills
+ * table. A network is offered, and accepted, only when a tool that can query
+ * its chain is registered.
+ */
+function networkArgument(
+  networks: string[],
+  supported: ReturnType<typeof detectChainType>[],
+  description: string,
+  isActive: (toolName: string) => boolean,
+) {
+  const available = supported.filter((kind) => chainFamilyActive(kind, isActive))
+  const offered = networks.filter((network) => available.includes(detectChainType(network)))
+  return {
+    available,
+    argument: completable(
+      z
+        .string()
+        .min(1)
+        .refine((network) => available.includes(detectChainType(network)), description)
+        .describe(description),
+      (value) => offered.filter((network) => network.includes(String(value ?? '').toLowerCase())).slice(0, 10),
+    ),
+  }
+}
 
 const timeframeArgument = completable(
   z.string().min(1).default('24h').describe('Recent time window such as 1h, 24h, 7d, or 30d'),
@@ -285,6 +303,25 @@ function promptText(params: {
 export function registerInvestigationPromptsAndResources(server: McpServer) {
   const isActive = captureToolActivePredicate()
 
+  const walletNetwork = networkArgument(
+    WALLET_NETWORKS,
+    ['evm', 'solana', 'bitcoin', 'hyperliquidFills'],
+    'Network supported by the wallet investigation: EVM, Solana, Bitcoin, or Hyperliquid fills',
+    isActive,
+  )
+  const contractNetwork = networkArgument(
+    CONTRACT_NETWORKS,
+    ['evm'],
+    'EVM network supported by the smart-contract investigation',
+    isActive,
+  )
+  const marketNetwork = networkArgument(
+    MARKET_NETWORKS,
+    ['evm', 'hyperliquidFills'],
+    'EVM or Hyperliquid fills network supported by the market investigation',
+    isActive,
+  )
+
   server.registerResource(
     'investigation-guide',
     'sqd://investigations',
@@ -334,14 +371,14 @@ export function registerInvestigationPromptsAndResources(server: McpServer) {
     },
   )
 
-  if (investigationAvailable(INVESTIGATIONS[0], isActive)) {
+  if (investigationAvailable(INVESTIGATIONS[0], isActive) && walletNetwork.available.length > 0) {
     server.registerPrompt(
       'investigate-wallet',
       {
         title: 'Investigate a wallet incident',
         description: 'Trace wallet activity, token flows, counterparties, and exact blockchain evidence.',
         argsSchema: z.object({
-          network: walletNetworkArgument,
+          network: walletNetwork.argument,
           address: z.string().min(1).describe('Wallet address to investigate'),
           timeframe: timeframeArgument,
           question: z.string().optional().describe('Optional incident question or concern'),
@@ -369,14 +406,14 @@ export function registerInvestigationPromptsAndResources(server: McpServer) {
     )
   }
 
-  if (investigationAvailable(INVESTIGATIONS[1], isActive)) {
+  if (investigationAvailable(INVESTIGATIONS[1], isActive) && contractNetwork.available.length > 0) {
     server.registerPrompt(
       'investigate-contract',
       {
         title: 'Investigate a smart contract',
         description: 'Explain deployment, calls, events, token flows, actors, and changes over time.',
         argsSchema: z.object({
-          network: contractNetworkArgument,
+          network: contractNetwork.argument,
           contract: z.string().min(1).describe('Contract address, token, or protocol name'),
           timeframe: timeframeArgument,
           question: z.string().optional().describe('Optional behavior or event to explain'),
@@ -404,14 +441,14 @@ export function registerInvestigationPromptsAndResources(server: McpServer) {
     )
   }
 
-  if (investigationAvailable(INVESTIGATIONS[2], isActive)) {
+  if (investigationAvailable(INVESTIGATIONS[2], isActive) && marketNetwork.available.length > 0) {
     server.registerPrompt(
       'investigate-market',
       {
         title: 'Investigate blockchain market activity',
         description: 'Analyze Hyperliquid or onchain price, volume, fills, swaps, and exact market evidence.',
         argsSchema: z.object({
-          network: marketNetworkArgument,
+          network: marketNetwork.argument,
           market: z.string().min(1).describe('Coin, token, pool, or market to investigate'),
           timeframe: timeframeArgument,
           question: z.string().optional().describe('Optional price or trading question'),
