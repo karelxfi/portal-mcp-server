@@ -476,17 +476,28 @@ export function registerGetErc20TransfersTool(server: McpServer) {
           })
         }) as Erc20TransferItem[],
       ).map((item) => normalizeErc20TransferResult(item))
-      const page = paginateAscendingItems(
-        allTransfers,
-        limit,
-        getBlockNumber,
-        paginationCursor
-          ? {
-              page_to_block: paginationCursor.page_to_block,
-              skip_inclusive_block: paginationCursor.skip_inclusive_block,
-            }
-          : undefined,
-      )
+      // paginateAscendingItems keeps the newest rows of an ascending list, which
+      // is the right page for a backward scan. A forward scan collects the
+      // oldest rows in the window, so keeping its tail answered "the first
+      // transfers" with the newest rows of the scanned region: asking for fewer
+      // rows returned later ones.
+      const page = scanResult
+        ? {
+            pageItems: allTransfers.slice(0, limit),
+            hasMore: allTransfers.length > limit,
+            nextBoundary: undefined,
+          }
+        : paginateAscendingItems(
+            allTransfers,
+            limit,
+            getBlockNumber,
+            paginationCursor
+              ? {
+                  page_to_block: paginationCursor.page_to_block,
+                  skip_inclusive_block: paginationCursor.skip_inclusive_block,
+                }
+              : undefined,
+          )
       const nextCursor =
         !scanResult && page.hasMore && page.nextBoundary
           ? encodeRecentPageCursor<Erc20Request>({
@@ -555,6 +566,9 @@ export function registerGetErc20TransfersTool(server: McpServer) {
         items: enrichedTransfers,
         getBlockNumber,
         hasMore: page.hasMore,
+        // The forward scan emits no cursor, so claiming one would point a
+        // client at a continuation that does not exist.
+        ...(scanResult ? { continuation: 'none' as const } : {}),
       })
 
       const presentation = buildTransferPresentation(enrichedTransfers as Erc20TransferItem[], nextCursor)
@@ -567,10 +581,13 @@ export function registerGetErc20TransfersTool(server: McpServer) {
         {
           toolName: 'portal_evm_query_token_transfers',
           notices,
-          pagination: buildPaginationInfo(limit, page.pageItems.length, nextCursor),
+          pagination: buildPaginationInfo(limit, page.pageItems.length, nextCursor, {
+            ...(scanResult && page.hasMore ? { hasMoreWithoutCursor: true } : {}),
+          }),
           ordering: buildChronologicalPageOrdering({
             sortedBy: 'block_number',
             tieBreakers: ['log_index', 'transaction_index', 'tx_hash'],
+            ...(scanResult ? { windowFocus: 'oldest_matches' as const, continuation: 'newer' as const } : {}),
           }),
           freshness,
           coverage,
