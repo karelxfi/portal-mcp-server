@@ -1,17 +1,14 @@
-declare const __SQD_INTER_DATA_URL__: string
 declare const __SQD_MONO_DATA_URL__: string
 
-const INTER_DATA_URL = typeof __SQD_INTER_DATA_URL__ === 'string' ? __SQD_INTER_DATA_URL__ : ''
 const MONO_DATA_URL = typeof __SQD_MONO_DATA_URL__ === 'string' ? __SQD_MONO_DATA_URL__ : ''
 
+/* Only the mono face is embedded. Interface text takes the host's --font-sans,
+   which every MCP Apps host supplies through applyHostFonts, and falls back to
+   the system stack; embedding Inter as well cost 51 KB of base64 to render
+   text in a typeface the host had already chosen. Values stay in JetBrains
+   Mono in every host, because a column of numbers that changes width as it
+   updates is harder to read than one that does not. */
 export const ACTIVITY_EXPLORER_CSS = String.raw`
-@font-face {
-  font-family: 'Inter SQD';
-  font-style: normal;
-  font-weight: 100 900;
-  font-display: swap;
-  src: url('${INTER_DATA_URL}') format('woff2');
-}
 @font-face {
   font-family: 'JetBrains Mono SQD';
   font-style: normal;
@@ -28,8 +25,8 @@ export const ACTIVITY_EXPLORER_CSS = String.raw`
    reads the host's MCP Apps style variables first (--color-background-*,
    --color-text-*, --color-border-*) and falls back to the SQD pair, so inside
    Claude the structure is Claude's and the accents, chart palette and mono
-   values stay SQD's. Inter for interface text at 510/400 unless the host
-   supplies --font-sans; JetBrains Mono for every changing value, always. */
+   values stay SQD's. Interface text uses the host's --font-sans, falling back
+   to the system stack; JetBrains Mono for every changing value, always. */
 :root {
   color-scheme: light dark;
 
@@ -113,7 +110,7 @@ export const ACTIVITY_EXPLORER_CSS = String.raw`
   --chart-5: light-dark(#007732, #8b5cf6);
   --chart-other: light-dark(rgb(139 141 158 / 0.60), rgb(152 152 161 / 0.38));
 
-  --font-sans: 'Inter SQD', Inter, system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   --sqd-font-mono: 'JetBrains Mono SQD', 'JetBrains Mono', ui-monospace, monospace;
 
   --radius-sm: var(--border-radius-xs, 4px);
@@ -391,7 +388,8 @@ button.sqd-chart-hit[aria-pressed='true'] { background: var(--accent-subtle); bo
 .sqd-event { min-height: 40px; display: grid; grid-template-columns: minmax(64px, auto) 8px minmax(0, 1fr) auto; gap: 10px; align-items: start; padding: 7px 0; border-bottom: 1px solid var(--edge); }
 .sqd-event:last-child { border-bottom: 0; }
 .sqd-event-time { order: -1; color: var(--fg-muted); font: 400 11.5px/18px var(--sqd-font-mono); letter-spacing: 0; font-variant-numeric: tabular-nums; white-space: nowrap; }
-.sqd-event-dot { width: 6px; height: 6px; margin-top: 6px; border-radius: 50%; background: var(--edge-hover); }
+.sqd-event-dot { display: inline-flex; align-items: center; justify-content: center; width: 14px; height: 14px; margin-top: 2px; border-radius: 50%; background: var(--edge-hover); color: var(--surface); font: 700 9px/1 var(--sqd-font-mono); }
+.sqd-event-dot:empty { width: 6px; height: 6px; margin-top: 6px; }
 .sqd-event-dot--in { background: var(--up); }
 .sqd-event-dot--out { background: var(--down); }
 .sqd-event-title { min-width: 0; font-size: 12.5px; line-height: 18px; font-weight: 510; letter-spacing: -0.006em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -508,6 +506,10 @@ button.sqd-chart-hit[aria-pressed='true'] { background: var(--accent-subtle); bo
 @media (max-width: 520px) {
   .sqd-app { padding-inline: calc(12px + var(--safe-right)) calc(12px + var(--safe-left)); }
 }
+
+/* Off screen until focused, then the first thing a keyboard user lands on. */
+.sqd-skip-link { position: absolute; left: -9999px; top: 0; z-index: 20; padding: 8px 12px; border-radius: var(--radius-md); background: var(--surface-elevated); color: var(--fg); font: 510 12px/16px var(--font-sans); text-decoration: none; }
+.sqd-skip-link:focus-visible { left: 12px; top: 12px; outline: 2px solid var(--accent); outline-offset: 2px; }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }

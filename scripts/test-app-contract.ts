@@ -164,7 +164,7 @@ async function main() {
     'resource URI must use the bundle hash as its cache key',
   )
   assert(
-    ACTIVITY_EXPLORER_BYTES > 20_000 && ACTIVITY_EXPLORER_BYTES < 720_000,
+    ACTIVITY_EXPLORER_BYTES > 20_000 && ACTIVITY_EXPLORER_BYTES < 700_000,
     'embedded app must stay inside its release byte budget',
   )
   for (const tool of [
@@ -323,9 +323,10 @@ async function main() {
         content.text.includes('viewBox="0 0 306 306"') &&
         content.text.includes('#08090a') &&
         content.text.includes('#818cf8') &&
-        content.text.includes('Inter SQD') &&
-        content.text.includes('JetBrains Mono SQD'),
-      'the app should contain the official SQD mark, dark product tokens, and embedded typefaces',
+        content.text.includes('JetBrains Mono SQD') &&
+        // The sans face is the host's to supply; only the mono face ships.
+        !content.text.includes('Inter SQD'),
+      'the app should contain the official SQD mark, dark product tokens, and the embedded mono face only',
     )
     assert(
       !content.text.includes('<script src=') && !content.text.includes('<link rel='),

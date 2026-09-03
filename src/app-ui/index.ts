@@ -31,9 +31,27 @@ const app = new App(
   { strict: true, autoResize: true },
 )
 
+/*
+ * A render replaces the whole tree, so whatever had focus is detached. The
+ * control that started the change is found again by its focus key and given
+ * focus back, which keeps a keyboard user where they were instead of at the
+ * top of the document after every follow-up.
+ */
 function update(next: Partial<ExplorerState>) {
+  const active = document.activeElement
+  const focusKey = active instanceof HTMLElement ? active.dataset.focusKey : undefined
+  const selectionStart = active instanceof HTMLInputElement ? active.selectionStart : null
+
   state = { ...state, ...next }
   renderExplorer(root!, state, actions)
+
+  if (!focusKey) return
+  const restored = root?.querySelector<HTMLElement>(`[data-focus-key="${CSS.escape(focusKey)}"]`)
+  if (!restored || restored.hasAttribute('disabled')) return
+  restored.focus()
+  if (restored instanceof HTMLInputElement && selectionStart !== null) {
+    restored.setSelectionRange(selectionStart, selectionStart)
+  }
 }
 
 function showSnapshot(index: number) {

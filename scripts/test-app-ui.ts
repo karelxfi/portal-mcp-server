@@ -188,7 +188,17 @@ async function validate(page: Page, fixture: string, viewport: (typeof viewports
     design.foreground === (host?.fg ?? expected.fg),
     `${fixture} ${viewport.name} foreground should come from ${host ? 'the host variables' : 'the SQD token'} (got ${design.foreground})`,
   )
-  assert(design.bodyFont.startsWith('"Inter SQD"'), `${fixture} should render with embedded Inter`)
+  /* Interface text is the host's to choose: it supplies --font-sans through
+     applyHostFonts and the app falls back to the system stack. Embedding a
+     sans face as well cost 51 KB to override a decision the host had made. */
+  assert(
+    /^(Inter|ui-sans-serif|system-ui|-apple-system)/.test(design.bodyFont),
+    `${fixture} interface text should take the host font or the system stack (got ${design.bodyFont})`,
+  )
+  assert(
+    !design.bodyFont.includes('Inter SQD'),
+    `${fixture} should not embed a sans face; the host supplies one (got ${design.bodyFont})`,
+  )
   assert(design.monoFont.startsWith('"JetBrains Mono SQD"'), `${fixture} evidence metadata should use JetBrains Mono`)
   assert(design.titleWeight === '510', `${fixture} headings should use SQD weight 510`)
   assert(
@@ -216,7 +226,10 @@ async function validate(page: Page, fixture: string, viewport: (typeof viewports
     assert(design.cardRadius === '12px', `${fixture} panels should use the SQD pane radius`)
   }
   if (design.tableHeaderFont) {
-    assert(design.tableHeaderFont.startsWith('"Inter SQD"'), `${fixture} table headers should use Inter`)
+    assert(
+      /^(Inter|ui-sans-serif|system-ui|-apple-system)/.test(design.tableHeaderFont),
+      `${fixture} table headers should take the interface font (got ${design.tableHeaderFont})`,
+    )
     assert(design.tableHeaderWeight === '510', `${fixture} table headers should use weight 510`)
     assert(
       design.tableHeaderTracking === 'normal',
@@ -772,6 +785,94 @@ async function validate(page: Page, fixture: string, viewport: (typeof viewports
 
 /* Third-party text (token names, program labels) must render as inert text
    in every mode: no markup interpretation, no script, the raw string visible. */
+/*
+ * The whole app driven from the keyboard, with no mouse: the skip link, the
+ * evidence table, a sort, a page turn, and an export. A screen-reader user
+ * reaches the rows through this path, and a re-render used to drop them back
+ * at the top of the document, so focus is checked after the state changes.
+ */
+async function validateKeyboardJourney(browser: Browser) {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 900 } })
+  const page = await context.newPage()
+  const errors: string[] = []
+  page.on('pageerror', (error) => errors.push(error.message))
+  try {
+    await page.goto(`${baseUrl}?fixture=large_table&picker=0`, { waitUntil: 'load' })
+    await page.evaluate(() => document.fonts.ready)
+
+    // The skip link is the first stop and lands on the evidence table.
+    await page.keyboard.press('Tab')
+    const skip = await page.evaluate(() => document.activeElement?.className ?? '')
+    assert(skip.includes('sqd-skip-link'), `the first tab stop should be the skip link (got "${skip}")`)
+    await page.keyboard.press('Enter')
+    assert(
+      await page.evaluate(() => Boolean(document.querySelector('#sqd-evidence'))),
+      'the skip link should point at the evidence table',
+    )
+
+    // Sorting is reachable and reports its direction.
+    const sortButton = page.locator('.sqd-sort').first()
+    await sortButton.focus()
+    const beforeSort = await page.locator('.sqd-table th').first().getAttribute('aria-sort')
+    await page.keyboard.press('Enter')
+    await page.waitForTimeout(80)
+    const afterSort = await page.locator('.sqd-table th').first().getAttribute('aria-sort')
+    assert(
+      afterSort !== beforeSort && afterSort !== 'none',
+      `sorting from the keyboard should change the reported direction (${beforeSort} -> ${afterSort})`,
+    )
+
+    // Focus survives the re-render that a sort causes.
+    const focusedAfterSort = await page.evaluate(() => document.activeElement?.getAttribute('data-focus-key') ?? '')
+    assert(
+      focusedAfterSort.startsWith('table-sort:'),
+      `focus should stay on the sort control after the rerender (got "${focusedAfterSort}")`,
+    )
+
+    // Paging forward, from the keyboard, keeps focus on the pager.
+    const next = page.locator('[data-focus-key="table-next"]')
+    if (await next.count()) {
+      const firstBefore = await page.locator('.sqd-table tbody tr').first().innerText()
+      await next.focus()
+      await page.keyboard.press('Enter')
+      await page.waitForTimeout(80)
+      assert(
+        (await page.locator('.sqd-table tbody tr').first().innerText()) !== firstBefore,
+        'paging from the keyboard should show the next rows',
+      )
+      assert(
+        (await page.evaluate(() => document.activeElement?.getAttribute('data-focus-key') ?? '')) === 'table-next',
+        'focus should stay on the pager after paging',
+      )
+    }
+
+    // Export is reachable and announces itself as a control, not a link.
+    const exportButton = page.locator('button', { hasText: 'Download CSV' }).first()
+    assert(await exportButton.count(), 'the evidence table should offer a CSV export')
+    await exportButton.focus()
+    assert(
+      await page.evaluate(() => document.activeElement?.tagName === 'BUTTON'),
+      'the export control should be focusable',
+    )
+
+    // A direction cue carries more than colour.
+    const cues = await page.evaluate(() =>
+      [...document.querySelectorAll('.sqd-event-dot')].map((node) => ({
+        text: node.textContent ?? '',
+        label: node.getAttribute('aria-label') ?? '',
+      })),
+    )
+    for (const cue of cues.filter((item) => item.label)) {
+      assert(cue.text.length > 0, 'a direction cue with a label should also carry a glyph')
+    }
+
+    assert(errors.length === 0, `keyboard journey raised page errors: ${errors.join('; ')}`)
+  } finally {
+    await context.close()
+  }
+  console.log('PASS  the app can be driven end to end from the keyboard')
+}
+
 async function validateHostile(browser: Browser) {
   for (const mode of ['fullscreen', 'inline'] as const) {
     const context = await browser.newContext({ viewport: { width: 1280, height: 900 }, colorScheme: 'light' })
@@ -942,6 +1043,7 @@ async function main() {
     await warmupPage.evaluate(() => document.fonts.ready)
     await warmup.close()
     await validateHostile(browser)
+    await validateKeyboardJourney(browser)
     for (const fixture of fixtures) {
       for (const viewport of viewports) {
         const context = await browser.newContext({

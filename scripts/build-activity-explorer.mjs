@@ -5,6 +5,7 @@ import path from 'node:path'
 import { build } from 'esbuild'
 
 import { compactStylesheet } from './compact-stylesheet-plugin.mjs'
+import { zodEnglishLocaleOnly } from './zod-locale-plugin.mjs'
 
 const root = process.cwd()
 const output = path.join(root, 'src/generated/activity-explorer.generated.ts')
@@ -12,12 +13,11 @@ const versionOutput = path.join(root, 'src/generated/activity-explorer.version.t
 const packageMetadata = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'))
 const appVersion = String(packageMetadata.version || '')
 if (!/^\d+\.\d+\.\d+$/.test(appVersion)) throw new Error(`Invalid SQD app version: ${appVersion}`)
-const interFont = await readFile(path.join(root, 'src/app-ui/assets/inter-latin.woff2'))
 const monoFont = await readFile(path.join(root, 'src/app-ui/assets/jetbrains-mono-latin.woff2'))
 const fontDataUrl = (mime, bytes) => `data:${mime};base64,${bytes.toString('base64')}`
 
 const result = await build({
-  plugins: [compactStylesheet],
+  plugins: [compactStylesheet, zodEnglishLocaleOnly],
   entryPoints: [path.join(root, 'src/app-ui/index.ts')],
   bundle: true,
   format: 'iife',
@@ -32,7 +32,6 @@ const result = await build({
   define: {
     'process.env.NODE_ENV': '"production"',
     __SQD_APP_VERSION__: JSON.stringify(appVersion),
-    __SQD_INTER_DATA_URL__: JSON.stringify(fontDataUrl('font/woff2', interFont)),
     __SQD_MONO_DATA_URL__: JSON.stringify(fontDataUrl('font/woff2', monoFont)),
   },
 })
@@ -42,10 +41,14 @@ if (!bundle) throw new Error('SQD Activity Explorer bundle is empty')
 const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark"><title>SQD Explorer</title></head><body><div id="app"></div><script>${bundle}</script></body></html>`
 const hash = createHash('sha256').update(html).digest('hex').slice(0, 12)
 const bytes = Buffer.byteLength(html)
-/* Release budget for the self-contained App resource, fonts included. */
-const maxBytes = 720_000
+/* Release budget for the self-contained App resource, the mono font included.
+   The hard cap fails the build; the soft cap only says so, so a feature that
+   eats the headroom is visible in the log before it is a blocker. */
+const maxBytes = 700_000
+const warnBytes = 600_000
 if (bytes > maxBytes)
   throw new Error(`SQD Activity Explorer is ${bytes} bytes, above the ${maxBytes}-byte release budget`)
+if (bytes > warnBytes) console.warn(`SQD Activity Explorer is ${bytes} bytes, above the ${warnBytes}-byte soft budget`)
 
 await mkdir(path.dirname(output), { recursive: true })
 await writeFile(

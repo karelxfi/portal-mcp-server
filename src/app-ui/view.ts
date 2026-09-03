@@ -354,6 +354,17 @@ function shortTimeLabel(value: string): string {
   return value.slice(0, 22)
 }
 
+/*
+ * renderExplorer rebuilds the whole tree on every state change, so the element
+ * that had focus is gone by the time the new one is in place: a follow-up
+ * click dropped keyboard users back at the top of the document. A control that
+ * carries a focus key can be found again in the new tree and refocused.
+ */
+export function withFocusKey<T extends HTMLElement>(node: T, key: string): T {
+  node.dataset.focusKey = key
+  return node
+}
+
 function element<K extends keyof HTMLElementTagNameMap>(
   tag: K,
   className?: string,
@@ -433,7 +444,10 @@ function canFullscreen(state: ExplorerState, actions: ExplorerActions): boolean 
 }
 
 function fullscreenButton(actions: ExplorerActions, modifier = ''): HTMLElement {
-  const button = element('button', `sqd-button${modifier ? ` ${modifier}` : ''}`, 'Open full screen')
+  const button = withFocusKey(
+    element('button', `sqd-button${modifier ? ` ${modifier}` : ''}`, 'Open full screen'),
+    'fullscreen',
+  )
   button.type = 'button'
   button.addEventListener('click', () => actions.requestFullscreen?.())
   return button
@@ -459,12 +473,12 @@ function appHeader(actions: ExplorerActions, state: ExplorerState): HTMLElement 
   const actionBar = element('div', 'sqd-actions')
   const hasHistory = (state.historyLength ?? 0) > 1
   if (mode === 'fullscreen' && hasHistory && (actions.goBack || actions.goForward)) {
-    const back = element('button', 'sqd-button', 'Back')
+    const back = withFocusKey(element('button', 'sqd-button', 'Back'), 'history-back')
     back.type = 'button'
     back.disabled = (state.historyIndex ?? 0) <= 0
     back.setAttribute('aria-label', 'Open previous result in this session')
     back.addEventListener('click', () => actions.goBack?.())
-    const forward = element('button', 'sqd-button', 'Forward')
+    const forward = withFocusKey(element('button', 'sqd-button', 'Forward'), 'history-forward')
     forward.type = 'button'
     forward.disabled = (state.historyIndex ?? 0) >= (state.historyLength ?? 1) - 1
     forward.setAttribute('aria-label', 'Open next result in this session')
@@ -472,7 +486,7 @@ function appHeader(actions: ExplorerActions, state: ExplorerState): HTMLElement 
     actionBar.append(back, forward)
   }
   if (mode === 'fullscreen' && actions.requestInline) {
-    const exit = element('button', 'sqd-button sqd-button--quiet', 'Exit full screen')
+    const exit = withFocusKey(element('button', 'sqd-button sqd-button--quiet', 'Exit full screen'), 'exit-fullscreen')
     exit.type = 'button'
     exit.addEventListener('click', () => actions.requestInline?.())
     actionBar.append(exit)
@@ -1907,7 +1921,7 @@ function tablePanel(payload: Record<string, unknown>, panel: Panel, options: Pan
     return root
   }
   const tools = element('div', 'sqd-table-tools')
-  const search = element('input', 'sqd-input')
+  const search = withFocusKey(element('input', 'sqd-input'), 'table-search')
   search.type = 'search'
   search.placeholder = 'Filter result evidence'
   search.setAttribute('aria-label', `Filter ${text(panel.title ?? 'evidence')} rows`)
@@ -1916,6 +1930,7 @@ function tablePanel(payload: Record<string, unknown>, panel: Panel, options: Pan
   tools.append(count)
   body.append(tools)
   const wrap = element('div', 'sqd-table-wrap')
+  if (!document.getElementById(EVIDENCE_ANCHOR_ID)) wrap.id = EVIDENCE_ANCHOR_ID
   const table = element('table', 'sqd-table')
   table.dataset.cols = String(effectiveColumns.length)
   const caption = element('caption', 'sqd-visually-hidden', text(panel.title ?? 'Blockchain evidence rows'))
@@ -1932,7 +1947,10 @@ function tablePanel(payload: Record<string, unknown>, panel: Panel, options: Pan
     th.dataset.align = column.align ?? 'left'
     th.setAttribute('aria-sort', 'none')
     headerByKey.set(column.key, th)
-    const button = element('button', 'sqd-sort', text(column.label ?? humanize(column.key)))
+    const button = withFocusKey(
+      element('button', 'sqd-sort', text(column.label ?? humanize(column.key))),
+      `table-sort:${text(column.key)}`,
+    )
     button.type = 'button'
     button.addEventListener('click', () => {
       sortDirection = sortKey === column.key && sortDirection === 'asc' ? 'desc' : 'asc'
@@ -1957,11 +1975,11 @@ function tablePanel(payload: Record<string, unknown>, panel: Panel, options: Pan
   body.append(wrap)
   const pagination = element('nav', 'sqd-table-pagination')
   pagination.setAttribute('aria-label', `${text(panel.title ?? 'Evidence')} table pages`)
-  const previous = element('button', 'sqd-button', 'Previous rows')
+  const previous = withFocusKey(element('button', 'sqd-button', 'Previous rows'), 'table-previous')
   previous.type = 'button'
   const pageStatus = element('span', 'sqd-brand-subtitle')
   pageStatus.setAttribute('aria-live', 'polite')
-  const next = element('button', 'sqd-button', 'Next rows')
+  const next = withFocusKey(element('button', 'sqd-button', 'Next rows'), 'table-next')
   next.type = 'button'
   pagination.append(previous, pageStatus, next)
   body.append(pagination)
@@ -2113,7 +2131,15 @@ function timelinePanel(payload: Record<string, unknown>, panel: Panel, options: 
       event.append(time)
       const direction = directionKey ? text(getByPath(row, directionKey)).toLowerCase() : ''
       const dotTone = direction === 'in' ? ' sqd-event-dot--in' : direction === 'out' ? ' sqd-event-dot--out' : ''
-      event.append(element('span', `sqd-event-dot${dotTone}`))
+      const dot = element('span', `sqd-event-dot${dotTone}`)
+      /* Colour alone does not carry the direction: a glyph shows it to anyone
+         who cannot see the hue, and the label reads it out. */
+      if (direction === 'in' || direction === 'out') {
+        dot.textContent = direction === 'in' ? '↓' : '↑'
+        dot.setAttribute('role', 'img')
+        dot.setAttribute('aria-label', direction === 'in' ? 'inbound' : 'outbound')
+      }
+      event.append(dot)
       const copy = element('div')
       const rawTitle = text(getByPath(row, text(panel.title_key)) ?? 'Activity')
       const titleNode = element('div', 'sqd-event-title')
@@ -2375,7 +2401,10 @@ function notice(tier: NoticeTier, copy: string, buttons: HTMLElement[] = []): HT
 }
 
 function actionButton(label: string, onClick: () => void, modifier = ''): HTMLButtonElement {
-  const button = element('button', `sqd-button${modifier ? ` ${modifier}` : ''}`, label) as HTMLButtonElement
+  const button = withFocusKey(
+    element('button', `sqd-button${modifier ? ` ${modifier}` : ''}`, label),
+    `action:${label}`,
+  ) as HTMLButtonElement
   button.type = 'button'
   button.addEventListener('click', onClick)
   return button
@@ -2555,6 +2584,9 @@ function stack(className: string, children: Array<HTMLElement | null>): HTMLElem
   return node
 }
 
+/** Where the skip link lands. */
+const EVIDENCE_ANCHOR_ID = 'sqd-evidence'
+
 export function renderExplorer(root: HTMLElement, state: ExplorerState, actions: ExplorerActions) {
   disposeActiveCharts()
   injectStyle()
@@ -2564,6 +2596,12 @@ export function renderExplorer(root: HTMLElement, state: ExplorerState, actions:
   root.dataset.mode = mode
   root.replaceChildren()
   const shell = element('main', 'sqd-shell')
+  /* The evidence table is the point of the app and sits below the header,
+     the answer and the charts. A keyboard user should not have to tab past
+     all of it to reach the rows. */
+  const skip = element('a', 'sqd-skip-link', 'Skip to the evidence table') as HTMLAnchorElement
+  skip.href = `#${EVIDENCE_ANCHOR_ID}`
+  shell.append(skip)
   shell.append(appHeader(actions, state))
   const pending = state.loading && Boolean(state.payload)
   if (pending) {
