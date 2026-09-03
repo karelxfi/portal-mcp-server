@@ -1906,8 +1906,20 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
           if (fees.blocks.length === 0) throw new Error('No data available for this time period')
           const firstTimestamp = fees.blocks[0].timestamp
           const lastTimestamp = fees.blocks[fees.blocks.length - 1].timestamp
-          const seriesStartTimestamp = lastTimestamp - durationSeconds
-          const feeBuckets = Array.from({ length: expectedBuckets }, (_, bucketIndex) => ({
+          // The series used to span `duration` even when the window came from
+          // from_timestamp/to_timestamp, so every scanned block older than
+          // lastTimestamp - duration fell outside every bucket and left the fee
+          // total, while summary.transactions still counted it. The span now
+          // always covers the blocks actually scanned.
+          const scannedSpanSeconds = Math.max(0, lastTimestamp - firstTimestamp)
+          const usedTimestampWindow = from_timestamp !== undefined || to_timestamp !== undefined
+          const feeSpanSeconds = Math.max(
+            intervalSeconds,
+            usedTimestampWindow ? scannedSpanSeconds : Math.max(durationSeconds, scannedSpanSeconds),
+          )
+          const feeBucketCount = Math.max(1, Math.ceil(feeSpanSeconds / intervalSeconds))
+          const seriesStartTimestamp = lastTimestamp - feeSpanSeconds
+          const feeBuckets = Array.from({ length: feeBucketCount }, (_, bucketIndex) => ({
             bucketIndex,
             bucketTimestamp: seriesStartTimestamp + bucketIndex * intervalSeconds,
             blocksInBucket: 0,
@@ -1918,10 +1930,10 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
           }))
           for (const block of fees.blocks) {
             const bucketIndex = Math.floor((block.timestamp - seriesStartTimestamp) / intervalSeconds)
-            if (bucketIndex < 0) continue
-            /* The newest block sits exactly at the series end and belongs to
-               the last bucket, so the window total and the bucket sum agree. */
-            const bucket = feeBuckets[Math.min(bucketIndex, expectedBuckets - 1)]
+            /* Every scanned block lands in a bucket: the newest sits exactly at
+               the series end and belongs to the last one, and nothing is
+               dropped, so the window total and the bucket sum agree. */
+            const bucket = feeBuckets[Math.min(Math.max(bucketIndex, 0), feeBucketCount - 1)]
             bucket.blocksInBucket += 1
             bucket.transactions += block.transaction_count
             bucket.feeSats += block.fee_sats
