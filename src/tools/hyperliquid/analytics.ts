@@ -45,6 +45,117 @@ const MAX_ANALYTICS_BLOCKS = 500000
 const FAST_MODE_MAX_ANALYTICS_BLOCKS = 100000
 const FAST_MODE_COMPLETE_WINDOW_BLOCKS = 250000
 const HYPERLIQUID_ANALYTICS_FAST_INITIAL_CHUNK_SIZE = 20_000
+type HyperliquidCoinTotals = {
+  fills: number
+  volume: number
+  traders: Set<number>
+  pnl: number
+  fees: number
+  longs: number
+  shorts: number
+  liquidations: number
+  liqVolume: number
+}
+
+export type HyperliquidFillTotals = {
+  traders: Set<number>
+  allCoins: Set<string>
+  dirCounts: Record<string, number>
+  coinData: Map<string, HyperliquidCoinTotals>
+  traderData: Map<string, { fills: number; volume: number; pnl: number; coins: Set<string> }>
+  totalFills: number
+  totalVolume: number
+  totalFees: number
+  totalPnl: number
+  liquidationCount: number
+  liquidationVolume: number
+}
+
+export function createFillAccumulator(): HyperliquidFillTotals {
+  return {
+    traders: new Set<number>(),
+    allCoins: new Set<string>(),
+    dirCounts: {},
+    coinData: new Map(),
+    traderData: new Map(),
+    totalFills: 0,
+    totalVolume: 0,
+    totalFees: 0,
+    totalPnl: 0,
+    liquidationCount: 0,
+    liquidationVolume: 0,
+  }
+}
+
+/*
+ * One fill folded into the running totals. This lived inside the streaming
+ * callback, where nothing but a live Portal window could reach it, and a
+ * sign error in it went unnoticed through a release: fees were summed as
+ * `Math.abs(fee)`, so a market whose makers collected rebates was reported as
+ * one that paid fees. Fees and PnL are signed here for that reason, and the
+ * function is exported so the arithmetic can be checked without a network.
+ */
+export function accumulateFill(totals: HyperliquidFillTotals, fill: Record<string, unknown>): void {
+  const userKey = typeof fill.user === 'string' ? fill.user : undefined
+  const coinKey = typeof fill.coin === 'string' ? fill.coin : 'unknown'
+  const notional = Number(fill.px || 0) * Number(fill.sz || 0)
+  const fee = Number(fill.fee || 0)
+  const pnl = Number(fill.closedPnl || 0)
+  const direction = typeof fill.dir === 'string' ? fill.dir : 'Unknown'
+  const isLiquidation = direction === 'Short > Long' || direction === 'Long > Short'
+
+  totals.totalFills += 1
+  if (userKey) totals.traders.add(hashString53(userKey))
+  if (coinKey) totals.allCoins.add(coinKey)
+  totals.totalVolume += notional
+  totals.totalFees += fee
+  totals.totalPnl += pnl
+  if (isLiquidation) {
+    totals.liquidationCount += 1
+    totals.liquidationVolume += notional
+  }
+  totals.dirCounts[direction] = (totals.dirCounts[direction] || 0) + 1
+
+  let cd = totals.coinData.get(coinKey)
+  if (!cd) {
+    cd = {
+      fills: 0,
+      volume: 0,
+      traders: new Set<number>(),
+      pnl: 0,
+      fees: 0,
+      longs: 0,
+      shorts: 0,
+      liquidations: 0,
+      liqVolume: 0,
+    }
+    totals.coinData.set(coinKey, cd)
+  }
+  cd.fills += 1
+  cd.volume += notional
+  if (userKey) cd.traders.add(hashString53(userKey))
+  cd.pnl += pnl
+  cd.fees += fee
+  if (direction === 'Open Long') cd.longs += 1
+  if (direction === 'Open Short') cd.shorts += 1
+  if (isLiquidation) {
+    cd.liquidations += 1
+    cd.liqVolume += notional
+  }
+
+  if (userKey) {
+    let td = totals.traderData.get(userKey)
+    if (!td) {
+      td = { fills: 0, volume: 0, pnl: 0, coins: new Set() }
+      totals.traderData.set(userKey, td)
+    }
+    td.fills += 1
+    td.volume += notional
+    td.pnl += pnl
+    if (coinKey) td.coins.add(coinKey)
+  }
+}
+
 const HYPERLIQUID_ANALYTICS_DEEP_INITIAL_CHUNK_SIZE = 40_000
 const HYPERLIQUID_ANALYTICS_CACHE_TTL_MS = 30_000
 const HYPERLIQUID_ANALYTICS_CACHE_MAX_ENTRIES = 8
@@ -630,35 +741,9 @@ export function registerHyperliquidAnalyticsTool(server: McpServer) {
       }
 
       const loadFreshAnalytics = async () => {
-        // Single-pass aggregation
-        const traders = new Set<number>()
-        const allCoins = new Set<string>()
-        let totalVolume = 0
-        let totalFees = 0
-        let totalPnl = 0
-        let totalFills = 0
-        let liquidationCount = 0
-        let liquidationVolume = 0
-        const dirCounts: Record<string, number> = {}
-
-        // Per-coin tracking
-        const coinData = new Map<
-          string,
-          {
-            fills: number
-            volume: number
-            traders: Set<number>
-            pnl: number
-            fees: number
-            longs: number
-            shorts: number
-            liquidations: number
-            liqVolume: number
-          }
-        >()
-
-        // Per-trader tracking (for top traders)
-        const traderData = new Map<string, { fills: number; volume: number; pnl: number; coins: Set<string> }>()
+        // Single-pass aggregation, in a shape a unit test can drive directly.
+        const totals = createFillAccumulator()
+        const { traders, allCoins, dirCounts, coinData, traderData } = totals
 
         const { chunksFetched, chunkSizeReduced } = await visitHyperliquidFillBlocks({
           dataset,
@@ -685,68 +770,12 @@ export function registerHyperliquidAnalyticsTool(server: McpServer) {
           onBlock: (block) => {
             const fills = block.fills || []
             for (let index = 0; index < fills.length; index += 1) {
-              const fill = fills[index]
-              const userKey = typeof fill.user === 'string' ? fill.user : undefined
-              const coinKey = typeof fill.coin === 'string' ? fill.coin : 'unknown'
-              const notional = Number(fill.px || 0) * Number(fill.sz || 0)
-              const fee = Math.abs(Number(fill.fee || 0))
-              const pnl = Number(fill.closedPnl || 0)
-              const direction = typeof fill.dir === 'string' ? fill.dir : 'Unknown'
-              const isLiquidation = direction === 'Short > Long' || direction === 'Long > Short'
-
-              totalFills += 1
-              if (userKey) traders.add(hashString53(userKey))
-              if (coinKey) allCoins.add(coinKey)
-              totalVolume += notional
-              totalFees += fee
-              totalPnl += pnl
-              if (isLiquidation) {
-                liquidationCount += 1
-                liquidationVolume += notional
-              }
-              dirCounts[direction] = (dirCounts[direction] || 0) + 1
-
-              let cd = coinData.get(coinKey)
-              if (!cd) {
-                cd = {
-                  fills: 0,
-                  volume: 0,
-                  traders: new Set<number>(),
-                  pnl: 0,
-                  fees: 0,
-                  longs: 0,
-                  shorts: 0,
-                  liquidations: 0,
-                  liqVolume: 0,
-                }
-                coinData.set(coinKey, cd)
-              }
-              cd.fills += 1
-              cd.volume += notional
-              if (userKey) cd.traders.add(hashString53(userKey))
-              cd.pnl += pnl
-              cd.fees += fee
-              if (direction === 'Open Long') cd.longs += 1
-              if (direction === 'Open Short') cd.shorts += 1
-              if (isLiquidation) {
-                cd.liquidations += 1
-                cd.liqVolume += notional
-              }
-
-              if (userKey) {
-                let td = traderData.get(userKey)
-                if (!td) {
-                  td = { fills: 0, volume: 0, pnl: 0, coins: new Set() }
-                  traderData.set(userKey, td)
-                }
-                td.fills += 1
-                td.volume += notional
-                td.pnl += pnl
-                if (coinKey) td.coins.add(coinKey)
-              }
+              accumulateFill(totals, fills[index])
             }
           },
         })
+
+        const { totalFills, totalVolume, totalFees, totalPnl, liquidationCount, liquidationVolume } = totals
 
         if (totalFills === 0) {
           throw new Error('No Hyperliquid fills found for the specified filters')
