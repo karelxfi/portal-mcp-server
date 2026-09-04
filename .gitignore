@@ -60,8 +60,12 @@ examples/
 *.duckdb
 *.parquet
 *.arrow
-cache/
-data/
+# Anchored to the repository root. Unanchored, `cache/` matches any directory
+# of that name at any depth, so it swallowed src/cache/ and hid
+# src/cache/datasets.test.ts from the repository: the suite ran locally and
+# never ran in CI.
+/cache/
+/data/
 
 # Local planning and working notes (public Markdown is tracked)
 CLAUDE.md
