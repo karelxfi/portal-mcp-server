@@ -4,7 +4,7 @@ import { type IncomingMessage, type ServerResponse, createServer } from 'node:ht
 import { toNodeHandler } from '@modelcontextprotocol/node'
 import { type McpRequestContext, createMcpHandler } from '@modelcontextprotocol/server'
 
-import { resolveActivityExplorerSurface } from './apps/activity-explorer.js'
+import { isActivityExplorerEnabledByDeployment, resolveActivityExplorerSurface } from './apps/activity-explorer.js'
 import { hasConfiguredCursorSecret } from './helpers/pagination.js'
 import {
   connectionKeyFromRequest,
@@ -158,6 +158,11 @@ const server = createServer(
         commit: gitCommit,
         observability: getObservabilityStatus(),
         tracing: tracingStatus(),
+        /* The deployment's setting, not this request's: an operator turning the
+           Explorer on or off restarts the process and needs to see whether the
+           restart took. A caller's own `?app=1` or `?app=0` is answered on the
+           MCP connection, not here. */
+        app: { enabled: isActivityExplorerEnabledByDeployment(), stage: 'beta' },
       })
       return
     }

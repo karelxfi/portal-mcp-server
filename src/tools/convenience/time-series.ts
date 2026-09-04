@@ -2164,7 +2164,15 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
                 resolvedWindow,
               }),
               coverage: buildBucketCoverage({
-                expectedBuckets,
+                /* The fee series spans the blocks that were scanned, not
+                   exactly `duration`, because dropping a scanned block would
+                   take its fees out of the buckets while leaving them in the
+                   window total. Bitcoin block times are irregular, so a 2h
+                   request routinely resolves to a block range spanning longer
+                   than 2h and the series is a bucket or two longer. Reporting
+                   the duration-derived count here made the response contradict
+                   itself: expected_buckets 8 beside returned_buckets 10. */
+                expectedBuckets: feeBucketCount,
                 returnedBuckets: timeSeries.length,
                 filledBuckets,
                 anchor: 'latest_block',

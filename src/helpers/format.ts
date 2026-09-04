@@ -390,6 +390,22 @@ function reconcileCoverageWithFreshness(coverage: unknown, freshness: unknown): 
   }
 }
 
+/*
+ * The gap diagnostics answer "did observed data cover these buckets", and
+ * _coverage answers "can we prove this is the window that was asked for". Both
+ * called the answer `window_complete`, and only _coverage was reconciled
+ * against an estimated boundary, so one Bitcoin fee series carried
+ * `_coverage.window_complete: false` beside `gap_diagnostics.window_complete:
+ * true`. A reader cannot be expected to know which one is answering which
+ * question, so a downgrade on one applies to the other.
+ */
+function reconcileGapDiagnosticsWithFreshness(diagnostics: unknown, freshness: unknown): unknown {
+  if (!isRecord(diagnostics) || diagnostics.window_complete !== true || freshnessProvesExactWindow(freshness)) {
+    return diagnostics
+  }
+  return { ...diagnostics, window_complete: false }
+}
+
 export function humanizeLabel(value: unknown): string | undefined {
   if (typeof value !== 'string') return undefined
   const trimmed = value.trim()
@@ -1373,6 +1389,12 @@ export function formatResult(data: unknown, message?: string, options?: FormatOp
       options?.coverage ?? buildDefaultCoverage(),
       payloadRecord._freshness,
     )
+    if (payloadRecord.gap_diagnostics !== undefined) {
+      payloadRecord.gap_diagnostics = reconcileGapDiagnosticsWithFreshness(
+        payloadRecord.gap_diagnostics,
+        payloadRecord._freshness,
+      )
+    }
     payloadRecord._execution = execution
     if (options?.ui !== undefined) {
       payloadRecord._ui = options.ui

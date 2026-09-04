@@ -267,6 +267,20 @@ async function directFeeSats(
   return { sats, blocks: seen.size, transactions }
 }
 
+/* Mirrors the rule in helpers/format.ts: an estimated window boundary is what
+   downgrades a complete window, and nothing else does here. */
+function freshnessProvesExactWindow(freshness: any): boolean {
+  if (!freshness || typeof freshness !== 'object') return true
+  if (freshness.kind === 'timestamp_lookup') return freshness.resolution !== 'estimated'
+  if (freshness.estimated_timeframe !== undefined) return false
+  const bounds = freshness.timestamp_bounds
+  if (!bounds || typeof bounds !== 'object') return true
+  return ['from', 'to'].every((key) => {
+    const boundary = bounds[key]
+    return !boundary || typeof boundary !== 'object' || boundary.resolution !== 'estimated'
+  })
+}
+
 async function assertLiveParity(): Promise<'pass' | 'bounded'> {
   const connected = await connectTestClient('bitcoin-fee-gate')
   try {
@@ -384,7 +398,21 @@ async function assertLiveParity(): Promise<'pass' | 'bounded'> {
     assert(!series.isError, `live fees_btc series must succeed: ${series.text.slice(0, 300)}`)
     const rows: Record<string, any>[] = series.data.time_series
     const summary = series.data.summary
-    assert(rows.length === 8, `2h in 15m buckets must return 8 rows, got ${rows.length}`)
+    /* At least 8, not exactly 8. The series is anchored to the latest block and
+       spans the blocks that were actually scanned, because dropping a scanned
+       block would take its fees out of the buckets while leaving them in the
+       window total. Bitcoin block times are irregular, so a 2h request often
+       resolves to a block range spanning a little longer than 2h. What must
+       hold is that the series covers at least the duration asked for and that
+       coverage describes the series it actually returned. */
+    assert(rows.length >= 8, `2h in 15m buckets must cover at least 8 rows, got ${rows.length}`)
+    const coverage = series.data._coverage
+    assert(
+      coverage.expected_buckets === rows.length && coverage.returned_buckets === rows.length,
+      `coverage must describe the series it returned: expected ${coverage.expected_buckets}, returned ${coverage.returned_buckets}, rows ${rows.length}`,
+    )
+    const spanSeconds = rows[rows.length - 1].timestamp - rows[0].timestamp + 15 * 60
+    assert(spanSeconds >= 2 * 60 * 60, `the series must span at least the 2h asked for, got ${spanSeconds}s`)
     assert(
       rows.some((row) => row.blocks_in_bucket > 0 && row.value > 0),
       'populated fee buckets must be non-zero',
@@ -406,7 +434,23 @@ async function assertLiveParity(): Promise<'pass' | 'bounded'> {
       summary.bucket_alignment === 'anchored_to_latest_block' && summary.window_anchor === 'latest_block',
       'the series must declare its bucket anchoring',
     )
-    assert(series.data._coverage.window_complete === true, 'a 2h fee series must be window-complete')
+    /* Not "must be complete". A Bitcoin duration window is resolved by
+       estimating where 2h ago falls between irregular block times, and when
+       that boundary is not verified the response says so by declaring the
+       window incomplete. What must hold is that the two blocks answering that
+       question agree, and that an incomplete window is explained rather than
+       asserted. */
+    const gaps = series.data.gap_diagnostics
+    assert(
+      coverage.window_complete === gaps.window_complete,
+      `_coverage and gap_diagnostics must agree on window_complete: ${coverage.window_complete} vs ${gaps.window_complete}`,
+    )
+    if (coverage.window_complete === false) {
+      assert(
+        !freshnessProvesExactWindow(series.data._freshness),
+        'an incomplete fee window must be explained by an estimated boundary in _freshness',
+      )
+    }
     const seriesDirect = await directFeeSats(summary.from_block, summary.to_block)
     const inWindowSats = rows.reduce((sum, row) => sum + BigInt(row.value_sats), 0n)
     assert(
