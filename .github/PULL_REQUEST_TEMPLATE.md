@@ -14,6 +14,7 @@ The required check is `npm run test:offline`. Tick what you ran locally.
 - [ ] `npm run test:catalog-tokens` passes, or the baseline was refreshed with a note and the changelog says why
 - [ ] For changes under `src/app-ui/`: `npm run test:app-ui` passes, or the layout baseline was refreshed with `npm run baseline:app-ui` and this description says which boxes moved and why
 - [ ] For changes under `src/app-ui/`: the contact sheet below shows the recorded fixtures at a desktop, tablet, and phone width, in both themes
+- [ ] For changes under `src/app-ui/` that change how it looks: `docs/explorer-design.md` still describes what the app does, or this pull request updates it
 - [ ] No internal hostnames, credentials, or operational procedures appear in code, comments, or this description
 
 ## Evidence
