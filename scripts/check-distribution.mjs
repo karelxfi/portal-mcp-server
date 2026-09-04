@@ -190,6 +190,58 @@ function checkDockerBuildInputs() {
   return result('docker-build-inputs', 'pass', `${seen.size} build scripts are all copied into the image`)
 }
 
+/*
+ * The offline gate is the required check and runs inside the pinned Playwright
+ * image, which is not a full developer machine: it carries no `zip` and no
+ * `unzip`. Two scripts shelled out to them, so packaging and unpacking the
+ * MCPB bundle failed there while every local run passed, and each one only
+ * surfaced on its own CI round trip. Anything the gate reaches may use node
+ * and npm and nothing else; where a task looks like it needs a system tool,
+ * there is usually a library or CLI already in devDependencies that does it
+ * (the MCPB CLI packs and unpacks its own format).
+ */
+const OFFLINE_GATE_BINARIES = new Set(['node', 'npm', 'npx'])
+
+function checkOfflineGateBinaries() {
+  const scripts = readJson('package.json').scripts
+  const bodies = []
+  const visited = new Set()
+  const queue = ['test:offline']
+  while (queue.length > 0) {
+    const name = queue.shift()
+    if (visited.has(name) || scripts[name] === undefined) continue
+    visited.add(name)
+    const body = scripts[name]
+    bodies.push(body)
+    queue.push(...[...body.matchAll(/npm run (?:--silent )?([A-Za-z0-9:_-]+)/g)].map((match) => match[1]))
+    /* A `pre<name>` script runs on its own and is easy to forget. */
+    queue.push(`pre${name.replace(/:/g, ':')}`)
+  }
+
+  const files = new Set()
+  for (const body of bodies) {
+    for (const match of body.matchAll(/scripts\/[A-Za-z0-9._-]+\.(?:mjs|ts)/g)) files.add(match[0])
+  }
+
+  const errors = []
+  for (const file of [...files].sort()) {
+    let source
+    try {
+      source = readFileSync(file, 'utf8')
+    } catch {
+      continue
+    }
+    for (const match of source.matchAll(/(?:spawnSync|execFileSync|execSync|spawn)\(\s*'([a-z][a-z0-9._-]*)'/g)) {
+      if (!OFFLINE_GATE_BINARIES.has(match[1])) {
+        errors.push(`${file} runs the system binary '${match[1]}'; the offline gate's container has node and npm only`)
+      }
+    }
+  }
+
+  if (errors.length > 0) fail(`Offline gate binaries:\n  - ${errors.join('\n  - ')}`)
+  return result('offline-gate-binaries', 'pass', `${files.size} gate scripts shell out to node and npm only`)
+}
+
 async function fetchText(url) {
   let lastError
   for (let attempt = 1; attempt <= 3; attempt += 1) {
@@ -354,9 +406,10 @@ function renderMarkdown(version, results) {
 
 const { version } = validateMetadata()
 const dockerInputs = checkDockerBuildInputs()
+const gateBinaries = checkOfflineGateBinaries()
 const results = LIVE
-  ? [dockerInputs, ...(await runLiveChecks(version))]
-  : [result('Distribution metadata', 'pass', `all manifests match version ${version}`), dockerInputs]
+  ? [dockerInputs, gateBinaries, ...(await runLiveChecks(version))]
+  : [result('Distribution metadata', 'pass', `all manifests match version ${version}`), dockerInputs, gateBinaries]
 const report = {
   checkedAt: new Date().toISOString(),
   expectedVersion: version,

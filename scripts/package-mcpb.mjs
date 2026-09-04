@@ -160,18 +160,20 @@ const manifest = {
 }
 writeFileSync(path.join(stage, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`)
 
-// 5. Validate with the official CLI, then zip.
-const validation = spawnSync(
-  process.execPath,
-  [path.join(root, 'node_modules/@anthropic-ai/mcpb/dist/cli/cli.js'), 'validate', path.join(stage, 'manifest.json')],
-  { encoding: 'utf8' },
-)
-if (validation.status !== 0) {
-  throw new Error(`mcpb validate failed: ${validation.stdout}${validation.stderr}`)
+// 5. Validate and pack with the official CLI.
+const mcpbCli = path.join(root, 'node_modules/@anthropic-ai/mcpb/dist/cli/cli.js')
+const runMcpb = (label, args) => {
+  const outcome = spawnSync(process.execPath, [mcpbCli, ...args], { encoding: 'utf8' })
+  if (outcome.error) throw outcome.error
+  if (outcome.status !== 0) throw new Error(`mcpb ${label} failed: ${outcome.stdout}${outcome.stderr}`)
 }
-const zip = spawnSync('zip', ['-q', '-r', '-X', bundlePath, '.'], { cwd: stage, encoding: 'utf8' })
-if (zip.error) throw zip.error
-if (zip.status !== 0) throw new Error(`zip failed: ${zip.stderr || zip.stdout}`)
+runMcpb('validate', ['validate', path.join(stage, 'manifest.json')])
+/* `mcpb pack` rather than shelling out to `zip`. The system binary is not
+   everywhere: the Playwright image CI runs the offline gate in does not carry
+   it, so packaging failed with ENOENT while every local run passed. The CLI is
+   already a dependency and already writes the archive format the format
+   defines. */
+runMcpb('pack', ['pack', stage, bundlePath])
 rmSync(stage, { recursive: true, force: true })
 
 const bytes = statSync(bundlePath).size

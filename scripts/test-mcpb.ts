@@ -29,7 +29,15 @@ async function main() {
 
   const unpacked = mkdtempSync(path.join(tmpdir(), 'sqd-mcpb-'))
   try {
-    execFileSync('unzip', ['-q', bundle, '-d', unpacked])
+    /* The official CLI rather than the `unzip` binary, for the reason
+       package-mcpb.mjs uses `mcpb pack`: the image CI runs the offline gate in
+       carries neither, and a check that needs a system binary the gate's own
+       environment lacks is a check that cannot run. Unpacking with the tool
+       that defines the format also means this reads the bundle the way a host
+       would. */
+    execFileSync('node', ['node_modules/@anthropic-ai/mcpb/dist/cli/cli.js', 'unpack', bundle, unpacked], {
+      stdio: 'pipe',
+    })
     const manifest = JSON.parse(readFileSync(path.join(unpacked, 'manifest.json'), 'utf8'))
     assert(manifest.name === 'sqd' && manifest.display_name === 'SQD', 'manifest must name the bundle sqd / SQD')
     assert(manifest.version === packageVersion, `manifest version ${manifest.version} must match ${packageVersion}`)
