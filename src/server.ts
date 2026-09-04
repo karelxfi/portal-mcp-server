@@ -53,7 +53,7 @@ const PORTAL_APP_INSTRUCTIONS =
   ' Its MCP App is named SQD Explorer. A successful result from any tool whose _meta carries ui.resourceUri can open in the Explorer with exact charts, tables, timelines, coverage, freshness, and safe follow-ups; a result being App-ready is not proof that the host rendered it. To demonstrate the App, run a successful App-enabled tool and only say it rendered when the host confirms a render.'
 
 /* Every example the App paragraph can offer, in the order it offers them. */
-const PORTAL_APP_EXAMPLES: Array<[tool: string, view: string]> = [
+const PORTAL_APP_EXAMPLES: [tool: string, view: string][] = [
   ['portal_get_recent_activity', 'the activity view'],
   ['portal_hyperliquid_get_ohlc', 'the market chart'],
   ['portal_evm_get_analytics', 'the analytics dashboard'],
@@ -62,7 +62,7 @@ const PORTAL_APP_EXAMPLES: Array<[tool: string, view: string]> = [
 
 /* The chain families the instructions can describe, each with the toolset that
    has to be registered for the claim to be true. */
-const PORTAL_CHAIN_FAMILIES: Array<[toolset: Toolset, description: string]> = [
+const PORTAL_CHAIN_FAMILIES: [toolset: Toolset, description: string][] = [
   ['evm', 'Ethereum-compatible networks'],
   ['solana', 'Solana'],
   ['bitcoin', 'Bitcoin'],
