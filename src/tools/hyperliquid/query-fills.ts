@@ -348,7 +348,12 @@ export function registerQueryHyperliquidFillsTool(server: McpServer) {
         feeToken: true,
       }
 
-      if (include_pnl) {
+      /* A summary reports total_realized_pnl, which it can only do if closedPnl
+         was requested. With include_pnl off it summed absent values and answered
+         a confident 0 over fills that closed real positions, so a summary asks
+         for the field whatever the flag says. The rows the caller sees still
+         follow the flag: the summary replaces them rather than listing them. */
+      if (include_pnl || effectiveResponseFormat === 'summary') {
         fillFields.closedPnl = true
         fillFields.startPosition = true
       }

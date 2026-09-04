@@ -957,8 +957,16 @@ export function registerQueryTransactionsTool(server: McpServer) {
       if (include_traces) txFilter.traces = true
       if (include_state_diffs) txFilter.stateDiffs = true
 
-      // Use field preset to control response size
-      const presetFields = getTransactionFields(field_preset || 'standard')
+      // Use field preset to control response size. A summary adds up gas, which
+      // the 'minimal' preset does not request, so a minimal summary reported a
+      // confident total_gas of 0 over transactions that burned real gas. Same
+      // defect and same fix as portal_evm_query_traces: a summary reads at
+      // least the standard field set.
+      const effectiveFieldPreset =
+        effectiveResponseFormat === 'summary' && (field_preset || 'standard') === 'minimal'
+          ? 'standard'
+          : field_preset || 'standard'
+      const presetFields = getTransactionFields(effectiveFieldPreset)
       const fields: Record<string, unknown> = { ...presetFields }
       fields.block = {
         ...((fields.block as Record<string, boolean> | undefined) ?? {}),
