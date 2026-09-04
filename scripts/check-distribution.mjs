@@ -130,6 +130,66 @@ function validateMetadata() {
   return { version: packageJson.version, targets }
 }
 
+/*
+ * The Docker image runs `npm run build`, and .dockerignore excludes scripts/*
+ * with an allowlist of the ones the build needs. An allowlist is silent when it
+ * is short by one file: the bundler gained zod-locale-plugin.mjs, the list did
+ * not, and the image build broke with ERR_MODULE_NOT_FOUND while the offline
+ * gate stayed green, because nothing else builds the image. This follows the
+ * relative imports out of the build entry points and fails on the first one the
+ * image would not receive.
+ */
+function checkDockerBuildInputs() {
+  const dockerignore = readFileSync('.dockerignore', 'utf8')
+  const allowed = new Set(
+    dockerignore
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line.startsWith('!'))
+      .map((line) => line.slice(1)),
+  )
+  /* `build` is mostly `npm run <other>`, so the script names have to be
+     followed before any file path shows up. */
+  const scripts = readJson('package.json').scripts
+  const entries = []
+  const visitedScripts = new Set()
+  const scriptQueue = ['build']
+  while (scriptQueue.length > 0) {
+    const name = scriptQueue.shift()
+    if (visitedScripts.has(name) || scripts[name] === undefined) continue
+    visitedScripts.add(name)
+    const body = scripts[name]
+    entries.push(...[...body.matchAll(/scripts\/[A-Za-z0-9._-]+\.mjs/g)].map((match) => match[0]))
+    scriptQueue.push(...[...body.matchAll(/npm run (?:--silent )?([A-Za-z0-9:_-]+)/g)].map((match) => match[1]))
+  }
+
+  const errors = []
+  const seen = new Set()
+  const queue = [...new Set(entries)]
+  while (queue.length > 0) {
+    const path = queue.shift()
+    if (seen.has(path)) continue
+    seen.add(path)
+    if (!allowed.has(path)) {
+      errors.push(`${path} is reachable from npm run build but .dockerignore does not let it into the image`)
+      continue
+    }
+    let source
+    try {
+      source = readFileSync(path, 'utf8')
+    } catch {
+      errors.push(`${path} is reachable from npm run build but does not exist`)
+      continue
+    }
+    for (const match of source.matchAll(/from '(\.\/[A-Za-z0-9._-]+\.mjs)'/g)) {
+      queue.push(`scripts/${match[1].slice(2)}`)
+    }
+  }
+
+  if (errors.length > 0) fail(`Docker build inputs:\n  - ${errors.join('\n  - ')}`)
+  return result('docker-build-inputs', 'pass', `${seen.size} build scripts are all copied into the image`)
+}
+
 async function fetchText(url) {
   let lastError
   for (let attempt = 1; attempt <= 3; attempt += 1) {
@@ -293,9 +353,10 @@ function renderMarkdown(version, results) {
 }
 
 const { version } = validateMetadata()
+const dockerInputs = checkDockerBuildInputs()
 const results = LIVE
-  ? await runLiveChecks(version)
-  : [result('Distribution metadata', 'pass', `all manifests match version ${version}`)]
+  ? [dockerInputs, ...(await runLiveChecks(version))]
+  : [result('Distribution metadata', 'pass', `all manifests match version ${version}`), dockerInputs]
 const report = {
   checkedAt: new Date().toISOString(),
   expectedVersion: version,
