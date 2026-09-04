@@ -194,40 +194,75 @@ type DirectBlock = {
 
 /* Independent float-free recomputation straight from Portal rows: integer
    satoshis per value via toFixed(8), so a drift in the helper would show. */
+/* Paging the reference means several requests in a row, and Portal answers an
+   overloaded moment with 429, 502, 503 or 529. Backing off is the difference
+   between a busy minute and a failed release gate. */
+const OVERLOADED = new Set([429, 502, 503, 529])
+
+async function directStreamRequest(fromBlock: number, toBlock: number): Promise<Response> {
+  let lastStatus = 0
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, 1_000 * 2 ** (attempt - 1)))
+    const response = await fetch('https://portal.sqd.dev/datasets/bitcoin-mainnet/stream', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        type: 'bitcoin',
+        fromBlock,
+        toBlock,
+        includeAllBlocks: true,
+        fields: {
+          block: { number: true, timestamp: true },
+          input: { prevoutValue: true, transactionIndex: true },
+          output: { value: true, transactionIndex: true },
+        },
+        inputs: [{}],
+        outputs: [{}],
+      }),
+    })
+    if (response.ok) return response
+    lastStatus = response.status
+    if (!OVERLOADED.has(response.status)) break
+  }
+  assert(false, `direct Portal stream failed: HTTP ${lastStatus}`)
+  throw new Error('unreachable')
+}
+
+/*
+ * The independent recomputation this whole gate rests on. Portal answers a
+ * stream request with as much as it is willing to send in one response and
+ * expects the caller to come back for the rest; a single request over twelve
+ * Bitcoin blocks with every input and output returned one block. Reading only
+ * that first response made the reference smaller than the answer it was
+ * checking, which the gate then read as the tool over-counting.
+ */
 async function directFeeSats(
   fromBlock: number,
   toBlock: number,
 ): Promise<{ sats: bigint; blocks: number; transactions: number }> {
-  const response = await fetch('https://portal.sqd.dev/datasets/bitcoin-mainnet/stream', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({
-      type: 'bitcoin',
-      fromBlock,
-      toBlock,
-      includeAllBlocks: true,
-      fields: {
-        block: { number: true, timestamp: true },
-        input: { prevoutValue: true, transactionIndex: true },
-        output: { value: true, transactionIndex: true },
-      },
-      inputs: [{}],
-      outputs: [{}],
-    }),
-  })
-  assert(response.ok, `direct Portal stream failed: HTTP ${response.status}`)
-  const lines = (await response.text()).split('\n').filter((line) => line.trim().length > 0)
   let sats = 0n
   let transactions = 0
   const seen = new Set<number>()
-  for (const line of lines) {
-    const block = JSON.parse(line) as DirectBlock
-    seen.add(block.header.number)
-    const toSats = (value: number) => BigInt(value.toFixed(8).replace('.', ''))
-    for (const input of block.inputs)
-      if (input.transactionIndex !== 0 && input.prevoutValue !== null) sats += toSats(input.prevoutValue)
-    for (const output of block.outputs) if (output.transactionIndex !== 0) sats -= toSats(output.value)
-    transactions += new Set(block.outputs.map((output) => output.transactionIndex).filter((index) => index !== 0)).size
+  let nextBlock = fromBlock
+  for (let request = 0; nextBlock <= toBlock; request += 1) {
+    assert(request < 200, `direct Portal stream did not reach block ${toBlock} in 200 requests`)
+    const response = await directStreamRequest(nextBlock, toBlock)
+    const lines = (await response.text()).split('\n').filter((line) => line.trim().length > 0)
+    assert(lines.length > 0, `direct Portal stream returned nothing for blocks ${nextBlock}-${toBlock}`)
+    let highest = nextBlock - 1
+    for (const line of lines) {
+      const block = JSON.parse(line) as DirectBlock
+      seen.add(block.header.number)
+      highest = Math.max(highest, block.header.number)
+      const toSats = (value: number) => BigInt(value.toFixed(8).replace('.', ''))
+      for (const input of block.inputs)
+        if (input.transactionIndex !== 0 && input.prevoutValue !== null) sats += toSats(input.prevoutValue)
+      for (const output of block.outputs) if (output.transactionIndex !== 0) sats -= toSats(output.value)
+      transactions += new Set(block.outputs.map((output) => output.transactionIndex).filter((index) => index !== 0))
+        .size
+    }
+    assert(highest >= nextBlock, `direct Portal stream made no progress past block ${nextBlock}`)
+    nextBlock = highest + 1
   }
   return { sats, blocks: seen.size, transactions }
 }
@@ -376,7 +411,7 @@ async function assertLiveParity(): Promise<'pass' | 'bounded'> {
     const inWindowSats = rows.reduce((sum, row) => sum + BigInt(row.value_sats), 0n)
     assert(
       seriesDirect.sats >= inWindowSats,
-      'direct rows for the scanned range must contain at least the bucketed fees (blocks before the series start are not bucketed)',
+      `direct rows for the scanned range must contain at least the bucketed fees (blocks before the series start are not bucketed): direct ${seriesDirect.sats} sats over ${seriesDirect.blocks} blocks ${summary.from_block}-${summary.to_block}, buckets ${inWindowSats} sats over ${rows.reduce((sum: number, row: Record<string, any>) => sum + Number(row.blocks_in_bucket), 0)} blocks, scanned_blocks ${summary.scanned_blocks}`,
     )
     console.log(
       `PASS  live fees_btc buckets reconcile to the exact window total (${summary.total_fees_btc} BTC over ${summary.scanned_blocks} blocks)`,
