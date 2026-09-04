@@ -569,6 +569,10 @@ export function registerGetErc20TransfersTool(server: McpServer) {
         // The forward scan emits no cursor, so claiming one would point a
         // client at a continuation that does not exist.
         ...(scanResult ? { continuation: 'none' as const } : {}),
+        /* It also stops as soon as the page is full, so it routinely leaves
+           the rest of the window unread. window_complete defaults to true,
+           which reported those unread blocks as analysed. */
+        ...(scanResult ? { windowComplete: !scanResult.hasUnscannedBlocks } : {}),
       })
 
       const presentation = buildTransferPresentation(enrichedTransfers as Erc20TransferItem[], nextCursor)

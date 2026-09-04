@@ -339,6 +339,11 @@ export function registerContractDeploymentTool(server: McpServer) {
         items,
         hasMore: scanHasMore,
         getBlockNumber,
+        /* The scan stops at maxScanBlocks, so the window it covered is often
+           smaller than the window that was asked for. buildQueryCoverage
+           defaults window_complete to true, which had this tool reporting a
+           capped search as an analysis of the whole range. */
+        windowComplete: !scanResult.hasUnscannedBlocks,
       })
 
       const execution = {
