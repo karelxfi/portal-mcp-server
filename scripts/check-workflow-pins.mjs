@@ -148,13 +148,50 @@ function selfTest() {
   return { failures, checked: passing.length + failing.length }
 }
 
+/*
+ * The Explorer layout baseline measures text boxes to the pixel, so it is only
+ * meaningful when it is recorded and checked in one environment. That
+ * environment is the pinned Playwright image, named in two places: the
+ * `container:` of the offline job and the `baseline:app-ui:ci` script that
+ * records the numbers. Renovate bumping the playwright dependency without
+ * both tags would silently re-font the comparison and produce a gate that
+ * cannot pass, which is how the mismatch was found in the first place.
+ */
+function checkPlaywrightImagePins() {
+  const errors = []
+  const lockfile = JSON.parse(readFileSync(path.resolve('package-lock.json'), 'utf8'))
+  const locked = lockfile.packages?.['node_modules/playwright']?.version
+  if (!locked) return ['package-lock.json does not pin a playwright version']
+
+  const expected = `mcr.microsoft.com/playwright:v${locked}-noble`
+  const sources = {
+    '.github/workflows/ci.yml': readFileSync(path.resolve('.github/workflows/ci.yml'), 'utf8'),
+    'package.json': readFileSync(path.resolve('package.json'), 'utf8'),
+  }
+  for (const [file, text] of Object.entries(sources)) {
+    const found = [...text.matchAll(/mcr\.microsoft\.com\/playwright:[^\s"\\]+/g)].map((match) => match[0])
+    if (found.length === 0) {
+      errors.push(`${file} no longer names the Playwright image; the layout baseline needs one environment`)
+      continue
+    }
+    for (const image of found) {
+      if (image !== expected) {
+        errors.push(
+          `${file} uses ${image} but package-lock.json pins playwright ${locked}, so it should be ${expected}`,
+        )
+      }
+    }
+  }
+  return errors
+}
+
 const { failures, checked } = selfTest()
 if (failures.length > 0) {
   for (const failure of failures) console.error(`FAIL  self-test: ${failure}`)
   process.exit(1)
 }
 
-const errors = checkWorkflows(path.resolve('.github/workflows'))
+const errors = [...checkWorkflows(path.resolve('.github/workflows')), ...checkPlaywrightImagePins()]
 if (errors.length > 0) {
   for (const error of errors) console.error(`FAIL  ${error}`)
   process.exit(1)
