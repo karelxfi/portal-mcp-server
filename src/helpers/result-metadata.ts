@@ -109,6 +109,8 @@ export interface SectionCoverage {
   window_from_block: number
   window_to_block: number
   sections: Record<string, { returned: number; has_more: boolean }>
+  /** Present only when a section was asked for and never came back. */
+  failed_sections?: string[]
 }
 
 export interface BucketGapDiagnosticItem {
@@ -356,15 +358,29 @@ export function buildSectionCoverage(params: {
   hasMore: boolean
   sections: Record<string, { returned: number; has_more: boolean }>
   windowComplete?: boolean
+  /** Sections that were asked for and never came back. */
+  failedSections?: string[]
 }): SectionCoverage {
+  /* result_complete used to be `!hasMore` alone. A wallet summary whose
+     transactions section failed upstream still had nothing more to page, so it
+     reported result_complete: true beside its own completeness object saying
+     result_complete: false with failed_sections: ["transactions"]. The server's
+     instructions tell clients to check _coverage before claiming completeness,
+     so the field they were told to trust was the one that was wrong: a caller
+     obeying it concluded it had a complete view of a wallet whose transactions
+     were never fetched. A section that never arrived is missing data, whatever
+     the pager says. */
+  const failedSections = Array.from(new Set(params.failedSections ?? []))
+  const windowComplete = params.windowComplete ?? true
   return {
     kind: 'section_window',
-    window_complete: params.windowComplete ?? true,
-    result_complete: !params.hasMore,
+    window_complete: windowComplete,
+    result_complete: !params.hasMore && windowComplete && failedSections.length === 0,
     continuation: params.hasMore ? 'cursor' : 'none',
     window_from_block: params.windowFromBlock,
     window_to_block: params.windowToBlock,
     sections: params.sections,
+    ...(failedSections.length > 0 ? { failed_sections: failedSections } : {}),
   }
 }
 

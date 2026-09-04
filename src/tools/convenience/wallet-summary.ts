@@ -2297,6 +2297,7 @@ export function registerGetWalletSummaryTool(server: McpServer) {
           windowToBlock,
           hasMore,
           windowComplete: walletWindowComplete,
+          failedSections: sectionFailures.map((failure) => failure.key),
           sections: {
             transactions: buildSectionPagination(transactions.length, txHasMore),
             ...(include_tokens ? { token_transfers: buildSectionPagination(tokenTransfers.length, tokenHasMore) } : {}),

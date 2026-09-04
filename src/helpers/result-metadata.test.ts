@@ -7,6 +7,7 @@ import {
   buildBucketCoverage,
   buildBucketGapDiagnostics,
   buildQueryCoverage,
+  buildSectionCoverage,
 } from './result-metadata.js'
 
 describe('buildQueryCoverage', () => {
@@ -153,5 +154,50 @@ describe('bucket coverage and gap diagnostics', () => {
     assert.equal(partial.coverage_gap_likely_bucket_count, 1)
     assert.equal(partial.no_activity_bucket_count, 1)
     assert.equal(partial.empty_buckets.find((bucket) => bucket.bucket_index === 3)?.gap_kind, 'coverage_gap_likely')
+  })
+})
+
+/*
+ * A release audit found a wallet summary reporting `_coverage.result_complete:
+ * true` beside its own `completeness` object saying false with
+ * `failed_sections: ["transactions"]`. The server tells clients to check
+ * `_coverage` before claiming completeness, so the field they were told to
+ * trust was the one that was wrong.
+ */
+describe('section coverage never claims complete over missing data', () => {
+  const base = {
+    windowFromBlock: 100,
+    windowToBlock: 200,
+    hasMore: false,
+    sections: { transactions: { returned: 0, has_more: false } },
+  }
+
+  it('is complete when the window was covered and nothing failed', () => {
+    const coverage = buildSectionCoverage({ ...base, windowComplete: true })
+    assert.equal(coverage.result_complete, true)
+    assert.equal(coverage.failed_sections, undefined)
+  })
+
+  it('is not complete when a section was asked for and never came back', () => {
+    const coverage = buildSectionCoverage({ ...base, windowComplete: true, failedSections: ['transactions'] })
+    assert.equal(coverage.result_complete, false)
+    assert.deepEqual(coverage.failed_sections, ['transactions'])
+  })
+
+  it('is not complete when the window itself was not covered', () => {
+    assert.equal(buildSectionCoverage({ ...base, windowComplete: false }).result_complete, false)
+  })
+
+  it('is not complete when there is another page', () => {
+    assert.equal(buildSectionCoverage({ ...base, hasMore: true, windowComplete: true }).result_complete, false)
+  })
+
+  it('does not report the same failed section twice', () => {
+    const coverage = buildSectionCoverage({
+      ...base,
+      windowComplete: true,
+      failedSections: ['transactions', 'transactions', 'token_transfers'],
+    })
+    assert.deepEqual(coverage.failed_sections, ['transactions', 'token_transfers'])
   })
 })
