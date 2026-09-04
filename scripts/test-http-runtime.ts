@@ -186,6 +186,13 @@ async function assertPublicHttpSurface() {
     typeof healthPayload.commit === 'string' && /^(unknown|[0-9a-f]{7,40})$/.test(healthPayload.commit),
     '/health must name the exact commit the server was built from, or unknown outside an image build',
   )
+  /* The Explorer's rollback plan says an operator restarts the process and
+     reads this field to see whether the flip took. This run sets nothing, so
+     the field has to be there and has to say off. */
+  assert(
+    healthPayload.app?.enabled === false && healthPayload.app?.stage === 'beta',
+    `/health must report the deployment's Explorer setting, got ${JSON.stringify(healthPayload.app)}`,
+  )
 
   const tools = await fetch(`${BASE_URL}/tools`)
   assert(tools.status === 404, `Retired duplicate /tools endpoint should return 404, got ${tools.status}`)
