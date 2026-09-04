@@ -1,5 +1,6 @@
 import { DEFAULT_RETRIES, DEFAULT_TIMEOUT, STREAM_TIMEOUT } from '../constants/index.js'
 import { portalRequestsTotal } from '../metrics.js'
+import { type UpstreamSpan, startUpstreamSpan } from '../tracing.js'
 import { portalAdmission } from './admission.js'
 import { ActionableError, RequestCancelledError, createTimeoutError, parsePortalError, wrapError } from './errors.js'
 import { applyGuardrail } from './guardrails.js'
@@ -232,15 +233,20 @@ export async function portalFetch<T>(
     if (attemptTimeout <= 0) break
     const abortContext = createRequestAbortContext(attemptTimeout)
     let releaseAdmission: (() => void) | undefined
+    let upstream: UpstreamSpan | undefined
 
     try {
       releaseAdmission = await portalAdmission.acquire(abortContext.signal)
+      upstream = startUpstreamSpan({ method, url, attempt })
       const fetchOptions: RequestInit = {
         method,
         headers: {
           'Accept-Encoding': 'gzip',
           'Content-Type': 'application/json',
           Accept: 'application/json',
+          /* Nothing when tracing is off, and a W3C traceparent when it is on,
+             so a Portal-side trace can join this one. */
+          ...upstream.headers(),
         },
         signal: abortContext.signal,
       }
@@ -251,6 +257,12 @@ export async function portalFetch<T>(
 
       const response = await fetch(url, fetchOptions)
 
+      upstream.setAttribute('http.response.status_code', response.status)
+      /* This path parses JSON rather than counting bytes, so the declared
+         length is the only size there is. Absent it, say nothing: `Number(null)`
+         is 0, and a reported zero would be a claim rather than a gap. */
+      const declaredBytes = Number(response.headers.get('content-length') ?? Number.NaN)
+      if (Number.isFinite(declaredBytes)) upstream.setAttribute('mcp.upstream.bytes', declaredBytes)
       portalRequestsTotal.inc({ method, status_code: response.status })
 
       // Handle specific status codes
@@ -302,6 +314,9 @@ export async function portalFetch<T>(
       if (!(await waitForRetry(attempt, retries, retryStartedAt, retryDelay ?? computeRetryDelayMs(attempt)))) break
     } finally {
       releaseAdmission?.()
+      /* Closed here rather than after the fetch, so the span covers reading
+         the body as well: on a streaming read that is nearly all of it. */
+      upstream?.end()
       abortContext.cleanup()
     }
   }
@@ -337,20 +352,26 @@ export async function portalFetchStream(
     if (attemptTimeout <= 0) break
     const abortContext = createRequestAbortContext(attemptTimeout)
     let releaseAdmission: (() => void) | undefined
+    let upstream: UpstreamSpan | undefined
 
     try {
       releaseAdmission = await portalAdmission.acquire(abortContext.signal)
+      upstream = startUpstreamSpan({ method: 'POST', url, attempt })
       const response = await fetch(url, {
         method: 'POST',
         headers: {
           'Accept-Encoding': 'gzip',
           'Content-Type': 'application/json',
           Accept: 'application/x-ndjson',
+          /* Nothing when tracing is off, and a W3C traceparent when it is on,
+             so a Portal-side trace can join this one. */
+          ...upstream.headers(),
         },
         body: JSON.stringify(body),
         signal: abortContext.signal,
       })
 
+      upstream.setAttribute('http.response.status_code', response.status)
       portalRequestsTotal.inc({ method: 'POST', status_code: response.status })
 
       if (response.status === 204) {
@@ -473,6 +494,8 @@ export async function portalFetchStream(
           }
         }
       } finally {
+        /* Once, on the way out, rather than on every chunk. */
+        upstream?.setAttribute('mcp.upstream.bytes', totalBytes)
         reader.releaseLock()
       }
 
@@ -490,6 +513,9 @@ export async function portalFetchStream(
         break
     } finally {
       releaseAdmission?.()
+      /* Closed here rather than after the fetch, so the span covers reading
+         the body as well: on a streaming read that is nearly all of it. */
+      upstream?.end()
       abortContext.cleanup()
     }
   } // end for loop
@@ -518,20 +544,26 @@ export async function portalFetchStreamVisit(
     if (attemptTimeout <= 0) break
     const abortContext = createRequestAbortContext(attemptTimeout)
     let releaseAdmission: (() => void) | undefined
+    let upstream: UpstreamSpan | undefined
 
     try {
       releaseAdmission = await portalAdmission.acquire(abortContext.signal)
+      upstream = startUpstreamSpan({ method: 'POST', url, attempt })
       const response = await fetch(url, {
         method: 'POST',
         headers: {
           'Accept-Encoding': 'gzip',
           'Content-Type': 'application/json',
           Accept: 'application/x-ndjson',
+          /* Nothing when tracing is off, and a W3C traceparent when it is on,
+             so a Portal-side trace can join this one. */
+          ...upstream.headers(),
         },
         body: JSON.stringify(body),
         signal: abortContext.signal,
       })
 
+      upstream.setAttribute('http.response.status_code', response.status)
       portalRequestsTotal.inc({ method: 'POST', status_code: response.status })
 
       if (response.status === 204) {
@@ -653,6 +685,8 @@ export async function portalFetchStreamVisit(
           await options.onRecord(parsed)
         }
       } finally {
+        /* Once, on the way out, rather than on every chunk. */
+        upstream?.setAttribute('mcp.upstream.bytes', totalBytes)
         reader.releaseLock()
       }
 
@@ -677,6 +711,9 @@ export async function portalFetchStreamVisit(
         break
     } finally {
       releaseAdmission?.()
+      /* Closed here rather than after the fetch, so the span covers reading
+         the body as well: on a streaming read that is nearly all of it. */
+      upstream?.end()
       abortContext.cleanup()
     }
   }

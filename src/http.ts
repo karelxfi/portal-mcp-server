@@ -20,6 +20,7 @@ import { type RuntimeRequestContext, getObservabilityStatus } from './observabil
 import { createReadinessTracker } from './readiness.js'
 import { createPortalServer } from './server.js'
 import { requestedToolsetsFromRequest } from './toolsets.js'
+import { recordRequestSpan, startTracing, stopTracing, tracingStatus } from './tracing.js'
 import { gitCommit, npmVersion } from './version.js'
 
 // ============================================================================
@@ -43,6 +44,10 @@ const TRUSTED_PROXY_PREFIXES = parseTrustedProxyPrefixes(process.env.MCP_TRUSTED
 // Internal header carrying the hashed connection key from the Node layer to the
 // MCP handler; any client-supplied value is overwritten.
 const CONNECTION_KEY_HEADER = 'x-sqd-connection-key'
+
+/* Nothing is imported, allocated, or sent unless OTEL_EXPORTER_OTLP_ENDPOINT
+   is set; see src/tracing.ts. Awaited here so the first request is traced. */
+await startTracing({ serviceName: 'sqd-portal-mcp-server', serviceVersion: npmVersion })
 
 const guardPolicy = resolveRequestGuardPolicy(process.env)
 for (const warning of guardPolicy.warnings) {
@@ -152,6 +157,7 @@ const server = createServer(
         version: npmVersion,
         commit: gitCommit,
         observability: getObservabilityStatus(),
+        tracing: tracingStatus(),
       })
       return
     }
@@ -220,7 +226,18 @@ const server = createServer(
         )
         return
       }
-      await handleMcpRequest(req, res)
+      /* One span per MCP request, parented to the caller's own trace when the
+         header carries one. Tool spans hang off it, so a batched request is a
+         single tree rather than a handful of unrelated roots. */
+      await recordRequestSpan(
+        {
+          method: req.method ?? 'POST',
+          transport: 'http',
+          traceparent: readHeader(req, 'traceparent'),
+          tracestate: readHeader(req, 'tracestate'),
+        },
+        () => handleMcpRequest(req, res),
+      )
       return
     }
 
@@ -244,6 +261,7 @@ async function shutdown() {
   console.log('Shutting down...')
   readiness.stop()
   await mcpHandler.close()
+  await stopTracing()
   server.close(() => process.exit(0))
 }
 

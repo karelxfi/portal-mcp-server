@@ -17,6 +17,7 @@ import {
   toolOutcomesTotal,
   toolResponseSizeBytes,
 } from './metrics.js'
+import { currentTraceIds } from './tracing.js'
 import { npmVersion } from './version.js'
 
 export type TransportKind = 'stdio' | 'http'
@@ -45,6 +46,10 @@ type ObservabilityEvent = {
   timestamp: string
   invocation_id: string
   request_id?: string
+  /* Present only while tracing is on, so a log line and its span can be
+     looked up from each other. Both are random ids, never caller input. */
+  trace_id?: string
+  span_id?: string
   transport: TransportKind
   protocol_version?: string
   server_version: string
@@ -325,6 +330,7 @@ export function recordSlowToolCall(params: {
       timestamp: new Date().toISOString(),
       invocation_id: params.invocationId,
       ...(params.runtime.requestId ? { request_id: params.runtime.requestId } : {}),
+      ...currentTraceIds(),
       tool: params.toolName,
       transport: params.runtime.transport,
       client_family: client.family,
@@ -618,6 +624,7 @@ export function recordToolOutcome(params: {
     timestamp: new Date().toISOString(),
     invocation_id: invocationId,
     ...(runtime.requestId ? { request_id: runtime.requestId } : {}),
+    ...currentTraceIds(),
     transport: runtime.transport,
     ...(runtime.protocolVersion ? { protocol_version: runtime.protocolVersion } : {}),
     server_version: npmVersion,

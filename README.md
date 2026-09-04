@@ -302,6 +302,59 @@ requests the ceiling would have cut. If that set is larger than you expected, th
 ceiling is wrong, not the traffic. Move to `enforce` once it is the size you
 intended.
 
+### Traces
+
+Metrics say how often and how long; a trace says where the time went inside one
+call. Traces are off unless you set `OTEL_EXPORTER_OTLP_ENDPOINT`. With it unset
+nothing here is imported, allocated, or sent, and the OpenTelemetry packages need
+not be installed at all.
+
+The SDK is not a dependency of this package. It and its exporter pull about 74
+packages against a published tarball of roughly 3.4MB, and almost nobody running
+this over stdio wants any of it, so they are declared as optional peers. To turn
+traces on, install them alongside the server and point it at your collector:
+
+```bash
+npm i @opentelemetry/sdk-node @opentelemetry/exporter-trace-otlp-http
+```
+
+```bash
+OTEL_EXPORTER_OTLP_ENDPOINT=http://collector:4318
+```
+
+One tool call is one tree:
+
+```
+mcp.request                       (HTTP only: method, transport)
+└─ tools/call portal_evm_query_logs
+   ├─ mcp.admission               (the wait for a slot)
+   ├─ portal.fetch                (one per attempt: dataset, status, bytes, resend count)
+   ├─ portal.fetch
+   └─ mcp.format_result           (hashing the answer for the evidence receipt)
+```
+
+`OTEL_*` variables are read by the OpenTelemetry SDK itself, so sampling,
+headers, batching, and protocol are configured the standard way. The rest:
+
+- A `traceparent` on the HTTP request, or in the tool call's `_meta`, makes the
+  call part of the caller's trace rather than starting a new one. The `_meta`
+  value wins, because it is the more specific claim about which turn this call
+  belongs to.
+- Each Portal request carries a `traceparent` naming its own fetch span, so a
+  Portal-side trace can join this one. Nothing is added when tracing is off.
+- The JSON log lines carry `trace_id` and `span_id` while tracing is on, so a log
+  event and its span can be looked up from each other.
+- `/health` reports whether tracing is configured, whether it started, and whether
+  argument capture is on.
+
+**Span attributes carry no arguments, addresses, hashes, cursors, or free text.**
+They are the tool name, its work class, the dataset, bounded counts, and a bounded
+outcome. A span leaves the process for a collector the query itself never reaches,
+so the rule is the one the metric labels follow, and stricter than the logs, which
+at least stay on your own stderr. `MCP_OTEL_INCLUDE_ARGS=1` adds the raw tool
+arguments to the tool span. It is off by default and **unsafe for production**: a
+tool argument is routinely a wallet address, and often a user's own words.
+
 ## Tests
 
 The [release-assurance contract](RELEASE_ASSURANCE.md) defines the complete v0.8.2 baseline and every gate added since, through v0.8.5. “100%” refers to every applicable cell in the declared matrix, not a claim that upstream networks can never fail.

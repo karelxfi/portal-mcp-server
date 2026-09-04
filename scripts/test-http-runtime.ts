@@ -23,6 +23,7 @@ let peakAppIsolationStreams = 0
 let catalogAvailable = false
 let catalogRequests = 0
 let probeRequests = 0
+const upstreamTraceparents: string[] = []
 const stderrChunks: string[] = []
 
 function assert(condition: boolean, message: string) {
@@ -80,6 +81,8 @@ async function startPortalFixture() {
       return
     }
     if (req.url === '/datasets/base-mainnet/head') {
+      const traceparent = req.headers.traceparent
+      if (typeof traceparent === 'string') upstreamTraceparents.push(traceparent)
       res.writeHead(200, { 'Content-Type': 'application/json' })
       res.end(JSON.stringify({ number: 1_000, hash: `0x${'1'.repeat(64)}` }))
       return
@@ -641,6 +644,149 @@ async function assertPublicBindWarning() {
   )
 }
 
+/*
+ * SDKTL-648. Two halves of the same claim: with no collector configured the
+ * server must not have loaded, started, or reached anything, and with one
+ * configured a tool call must arrive as a tree whose ids reach Portal.
+ */
+function assertTracingOffByDefault(health: Record<string, any>) {
+  assert(
+    health.tracing?.configured === false && health.tracing?.active === false,
+    `/health should report tracing off with no endpoint set, got ${JSON.stringify(health.tracing)}`,
+  )
+  assert(health.tracing?.include_arguments === false, 'argument capture must be off unless asked for')
+  const stderrText = stderrChunks.join('')
+  assert(!stderrText.includes('[mcp:tracing]'), 'an unconfigured server should say nothing about tracing')
+  const toolLines = stderrText.split('\n').filter((line) => line.includes('"event":"mcp_tool_call"'))
+  assert(toolLines.length > 0, 'the run should have logged at least one tool call to check')
+  assert(
+    toolLines.every((line) => !line.includes('"trace_id"') && !line.includes('"span_id"')),
+    'log lines should carry no trace ids when nothing is tracing',
+  )
+  assert(upstreamTraceparents.length === 0, 'an untraced server must not add a traceparent to a Portal request')
+}
+
+type OtlpSpan = {
+  name: string
+  traceId: string
+  spanId: string
+  parentSpanId?: string
+  attributes?: { key: string; value: Record<string, unknown> }[]
+}
+
+async function assertTracingPropagation() {
+  const spans: OtlpSpan[] = []
+  const collector = createServer((req, res) => {
+    const chunks: Buffer[] = []
+    req.on('data', (chunk) => chunks.push(chunk as Buffer))
+    req.on('end', () => {
+      try {
+        const payload = JSON.parse(Buffer.concat(chunks).toString('utf8'))
+        for (const resourceSpan of payload.resourceSpans ?? []) {
+          for (const scopeSpan of resourceSpan.scopeSpans ?? []) {
+            spans.push(...(scopeSpan.spans ?? []))
+          }
+        }
+      } catch {
+        // a body this test cannot read is a failed assertion below, not a crash
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json' })
+      res.end('{}')
+    })
+  })
+  await new Promise<void>((resolve) => collector.listen(0, '127.0.0.1', resolve))
+  const collectorPort = (collector.address() as { port: number }).port
+  const port = 3199
+  const before = upstreamTraceparents.length
+  const traced = spawn('node', ['dist/http.js'], {
+    cwd: process.cwd(),
+    env: {
+      ...process.env,
+      PORT: String(port),
+      PORTAL_URL: portalFixtureUrl,
+      OTEL_EXPORTER_OTLP_ENDPOINT: `http://127.0.0.1:${collectorPort}`,
+      /* Flush fast enough that the test does not wait five seconds for a batch. */
+      OTEL_BSP_SCHEDULE_DELAY: '100',
+      OTEL_RESOURCE_DETECTORS: 'none',
+    },
+    stdio: ['pipe', 'pipe', 'pipe'],
+  })
+  let stderr = ''
+  traced.stderr.on('data', (chunk) => {
+    stderr += chunk.toString()
+  })
+  const traceId = '4bf92f3577b34da6a3ce929d0e0e4736'
+  try {
+    const deadline = Date.now() + 15_000
+    let ready = false
+    while (Date.now() < deadline && !ready) {
+      try {
+        ready = (await fetch(`http://127.0.0.1:${port}/health`)).ok
+      } catch {
+        await sleep(100)
+      }
+    }
+    assert(ready, `the traced server should start; stderr: ${stderr.slice(0, 400)}`)
+    const health = (await (await fetch(`http://127.0.0.1:${port}/health`)).json()) as Record<string, any>
+    assert(
+      health.tracing?.configured === true && health.tracing?.active === true,
+      `/health should report tracing active, got ${JSON.stringify(health.tracing)}`,
+    )
+
+    const client = new Client({ name: 'trace-probe', version: '1.0.0' })
+    await client.connect(
+      new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${port}/mcp`), {
+        requestInit: { headers: { traceparent: `00-${traceId}-00f067aa0ba902b7-01` } },
+      }),
+    )
+    try {
+      const result = await client.callTool({ name: 'portal_get_head', arguments: { network: 'base-mainnet' } })
+      assert(!result.isError, `the traced tool call should succeed: ${JSON.stringify(result).slice(0, 600)}`)
+    } finally {
+      await client.close()
+    }
+
+    const spanDeadline = Date.now() + 10_000
+    while (Date.now() < spanDeadline && !spans.some((span) => span.name === 'tools/call portal_get_head')) {
+      await sleep(150)
+    }
+  } finally {
+    traced.kill()
+    await new Promise<void>((resolve) => collector.close(() => resolve()))
+  }
+
+  const names = spans.map((span) => span.name)
+  const tool = spans.find((span) => span.name === 'tools/call portal_get_head')
+  assert(Boolean(tool), `the collector should receive a tool span, got [${names.join(', ')}]`)
+  /* Every POST in the session is its own request span, so the one that matters
+     is the parent of the tool call rather than the first that arrived. */
+  const request = spans.find((span) => span.name === 'mcp.request' && span.spanId === tool?.parentSpanId)
+  assert(Boolean(request), `the tool span should hang off its own request span, got [${names.join(', ')}]`)
+  /* The readiness prober also fetches from Portal, on no tool call and so in
+     its own trace; the one this asserts on is the child of the tool span. */
+  const fetchSpan = spans.find((span) => span.name === 'portal.fetch' && span.parentSpanId === tool?.spanId)
+  assert(Boolean(fetchSpan), `the tool call's own Portal fetch should be a child span, got [${names.join(', ')}]`)
+  assert(
+    request?.traceId === traceId && tool?.traceId === traceId && fetchSpan?.traceId === traceId,
+    `the caller traceparent should be joined, got ${request?.traceId} and ${tool?.traceId}`,
+  )
+
+  const rendered = JSON.stringify(spans.flatMap((span) => span.attributes ?? []))
+  assert(!/0x[0-9a-fA-F]{40}/.test(rendered), 'no span attribute may carry an address')
+  assert(!/"mcp\.tool\.arguments"/.test(rendered), 'arguments must stay off by default')
+  assert(
+    rendered.includes('"gen_ai.tool.name"') && rendered.includes('portal_get_head'),
+    'the tool span should carry the attribute collectors group on',
+  )
+
+  const forwarded = upstreamTraceparents.slice(before)
+  assert(forwarded.length > 0, 'a traced Portal request should carry a traceparent')
+  assert(
+    forwarded.every((value) => value.includes(traceId)),
+    `the Portal request should carry this trace, got ${forwarded.join(', ')}`,
+  )
+}
+
 async function main() {
   console.log('Starting HTTP runtime QA...\n')
 
@@ -782,6 +928,8 @@ async function main() {
   )
   assertUserContentNotCaptured()
   await assertDashboardMetricNames(metricsText)
+  assertTracingOffByDefault((await (await fetch(`${BASE_URL}/health`)).json()) as Record<string, any>)
+  await assertTracingPropagation()
 
   console.log('PASS  /health and MCP remain public with no client credential setup')
   console.log('PASS  MCP 2026-07-28 negotiates and calls tools over stateless HTTP')
@@ -798,6 +946,8 @@ async function main() {
   console.log('PASS  binding 0.0.0.0 without an allowlist logs a startup error; loopback needs no configuration')
   console.log('PASS  ?toolsets= and X-MCP-Toolsets narrow a connection and never widen the deployment set')
   console.log('PASS  slow tool calls log bounded phase timings; per-family admission gauge returns to zero')
+  console.log('PASS  no collector configured means no trace ids, no traceparent to Portal, and nothing loaded')
+  console.log('PASS  a configured collector receives one tree per call, joins the caller trace, and reaches Portal')
   console.log('\nHTTP runtime QA passed')
 }
 

@@ -13,6 +13,7 @@
       "!src/generated/**",
       "!src/app-ui/fixtures.recorded.ts",
       "!src/app-ui/chains.generated.ts",
+      "!scripts/app-ui-baselines/**",
       "!dist/**",
       "!output/**",
       "!artifacts/**",

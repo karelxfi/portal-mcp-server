@@ -38,6 +38,7 @@ import {
   runWithToolSelection,
   toolsetOf,
 } from './toolsets.js'
+import { recordChildSpan, recordToolSpan } from './tracing.js'
 import { npmVersion } from './version.js'
 
 // ============================================================================
@@ -180,6 +181,11 @@ function buildPortalServer(runtimeContext: RuntimeRequestContext, appEnabled: bo
           typeof declaredClient?.version === 'string' ? declaredClient.version : runtimeContext.clientVersion,
         protocolVersion: server.server.getNegotiatedProtocolVersion(),
       }
+      /* A host that traces its own turn puts W3C trace context in the tool
+         call `_meta`; over HTTP the request span has already picked it up from
+         the header, and this overrides it when the client is more specific. */
+      const metaTraceparent = typeof envelope?.traceparent === 'string' ? envelope.traceparent : undefined
+      const metaTracestate = typeof envelope?.tracestate === 'string' ? envelope.tracestate : undefined
       const uiCapability = classifyUiCapability(envelope, server.server.getClientCapabilities())
       const clientFamily = classifyClientFamily(effectiveRuntime.clientName)
       /* stdio has exactly one caller, so it is counted but never share-limited;
@@ -204,81 +210,106 @@ function buildPortalServer(runtimeContext: RuntimeRequestContext, appEnabled: bo
           invocationId,
         })
 
-      try {
-        const lease = await toolAdmission.acquire(
-          getToolWorkProfile(toolName),
-          runtimeContext.transport,
-          requestSignal,
-          caller,
-        )
-        admissionWaitMs = lease.waitMs
-        releaseAdmission = lease.release
-        admitted = true
-        toolCallsActive.inc({ tool: toolName, transport: runtimeContext.transport })
-        /* Handlers run outside the factory's scope, so the connection's app
-           choice is re-entered here for the result formatters. */
-        const handlerResult = await runWithActivityExplorerSurface(appEnabled, () =>
-          runWithPortalRequestSignal(requestSignal, () =>
-            runWithGuardrailScope({ tool: toolName, workClass: getToolWorkProfile(toolName).class }, () =>
-              handler(...handlerArgs),
-            ),
-          ),
-        )
-        const result = attachEvidenceReceipt(toolName, toolArgs, handlerResult)
-        const status = classifyToolOutcome({ result })
-        toolCallsTotal.inc({
+      return recordToolSpan(
+        {
           tool: toolName,
-          status,
-          transport: runtimeContext.transport,
-          server_version: npmVersion,
-        })
-        recordToolOutcome({
-          toolName,
+          workClass: getToolWorkProfile(toolName).class,
+          runtimeContext: effectiveRuntime,
+          traceparent: metaTraceparent,
+          tracestate: metaTracestate,
           args: toolArgs,
-          result,
-          durationMs: Date.now() - startedAt,
-          runtime: effectiveRuntime,
-          invocationId,
-          status,
-        })
-        recordActivityExplorerResult({
-          toolName,
-          result,
-          transport: runtimeContext.transport,
-          uiCapability,
-          resultState: status,
-        })
-        noteSlowCall(status)
-        return result
-      } catch (error) {
-        const cancelled = requestSignal?.aborted || error instanceof RequestCancelledError
-        const status = cancelled ? 'cancelled' : 'tool_error'
-        noteSlowCall(status)
-        const toolErrorResult = cancelled ? undefined : formatToolError(error, toolName)
-        toolCallsTotal.inc({ tool: toolName, status, transport: runtimeContext.transport, server_version: npmVersion })
-        recordToolOutcome({
-          toolName,
-          args: toolArgs,
-          ...(cancelled ? { error: new RequestCancelledError() } : { result: toolErrorResult }),
-          durationMs: Date.now() - startedAt,
-          runtime: effectiveRuntime,
-          invocationId,
-          status,
-        })
-        recordActivityExplorerResult({
-          toolName,
-          result: toolErrorResult,
-          transport: runtimeContext.transport,
-          uiCapability,
-          resultState: status,
-        })
-        if (cancelled) throw error
-        return toolErrorResult
-      } finally {
-        end()
-        if (admitted) toolCallsActive.dec({ tool: toolName, transport: runtimeContext.transport })
-        releaseAdmission?.()
-      }
+        },
+        async (span) => {
+          try {
+            const lease = await recordChildSpan(
+              'mcp.admission',
+              { 'mcp.tool.work_class': getToolWorkProfile(toolName).class },
+              () =>
+                toolAdmission.acquire(getToolWorkProfile(toolName), runtimeContext.transport, requestSignal, caller),
+            )
+            admissionWaitMs = lease.waitMs
+            span.setAttribute('mcp.admission.wait_ms', lease.waitMs)
+            releaseAdmission = lease.release
+            admitted = true
+            toolCallsActive.inc({ tool: toolName, transport: runtimeContext.transport })
+            /* Handlers run outside the factory's scope, so the connection's
+               app choice is re-entered here for the result formatters. */
+            const handlerResult = await runWithActivityExplorerSurface(appEnabled, () =>
+              runWithPortalRequestSignal(requestSignal, () =>
+                runWithGuardrailScope({ tool: toolName, workClass: getToolWorkProfile(toolName).class }, () =>
+                  handler(...handlerArgs),
+                ),
+              ),
+            )
+            /* Hashing the result for the evidence receipt is real work on a
+               large answer, and it happens after every fetch has returned, so
+               it is worth its own span rather than unexplained tail. */
+            const result = await recordChildSpan('mcp.format_result', {}, async () =>
+              attachEvidenceReceipt(toolName, toolArgs, handlerResult),
+            )
+            const status = classifyToolOutcome({ result })
+            toolCallsTotal.inc({
+              tool: toolName,
+              status,
+              transport: runtimeContext.transport,
+              server_version: npmVersion,
+            })
+            recordToolOutcome({
+              toolName,
+              args: toolArgs,
+              result,
+              durationMs: Date.now() - startedAt,
+              runtime: effectiveRuntime,
+              invocationId,
+              status,
+            })
+            recordActivityExplorerResult({
+              toolName,
+              result,
+              transport: runtimeContext.transport,
+              uiCapability,
+              resultState: status,
+            })
+            noteSlowCall(status)
+            span.setOutcome(status)
+            return result
+          } catch (error) {
+            const cancelled = requestSignal?.aborted || error instanceof RequestCancelledError
+            const status = cancelled ? 'cancelled' : 'tool_error'
+            noteSlowCall(status)
+            const toolErrorResult = cancelled ? undefined : formatToolError(error, toolName)
+            toolCallsTotal.inc({
+              tool: toolName,
+              status,
+              transport: runtimeContext.transport,
+              server_version: npmVersion,
+            })
+            recordToolOutcome({
+              toolName,
+              args: toolArgs,
+              ...(cancelled ? { error: new RequestCancelledError() } : { result: toolErrorResult }),
+              durationMs: Date.now() - startedAt,
+              runtime: effectiveRuntime,
+              invocationId,
+              status,
+            })
+            recordActivityExplorerResult({
+              toolName,
+              result: toolErrorResult,
+              transport: runtimeContext.transport,
+              uiCapability,
+              resultState: status,
+            })
+            span.setOutcome(status, cancelled ? undefined : error instanceof Error ? error.constructor.name : 'Error')
+            if (cancelled) throw error
+            return toolErrorResult
+          } finally {
+            end()
+            if (admitted) toolCallsActive.dec({ tool: toolName, transport: runtimeContext.transport })
+            releaseAdmission?.()
+          }
+        },
+      )
     }
   }
 
