@@ -2,7 +2,16 @@
 
 ## [0.8.5] - Unreleased
 
-Portal MCP v0.8.5 turns the SQD Explorer into a data-first beta app that fits its host and is clearly opt-in. Tool answers are unchanged.
+Portal MCP v0.8.5 turns the SQD Explorer into a data-first beta app that fits its host and is clearly opt-in, and corrects four cases where a tool answered with something it should not have.
+
+### Correctness
+- **A network name always means that network.** Aliases were matched as substrings in both directions against tokens as short as `op`, `eth` and `btc`, so `opbnb` answered with Optimism's chain head, `ethereum-holesky` with Ethereum mainnet, and `btc-testnet` with Bitcoin mainnet, each with the evidence receipt recording the name that was asked for. Matching is now whole-name, a real dataset beats a nickname, and a network SQD does not carry returns `unknown_network` instead of a neighbour's data.
+- **`portal_get_time_series` no longer answers metrics it does not compute.** Nine of its fifteen metrics returned an all-zero series on EVM networks, marked `result_complete: true` with no empty buckets and a receipt hashing the zeros, so "success rate averaged 0%" was indistinguishable from a real answer. Each chain family now declares what it computes and anything outside that set is refused with `unsupported_operation`.
+- **A wallet summary no longer reports a complete result over a section that failed.** `_coverage.result_complete` was keyed off pagination alone, so a summary whose transactions never arrived still reported complete beside its own `failed_sections: ["transactions"]`. It now requires the window to be covered and every section to have arrived, and names any that did not.
+- **Long time-series windows are refused instead of run.** The tool reads every block in the window, so `7d` on a two-second chain is 302,400 blocks: it went four minutes without answering and reached 1.9 GB of memory. Windows over 12,000 blocks are now refused in about a second with the block count, the bound, and a duration that fits on that chain. The limit is blocks rather than time, so `24h` still works on Bitcoin and Ethereum and is refused on Base.
+
+### Operations
+- **Cost guardrails.** `MCP_GUARDRAIL_MODE` of `off` (default), `shadow` or `enforce`, with per-class ceilings on scan blocks, window seconds and upstream bytes through `MCP_GUARDRAIL_<CLASS>_<LIMIT>`. There are no numeric defaults, so `off` and `enforce` with nothing configured are the same server. Shadow counts what enforcing would cut without changing a response; enforce reports a capped scan through the existing partial-coverage path and refuses an over-cap window before any upstream call. Four Prometheus counters and a Grafana panel.
 
 ### Highlights
 - **Beta, opt in**: the Explorer is labelled Beta in the widget, in the resource description, and as `_app.stage`. It stays off by default. `MCP_APP_ENABLED=true` enables it for a deployment; `?app=1` and `?app=0` on the connection override that in either direction.

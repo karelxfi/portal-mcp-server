@@ -143,6 +143,81 @@ const SOLANA_GENERIC_MAX_BYTES = 150 * 1024 * 1024
 const FAST_EVM_TIME_SERIES_BLOCK_CAP = 1500
 /* Bitcoin inputs and outputs weigh about a megabyte per block; a fee series
    scans at most this many of the newest requested blocks and says so. */
+/*
+ * How many blocks one series call may read before it refuses.
+ *
+ * The cost of this tool is linear in blocks, not in buckets: every block in the
+ * window is streamed and folded into its bucket, so a coarser interval reads
+ * exactly as much as a fine one. Measured on Base at two seconds a block:
+ * 10,800 blocks took 12.8s, 21,600 took 25.8s, and 43,200 took 112s and 428MB
+ * on the way. Seven days is 302,400 blocks; that call never answered inside
+ * four minutes and the process reached 1.9GB and was still climbing.
+ *
+ * A block ceiling is the right unit precisely because it is not a duration.
+ * Twenty-four hours is 144 blocks on Bitcoin, 7,200 on Ethereum and 43,200 on
+ * Base, so the same number lets the request through where it is cheap and
+ * stops it where it is not, without a per-chain table to maintain. Twenty
+ * thousand blocks is where the worst case lands near thirty seconds, inside
+ * the sixty seconds most MCP clients wait: 10,800 blocks measured at 26.6s, so
+ * the ceiling is set just above the largest window that finishes comfortably
+ * rather than at the largest that finishes at all.
+ *
+ * Refusing is the point. A tool that hangs past the client's timeout has not
+ * given a slow answer, it has given none, and it has spent a gigabyte doing it.
+ */
+export const MAX_SERIES_SCAN_BLOCKS = 12_000
+
+export function assertSeriesWindowScannable(params: {
+  dataset: string
+  chainType: string
+  fromBlock: number
+  toBlock: number
+  duration: string
+}) {
+  const blocks = Math.max(0, params.toBlock - params.fromBlock + 1)
+  if (blocks <= MAX_SERIES_SCAN_BLOCKS) return
+
+  const secondsPerBlock = estimateBlockTime(params.dataset, params.chainType)
+  const affordableSeconds = MAX_SERIES_SCAN_BLOCKS * secondsPerBlock
+  /* Suggest a real preset rather than a computed number nobody can type. */
+  const presets: [string, number][] = [
+    ['30d', 2_592_000],
+    ['14d', 1_209_600],
+    ['7d', 604_800],
+    ['3d', 259_200],
+    ['24h', 86_400],
+    ['12h', 43_200],
+    ['6h', 21_600],
+    ['1h', 3_600],
+    ['30m', 1_800],
+    ['15m', 900],
+  ]
+  const largest = presets.find(([, seconds]) => seconds <= affordableSeconds)
+
+  throw new ActionableError(
+    `A ${params.duration} window is ${blocks.toLocaleString()} blocks on ${params.dataset}, and portal_get_time_series reads every block in the window. It stops at ${MAX_SERIES_SCAN_BLOCKS.toLocaleString()} blocks so a call cannot outlast the client waiting for it.`,
+    [
+      largest
+        ? `Ask for duration '${largest[0]}' or less on ${params.dataset}: about ${MAX_SERIES_SCAN_BLOCKS.toLocaleString()} blocks is roughly ${Math.floor(affordableSeconds / 3600)} hours here.`
+        : `Ask for a window under ${MAX_SERIES_SCAN_BLOCKS.toLocaleString()} blocks on ${params.dataset}.`,
+      'Use from_block and to_block for an exact window inside that bound.',
+      'The same duration costs less on a slower chain: the limit is blocks, not time.',
+      'Use the analytics tool for this chain if you want one aggregate over a wider window instead of a series.',
+    ],
+    {
+      requested_duration: params.duration,
+      requested_blocks: blocks,
+      max_scan_blocks: MAX_SERIES_SCAN_BLOCKS,
+      seconds_per_block: secondsPerBlock,
+      ...(largest ? { largest_supported_duration: largest[0] } : {}),
+    },
+    /* The caller asked for more than the tool serves and can ask for less.
+       That is their input, not a server fault, and retrying it unchanged will
+       fail exactly the same way. */
+    { code: 'unsupported_operation', origin: 'client_input', retryable: false },
+  )
+}
+
 const BITCOIN_FEE_SERIES_MAX_BLOCKS = 144
 const TIME_SERIES_CACHE_TTL_MS = 30_000
 const TIME_SERIES_CACHE_MAX_ENTRIES = 16
@@ -169,7 +244,7 @@ function buildLongWindowNotice(duration: string): string | undefined {
   const durationSeconds = parseTimeframeToSeconds(duration)
   if (durationSeconds <= INTERACTIVE_TIME_SERIES_WINDOW_SECONDS) return undefined
 
-  return `Long-window note: ${describeTimeWindowInput(duration)} is supported, but complete scans can take longer than the default ${DEFAULT_TIME_SERIES_DURATION} interactive window.`
+  return `Long-window note: ${describeTimeWindowInput(duration)} reads more blocks than the default ${DEFAULT_TIME_SERIES_DURATION} window, so it takes longer. Windows over ${MAX_SERIES_SCAN_BLOCKS.toLocaleString()} blocks are refused rather than run.`
 }
 
 function withWindowNotice(message: string, notice?: string): string {
@@ -696,7 +771,7 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
         .optional()
         .default(DEFAULT_TIME_SERIES_DURATION)
         .describe(
-          'Total time period to analyze. Defaults to "6h" for interactive use. Explicit longer windows like "24h" or "7d" are supported but can take longer. Accepts compact durations like "30m" or natural phrases like "past 30 minutes".',
+          'Total time period to analyze. Defaults to "6h" for interactive use. How far back you can ask depends on the chain, not on the duration: this tool reads every block in the window and stops at 12,000 of them, so "24h" is fine on Bitcoin or Ethereum and refused on a 2-second chain like Base, where it is 43,200 blocks. A window over the bound is refused immediately and the error names a duration that fits. Accepts compact durations like "30m" or natural phrases like "past 30 minutes".',
         ),
       address: z
         .string()
@@ -1188,6 +1263,7 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
           resolvedWindow.to_block ?? Number.MAX_SAFE_INTEGER,
           false,
         )
+        assertSeriesWindowScannable({ dataset, chainType, fromBlock, toBlock, duration })
         const intervalSeconds = parseTimeframeToSeconds(interval)
         const durationSeconds = parseTimeframeToSeconds(duration)
         const expectedBuckets = Math.ceil(durationSeconds / intervalSeconds)
@@ -2276,6 +2352,7 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
         resolvedWindow.to_block ?? Number.MAX_SAFE_INTEGER,
         false,
       )
+      assertSeriesWindowScannable({ dataset, chainType, fromBlock, toBlock, duration })
 
       // Calculate bucket size based on interval duration
       const intervalSeconds = parseTimeframeToSeconds(interval)
