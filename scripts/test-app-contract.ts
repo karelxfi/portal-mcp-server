@@ -386,19 +386,31 @@ async function main() {
       content.text.includes('https://www.tradingview.com/'),
       'the bundled market chart must retain the required TradingView product-creator link',
     )
-    const publicCopySources = await Promise.all([
-      readFile('src/app-ui/view.ts', 'utf8'),
-      readFile('src/app-ui/index.ts', 'utf8'),
-      readFile('src/app-ui/fixtures.ts', 'utf8'),
-    ])
-    assert(
-      publicCopySources.every((source) => !source.includes('—')),
-      'public app copy must not contain em dashes',
-    )
+    /* Every module the reader can end up looking at. The Explorer was one
+       file; it is now `view.ts` over `masthead.ts`, `charts/`, `tables.ts`,
+       `panels.ts`, `states.ts` and `common.ts`, and copy can hide in any of
+       them. */
+    const APP_COPY_MODULES = [
+      'src/app-ui/view.ts',
+      'src/app-ui/index.ts',
+      'src/app-ui/fixtures.ts',
+      'src/app-ui/common.ts',
+      'src/app-ui/masthead.ts',
+      'src/app-ui/tables.ts',
+      'src/app-ui/panels.ts',
+      'src/app-ui/states.ts',
+      'src/app-ui/charts/range.ts',
+      'src/app-ui/charts/terminal.ts',
+    ]
+    const publicCopySources = await Promise.all(APP_COPY_MODULES.map((path) => readFile(path, 'utf8')))
+    for (const [index, source] of publicCopySources.entries()) {
+      assert(!source.includes('—'), `public app copy must not contain em dashes (${APP_COPY_MODULES[index]})`)
+    }
     const appBridgeSource = publicCopySources[1]
+    const chartSource = publicCopySources[APP_COPY_MODULES.indexOf('src/app-ui/charts/terminal.ts')]
     assert(
-      publicCopySources[0].includes("'Charts by TradingView'") &&
-        publicCopySources[0].includes("attribution.href = 'https://www.tradingview.com/'"),
+      chartSource.includes("'Charts by TradingView'") &&
+        chartSource.includes("attribution.href = 'https://www.tradingview.com/'"),
       'the market chart must keep the required TradingView attribution visible',
     )
     assert(
