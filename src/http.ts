@@ -5,6 +5,7 @@ import { toNodeHandler } from '@modelcontextprotocol/node'
 import { type McpRequestContext, createMcpHandler } from '@modelcontextprotocol/server'
 
 import { resolveActivityExplorerSurface } from './apps/activity-explorer.js'
+import { hasConfiguredCursorSecret } from './helpers/pagination.js'
 import {
   connectionKeyFromRequest,
   evaluateBodyLimit,
@@ -46,6 +47,16 @@ const CONNECTION_KEY_HEADER = 'x-sqd-connection-key'
 const guardPolicy = resolveRequestGuardPolicy(process.env)
 for (const warning of guardPolicy.warnings) {
   console.error(`[mcp:http] ${warning}`)
+}
+
+/* Without a configured key each process signs cursors with its own random one,
+   so a cursor issued by one instance is rejected by the next. That is safe but
+   it is not what an operator running more than one process wants, and the
+   failure would otherwise surface as clients randomly losing their place. */
+if (!hasConfiguredCursorSecret()) {
+  console.error(
+    '[mcp:http] MCP_CURSOR_SECRET is not set. Cursors are signed with a per-process key, so pagination will not survive a restart or work across instances. Set it to a random secret shared by every instance.',
+  )
 }
 
 const readiness = createReadinessTracker({ probeIntervalMs: READY_PROBE_INTERVAL_MS, maxAgeMs: READY_MAX_AGE_MS })

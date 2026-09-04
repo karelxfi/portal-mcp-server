@@ -1,12 +1,25 @@
 import { Buffer } from 'node:buffer'
-import { createHmac, timingSafeEqual } from 'node:crypto'
+import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
 
 import { ActionableError } from './errors.js'
 
 const CURSOR_VERSION = 1
-// Production deployments should set MCP_CURSOR_SECRET. The fallback is
-// deterministic only so local dev/tests can continue cursors across restarts.
-const LOCAL_DEV_CURSOR_SECRET = 'sqd-portal-mcp-local-dev-cursor-secret-v1'
+/*
+ * Cursors are signed so a caller cannot hand back a window the tool would
+ * never have offered. The fallback used to be a constant in this file, which
+ * is to say a signing key published with the source: an auditor forged a
+ * cursor against a default deployment and the server ran the window they
+ * chose, past the limits the schema enforces on a first request.
+ *
+ * The fallback is now random per process. Nothing can be forged without the
+ * key, and the cost is that a cursor stops working when the process restarts
+ * or the request lands on another instance. That is a real cost, and it is the
+ * reason `MCP_CURSOR_SECRET` exists: any deployment running more than one
+ * process should set it, and the HTTP entry point says so at startup when it
+ * is missing. A cursor that expires early is a retry; a cursor anyone can mint
+ * is not.
+ */
+const PROCESS_CURSOR_SECRET = randomBytes(32).toString('base64url')
 
 type CursorPayload = {
   version?: number
@@ -46,9 +59,12 @@ export interface OffsetPageCursor<TRequest extends Record<string, unknown>> {
   offset: number
 }
 
+export function hasConfiguredCursorSecret(env: NodeJS.ProcessEnv = process.env): boolean {
+  return Boolean(env.MCP_CURSOR_SECRET?.trim())
+}
+
 function getCursorSecret(): string {
-  const configured = process.env.MCP_CURSOR_SECRET?.trim()
-  return configured || LOCAL_DEV_CURSOR_SECRET
+  return process.env.MCP_CURSOR_SECRET?.trim() || PROCESS_CURSOR_SECRET
 }
 
 function signCursorPayload(payload: string): string {
