@@ -5,6 +5,7 @@ import { readFile } from 'node:fs/promises'
 import { Client } from '@modelcontextprotocol/client'
 import { InMemoryTransport } from '@modelcontextprotocol/server'
 
+import { EXPLORER_CHART_CAPABILITIES } from '../src/app-ui/capabilities.js'
 import { CHAINS, LOGO_CDN, LOGO_ORIGINS } from '../src/app-ui/chains.generated.js'
 import { chainLogoUrl, explorerLink } from '../src/app-ui/explorers.js'
 import { buildEvidenceExport } from '../src/app-ui/export.js'
@@ -116,18 +117,49 @@ async function main() {
     ['time series', timeSeriesContract],
     ['candlestick', candleContract],
   ] as const) {
-    assert(chart.interactions?.hover?.enabled === true, `${name} charts should declare exact point inspection`)
-    assert(chart.interactions?.zoom?.enabled === true, `${name} charts should declare implemented x-axis range focus`)
+    /* The contract may only name controls the app has actually built. For two
+       releases it offered a PNG export and a visual switch that did not exist;
+       the app now publishes what it implements and the declaration is held
+       against that list rather than against a comment. */
+    assert(
+      chart.interactions?.hover?.enabled === EXPLORER_CHART_CAPABILITIES.hover &&
+        chart.interactions?.hover?.crosshair === EXPLORER_CHART_CAPABILITIES.crosshair &&
+        chart.interactions?.hover?.snap_to_data === EXPLORER_CHART_CAPABILITIES.snapToData,
+      `${name} charts should declare exactly the hover behaviour the app implements`,
+    )
+    assert(
+      chart.interactions?.zoom?.enabled === true &&
+        chart.interactions?.zoom?.axis === EXPLORER_CHART_CAPABILITIES.zoomAxis &&
+        chart.interactions?.zoom?.brush === EXPLORER_CHART_CAPABILITIES.brush,
+      `${name} charts should declare the range focus the app implements`,
+    )
     assert(chart.interactions?.toolbar?.enabled === true, `${name} charts should expose the implemented range controls`)
     assert(
-      chart.interactions?.toolbar?.actions.includes('reset_zoom') === true,
-      `${name} charts should expose reset range`,
+      JSON.stringify(chart.interactions?.toolbar?.actions) ===
+        JSON.stringify([...EXPLORER_CHART_CAPABILITIES.toolbarActions]),
+      `${name} charts must name every toolbar control the app builds and no others (got ${JSON.stringify(chart.interactions?.toolbar?.actions)})`,
+    )
+    assert(
+      chart.interactions?.legend?.toggle_series === undefined ||
+        chart.interactions.legend.toggle_series === EXPLORER_CHART_CAPABILITIES.legendToggle,
+      `${name} charts should declare series toggling only where the app implements it`,
     )
   }
-  const shortChart = buildTimeSeriesChart({ interval: '1m', totalPoints: 4 })
+  const shortChart = buildTimeSeriesChart({
+    interval: '1m',
+    totalPoints: EXPLORER_CHART_CAPABILITIES.minimumPointsForZoom - 1,
+  })
   assert(
-    shortChart.interactions?.zoom?.enabled === false,
+    shortChart.interactions?.zoom?.enabled === false && shortChart.interactions.toolbar?.actions.length === 0,
     'short charts should not advertise unnecessary range controls',
+  )
+  const zoomableChart = buildTimeSeriesChart({
+    interval: '1m',
+    totalPoints: EXPLORER_CHART_CAPABILITIES.minimumPointsForZoom,
+  })
+  assert(
+    zoomableChart.interactions?.zoom?.enabled === true,
+    'a chart at the app minimum should advertise the controls the app draws',
   )
 
   const jsonExport = buildEvidenceExport(APP_FIXTURES.hyperliquid, 'json')
@@ -163,10 +195,28 @@ async function main() {
     ACTIVITY_EXPLORER_RESOURCE_URI.includes(ACTIVITY_EXPLORER_HASH),
     'resource URI must use the bundle hash as its cache key',
   )
+  /*
+   * Two numbers, because they answer different questions. 700,000 is the hard
+   * gate: past it the resource is too big to send a host on every session.
+   * 600,000 is where the bundle stops having room to grow, and a build that
+   * crosses it says so while still passing, so the next feature is a decision
+   * rather than a surprise.
+   *
+   * The measured floor is about 490,000 before a line of app code:
+   * lightweight-charts 156,427, zod 137,297, the MCP client 58,832, and the
+   * mono font subset 16,052. A target below that is not reachable by trimming
+   * app code, and pretending otherwise would put a gate on the release that
+   * only a dependency change could satisfy.
+   */
   assert(
     ACTIVITY_EXPLORER_BYTES > 20_000 && ACTIVITY_EXPLORER_BYTES < 700_000,
-    'embedded app must stay inside its release byte budget',
+    `embedded app must stay inside its release byte budget (${ACTIVITY_EXPLORER_BYTES} bytes)`,
   )
+  if (ACTIVITY_EXPLORER_BYTES > 600_000) {
+    console.warn(
+      `WARN  the Explorer bundle is ${ACTIVITY_EXPLORER_BYTES} bytes, past the 600,000 headroom mark and ${700_000 - ACTIVITY_EXPLORER_BYTES} from the gate`,
+    )
+  }
   for (const tool of [
     'portal_list_networks',
     'portal_get_network_info',
@@ -522,6 +572,7 @@ async function main() {
   console.log('PASS  28 tool contracts remain intact with selective app metadata')
   console.log('PASS  versioned self-contained resource exposes exact standard and ChatGPT metadata')
   console.log('PASS  capability states and app runtime metrics are bounded and deterministic')
+  console.log('PASS  chart contracts name exactly the interactions the app implements')
 }
 
 main().catch((error) => {

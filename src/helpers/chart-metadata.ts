@@ -1,3 +1,5 @@
+import { EXPLORER_CHART_CAPABILITIES, type ExplorerToolbarAction } from '../app-ui/capabilities.js'
+
 export type TableValueFormat =
   | 'integer'
   | 'decimal'
@@ -48,10 +50,12 @@ export interface ChartInteractionsDescriptor {
   }
   toolbar?: {
     enabled: boolean
-    /* Only what the app actually offers. Resetting the view is the one
-       toolbar action it implements; a descriptor that named a PNG export or a
-       visual switch would be describing a control that is not there. */
-    actions: 'reset_zoom'[]
+    /* Only what the app actually offers: resetting the view, and the range
+       presets beside it. The app publishes the same list in
+       `app-ui/capabilities.ts` and `test:app-contract` holds the two against
+       each other, so a control that is named here and not built fails a gate
+       rather than reaching a model. */
+    actions: ExplorerToolbarAction[]
   }
 }
 
@@ -198,6 +202,9 @@ export function buildTimeSeriesChart(params: {
   const recommendedVisual = params.recommendedVisual ?? (params.groupedValueField ? 'stacked_area' : 'line')
   const xField = params.xField ?? 'timestamp'
 
+  /* Below the app's own minimum there is nothing to zoom into, so the
+     descriptor offers nothing either. */
+  const zoomable = params.totalPoints >= EXPLORER_CHART_CAPABILITIES.minimumPointsForZoom
   return {
     kind: 'time_series',
     data_key: params.dataKey ?? 'time_series',
@@ -242,10 +249,14 @@ export function buildTimeSeriesChart(params: {
       ],
     },
     interactions: params.interactions ?? {
-      hover: { enabled: true, crosshair: true, snap_to_data: true },
-      zoom: { enabled: params.totalPoints > 8, axis: 'x', brush: false },
+      hover: {
+        enabled: EXPLORER_CHART_CAPABILITIES.hover,
+        crosshair: EXPLORER_CHART_CAPABILITIES.crosshair,
+        snap_to_data: EXPLORER_CHART_CAPABILITIES.snapToData,
+      },
+      zoom: { enabled: zoomable, axis: EXPLORER_CHART_CAPABILITIES.zoomAxis, brush: EXPLORER_CHART_CAPABILITIES.brush },
       legend: { enabled: Boolean(params.groupedValueField), position: 'top', toggle_series: true },
-      toolbar: { enabled: params.totalPoints > 8, actions: params.totalPoints > 8 ? ['reset_zoom'] : [] },
+      toolbar: { enabled: zoomable, actions: zoomable ? [...EXPLORER_CHART_CAPABILITIES.toolbarActions] : [] },
     },
     height_hint: params.heightHint ?? (params.groupedValueField ? 'tall' : 'medium'),
   }
@@ -388,6 +399,7 @@ export function buildCandlestickChart(params: {
   interactions?: ChartInteractionsDescriptor
   heightHint?: 'compact' | 'medium' | 'tall'
 }): CandlestickChartDescriptor {
+  const zoomable = params.totalCandles >= EXPLORER_CHART_CAPABILITIES.minimumPointsForZoom
   return {
     kind: 'candlestick',
     data_key: params.dataKey ?? 'ohlc',
@@ -456,10 +468,14 @@ export function buildCandlestickChart(params: {
       ],
     },
     interactions: params.interactions ?? {
-      hover: { enabled: true, crosshair: true, snap_to_data: true },
-      zoom: { enabled: params.totalCandles > 8, axis: 'x', brush: false },
+      hover: {
+        enabled: EXPLORER_CHART_CAPABILITIES.hover,
+        crosshair: EXPLORER_CHART_CAPABILITIES.crosshair,
+        snap_to_data: EXPLORER_CHART_CAPABILITIES.snapToData,
+      },
+      zoom: { enabled: zoomable, axis: EXPLORER_CHART_CAPABILITIES.zoomAxis, brush: EXPLORER_CHART_CAPABILITIES.brush },
       legend: { enabled: false },
-      toolbar: { enabled: params.totalCandles > 8, actions: params.totalCandles > 8 ? ['reset_zoom'] : [] },
+      toolbar: { enabled: zoomable, actions: zoomable ? [...EXPLORER_CHART_CAPABILITIES.toolbarActions] : [] },
     },
     height_hint: params.heightHint ?? 'tall',
   }

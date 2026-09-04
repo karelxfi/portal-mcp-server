@@ -132,7 +132,7 @@ const LOCKED_SELECTORS = [
   '.sqd-card-head',
   '.sqd-card-body',
   '.sqd-chart-wrap',
-  '.sqd-chart',
+  '.sqd-chart-plot',
   '.sqd-candle-terminal',
   '.sqd-candle-chart',
   '.sqd-chart-toolbar',
@@ -397,17 +397,25 @@ async function validate(page: Page, fixture: string, viewport: (typeof viewports
     return
   }
   if (['timeseries', 'grouped', 'sparse', 'mixed'].includes(fixture)) {
-    const svg = page.locator('svg.sqd-chart')
-    assert((await svg.count()) >= 1, `${fixture} should render an accessible chart workspace`)
-    const box = await svg.boundingBox()
-    const minimumChartHeight = viewport.width <= 520 ? 110 : 280
+    const plot = page.locator('.sqd-chart-plot')
+    assert((await plot.count()) >= 1, `${fixture} should render an accessible chart workspace`)
+    const box = await plot.first().boundingBox()
+    const minimumChartHeight = viewport.width <= 520 ? 110 : 260
     assert(box && box.width >= 300 && box.height >= minimumChartHeight, `${fixture} chart should stay readable`)
-    const rightScaleX = await svg.locator('.sqd-chart-label').first().getAttribute('x')
-    const chartViewBoxWidth = Number((await svg.getAttribute('viewBox'))?.split(' ')[2])
-    assert(Number(rightScaleX) > chartViewBoxWidth * 0.85, `${fixture} should use the SQD right-side value scale`)
+    /* Lines, bars, and candles all come through lightweight-charts now, so
+       every chart carries the same two canvases and the same right-side scale
+       rather than one engine's SVG and another's canvas. */
     assert(
-      (await svg.getAttribute('role')) === 'group',
+      (await page.locator('.sqd-chart-plot canvas').count()) >= 2,
+      `${fixture} should render through the shared chart engine`,
+    )
+    assert(
+      (await plot.first().getAttribute('role')) === 'group',
       `${fixture} interactive charts should expose their point descendants`,
+    )
+    assert(
+      (await page.locator('.sqd-chart-attribution').count()) >= 1,
+      `${fixture} should carry the chart engine attribution`,
     )
   }
   if (['hyperliquid', 'ratio'].includes(fixture)) {
@@ -558,12 +566,15 @@ async function validate(page: Page, fixture: string, viewport: (typeof viewports
       (await page.locator('.sqd-chart-hit').count()) === expected.length,
       'Time series should render every source point',
     )
+    /* The marks are on a canvas, so the exact numbers live on the hit targets
+       that sit over them, which is also what a screen reader and a keyboard
+       user reach. */
     const renderedValues = await page
-      .locator('.sqd-chart-bar')
+      .locator('.sqd-chart-hit[data-value]')
       .evaluateAll((nodes) => nodes.map((node) => Number(node.getAttribute('data-value'))))
     assert(
       JSON.stringify(renderedValues) === JSON.stringify(expected.map((row) => row.value)),
-      'Time-series bars should carry every exact Portal value in order',
+      `Time-series bars should carry every exact Portal value in order (got ${renderedValues.join(', ')})`,
     )
     assert(
       Number(await page.locator('[data-final-value]').getAttribute('data-final-value')) === expected.at(-1)?.value,
@@ -578,7 +589,7 @@ async function validate(page: Page, fixture: string, viewport: (typeof viewports
       'Grouped charts should expose every series',
     )
     const renderedTotals = await page
-      .locator('[data-series-total]')
+      .locator('.sqd-chart-series[data-series-total]')
       .evaluateAll((nodes) => nodes.map((node) => Number(node.getAttribute('data-series-total'))))
     const expectedTotals = keys.map((key) =>
       rows.filter((row) => row.contract_address === key).reduce((sum, row) => sum + row.value, 0),
@@ -604,10 +615,8 @@ async function validate(page: Page, fixture: string, viewport: (typeof viewports
       'Hidden series should leave point tooltips',
     )
     assert(
-      await page
-        .locator('.sqd-chart-series-area[data-series-index="0"]')
-        .evaluate((node) => getComputedStyle(node).display === 'none'),
-      'Hiding the first series should hide its stacked band',
+      (await page.locator('.sqd-chart-series[data-series-index="0"]').getAttribute('data-visible')) === 'false',
+      'Hiding the first series should take its band off the chart',
     )
   }
   if (fixture === 'sparse') {
@@ -618,21 +627,19 @@ async function validate(page: Page, fixture: string, viewport: (typeof viewports
       JSON.stringify(orderedX) === JSON.stringify([0, 1, 3, 4]),
       'Sparse series should render in chronological order',
     )
-    const segments = await page
-      .locator('.sqd-chart-line')
-      .evaluateAll((nodes) => nodes.map((node) => Number(node.getAttribute('data-point-count'))))
+    const segments = await page.locator('.sqd-chart-series').first().getAttribute('data-segments')
     assert(
-      JSON.stringify(segments) === JSON.stringify([2, 2]),
-      'Sparse series should leave a visual gap for the missing bucket',
+      segments === '2,2',
+      `Sparse series should leave a visual gap for the missing bucket (drew runs of ${segments})`,
     )
   }
   if (fixture === 'mixed') {
     const values = await page
-      .locator('.sqd-chart-bar')
+      .locator('.sqd-chart-hit[data-value]')
       .evaluateAll((nodes) => nodes.map((node) => Number(node.getAttribute('data-value'))))
     assert(
       JSON.stringify(values) === JSON.stringify([-30, -10, 15, 0, 50]),
-      'Signed bars should preserve chronological values',
+      `Signed bars should preserve chronological values (got ${values.join(', ')})`,
     )
     assert(
       (await page.locator('.sqd-chart-hit').count()) === 6,
@@ -642,14 +649,58 @@ async function validate(page: Page, fixture: string, viewport: (typeof viewports
       (await page.locator('.sqd-chart-hit').last().getAttribute('aria-label'))?.includes('not available'),
       'Null chart values must not become factual zeroes',
     )
-    const validGeometry = await page.locator('.sqd-chart-bar').evaluateAll((nodes) =>
-      nodes.every((node) => {
-        const height = Number(node.getAttribute('height'))
-        const y = Number(node.getAttribute('y'))
-        return Number.isFinite(height) && height >= 1 && Number.isFinite(y)
-      }),
+    /* Bars that straddle zero must hang from a zero line inside the pane, not
+       from the axis floor. The canvas cannot be measured, so the chart
+       publishes where it drew that line. */
+    const plotBox = await page.locator('.sqd-chart-plot').first().boundingBox()
+    const zeroBaseline = Number(await page.locator('.sqd-chart-plot').first().getAttribute('data-zero-baseline'))
+    assert(
+      Number.isFinite(zeroBaseline) && zeroBaseline > 8 && plotBox !== null && zeroBaseline < plotBox.height - 8,
+      `Signed bars should hang from a zero line inside the plot (got ${zeroBaseline} in ${plotBox?.height})`,
     )
-    assert(validGeometry, 'Signed bars should have valid geometry on both sides of zero')
+  }
+  if (fixture === 'large_table' || fixture === 'hyperliquid') {
+    /*
+     * A follow-up re-renders the same result with the in-flight flag set. It
+     * must not rebuild the DOM: the charts on screen are live instances, and
+     * throwing them away takes the reader's zoom with them at the one moment
+     * they are watching. The budget is what the issue asks for; the identity
+     * check is what makes the budget meaningful.
+     */
+    const beforeChart = await page.locator('.sqd-chart-canvas canvas, .sqd-candle-canvas canvas').count()
+    /* Marking an element is what makes this an identity check: a rebuild
+       replaces it, and the mark goes with it. `large_table` has no chart, so
+       it marks the table it does have. */
+    await page.evaluate(() =>
+      document
+        .querySelector('.sqd-chart-canvas canvas, .sqd-candle-canvas canvas, table.sqd-table')
+        ?.setAttribute('data-kept', '1'),
+    )
+    const rerenderStarted = performance.now()
+    await page.evaluate(() => (window as unknown as { __sqdSetBusy: (busy: boolean) => void }).__sqdSetBusy(true))
+    const rerenderMs = performance.now() - rerenderStarted
+    assert(
+      rerenderMs < 250,
+      `${fixture} follow-up re-render should stay under 250ms (took ${Math.round(rerenderMs)}ms)`,
+    )
+    assert(
+      (await page.locator('.sqd-shell[aria-busy="true"]').count()) === 1,
+      `${fixture} follow-up should mark the result busy`,
+    )
+    assert(
+      (await page.locator('.sqd-progress').count()) === 1,
+      `${fixture} follow-up should show one progress bar, not one per render`,
+    )
+    assert(
+      (await page.locator('.sqd-chart-canvas canvas, .sqd-candle-canvas canvas').count()) === beforeChart &&
+        (await page.locator('[data-kept="1"]').count()) === 1,
+      `${fixture} follow-up must keep the result on screen rather than rebuilding it`,
+    )
+    await page.evaluate(() => (window as unknown as { __sqdSetBusy: (busy: boolean) => void }).__sqdSetBusy(false))
+    assert(
+      (await page.locator('.sqd-progress').count()) === 0,
+      `${fixture} should clear the progress bar when the follow-up settles`,
+    )
   }
   if (['hyperliquid', 'timeseries', 'activity', 'large_table'].includes(fixture)) {
     assert((await page.locator('table.sqd-table').count()) >= 1, `${fixture} should expose an evidence table`)
@@ -1047,7 +1098,7 @@ async function validateChartRange(browser: Browser) {
       assert((await status.innerText()) === full, `${fixture}: Reset view should restore the whole series`)
 
       // The keyboard reaches zoom from the chart itself, and Home resets it.
-      const surface = fixture === 'hyperliquid' ? '.sqd-candle-chart' : '.sqd-chart-wrap'
+      const surface = fixture === 'hyperliquid' ? '.sqd-candle-chart' : '.sqd-chart-plot'
       const box = await page.locator(surface).first().boundingBox()
       assert(box, `${fixture}: the chart should have a box`)
       await page.locator(surface).first().dispatchEvent('keydown', { key: '+', bubbles: true })

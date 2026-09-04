@@ -1,14 +1,17 @@
 import {
+  AreaSeries,
   CandlestickSeries,
   ColorType,
   CrosshairMode,
   HistogramSeries,
   type IChartApi,
+  LineSeries,
   LineStyle,
   type UTCTimestamp,
   createChart,
 } from 'lightweight-charts'
 
+import { EXPLORER_CHART_CAPABILITIES, type ExplorerToolbarAction } from './capabilities.js'
 import { chainFor, chainLogoUrl, explorerLink, identifierKind } from './explorers.js'
 import { ACTIVITY_EXPLORER_CSS } from './styles.js'
 
@@ -123,13 +126,6 @@ export function disposeActiveCharts() {
   for (const dispose of activeChartDisposers.splice(0)) dispose()
 }
 
-/* SVG panels hold no canvas, but they do hold gesture listeners, and a render
-   throws the panel away. Their teardown joins the same list. */
-function registerSurfaceDisposer(panelRoot: HTMLElement, dispose: () => void) {
-  panelChartDisposers.set(panelRoot, dispose)
-  activeChartDisposers.push(dispose)
-}
-
 function registerChartDisposer(panelRoot: HTMLElement, chart: IChartApi, extra: () => void) {
   let disposed = false
   const dispose = () => {
@@ -142,36 +138,29 @@ function registerChartDisposer(panelRoot: HTMLElement, chart: IChartApi, extra: 
   activeChartDisposers.push(dispose)
 }
 
-/* The SVG coordinate space shrinks on narrow hosts so type stays near its CSS
-   size instead of scaling away with the viewBox. */
+/* Narrow hosts have no room beside the plot for a rotated axis title, and the
+   series label is already in the legend or the card title. */
 let appRoot: HTMLElement | null = null
 
-function chartGeometry() {
+function axisTitlesFit(): boolean {
   const width = appRoot?.clientWidth || (typeof innerWidth === 'number' ? innerWidth : 900)
-  const narrow = width <= 520
-  if (narrow) return { width: 460, height: 380, pad: { left: 10, right: 58, top: 14, bottom: 30 }, axisTitles: false }
-  /* Wide hosts get a coordinate space close to the rendered width, so axis
-     labels paint at their 11px CSS size instead of scaling with the card. */
-  const chrome = appRoot?.dataset.mode === 'fullscreen' ? 66 : 32
-  const plotWidth = Math.min(1400, Math.max(640, width - chrome))
-  return { width: plotWidth, height: 320, pad: { left: 26, right: 76, top: 14, bottom: 32 }, axisTitles: true }
+  return width > 520
 }
 
 /*
- * One zoom-and-pan vocabulary for both chart engines. The candle terminal
- * drives lightweight-charts' logical range; the SVG chart drives the slice of
- * points it draws. Both are view-only: narrowing the view never changes which
- * rows the tool returned, so _coverage and the evidence receipt keep saying
- * exactly what the tool said.
+ * One zoom-and-pan vocabulary for every chart. Candles, lines, areas, and bars
+ * all drive lightweight-charts' logical range through this. It is view-only:
+ * narrowing the view never changes which rows the tool returned, so _coverage
+ * and the evidence receipt keep saying exactly what the tool said.
  */
 export type RangeWindow = { from: number; to: number }
 
 export type RangeController = {
   /* Lowest allowed `from` and highest allowed `to`. lightweight-charts places
-     index i at logical i and pads half a slot at each end, so the candle
-     terminal passes -0.5 and count - 0.5; the SVG chart passes 0 and count-1.
-     `total` closes the gap: the padding either end follows from the three, so
-     the controls can count points rather than guess from the span. */
+     index i at logical i and pads half a slot at each end, so a terminal over
+     n points passes -0.5 and n - 0.5. `total` closes the gap: the padding
+     either end follows from the three, so the controls can count points rather
+     than guess from the span. */
   min: number
   max: number
   total: number
@@ -180,7 +169,7 @@ export type RangeController = {
   write: (window: RangeWindow) => void
 }
 
-/** Half a slot for lightweight-charts, nothing for the SVG plot. */
+/** Half a slot at each end, as lightweight-charts lays a series out. */
 function edgePad(controller: RangeController): number {
   return controller.total > 1 ? (controller.max - controller.min - (controller.total - 1)) / 2 : 0
 }
@@ -361,6 +350,8 @@ function chartRangeToolbar(
   totalPoints: number,
   focusPrefix: string,
   onChange?: () => void,
+  /* A chart whose logical slots are not all points counts its own. */
+  shownInWindow: (window: RangeWindow) => number = (window) => pointsInWindow(window, controller),
 ): { node: HTMLElement; sync: () => void } {
   const node = element('div', 'sqd-chart-toolbar')
   node.setAttribute('role', 'group')
@@ -371,12 +362,15 @@ function chartRangeToolbar(
   status.setAttribute('role', 'status')
   status.setAttribute('aria-live', 'polite')
   const presets: Array<{ node: HTMLButtonElement; count: number }> = []
+  const offers = (action: ExplorerToolbarAction) => EXPLORER_CHART_CAPABILITIES.toolbarActions.includes(action)
 
-  for (const { label, share } of [
-    { label: 'All', share: 1 },
-    { label: 'Last half', share: 0.5 },
-    { label: 'Last quarter', share: 0.25 },
-  ]) {
+  for (const { label, share } of offers('range_presets')
+    ? [
+        { label: 'All', share: 1 },
+        { label: 'Last half', share: 0.5 },
+        { label: 'Last quarter', share: 0.25 },
+      ]
+    : []) {
     const count = share === 1 ? totalPoints : Math.ceil(totalPoints * share)
     if (share !== 1 && (count < 2 || count >= totalPoints)) continue
     const button = withFocusKey(
@@ -404,10 +398,11 @@ function chartRangeToolbar(
     sync()
     onChange?.()
   })
-  node.append(reset, status)
+  if (offers('reset_zoom')) node.append(reset)
+  node.append(status)
 
   const sync = () => {
-    const shown = pointsInWindow(controller.read(), controller)
+    const shown = shownInWindow(controller.read())
     const full = shown >= totalPoints
     reset.disabled = full
     /* lightweight-charts pins the right edge, so a preset can settle a point
@@ -1044,56 +1039,6 @@ function intervalSeconds(value: unknown): number | undefined {
   return Number(match[1]) * multiplier
 }
 
-/* Axis scales follow the Chart Standards band() rule: floors and ceilings land
-   on the 1/2/5 ladder. Zero is compulsory when the mark's size carries the
-   value (bars, stacked segments, areas) and optional when position carries it,
-   so lines get a banded axis with a labelled floor and no area fill. */
-const STEP_LADDER = [1, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10]
-
-function bandScale(
-  min: number,
-  max: number,
-  zeroBased: boolean,
-): { domainMin: number; domainMax: number; ticks: number[] } {
-  let low = zeroBased ? Math.min(0, min) : min
-  let high = zeroBased ? Math.max(0, max) : max
-  if (high === low) {
-    const nudge = Math.max(Math.abs(high) * 0.001, 1e-9)
-    low -= nudge
-    high += nudge
-  }
-  const span = high - low
-  const pad = span * 0.08
-  const paddedLow = zeroBased && low === 0 ? 0 : low - pad
-  const paddedHigh = zeroBased && high === 0 ? 0 : high + pad
-  const paddedSpan = paddedHigh - paddedLow
-  const power = 10 ** Math.floor(Math.log10(paddedSpan / 4))
-  let best: { step: number; domainMin: number; domainMax: number; score: number } | undefined
-  for (const unit of STEP_LADDER) {
-    const step = unit * power
-    const domainMin = Math.floor(paddedLow / step) * step
-    const domainMax = Math.ceil(paddedHigh / step) * step
-    const intervals = Math.round((domainMax - domainMin) / step)
-    if (intervals < 3 || intervals > 7) continue
-    const score = span / (domainMax - domainMin) - Math.abs(intervals - 5) * 0.01
-    if (!best || score > best.score) best = { step, domainMin, domainMax, score }
-  }
-  if (!best) {
-    const step = 10 * power
-    best = {
-      step,
-      domainMin: Math.floor(paddedLow / step) * step,
-      domainMax: Math.ceil(paddedHigh / step) * step,
-      score: 0,
-    }
-  }
-  const ticks: number[] = []
-  for (let value = best.domainMin; value <= best.domainMax + best.step / 2; value += best.step) {
-    ticks.push(Math.abs(value) < best.step / 1e6 ? 0 : value)
-  }
-  return { domainMin: best.domainMin, domainMax: best.domainMax, ticks }
-}
-
 function tickText(value: number, format?: string, isTop = false): string {
   const magnitude = Math.abs(value)
   let base: string
@@ -1158,18 +1103,6 @@ function selectEvidenceRow(row: Record<string, unknown>, selectedHit: Element) {
   selectedTableRow?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
 }
 
-function bindPointSelection(hit: SVGElement, row: Record<string, unknown>) {
-  hit.setAttribute('role', 'button')
-  hit.setAttribute('aria-pressed', 'false')
-  hit.addEventListener('click', () => selectEvidenceRow(row, hit))
-  hit.addEventListener('keydown', (event) => {
-    if (event.key === 'Enter' || event.key === ' ') {
-      event.preventDefault()
-      selectEvidenceRow(row, hit)
-    }
-  })
-}
-
 function normalizeSeries(
   rows: Record<string, unknown>[],
   chart: Record<string, unknown>,
@@ -1187,7 +1120,9 @@ function normalizeSeries(
         const value = numeric(getByPath(row, yField))
         return { row, values: [value ?? null] }
       }),
-      series: [{ key: yField, label: text(chart.y_axis_label || humanize(yField)), color: 'var(--accent)' }],
+      /* The chart palette's series-1, not the interface accent: the accent is
+         a text colour, and a fill at that lightness reads as a highlight. */
+      series: [{ key: yField, label: text(chart.y_axis_label || humanize(yField)), color: CHART_COLORS[0] }],
     }
   }
 
@@ -1261,6 +1196,79 @@ function finalCandleStillForming(payload: Record<string, unknown>): boolean {
   if (windowTo !== undefined && head !== undefined) return windowTo >= head
   const summary = isRecord(payload.summary) ? payload.summary : {}
   return summary.window_anchor === 'indexed_head' || summary.window_anchor === 'latest_fill'
+}
+
+/*
+ * One instrument for every chart. Candles, lines, areas, and bars all come
+ * through here, so they share the grid, the crosshair, the right price scale,
+ * the mono type, and the axis behaviour rather than each inventing its own.
+ */
+function createTerminalChart(
+  mount: HTMLElement,
+  colors: ReturnType<typeof terminalColors>,
+  params: {
+    scaleMargins: { top: number; bottom: number }
+    tickLabel: (time: number) => string
+    crosshair?: CrosshairMode
+  },
+): IChartApi {
+  return createChart(mount, {
+    autoSize: true,
+    /* Every number the app formats goes through en-US, and the chart has to
+       agree. Left to itself lightweight-charts takes the browser's locale,
+       which on a host whose environment reports something like `en_US@posix`
+       is not a valid language tag and throws out of the axis formatter. */
+    localization: { locale: 'en-US' },
+    layout: {
+      background: { type: ColorType.Solid, color: 'transparent' },
+      textColor: colors.ink,
+      fontFamily: TERMINAL_MONO,
+      fontSize: 11,
+      attributionLogo: false,
+    },
+    grid: {
+      vertLines: { color: colors.grid },
+      horzLines: { color: colors.grid },
+    },
+    rightPriceScale: {
+      borderColor: colors.axis,
+      scaleMargins: params.scaleMargins,
+    },
+    timeScale: {
+      borderColor: colors.axis,
+      timeVisible: true,
+      secondsVisible: false,
+      fixLeftEdge: true,
+      fixRightEdge: true,
+      tickMarkFormatter: params.tickLabel,
+    },
+    crosshair: {
+      mode: params.crosshair ?? CrosshairMode.Magnet,
+      vertLine: {
+        color: colors.crosshair,
+        width: 1,
+        style: LineStyle.LargeDashed,
+        labelBackgroundColor: colors.crosshairLabel,
+      },
+      horzLine: {
+        color: colors.crosshair,
+        width: 1,
+        style: LineStyle.LargeDashed,
+        labelBackgroundColor: colors.crosshairLabel,
+      },
+    },
+    /* Zoom and pan are view-only. lightweight-charts handles the gestures it
+       owns (axis drags, pinch); the overlay forwards wheel and drag, which
+       would otherwise stop at the hit targets sitting above the canvas. */
+    handleScroll: { mouseWheel: false, pressedMouseMove: false, horzTouchDrag: true, vertTouchDrag: false },
+    handleScale: {
+      mouseWheel: false,
+      pinch: true,
+      axisPressedMouseMove: { time: true, price: false },
+      axisDoubleClickReset: { time: true, price: false },
+    },
+    kineticScroll: { mouse: false, touch: false },
+  })
 }
 
 function buildCandleTerminal(
@@ -1384,63 +1392,9 @@ function buildCandleTerminal(
   terminal.append(readout, chartBox, attribution)
 
   const TERMINAL_COLORS = terminalColors()
-  const chartApi = createChart(mount, {
-    autoSize: true,
-    /* Every number the app formats goes through en-US, and the chart has to
-       agree. Left to itself lightweight-charts takes the browser's locale,
-       which on a host whose environment reports something like `en_US@posix`
-       is not a valid language tag and throws out of the axis formatter. */
-    localization: { locale: 'en-US' },
-    layout: {
-      background: { type: ColorType.Solid, color: 'transparent' },
-      textColor: TERMINAL_COLORS.ink,
-      fontFamily: TERMINAL_MONO,
-      fontSize: 11,
-      attributionLogo: false,
-    },
-    grid: {
-      vertLines: { color: TERMINAL_COLORS.grid },
-      horzLines: { color: TERMINAL_COLORS.grid },
-    },
-    rightPriceScale: {
-      borderColor: TERMINAL_COLORS.axis,
-      scaleMargins: { top: 0.06, bottom: hasVolume ? 0.3 : 0.08 },
-    },
-    timeScale: {
-      borderColor: TERMINAL_COLORS.axis,
-      timeVisible: true,
-      secondsVisible: false,
-      fixLeftEdge: true,
-      fixRightEdge: true,
-      tickMarkFormatter: (time: number) =>
-        timeToLabel.get(time) ?? (monotonic ? new Date(time * 1000).toISOString().slice(11, 16) : ''),
-    },
-    crosshair: {
-      mode: CrosshairMode.Magnet,
-      vertLine: {
-        color: TERMINAL_COLORS.crosshair,
-        width: 1,
-        style: LineStyle.LargeDashed,
-        labelBackgroundColor: TERMINAL_COLORS.crosshairLabel,
-      },
-      horzLine: {
-        color: TERMINAL_COLORS.crosshair,
-        width: 1,
-        style: LineStyle.LargeDashed,
-        labelBackgroundColor: TERMINAL_COLORS.crosshairLabel,
-      },
-    },
-    /* Zoom and pan are view-only. lightweight-charts handles the gestures it
-       owns (axis drags, pinch); the overlay forwards wheel and drag, which
-       would otherwise stop at the hit targets sitting above the canvas. */
-    handleScroll: { mouseWheel: false, pressedMouseMove: false, horzTouchDrag: true, vertTouchDrag: false },
-    handleScale: {
-      mouseWheel: false,
-      pinch: true,
-      axisPressedMouseMove: { time: true, price: false },
-      axisDoubleClickReset: { time: true, price: false },
-    },
-    kineticScroll: { mouse: false, touch: false },
+  const chartApi = createTerminalChart(mount, TERMINAL_COLORS, {
+    scaleMargins: { top: 0.06, bottom: hasVolume ? 0.3 : 0.08 },
+    tickLabel: (time) => timeToLabel.get(time) ?? (monotonic ? new Date(time * 1000).toISOString().slice(11, 16) : ''),
   })
   const candleSeries = chartApi.addSeries(CandlestickSeries, {
     upColor: TERMINAL_COLORS.up,
@@ -1660,9 +1614,9 @@ function buildCandleTerminal(
       lastLabel: fullLabels[last] ?? '',
     })
   }
-  /* Below nine candles there is nothing to zoom into, which is also what the
-     descriptor declares, so the controls are not offered. */
-  const zoomable = parsed.length > 8
+  /* Below the declared minimum there is nothing to zoom into, so nothing is
+     offered; the tool contract declares the same number. */
+  const zoomable = parsed.length >= EXPLORER_CHART_CAPABILITIES.minimumPointsForZoom
   const toolbar = zoomable ? chartRangeToolbar(controller, parsed.length, 'candles') : undefined
   if (toolbar) terminal.insertBefore(toolbar.node, chartBox)
   const detachGestures = zoomable
@@ -1692,130 +1646,279 @@ function buildCandleTerminal(
   return terminal
 }
 
-function chartPanel(
-  payload: Record<string, unknown>,
-  panel: Panel,
-  onViewChange?: (view: ChartView) => void,
-): HTMLElement {
-  const descriptor = getByPath(payload, text(panel.chart_key))
-  const chart = isRecord(descriptor) ? descriptor : {}
-  const { root, body } = card(
-    text(panel.title ?? chart.title ?? 'Activity over time'),
-    text(panel.subtitle ?? chart.subtitle),
-    panel.emphasis === 'primary' ? 'sqd-card--primary' : '',
-  )
-  const wrap = element('div', 'sqd-chart-wrap')
-  const geometry = chartGeometry()
-  const CHART_WIDTH = geometry.width
-  const CHART_HEIGHT = geometry.height
-  const CHART_PAD = geometry.pad
-  const rows = sortRowsByX(numberRows(payload, chart), chart)
-  if (!rows.length) {
-    wrap.append(element('div', 'sqd-chart-empty', 'No chart points were returned for this window.'))
-    body.append(wrap)
-    return root
-  }
-  if (chart.kind === 'candlestick') {
-    const terminal = buildCandleTerminal(
-      root,
-      chart,
-      rows,
-      text(panel.title ?? chart.title ?? 'Blockchain activity chart'),
-      finalCandleStillForming(payload),
-      onViewChange,
-    )
-    if (!terminal) {
-      wrap.append(element('div', 'sqd-chart-empty', 'The result did not include numeric candle values.'))
-      body.append(wrap)
-      return root
-    }
-    wrap.append(terminal)
-    body.append(wrap)
-    const declaredCandles = Number(chart.total_points ?? chart.total_candles)
-    const candleNotice = Number.isFinite(declaredCandles)
-      ? displayLimitNotice('chart points', rows.length, rows.length, declaredCandles)
-      : null
-    if (candleNotice) body.append(candleNotice)
-    return root
-  }
-  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
-  svg.setAttribute('class', 'sqd-chart')
-  svg.setAttribute('viewBox', `0 0 ${CHART_WIDTH} ${CHART_HEIGHT}`)
-  svg.style.aspectRatio = `${CHART_WIDTH} / ${CHART_HEIGHT}`
-  svg.setAttribute('role', 'group')
-  const chartTitle = text(panel.title ?? chart.title ?? 'Blockchain activity chart')
-  const plotW = CHART_WIDTH - CHART_PAD.left - CHART_PAD.right
-  const plotRight = CHART_WIDTH - CHART_PAD.right
-  const tickX = plotRight + 8
-  const add = (tag: string, attrs: Record<string, string>): SVGElement => {
-    const node = document.createElementNS('http://www.w3.org/2000/svg', tag)
-    for (const [key, value] of Object.entries(attrs)) node.setAttribute(key, value)
-    svg.append(node)
-    return node
-  }
-  const addAxisTitle = (label: string, midY: number) => {
-    if (!label || !geometry.axisTitles) return
-    const group = document.createElementNS('http://www.w3.org/2000/svg', 'g')
-    group.setAttribute('transform', `translate(11, ${midY}) rotate(-90)`)
-    const node = document.createElementNS('http://www.w3.org/2000/svg', 'text')
-    node.setAttribute('class', 'sqd-chart-axis-title')
-    node.setAttribute('text-anchor', 'middle')
-    node.textContent = label
-    group.append(node)
-    svg.append(group)
-  }
-  const addXLabels = (labels: string[], y: number) => {
-    if (!labels.length) return
-    const first = add('text', { x: String(CHART_PAD.left), y: String(y), class: 'sqd-chart-label' })
-    first.textContent = labels[0]
-    if (labels.length > 2 && labels[1]) {
-      const middle = add('text', {
-        x: String(CHART_PAD.left + plotW / 2),
-        y: String(y),
-        'text-anchor': 'middle',
-        class: 'sqd-chart-label',
-      })
-      middle.textContent = labels[1]
-    }
-    if (labels.length > 1 && labels.at(-1) && labels.at(-1) !== labels[0]) {
-      const last = add('text', { x: String(plotRight), y: String(y), 'text-anchor': 'end', class: 'sqd-chart-label' })
-      last.textContent = labels.at(-1)!
-    }
-  }
-  const rowTimeLabel = (row: Record<string, unknown> | undefined) =>
-    row ? shortTimeLabel(text(row.timestamp_human ?? row.timestamp ?? row.bucket_index ?? '')) : ''
+/** `var(--chart-1)` is what the DOM needs; the canvas needs what it resolves to. */
+function resolveSeriesColor(color: string, fallback: string): string {
+  const token = /^var\(\s*(--[\w-]+)\s*\)$/.exec(color)?.[1]
+  return token ? resolveColor(token, fallback) : color
+}
 
+/*
+ * Lines, areas, and bars, on the same instrument as the candles.
+ *
+ * The canvas carries the marks, the crosshair, and the right price scale. A
+ * transparent overlay of one button per point carries everything a canvas
+ * cannot: keyboard reach, the accessible label naming each visible series and
+ * its exact value, the pinned selection that pages the evidence table, and the
+ * exact numbers a test can read back. Hidden per-series markers carry the
+ * totals and the run lengths for the same reason.
+ */
+function buildSeriesTerminal(
+  panelRoot: HTMLElement,
+  chart: Record<string, unknown>,
+  rows: Record<string, unknown>[],
+  chartTitle: string,
+  focusPrefix: string,
+  onViewChange?: (view: ChartView) => void,
+): HTMLElement | null {
+  const normalized = normalizeSeries(rows, chart)
+  const points = normalized.points
+  if (!normalized.series.length || !points.some((point) => point.values.some((value) => value !== null))) return null
+
+  const valueFormat = text(chart.value_format)
+  const unit = text(chart.unit)
+  /* A grouped bar chart would need side-by-side slots, which a histogram
+     series does not have; no descriptor asks for one, and a line is a better
+     answer than overlapping bars if one ever does. */
+  const isBar = chart.recommended_visual === 'bar' && normalized.series.length === 1
+  const stacked = chart.recommended_visual === 'stacked_area' && normalized.series.length > 1
+  const xField = text(chart.x_field || 'timestamp')
+
+  const rawX = points.map((point) => numeric(getByPath(point.row, xField)))
+  const monotonic = rawX.every(
+    (value, index) => value !== undefined && (index === 0 || value > (rawX[index - 1] as number)),
+  )
+  const times = points.map((_point, index) => (monotonic ? (rawX[index] as number) : index * 60) as UTCTimestamp)
+  const labels = points.map((point, index) =>
+    text(point.row.timestamp_human ?? point.row.timestamp ?? point.row.bucket_index ?? `Point ${index + 1}`),
+  )
+  const timeToLabel = new Map<number, string>()
+  times.forEach((time, index) => timeToLabel.set(time as number, shortTimeLabel(labels[index]) || labels[index]))
+
+  /*
+   * lightweight-charts spaces points by their position in the data, not by
+   * their time, so a bucket the query never returned needs a slot of its own
+   * or the two points either side of it sit next to each other as though
+   * nothing were missing. One empty slot per gap is enough to show it.
+   */
+  const expectedStep = monotonic ? (xField === 'bucket_index' ? 1 : intervalSeconds(chart.interval)) : undefined
+  const timeline: UTCTimestamp[] = []
+  const slotOfPoint: number[] = []
+  points.forEach((_point, index) => {
+    const previous = index > 0 ? (times[index - 1] as number) : undefined
+    if (previous !== undefined && expectedStep && (times[index] as number) - previous > expectedStep * 1.5) {
+      timeline.push((previous + expectedStep) as UTCTimestamp)
+    }
+    slotOfPoint.push(timeline.length)
+    timeline.push(times[index])
+  })
+  const pointOfSlot = new Map(slotOfPoint.map((slot, index) => [slot, index]))
+
+  /*
+   * The runs of consecutive points a series actually draws. A line series
+   * connects straight through an empty slot, so each run is its own series
+   * and the break between them is real rather than implied.
+   */
+  const runsOf = (values: (number | null)[]) => {
+    const runs: Array<{ time: UTCTimestamp; value: number }[]> = []
+    let run: { time: UTCTimestamp; value: number }[] = []
+    points.forEach((_point, index) => {
+      const value = values[index]
+      const broken = value === null || (index > 0 && slotOfPoint[index] !== slotOfPoint[index - 1] + 1)
+      if (broken && run.length) {
+        runs.push(run)
+        run = []
+      }
+      if (value !== null) run.push({ time: times[index], value })
+    })
+    if (run.length) runs.push(run)
+    return runs
+  }
+
+  const terminal = element('div', 'sqd-chart-terminal')
+  const plot = element('div', 'sqd-chart-plot')
+  plot.setAttribute('role', 'group')
+  plot.setAttribute(
+    'aria-label',
+    `${chartTitle}. ${points.length} data points across ${normalized.series.length} series.`,
+  )
+  const mount = element('div', 'sqd-chart-canvas')
+  mount.setAttribute('aria-hidden', 'true')
+  const hits = element('div', 'sqd-chart-hits')
   const tooltip = element('div', 'sqd-chart-tooltip')
   tooltip.setAttribute('role', 'status')
   tooltip.setAttribute('aria-live', 'polite')
   tooltip.hidden = true
-  let crosshair: SVGLineElement | undefined
-  const showTooltip = (cx: number, label: string, values: string[]) => {
-    renderTooltip(tooltip, label, values.map(splitTooltipValue))
-    tooltip.hidden = false
-    placeTooltip(tooltip, (cx / CHART_WIDTH) * (tooltip.parentElement?.clientWidth ?? CHART_WIDTH))
-    crosshair?.setAttribute('x1', String(cx))
-    crosshair?.setAttribute('x2', String(cx))
-    if (crosshair) crosshair.style.display = ''
+  plot.append(mount, hits, tooltip)
+  /* The value axis is named in a gutter beside the plot rather than over it:
+     the canvas fills its box edge to edge, so a label inside would sit on the
+     first bars. */
+  const axisTitle = text(chart.y_axis_label ?? (normalized.series.length === 1 ? normalized.series[0].label : unit))
+  const frame = element('div', 'sqd-chart-frame')
+  if (axisTitle && axisTitlesFit()) frame.append(element('div', 'sqd-chart-axis-title', axisTitle))
+  frame.append(plot)
+  const attribution = element('a', 'sqd-chart-attribution', 'Charts by TradingView') as HTMLAnchorElement
+  attribution.href = 'https://www.tradingview.com/'
+  attribution.target = '_blank'
+  attribution.rel = 'noopener noreferrer'
+  terminal.append(frame, attribution)
+
+  const TERMINAL_COLORS = terminalColors()
+  const chartApi = createTerminalChart(mount, TERMINAL_COLORS, {
+    scaleMargins: { top: 0.14, bottom: 0.08 },
+    /* An empty slot has no label of its own, and inventing one from its
+       placeholder time would put a wrong reading on the axis. */
+    tickLabel: (time) => timeToLabel.get(time) ?? '',
+    /* A bar is read at its own slot; magnet would snap the crosshair to the
+       nearest value instead. Lines keep the magnet. */
+    crosshair: isBar ? CrosshairMode.Normal : CrosshairMode.Magnet,
+  })
+  const priceFormat = {
+    type: 'custom' as const,
+    formatter: (value: number) => tickText(value, valueFormat),
+    minMove: 1e-8,
   }
-  const hideTooltip = () => {
-    tooltip.hidden = true
-    if (crosshair) crosshair.style.display = 'none'
+  /* Every slot exists on the time scale, including the empty ones, so the gaps
+     keep their width whatever the visible series happen to be. It carries no
+     values, and it sits on a scale of its own: on the visible one its default
+     two-decimal price format would become the axis format for every chart. */
+  const timelineSeries = chartApi.addSeries(LineSeries, {
+    visible: false,
+    priceScaleId: 'sqd-timeline',
+    priceFormat,
+    priceLineVisible: false,
+    lastValueVisible: false,
+  })
+  timelineSeries.setData(timeline.map((time) => ({ time })))
+
+  const seriesColors = normalized.series.map((series, index) =>
+    resolveSeriesColor(series.color, index === 0 ? '#6366f1' : TERMINAL_COLORS.accent),
+  )
+  /* One logical series, one or more drawn runs. */
+  const seriesRuns: Array<ReturnType<IChartApi['addSeries']>[]> = normalized.series.map(() => [])
+  const runLengths: number[][] = normalized.series.map(() => [])
+  let signedBaseline = false
+
+  if (isBar) {
+    const values = points.map((point) => point.values[0])
+    const signed = values.some((value) => value !== null && value < 0)
+    signedBaseline = signed && values.some((value) => value !== null && value > 0)
+    const api = chartApi.addSeries(HistogramSeries, {
+      priceFormat,
+      priceLineVisible: false,
+      lastValueVisible: false,
+      base: 0,
+      color: seriesColors[0],
+    })
+    /* Bars stand on their own slot, so an empty slot simply has no bar and
+       nothing has to be split. */
+    api.setData(
+      points.flatMap((point, index) =>
+        point.values[0] === null
+          ? []
+          : [
+              {
+                time: times[index],
+                value: point.values[0] as number,
+                ...(signed
+                  ? { color: (point.values[0] as number) >= 0 ? TERMINAL_COLORS.up : TERMINAL_COLORS.down }
+                  : {}),
+              },
+            ],
+      ),
+    )
+    seriesRuns[0].push(api)
+    runLengths[0] = runsOf(values).map((run) => run.length)
+  } else if (stacked) {
+    /* Stacked bands, drawn as filled areas over running totals. The topmost
+       total goes down first so each shorter one paints in front of it, which
+       is what makes the bands read as segments rather than as overlapping
+       fills. A negative contribution has no place in a stack, so the clamp at
+       zero the SVG plot used is kept. */
+    const totals = normalized.series.map((_series, seriesIndex) =>
+      points.map((point) =>
+        point.values.slice(0, seriesIndex + 1).reduce<number>((sum, value) => sum + Math.max(0, value ?? 0), 0),
+      ),
+    )
+    for (let seriesIndex = normalized.series.length - 1; seriesIndex >= 0; seriesIndex -= 1) {
+      const api = chartApi.addSeries(AreaSeries, {
+        priceFormat,
+        priceLineVisible: false,
+        lastValueVisible: false,
+        lineWidth: 1,
+        lineColor: seriesColors[seriesIndex],
+        topColor: withAlpha(seriesColors[seriesIndex], 0.82),
+        bottomColor: withAlpha(seriesColors[seriesIndex], 0.82),
+      })
+      api.setData(totals[seriesIndex].map((value, index) => ({ time: times[index], value })))
+      seriesRuns[seriesIndex].push(api)
+      runLengths[seriesIndex] = [points.length]
+    }
+  } else {
+    const single = normalized.series.length === 1
+    normalized.series.forEach((_series, seriesIndex) => {
+      const values = points.map((point) => point.values[seriesIndex])
+      const positive = values.every((value) => value === null || value >= 0)
+      const area = single && positive
+      for (const run of runsOf(values)) {
+        const api = area
+          ? chartApi.addSeries(AreaSeries, {
+              priceFormat,
+              priceLineVisible: false,
+              lastValueVisible: false,
+              lineWidth: 2,
+              lineColor: seriesColors[0],
+              topColor: withAlpha(seriesColors[0], 0.24),
+              bottomColor: withAlpha(seriesColors[0], 0.02),
+            })
+          : chartApi.addSeries(LineSeries, {
+              priceFormat,
+              priceLineVisible: false,
+              lastValueVisible: false,
+              lineWidth: 2,
+              color: seriesColors[seriesIndex],
+            })
+        api.setData(run)
+        seriesRuns[seriesIndex].push(api)
+        runLengths[seriesIndex].push(run.length)
+      }
+    })
   }
 
-  const normalized = normalizeSeries(rows, chart)
-  if (!normalized.series.length || !normalized.points.some((point) => point.values.some((value) => value !== null))) {
-    wrap.append(element('div', 'sqd-chart-empty', 'The result did not include numeric chart values.'))
-    body.append(wrap)
-    return root
-  }
+  /* What a canvas cannot say: each series' identity, its exact total, the runs
+     it drew, and whether the reader has switched it off. */
+  const markers = normalized.series.map((series, seriesIndex) => {
+    const marker = element('span', 'sqd-chart-series')
+    marker.hidden = true
+    marker.setAttribute('data-series-index', String(seriesIndex))
+    marker.setAttribute('data-series', series.key)
+    marker.setAttribute(
+      'data-series-total',
+      String(points.reduce((sum, point) => sum + (point.values[seriesIndex] ?? 0), 0)),
+    )
+    marker.setAttribute('data-segments', runLengths[seriesIndex].join(','))
+    marker.setAttribute('data-visible', 'true')
+    terminal.append(marker)
+    return marker
+  })
 
-  /* A redraw replaces the whole plot, so what the reader has changed about it
-     has to live outside: which series the legend has switched off, and the
-     labeller the legend calls after a toggle. */
   const visibleSeries = new Set(normalized.series.map((_series, index) => index))
-  let seriesNodes = new Map<number, SVGElement[]>()
-  let updatePointLabels = () => {}
+  const valuesForPoint = (point: ChartPoint) =>
+    normalized.series.flatMap((series, seriesIndex) => {
+      if (!visibleSeries.has(seriesIndex)) return []
+      const value = point.values[seriesIndex]
+      return [`${series.label} ${value === null ? 'not available' : formatValue(value, valueFormat, unit)}`]
+    })
+
+  const buttons: HTMLButtonElement[] = []
+  const updatePointLabels = () => {
+    buttons.forEach((button, index) => {
+      const visible = valuesForPoint(points[index])
+      button.setAttribute(
+        'aria-label',
+        `${labels[index]}. ${visible.length ? visible.join('. ') : 'No visible series'}.`,
+      )
+    })
+  }
 
   if (normalized.series.length > 1) {
     const legend = element('div', 'sqd-chart-legend')
@@ -1832,351 +1935,222 @@ function chartPanel(
         button.setAttribute('aria-pressed', String(visible))
         if (visible) visibleSeries.add(seriesIndex)
         else visibleSeries.delete(seriesIndex)
-        seriesNodes.get(seriesIndex)?.forEach((node) => {
-          node.style.display = visible ? '' : 'none'
-        })
+        for (const api of seriesRuns[seriesIndex]) api.applyOptions({ visible })
+        markers[seriesIndex].setAttribute('data-visible', String(visible))
         updatePointLabels()
       })
       legend.append(button)
     })
-    body.append(legend)
+    terminal.insertBefore(legend, frame)
   }
 
-  const drawPlot = (window: RangeWindow) => {
-    svg.replaceChildren()
-    crosshair = add('line', {
-      x1: '0',
-      x2: '0',
-      y1: String(CHART_PAD.top),
-      y2: String(CHART_HEIGHT - CHART_PAD.bottom),
-      class: 'sqd-chart-crosshair',
-    }) as SVGLineElement
-    crosshair.style.display = 'none'
-    hideTooltip()
-    const first = Math.max(0, Math.round(window.from))
-    const last = Math.min(normalized.points.length - 1, Math.max(first, Math.round(window.to)))
-    const view = { series: normalized.series, points: normalized.points.slice(first, last + 1) }
-    const values = view.points.flatMap((point) => point.values).filter((value): value is number => value !== null)
-    if (!values.length) {
-      const note = add('text', {
-        x: String(CHART_WIDTH / 2),
-        y: String(CHART_HEIGHT / 2),
-        'text-anchor': 'middle',
-        class: 'sqd-chart-label',
-      })
-      note.textContent = 'No numeric values in this range.'
-      return
-    }
-    const plotH = CHART_HEIGHT - CHART_PAD.top - CHART_PAD.bottom
-    const plotBottom = CHART_PAD.top + plotH
-    const stacked = chart.recommended_visual === 'stacked_area' && view.series.length > 1
-    const stackTotals = view.points.map((point) =>
-      point.values.reduce<number>((sum, value) => sum + Math.max(0, value ?? 0), 0),
-    )
-    const isBar = chart.recommended_visual === 'bar'
-    const rawMin = isBar ? Math.min(0, ...values) : stacked ? 0 : Math.min(...values)
-    const rawMax = isBar ? Math.max(0, ...values) : stacked ? Math.max(...stackTotals) : Math.max(...values)
-    const scale = bandScale(rawMin, rawMax, isBar || stacked)
-    const { domainMin, domainMax } = scale
-    const range = domainMax - domainMin
-    const y = (value: number) => CHART_PAD.top + (1 - (value - domainMin) / range) * plotH
-    const xField = text(chart.x_field || 'timestamp')
-    const optionalXValues = view.points.map((point) => numeric(getByPath(point.row, xField)))
-    const xValues = optionalXValues.every((value) => value !== undefined) ? (optionalXValues as number[]) : undefined
-    const numericX = Boolean(xValues && Math.max(...xValues) > Math.min(...xValues))
-    const minX = numericX && xValues ? Math.min(...xValues) : 0
-    const maxX = numericX && xValues ? Math.max(...xValues) : Math.max(view.points.length - 1, 1)
-    const x = (index: number) => {
-      if (view.points.length === 1) return CHART_PAD.left + plotW / 2
-      const value = numericX && xValues ? xValues[index] : index
-      return CHART_PAD.left + ((value - minX) / (maxX - minX)) * plotW
-    }
-    /* Bars occupy a slot rather than sitting on a point: on a value scale the
-       first and last bar would be half outside the plot, and the last one
-       painted over the tick labels. Their hit targets follow the same slots so
-       the tooltip lands on the bar the reader is pointing at. */
-    const slotWidth = plotW / Math.max(view.points.length, 1)
-    const xCentre = (index: number) => (isBar ? CHART_PAD.left + (index + 0.5) * slotWidth : x(index))
-    const expectedStep = xField === 'bucket_index' ? 1 : intervalSeconds(chart.interval)
-    const gapBetween = (previousIndex: number, currentIndex: number) => {
-      if (!expectedStep || !numericX) return false
-      return Boolean(xValues && xValues[currentIndex] - xValues[previousIndex] > expectedStep * 1.5)
-    }
-    const lastPointValue = view.points.at(-1)?.values[0] ?? null
-    const showPill = !stacked && view.series.length === 1 && lastPointValue !== null
-    const finalValue = showPill ? lastPointValue : undefined
-    const pillY = finalValue === undefined ? undefined : y(finalValue)
-    for (const tick of scale.ticks) {
-      const gy = y(tick)
-      add('line', {
-        x1: String(CHART_PAD.left),
-        x2: String(plotRight),
-        y1: String(gy),
-        y2: String(gy),
-        class: 'sqd-chart-grid',
-      })
-      if (pillY !== undefined && Math.abs(gy - pillY) < 17) continue
-      const label = add('text', { x: String(tickX), y: String(gy + 4), class: 'sqd-chart-label' })
-      label.textContent = tickText(tick, text(chart.value_format), tick === scale.ticks.at(-1))
-    }
-    for (let quarter = 1; quarter <= 3; quarter += 1) {
-      const gx = CHART_PAD.left + (plotW * quarter) / 4
-      add('line', {
-        x1: String(gx),
-        x2: String(gx),
-        y1: String(CHART_PAD.top),
-        y2: String(plotBottom),
-        class: 'sqd-chart-grid',
-      })
-    }
-    add('line', {
-      x1: String(CHART_PAD.left),
-      x2: String(plotRight),
-      y1: String(plotBottom),
-      y2: String(plotBottom),
-      class: 'sqd-chart-axis',
-    })
-    const hasNegative = values.some((value) => value < 0)
-    if (isBar && hasNegative && domainMin < 0 && domainMax > 0) {
-      add('line', {
-        x1: String(CHART_PAD.left),
-        x2: String(plotRight),
-        y1: String(y(0)),
-        y2: String(y(0)),
-        class: 'sqd-chart-zero',
-      })
-    }
-
-    seriesNodes = new Map<number, SVGElement[]>()
-    const pointHits: Array<{ node: SVGElement; point: ChartPoint; timeLabel: string; cx: number }> = []
-    const valuesForPoint = (point: ChartPoint) =>
-      view.series.flatMap((series, seriesIndex) => {
-        if (!visibleSeries.has(seriesIndex)) return []
-        const value = point.values[seriesIndex]
-        return [
-          `${series.label} ${value === null ? 'not available' : formatValue(value, text(chart.value_format), text(chart.unit))}`,
-        ]
-      })
-    updatePointLabels = () => {
-      pointHits.forEach(({ node, point, timeLabel }) => {
-        const values = valuesForPoint(point)
-        node.setAttribute('aria-label', `${timeLabel}. ${values.length ? values.join('. ') : 'No visible series'}.`)
-      })
-    }
-    const trackSeriesNode = (seriesIndex: number, node: SVGElement) => {
-      const nodes = seriesNodes.get(seriesIndex) ?? []
-      nodes.push(node)
-      seriesNodes.set(seriesIndex, nodes)
-      node.setAttribute('data-series-index', String(seriesIndex))
-      node.setAttribute('data-series', view.series[seriesIndex]?.key ?? String(seriesIndex))
-    }
-
-    if (isBar) {
-      const singleSigned = view.series.length === 1 && hasNegative
-      /* The cap keeps wide windows from drawing slabs; zoomed to a handful of
-         buckets the old 22px left hairlines with acres of space between them. */
-      const barWidth = Math.max(2, Math.min(44, (slotWidth * 0.72) / view.series.length))
-      view.points.forEach((point, pointIndex) => {
-        point.values.forEach((value, seriesIndex) => {
-          if (value === null) return
-          const offset = (seriesIndex - (view.series.length - 1) / 2) * barWidth
-          const baseline = y(0)
-          const valueY = y(value)
-          const polarity = singleSigned ? (value >= 0 ? ' sqd-chart-bar--up' : ' sqd-chart-bar--down') : ''
-          const bar = add('rect', {
-            x: String(xCentre(pointIndex) + offset - barWidth / 2),
-            y: String(Math.min(valueY, baseline)),
-            width: String(Math.max(1, barWidth - 1)),
-            height: String(Math.max(1, Math.abs(baseline - valueY))),
-            rx: '1.5',
-            class: `sqd-chart-bar${polarity}`,
-            ...(singleSigned ? {} : { fill: view.series[seriesIndex].color }),
-            'data-value': String(value),
-          })
-          trackSeriesNode(seriesIndex, bar)
-        })
-      })
-    } else if (stacked) {
-      const bottoms = new Array(view.points.length).fill(0) as number[]
-      view.series.forEach((series, seriesIndex) => {
-        const topValues = view.points.map(
-          (point, index) => bottoms[index] + Math.max(0, point.values[seriesIndex] ?? 0),
-        )
-        const top = topValues.map((value, index) => `${x(index)},${y(value)}`).join(' ')
-        const bottom = bottoms
-          .map((value, index) => `${x(index)},${y(value)}`)
-          .reverse()
-          .join(' ')
-        const area = add('polygon', {
-          points: `${top} ${bottom}`,
-          class: 'sqd-chart-series-area',
-          fill: series.color,
-          'data-series-total': String(view.points.reduce((sum, point) => sum + (point.values[seriesIndex] ?? 0), 0)),
-        })
-        trackSeriesNode(seriesIndex, area)
-        topValues.forEach((value, index) => {
-          bottoms[index] = value
-        })
-      })
-    } else {
-      view.series.forEach((series, seriesIndex) => {
-        const segments: Array<Array<{ x: number; y: number; value: number; index: number }>> = []
-        let segment: Array<{ x: number; y: number; value: number; index: number }> = []
-        view.points.forEach((point, index) => {
-          const value = point.values[seriesIndex]
-          if (value === null || (segment.length > 0 && gapBetween(segment.at(-1)!.index, index))) {
-            if (segment.length) segments.push(segment)
-            segment = []
-          }
-          if (value !== null) segment.push({ x: x(index), y: y(value), value, index })
-        })
-        if (segment.length) segments.push(segment)
-        if (!segments.length) return
-        segments.forEach((points) => {
-          if (view.series.length === 1 && points.length > 1 && domainMin === 0) {
-            const baseline = y(0)
-            const area = add('polygon', {
-              points: `${points[0].x},${baseline} ${points.map((point) => `${point.x},${point.y}`).join(' ')} ${points.at(-1)!.x},${baseline}`,
-              class: 'sqd-chart-area',
-            })
-            trackSeriesNode(seriesIndex, area)
-          }
-          const line = add('polyline', {
-            points: points.map((point) => `${point.x},${point.y}`).join(' '),
-            class: 'sqd-chart-line',
-            stroke: series.color,
-            'data-point-count': String(points.length),
-            'data-segment-start': String(points[0].index),
-            'data-segment-end': String(points.at(-1)!.index),
-          })
-          trackSeriesNode(seriesIndex, line)
-        })
-      })
-    }
-
-    view.points.forEach((point, index) => {
-      const timeLabel = text(
-        point.row.timestamp_human ?? point.row.timestamp ?? point.row.bucket_index ?? `Point ${index + 1}`,
-      )
-      const cx = xCentre(index)
-      const hit = add('rect', {
-        x: String(Math.max(CHART_PAD.left, cx - slotWidth / 2)),
-        y: String(CHART_PAD.top),
-        width: String(Math.max(6, slotWidth)),
-        height: String(plotH),
-        class: 'sqd-chart-hit',
-        tabindex: '0',
-        'data-point-index': String(first + index),
-        'data-x-value': text(getByPath(point.row, xField)),
-        'aria-label': '',
-      })
-      pointHits.push({ node: hit, point, timeLabel, cx })
-      hit.addEventListener('pointerenter', () => showTooltip(cx, timeLabel, valuesForPoint(point)))
-      hit.addEventListener('focus', () => hit.dispatchEvent(new Event('pointerenter')))
-      hit.addEventListener('pointerleave', hideTooltip)
-      hit.addEventListener('blur', hideTooltip)
-      bindPointSelection(hit, point.row)
-    })
-    updatePointLabels()
-
-    if (finalValue !== undefined && pillY !== undefined) {
-      const finalLine = add('line', {
-        x1: String(CHART_PAD.left),
-        x2: String(plotRight),
-        y1: String(pillY),
-        y2: String(pillY),
-        class: 'sqd-chart-last-line',
-      })
-      trackSeriesNode(0, finalLine)
-      const finalText =
-        Math.abs(finalValue) >= 1000 ? pillCompact(finalValue) : tickText(finalValue, text(chart.value_format))
-      const pillWidth = Math.max(34, finalText.length * 7 + 14)
-      const finalPill = add('rect', {
-        x: String(plotRight + 4),
-        y: String(pillY - 11),
-        width: String(pillWidth),
-        height: '22',
-        rx: '5',
-        class: 'sqd-chart-last-pill',
-      })
-      trackSeriesNode(0, finalPill)
-      const finalLabel = add('text', {
-        x: String(plotRight + 4 + pillWidth / 2),
-        y: String(pillY + 4),
-        'text-anchor': 'middle',
-        class: 'sqd-chart-last-value',
-        'data-final-value': String(finalValue),
-      })
-      trackSeriesNode(0, finalLabel)
-      finalLabel.textContent = finalText
-    }
-    addAxisTitle(
-      text(chart.y_axis_label ?? (view.series.length === 1 ? view.series[0].label : chart.unit)),
-      CHART_PAD.top + plotH / 2,
-    )
-    addXLabels(
-      [
-        rowTimeLabel(view.points[0]?.row),
-        rowTimeLabel(view.points[Math.floor((view.points.length - 1) / 2)]?.row),
-        rowTimeLabel(view.points.at(-1)?.row),
-      ],
-      CHART_HEIGHT - 8,
-    )
-    svg.setAttribute(
-      'aria-label',
-      `${chartTitle}. ${view.points.length} data points across ${view.series.length} series.`,
-    )
-
-    for (const [seriesIndex, nodes] of seriesNodes) {
-      if (visibleSeries.has(seriesIndex)) continue
-      for (const node of nodes) node.style.display = 'none'
+  const anchorSeries = seriesRuns.flat()[0]
+  const showTooltip = (index: number, x: number) => {
+    renderTooltip(tooltip, labels[index], valuesForPoint(points[index]).map(splitTooltipValue))
+    tooltip.hidden = false
+    placeTooltip(tooltip, x)
+    const anchor = points[index].values.find((value) => value !== null)
+    if (anchor !== undefined && anchor !== null && anchorSeries) {
+      chartApi.setCrosshairPosition(anchor, times[index], anchorSeries)
     }
   }
+  const hideTooltip = () => {
+    tooltip.hidden = true
+    chartApi.clearCrosshairPosition()
+  }
+
+  points.forEach((point, index) => {
+    const button = element('button', 'sqd-chart-hit') as HTMLButtonElement
+    button.type = 'button'
+    button.setAttribute('data-point-index', String(index))
+    button.setAttribute('data-x-value', text(getByPath(point.row, xField)))
+    /* A single-series chart publishes the exact number behind each mark. A
+       point the tool returned no value for carries no attribute at all, so a
+       gap is never read back as a zero. */
+    if (normalized.series.length === 1 && point.values[0] !== null) {
+      button.setAttribute('data-value', String(point.values[0]))
+    }
+    button.setAttribute('aria-pressed', 'false')
+    button.style.left = `${(index / points.length) * 100}%`
+    button.style.width = `${100 / points.length}%`
+    const enter = () => showTooltip(index, button.offsetLeft + button.offsetWidth / 2)
+    button.addEventListener('pointerenter', enter)
+    button.addEventListener('focus', enter)
+    button.addEventListener('pointerleave', hideTooltip)
+    button.addEventListener('blur', hideTooltip)
+    button.addEventListener('click', () => selectEvidenceRow(point.row, button))
+    button.addEventListener('keydown', (event) => {
+      if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
+      const step = event.key === 'ArrowLeft' ? -1 : 1
+      const next = buttons.slice(index + step, index + step + 1).find((candidate) => !candidate.hidden)
+      if (!next) return
+      event.preventDefault()
+      event.stopPropagation()
+      next.focus()
+    })
+    hits.append(button)
+    buttons.push(button)
+  })
+  updatePointLabels()
+
+  const lastSeries = seriesRuns[0].at(-1)
+  const finalValue = !stacked && normalized.series.length === 1 ? (points.at(-1)?.values[0] ?? null) : null
+  if (finalValue !== null && lastSeries) {
+    /* The chart writes the last value into the price scale itself, and drops
+       the tick it would have collided with. A badge of our own on top of the
+       axis had to guess which tick to hide, and got it wrong at the edges. */
+    lastSeries.applyOptions({ lastValueVisible: true })
+    markers[0].setAttribute('data-final-value', String(finalValue))
+    lastSeries.createPriceLine({
+      price: finalValue,
+      color: TERMINAL_COLORS.accentLine,
+      lineWidth: 1,
+      lineStyle: LineStyle.Dashed,
+      axisLabelVisible: false,
+    })
+  }
+
+  const sync = () => {
+    const timeScale = chartApi.timeScale()
+    const coordinates = times.map((time) => timeScale.timeToCoordinate(time))
+    if (coordinates.some((coordinate) => coordinate === null)) return
+    const xs = coordinates as number[]
+    const slot =
+      timeline.length > 1
+        ? Math.max(
+            6,
+            (timeScale.timeToCoordinate(timeline.at(-1) as UTCTimestamp) ?? 0) -
+              (timeScale.timeToCoordinate(timeline[0]) ?? 0),
+          ) / Math.max(1, timeline.length - 1)
+        : Math.max(24, mount.clientWidth / 2)
+    const paneWidth = mount.clientWidth
+    buttons.forEach((button, index) => {
+      button.style.left = `${xs[index] - slot / 2}px`
+      button.style.width = `${slot}px`
+      /* A point scrolled out of the pane leaves the tab order too, or a
+         keyboard user lands on a target with nothing under it. */
+      button.hidden = paneWidth > 0 && (xs[index] < -slot / 2 || xs[index] > paneWidth + slot / 2)
+    })
+    /* A signed series is drawn from zero, not from the axis floor, and the
+       canvas cannot be asked where it put the line. Publishing it is what lets
+       a test see the baseline is a real interior line, not the pane's bottom. */
+    if (signedBaseline && lastSeries) {
+      const zeroY = lastSeries.priceToCoordinate(0)
+      if (zeroY !== null) plot.dataset.zeroBaseline = String(Math.round(zeroY))
+    }
+  }
+  let viewAdjusted = false
+  const scheduleSync = () =>
+    requestAnimationFrame(() => {
+      if (!viewAdjusted) chartApi.timeScale().fitContent()
+      requestAnimationFrame(sync)
+    })
+  chartApi.timeScale().subscribeVisibleLogicalRangeChange(() => requestAnimationFrame(sync))
 
   const controller: RangeController = {
-    min: 0,
-    max: normalized.points.length - 1,
-    total: normalized.points.length,
-    minimumSpan: Math.min(2, Math.max(0, normalized.points.length - 1)),
-    read: () => ({ ...svgWindow }),
-    write: (next) => {
-      svgWindow = next
-      drawPlot(svgWindow)
+    min: -0.5,
+    max: timeline.length - 0.5,
+    total: timeline.length,
+    minimumSpan: Math.min(2, timeline.length),
+    read: () => {
+      const range = chartApi.timeScale().getVisibleLogicalRange()
+      return range ? { from: range.from, to: range.to } : { from: -0.5, to: timeline.length - 0.5 }
+    },
+    write: (window) => {
+      viewAdjusted = window.to - window.from < timeline.length - 1e-6
+      chartApi.timeScale().setVisibleLogicalRange(window)
     },
   }
-  let svgWindow: RangeWindow = { from: 0, to: Math.max(0, normalized.points.length - 1) }
-  drawPlot(svgWindow)
-
-  if (normalized.points.length > 8) {
-    const reportView = () => {
-      const firstIndex = Math.max(0, Math.ceil(svgWindow.from - 1e-6))
-      const lastIndex = Math.min(normalized.points.length - 1, Math.floor(svgWindow.to + 1e-6))
-      onViewChange?.({
-        chart: chartTitle,
-        shown: pointsInWindow(svgWindow, controller),
-        total: normalized.points.length,
-        firstLabel: rowTimeLabel(normalized.points[firstIndex]?.row),
-        lastLabel: rowTimeLabel(normalized.points[lastIndex]?.row),
-      })
-    }
-    const toolbar = chartRangeToolbar(
-      controller,
-      normalized.points.length,
-      `chart-${text(panel.chart_key)}`,
-      reportView,
+  /* The controller counts slots, and an empty slot is not a point the tool
+     returned, so what the reader is told is the count of real points. */
+  const pointsShown = (window: RangeWindow) => {
+    const first = Math.ceil(window.from - 1e-6)
+    const last = Math.floor(window.to + 1e-6)
+    return slotOfPoint.filter((slot) => slot >= first && slot <= last).length
+  }
+  const reportView = () => {
+    const window = controller.read()
+    const visible = slotOfPoint.flatMap((slot, index) =>
+      slot >= Math.ceil(window.from - 1e-6) && slot <= Math.floor(window.to + 1e-6) ? [index] : [],
     )
-    body.append(toolbar.node)
-    const detach = attachRangeGestures(wrap, controller, () => {
-      toolbar.sync()
+    onViewChange?.({
+      chart: chartTitle,
+      shown: visible.length,
+      total: points.length,
+      firstLabel: labels[visible[0] ?? 0] ?? '',
+      lastLabel: labels[visible.at(-1) ?? points.length - 1] ?? '',
+    })
+  }
+  const zoomable = points.length >= EXPLORER_CHART_CAPABILITIES.minimumPointsForZoom
+  const toolbar = zoomable
+    ? chartRangeToolbar(controller, points.length, focusPrefix, undefined, pointsShown)
+    : undefined
+  if (toolbar) terminal.insertBefore(toolbar.node, frame)
+  const detachGestures = zoomable
+    ? attachRangeGestures(plot, controller, () => {
+        toolbar?.sync()
+        requestAnimationFrame(sync)
+        reportView()
+      })
+    : () => {}
+  if (zoomable) {
+    chartApi.timeScale().subscribeVisibleLogicalRangeChange(() => {
+      toolbar?.sync()
       reportView()
     })
-    /* The panel is thrown away and rebuilt on every render, so the listeners
-       have to go with it or they pile up on detached nodes. */
-    registerSurfaceDisposer(root, detach)
   }
 
-  wrap.append(svg)
-  wrap.append(tooltip)
+  const observer = typeof ResizeObserver === 'function' ? new ResizeObserver(scheduleSync) : undefined
+  observer?.observe(plot)
+  scheduleSync()
+  if (typeof document !== 'undefined' && document.fonts?.ready) {
+    document.fonts.ready.then(scheduleSync).catch(() => {})
+  }
+  registerChartDisposer(panelRoot, chartApi, () => {
+    detachGestures()
+    observer?.disconnect()
+  })
+  return terminal
+}
+
+function chartPanel(
+  payload: Record<string, unknown>,
+  panel: Panel,
+  onViewChange?: (view: ChartView) => void,
+): HTMLElement {
+  const descriptor = getByPath(payload, text(panel.chart_key))
+  const chart = isRecord(descriptor) ? descriptor : {}
+  const { root, body } = card(
+    text(panel.title ?? chart.title ?? 'Activity over time'),
+    text(panel.subtitle ?? chart.subtitle),
+    panel.emphasis === 'primary' ? 'sqd-card--primary' : '',
+  )
+  const wrap = element('div', 'sqd-chart-wrap')
+  const rows = sortRowsByX(numberRows(payload, chart), chart)
+  if (!rows.length) {
+    wrap.append(element('div', 'sqd-chart-empty', 'No chart points were returned for this window.'))
+    body.append(wrap)
+    return root
+  }
+  const candles = chart.kind === 'candlestick'
+  const chartTitle = text(panel.title ?? chart.title ?? 'Blockchain activity chart')
+  const terminal = candles
+    ? buildCandleTerminal(root, chart, rows, chartTitle, finalCandleStillForming(payload), onViewChange)
+    : buildSeriesTerminal(root, chart, rows, chartTitle, `chart-${text(panel.chart_key)}`, onViewChange)
+  if (!terminal) {
+    wrap.append(
+      element(
+        'div',
+        'sqd-chart-empty',
+        candles
+          ? 'The result did not include numeric candle values.'
+          : 'The result did not include numeric chart values.',
+      ),
+    )
+    body.append(wrap)
+    return root
+  }
+  wrap.append(terminal)
   body.append(wrap)
   const declaredPoints = Number(chart.total_points ?? chart.total_candles)
   const pointNotice = Number.isFinite(declaredPoints)
@@ -3044,11 +3018,72 @@ function stack(className: string, children: Array<HTMLElement | null>): HTMLElem
 /** Where the skip link lands. */
 const EVIDENCE_ANCHOR_ID = 'sqd-evidence'
 
+/*
+ * Everything a render reads apart from whether a follow-up is in flight. Two
+ * renders with the same signature draw the same result, so the second one has
+ * nothing to rebuild: tearing the DOM down would dispose every live chart and
+ * take the reader's zoom with it, in the one moment they are most likely to be
+ * looking at it.
+ */
+function renderSignature(state: ExplorerState, mode: DisplayMode): string {
+  const evidence =
+    isRecord(state.payload?._evidence) && isRecord(state.payload._evidence.result)
+      ? text(state.payload._evidence.result.sha256)
+      : ''
+  return JSON.stringify([
+    evidence || state.rawText.slice(0, 2048),
+    mode,
+    state.error,
+    state.historyIndex,
+    state.historyLength,
+    state.availableDisplayModes,
+    state.currentArgs,
+    Boolean(state.payload),
+  ])
+}
+
+let lastRender: { root: HTMLElement; signature: string; payload: Record<string, unknown> | null } | undefined
+
+/** The dimmed, held state a follow-up puts the last result into. */
+function setPending(shell: HTMLElement, pending: boolean) {
+  const existing = shell.querySelector('.sqd-progress')
+  if (!pending) {
+    shell.removeAttribute('aria-busy')
+    existing?.remove()
+    return
+  }
+  shell.setAttribute('aria-busy', 'true')
+  if (existing) return
+  const progress = element('div', 'sqd-progress')
+  progress.setAttribute('role', 'progressbar')
+  progress.setAttribute('aria-label', 'Loading the next result')
+  shell.querySelector('.sqd-topbar')?.after(progress)
+}
+
 export function renderExplorer(root: HTMLElement, state: ExplorerState, actions: ExplorerActions) {
-  disposeActiveCharts()
   reportSelection = actions.reportSelection
   injectStyle()
   const mode = displayModeOf(state)
+  const signature = renderSignature(state, mode)
+  const liveShell = root.querySelector<HTMLElement>('.sqd-shell')
+  /* Object identity as well as the signature: a payload with no evidence
+     receipt has little to hash, and answering a new result with the old DOM
+     would be far worse than a rebuild nobody notices. */
+  if (
+    lastRender?.root === root &&
+    lastRender.payload === state.payload &&
+    lastRender.signature === signature &&
+    liveShell
+  ) {
+    /* The same result, in flight or not. The header is rebuilt because it
+       carries the callbacks and the history state; everything below it, charts
+       included, stays exactly as the reader left it. */
+    liveShell.querySelector('.sqd-topbar')?.replaceWith(appHeader(actions, state))
+    setPending(liveShell, state.loading && Boolean(state.payload))
+    return
+  }
+  lastRender = { root, signature, payload: state.payload }
+  disposeActiveCharts()
   appRoot = root
   root.className = 'sqd-app'
   root.dataset.mode = mode
@@ -3061,16 +3096,9 @@ export function renderExplorer(root: HTMLElement, state: ExplorerState, actions:
   skip.href = `#${EVIDENCE_ANCHOR_ID}`
   shell.append(skip)
   shell.append(appHeader(actions, state))
-  const pending = state.loading && Boolean(state.payload)
-  if (pending) {
-    /* A follow-up is in flight: the last result stays on screen, dimmed
-       behind a progress bar, and every follow-up control is held. */
-    shell.setAttribute('aria-busy', 'true')
-    const progress = element('div', 'sqd-progress')
-    progress.setAttribute('role', 'progressbar')
-    progress.setAttribute('aria-label', 'Loading the next result')
-    shell.append(progress)
-  }
+  /* A follow-up in flight: the last result stays on screen, dimmed behind a
+     progress bar, and every follow-up control is held. */
+  setPending(shell, state.loading && Boolean(state.payload))
   if (state.loading && !state.payload) shell.append(loadingState())
   else if (!state.payload) shell.append(emptyState(state, actions))
   else {

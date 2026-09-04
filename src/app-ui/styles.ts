@@ -261,24 +261,13 @@ button { color: inherit; }
    as an accent pill on a dashed reference line. Gaps stay gaps; the forming
    candle stays hollow and labelled. */
 .sqd-chart-wrap { position: relative; width: 100%; }
-.sqd-chart { display: block; width: 100%; height: auto; overflow: visible; }
-.sqd-app[data-mode='inline'] .sqd-chart-grid { stroke: var(--grid); stroke-width: 1; }
-.sqd-chart-axis { stroke: var(--axis); stroke-width: 1; }
-.sqd-chart-zero { stroke: var(--fg-disabled); stroke-width: 1; }
-.sqd-chart-line { fill: none; stroke: var(--accent); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
-.sqd-chart-area { fill: var(--accent-subtle); }
-.sqd-chart-series-area { opacity: 0.82; stroke: var(--surface-raised); stroke-width: 1; }
-.sqd-chart-bar { fill: var(--chart-1); }
-.sqd-chart-bar--up { fill: var(--up); }
-.sqd-chart-bar--down { fill: var(--down); }
-.sqd-chart-label { fill: var(--fg-muted); font: 400 11px var(--sqd-font-mono); font-variant-numeric: tabular-nums; }
-.sqd-chart-axis-title { fill: var(--fg-muted); font: 400 10.5px var(--font-sans); letter-spacing: 0; text-transform: uppercase; }
-.sqd-chart-last-line { stroke: var(--accent-line); stroke-width: 1; stroke-dasharray: 3 4; }
-.sqd-chart-last-pill { fill: var(--accent); }
-.sqd-chart-last-value { fill: var(--accent-on); font: 600 11px/1 var(--sqd-font-mono); font-variant-numeric: tabular-nums; }
-.sqd-chart-crosshair { stroke: var(--fg-secondary); stroke-width: 1; stroke-dasharray: 2 3; pointer-events: none; opacity: 0.6; }
-.sqd-chart-hit { fill: transparent; pointer-events: all; outline: none; }
-.sqd-chart-hit:focus-visible { fill: var(--accent-subtle); stroke: var(--accent); stroke-width: 1; }
+.sqd-chart-terminal { position: relative; width: 100%; }
+.sqd-chart-plot { position: relative; width: 100%; height: 260px; }
+.sqd-app[data-mode='fullscreen'] .sqd-chart-plot { height: 320px; }
+.sqd-chart-canvas { position: absolute; inset: 0; }
+.sqd-chart-frame { display: flex; align-items: stretch; gap: 2px; width: 100%; }
+.sqd-chart-frame .sqd-chart-plot { flex: 1 1 auto; min-width: 0; }
+.sqd-chart-axis-title { flex: 0 0 auto; display: flex; align-items: center; justify-content: center; writing-mode: vertical-rl; transform: rotate(180deg); color: var(--fg-muted); font: 400 10.5px/14px var(--font-sans); letter-spacing: 0; text-transform: uppercase; white-space: nowrap; overflow: hidden; }
 .sqd-chart-tooltip { position: absolute; z-index: 2; top: 6px; max-width: min(260px, calc(100% - 8px)); transform: translateX(-50%); border: 1px solid var(--edge-strong); border-radius: var(--radius-sm); padding: 5px 8px; background: var(--surface); color: var(--fg-value); box-shadow: var(--shadow-pop); font: 400 10.5px/14px var(--sqd-font-mono); pointer-events: none; }
 .sqd-chart-legend { display: flex; flex-wrap: wrap; gap: 4px 6px; margin-bottom: 10px; }
 .sqd-chart-legend-item { min-height: 28px; display: inline-flex; align-items: center; gap: 7px; border: 1px solid transparent; border-radius: var(--radius-md); padding: 4px 9px; background: transparent; color: var(--fg); cursor: pointer; font: 400 12px/16px var(--font-sans); letter-spacing: -0.006em; transition: background-color var(--duration-normal) var(--ease-soft); }
@@ -300,7 +289,7 @@ button { color: inherit; }
 .sqd-chart-range-reset:disabled { border-color: var(--edge-subtle); color: var(--fg-disabled); cursor: default; }
 .sqd-chart-range-status { margin-left: auto; color: var(--fg-muted); font: 400 11px/16px var(--sqd-font-mono); font-variant-numeric: tabular-nums; }
 .sqd-chart-panning { cursor: grabbing; }
-.sqd-chart-panning .sqd-chart-hit, .sqd-chart-panning button.sqd-chart-hit { cursor: grabbing; }
+.sqd-chart-panning button.sqd-chart-hit { cursor: grabbing; }
 
 /* ── Market terminal · the dominant price chart ─────────────────────────── */
 .sqd-candle-terminal { position: relative; width: 100%; }

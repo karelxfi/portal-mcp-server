@@ -89,7 +89,7 @@ function show(name: string) {
     historyIndex: 1,
     historyLength: 3,
   }
-  renderExplorer(root!, state, {
+  const actions: Parameters<typeof renderExplorer>[2] = {
     runFollowup(intent, target) {
       document.body.dataset.lastAction = intent
       if (intent === 'show_raw' && target) {
@@ -134,7 +134,15 @@ function show(name: string) {
     reportSelection(selection) {
       document.body.dataset.pinnedPoint = selection ?? ''
     },
-  })
+  }
+  renderExplorer(root!, state, actions)
+  /* A follow-up re-renders the same result with the in-flight flag set before
+     its answer arrives. `test:app-ui` drives that path from here so the cost
+     of it, and the survival of the live charts, are both measured. */
+  ;(window as unknown as { __sqdSetBusy?: (busy: boolean) => void }).__sqdSetBusy = (busy) => {
+    state.loading = busy
+    renderExplorer(root!, state, actions)
+  }
   document.body.dataset.fixture = name
   document.body.dataset.mode = mode
 }
