@@ -68,6 +68,27 @@ type TimeSeriesMetric =
   | 'fill_count'
   | 'unique_traders'
 
+/*
+ * What each chain family actually computes. Kept beside the metric enum
+ * because the enum is the union of every family's metrics, and a request is
+ * only meaningful against one family at a time.
+ */
+type SupportedFamily = 'evm' | 'solana' | 'bitcoin' | 'hyperliquid'
+
+const SUPPORTED_METRICS: Record<SupportedFamily, readonly TimeSeriesMetric[]> = {
+  evm: [
+    'transaction_count',
+    'transactions_per_block',
+    'avg_gas_price',
+    'gas_used',
+    'block_utilization',
+    'unique_addresses',
+  ],
+  solana: ['transaction_count', 'unique_addresses', 'tps', 'avg_fee', 'success_rate', 'slots_per_hour'],
+  bitcoin: ['transaction_count', 'unique_addresses', 'fees_btc', 'block_size_bytes'],
+  hyperliquid: ['volume', 'fill_count', 'unique_traders'],
+}
+
 type TimeSeriesBlock = {
   number?: number
   timestamp?: number
@@ -789,6 +810,31 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
           dataset,
           supportedMetrics: ['transaction_count', 'unique_addresses'],
           reason: 'Gas metrics are available only on EVM datasets.',
+        })
+      }
+
+      /* The reverse direction, which was missing. The shared bucket reducer is
+         an if-chain over six metrics starting from `let value = 0`, so a metric
+         belonging to another chain family fell through it and shipped the
+         initial accumulator as the answer: `tps`, `success_rate`, `avg_fee` and
+         `block_size_bytes` all returned an all-zero series on EVM, stamped
+         result_complete: true with empty_buckets: 0 and an evidence receipt
+         hashing the zeros. On Solana the same gap coerced an unrecognised
+         metric to transaction_count and answered a question nobody asked.
+         Neither is recoverable by the caller, because nothing in the response
+         says the number is not the metric they requested. */
+      const supported = SUPPORTED_METRICS[isHyperliquid ? 'hyperliquid' : (chainType as SupportedFamily)]
+      if (supported && !supported.includes(metric)) {
+        throw createUnsupportedMetricError({
+          toolName: 'portal_get_time_series',
+          metric,
+          dataset,
+          supportedMetrics: [...supported],
+          reason: `This metric is not computed for ${isHyperliquid ? 'Hyperliquid' : chainType} datasets.`,
+          suggestions: [
+            `Ask for one of: ${supported.join(', ')}.`,
+            'Use portal_get_network_info to see what this network exposes.',
+          ],
         })
       }
 

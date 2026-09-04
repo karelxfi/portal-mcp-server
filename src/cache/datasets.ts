@@ -218,45 +218,57 @@ const CHAIN_ALIASES: Record<string, string[]> = {
 
 /**
  * Resolve a dataset name or alias to the canonical dataset name.
+ *
+ * Every step here must be a whole-name decision. The alias table holds tokens
+ * as short as `op`, `eth`, `btc` and `sol`, and matching them as substrings in
+ * either direction sent real, distinct chains to the wrong one: `opbnb`
+ * contains `op` and answered with Optimism, `ethereum-holesky` contains `eth`
+ * and answered with Ethereum mainnet, `btc-testnet` answered with Bitcoin
+ * mainnet, and the empty string matched every alias because `a.includes('')`
+ * is always true. Nothing in the response said a substitution had happened, so
+ * the evidence receipt certified another chain's blocks under the name the
+ * caller asked for. A wrong answer is bad; a wrong answer with an audit trail
+ * vouching for it is worse.
+ *
+ * Order matters as much as the matching. `{name}-mainnet` is tried before the
+ * alias table so a real dataset always beats a nickname: `opbnb` is
+ * `opbnb-mainnet`, not whatever `op` stands for.
  */
+export function pickDataset(dataset: string, datasets: { dataset: string; aliases: string[] }[]): string | undefined {
+  const lowerDataset = dataset.trim().toLowerCase()
+  if (!lowerDataset) return undefined
+
+  // Exact dataset name, or an alias the Portal itself declares.
+  const exactMatch = datasets.find(
+    (d) => d.dataset === dataset || d.aliases.includes(dataset) || d.dataset.toLowerCase() === lowerDataset,
+  )
+  if (exactMatch) return exactMatch.dataset
+
+  // A real dataset beats a nickname.
+  const mainnetMatch = datasets.find((d) => d.dataset.toLowerCase() === `${lowerDataset}-mainnet`)
+  if (mainnetMatch) return mainnetMatch.dataset
+
+  // Nicknames, matched whole. `eth` is Ethereum; `ethereum-holesky` is not.
+  for (const [canonicalName, aliases] of Object.entries(CHAIN_ALIASES)) {
+    if (aliases.includes(lowerDataset)) return canonicalName
+  }
+
+  /* A prefix is only a prefix at a name boundary, so `base` can still find
+     `base-mainnet` while `btc-testnet` no longer finds `bitcoin-mainnet` and
+     `solana-devnet` no longer finds `solana-mainnet`. */
+  const partialMatches = datasets.filter((d) => {
+    const candidate = d.dataset.toLowerCase()
+    return candidate.startsWith(`${lowerDataset}-`) || candidate.endsWith(`-${lowerDataset}`)
+  })
+  if (!partialMatches.length) return undefined
+  return (partialMatches.find((d) => d.dataset.endsWith('-mainnet')) ?? partialMatches[0]).dataset
+}
+
 export async function resolveDataset(dataset: string): Promise<string> {
   const datasets = await getDatasets()
-
-  // Exact match
-  const exactMatch = datasets.find((d) => d.dataset === dataset || d.aliases.includes(dataset))
-  if (exactMatch) {
-    return exactMatch.dataset
-  }
-
-  const lowerDataset = dataset.toLowerCase()
-
-  // Check common aliases
-  for (const [canonicalName, aliases] of Object.entries(CHAIN_ALIASES)) {
-    if (aliases.some((a) => a === lowerDataset || lowerDataset.includes(a) || a.includes(lowerDataset))) {
-      return canonicalName
-    }
-  }
-
-  // Try "{name}-mainnet"
-  const mainnetMatch = datasets.find((d) => d.dataset === `${lowerDataset}-mainnet`)
-  if (mainnetMatch) {
-    return mainnetMatch.dataset
-  }
-
-  // Partial match, prefer mainnet
-  const partialMatches = datasets.filter(
-    (d) =>
-      d.dataset.toLowerCase().startsWith(lowerDataset) ||
-      d.dataset.toLowerCase().includes(`-${lowerDataset}-`) ||
-      (lowerDataset.includes('-') && d.dataset.toLowerCase().includes(lowerDataset)),
-  )
-
-  if (partialMatches.length > 0) {
-    const preferredMatch = partialMatches.find((d) => d.dataset.includes('-mainnet')) || partialMatches[0]
-    return preferredMatch.dataset
-  }
-
-  throw createDatasetError(dataset, datasets.length)
+  const picked = pickDataset(dataset, datasets)
+  if (picked === undefined) throw createDatasetError(dataset, datasets.length)
+  return picked
 }
 
 export async function validateDataset(dataset: string): Promise<void> {

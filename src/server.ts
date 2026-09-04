@@ -10,6 +10,7 @@ import {
 } from './apps/activity-explorer.js'
 import { RequestCancelledError } from './helpers/errors.js'
 import { attachEvidenceReceipt } from './helpers/evidence-receipt.js'
+import { runWithGuardrailScope } from './helpers/guardrails.js'
 import { PORTAL_TOOL_NAMES } from './helpers/mcp-registration.js'
 import { runWithPortalRequestSignal } from './helpers/request-context.js'
 import { getToolWorkProfile, toolAdmission } from './helpers/tool-admission.js'
@@ -217,7 +218,11 @@ function buildPortalServer(runtimeContext: RuntimeRequestContext, appEnabled: bo
         /* Handlers run outside the factory's scope, so the connection's app
            choice is re-entered here for the result formatters. */
         const handlerResult = await runWithActivityExplorerSurface(appEnabled, () =>
-          runWithPortalRequestSignal(requestSignal, () => handler(...handlerArgs)),
+          runWithPortalRequestSignal(requestSignal, () =>
+            runWithGuardrailScope({ tool: toolName, workClass: getToolWorkProfile(toolName).class }, () =>
+              handler(...handlerArgs),
+            ),
+          ),
         )
         const result = attachEvidenceReceipt(toolName, toolArgs, handlerResult)
         const status = classifyToolOutcome({ result })

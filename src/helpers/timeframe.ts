@@ -8,6 +8,7 @@ import { detectChainType } from './chain.js'
 import { ActionableError } from './errors.js'
 import { portalFetch, portalFetchStream } from './fetch.js'
 import { formatTimestamp } from './format.js'
+import { assertWindowWithinGuardrail } from './guardrails.js'
 
 export type Timeframe = '1h' | '6h' | '12h' | '24h' | '3d' | '7d' | '14d' | '30d'
 export type TimestampInput = string | number
@@ -875,6 +876,8 @@ export async function resolveTimeframeOrBlocks(params: {
     const latestBlock = head.number
     const chainType = detectChainType(dataset)
     const seconds = parseTimeframeToSeconds(timeframe)
+    /* Before the head lookup costs anything upstream. */
+    assertWindowWithinGuardrail(seconds)
 
     const estimationReason = isTimestampEndpointDown(dataset) ? 'timestamp_endpoint_down' : undefined
 
@@ -968,6 +971,12 @@ export async function resolveTimeframeOrBlocks(params: {
         },
         { code: 'incomplete_result', origin: 'upstream', retryable: true },
       )
+    }
+
+    const fromSeconds = resolvedFrom?.timestamp
+    const toSeconds = resolvedTo?.timestamp ?? headTimestamp
+    if (fromSeconds !== undefined && toSeconds >= fromSeconds) {
+      assertWindowWithinGuardrail(toSeconds - fromSeconds)
     }
 
     const resolvedFromBlock = resolvedFrom?.block_number ?? resolvedTo?.block_number

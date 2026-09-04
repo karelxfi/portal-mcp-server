@@ -262,6 +262,45 @@ Useful environment variables:
 - `MCP_TRUSTED_PROXY_PREFIXES` a comma-separated list of address prefixes that count as your proxies, matched against the start of the peer address (for example `203.0.113.` or `2606:4700:`). Setting it **replaces** the default rather than adding to it, so include loopback or your private range if a co-located proxy also reaches the server. With it unset, loopback and private ranges are trusted, which is where a co-located proxy sits; on a shared private network that means any host on that network can present a forwarded address, so name your proxies explicitly there.
 - `MCP_SLOW_REQUEST_MS` threshold for one JSON line on stderr per slow tool call with admission wait and execution timings and the bounded client family, default `5000`.
 
+### Cost guardrails
+
+Every scan bound in the server is compiled in and set per tool: a filtered trace
+scan stops at 5,000 blocks, a contract-deployment search at 1,000,000. Guardrails
+add a second ceiling above those that a deployment sets from the environment, so
+an endpoint under load can be turned down without shipping a new image.
+
+- `MCP_GUARDRAIL_MODE` one of `off` (default), `shadow`, or `enforce`.
+- `MCP_GUARDRAIL_<CLASS>_<LIMIT>` sets one ceiling, where `<CLASS>` is
+  `LOOKUP`, `RAW_QUERY`, `SUMMARY`, or `ANALYTICS`, and `<LIMIT>` is
+  `MAX_SCAN_BLOCKS`, `MAX_WINDOW_SECONDS`, or `MAX_UPSTREAM_BYTES`. For example
+  `MCP_GUARDRAIL_RAW_QUERY_MAX_SCAN_BLOCKS=50000`.
+
+**There are no numeric defaults.** A class with nothing set has no extra ceiling,
+so `off` and `enforce` with nothing configured are the same server. The only way a
+guardrail changes behaviour is if you set a number.
+
+`shadow` evaluates every ceiling and records what enforcing would have done,
+without changing a single response. `enforce` acts:
+
+- A scan over its ceiling stops at the ceiling and reports what it covered
+  through the same partial-coverage path a scan that hits its compiled bound
+  already uses, so `_coverage.result_complete` becomes `false` and the response
+  names the blocks it searched. It never claims a complete answer it did not get.
+- A query window over its ceiling is refused before anything is fetched, with the
+  cap named in the error and the next steps, because there is no honest partial
+  to return for a request that was never allowed to start.
+
+Four counters, all with bounded labels: `mcp_guardrail_admitted_total{class}`,
+`mcp_guardrail_would_block_total{class,limit}`,
+`mcp_guardrail_blocked_total{class,limit}`, and
+`mcp_guardrail_fail_open_total{reason}`.
+
+**Recommended rollout.** Set the ceilings you are considering and run `shadow` for
+a week. Read `mcp_guardrail_would_block_total`: it is exactly the set of real
+requests the ceiling would have cut. If that set is larger than you expected, the
+ceiling is wrong, not the traffic. Move to `enforce` once it is the size you
+intended.
+
 ## Tests
 
 The [release-assurance contract](RELEASE_ASSURANCE.md) defines the complete v0.8.2 baseline and every gate added since, through v0.8.5. “100%” refers to every applicable cell in the declared matrix, not a claim that upstream networks can never fail.

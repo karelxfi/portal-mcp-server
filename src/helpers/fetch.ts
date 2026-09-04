@@ -2,6 +2,7 @@ import { DEFAULT_RETRIES, DEFAULT_TIMEOUT, STREAM_TIMEOUT } from '../constants/i
 import { portalRequestsTotal } from '../metrics.js'
 import { portalAdmission } from './admission.js'
 import { ActionableError, RequestCancelledError, createTimeoutError, parsePortalError, wrapError } from './errors.js'
+import { applyGuardrail } from './guardrails.js'
 import {
   type RequestAbortContext,
   createRequestAbortContext,
@@ -129,17 +130,29 @@ export interface PortalFetchRecentRecordsOptions extends PortalFetchStreamRangeO
   initialSequentialChunks?: number
 }
 
+/* The byte budget is usually tens of megabytes, but an operator ceiling can set
+   it far lower, and rounding that to megabytes reported a 2KB cap as ">0MB". */
+function humanBytes(bytes: number): string {
+  if (bytes >= 1024 * 1024) return `${Math.round(bytes / 1024 / 1024)}MB`
+  if (bytes >= 1024) return `${Math.round(bytes / 1024)}KB`
+  return `${bytes} bytes`
+}
+
 function normalizePortalFetchStreamOptions(
   timeoutOrOptions: number | PortalFetchStreamOptions,
   maxBlocks: number,
   maxBytes: number,
   retries: number,
 ) {
+  /* An operator ceiling lowers the byte budget the stream already enforces, so
+     an over-budget response ends in the same `response_too_large` refusal it
+     ends in today rather than a shape nothing has seen before. */
+  const guarded = (requested: number) => applyGuardrail('max_upstream_bytes', requested).value
   if (typeof timeoutOrOptions === 'object') {
     return {
       timeout: timeoutOrOptions.timeout ?? STREAM_TIMEOUT,
       maxBlocks: timeoutOrOptions.maxBlocks ?? 0,
-      maxBytes: timeoutOrOptions.maxBytes ?? 50 * 1024 * 1024,
+      maxBytes: guarded(timeoutOrOptions.maxBytes ?? 50 * 1024 * 1024),
       retries: timeoutOrOptions.retries ?? DEFAULT_RETRIES,
       stopAfterItems: timeoutOrOptions.stopAfterItems,
     }
@@ -148,7 +161,7 @@ function normalizePortalFetchStreamOptions(
   return {
     timeout: timeoutOrOptions,
     maxBlocks,
-    maxBytes,
+    maxBytes: guarded(maxBytes),
     retries,
     stopAfterItems: undefined,
   }
@@ -444,9 +457,7 @@ export async function portalFetchStream(
 
           if (totalBytes > options.maxBytes) {
             await reader.cancel()
-            throw new Error(
-              `Response too large (>${Math.round(options.maxBytes / 1024 / 1024)}MB). Add filters or reduce block range.`,
-            )
+            throw new Error(`Response too large (>${humanBytes(options.maxBytes)}). Add filters or reduce block range.`)
           }
         }
 
@@ -628,7 +639,7 @@ export async function portalFetchStreamVisit(
           if (totalBytes > normalizedOptions.maxBytes) {
             await reader.cancel()
             throw new Error(
-              `Response too large (>${Math.round(normalizedOptions.maxBytes / 1024 / 1024)}MB). Add filters or reduce block range.`,
+              `Response too large (>${humanBytes(normalizedOptions.maxBytes)}). Add filters or reduce block range.`,
             )
           }
         }

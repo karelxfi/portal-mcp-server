@@ -1,3 +1,5 @@
+import { applyGuardrail } from './guardrails.js'
+
 export type BoundedSearchScanOrder = 'earliest' | 'latest'
 
 export type BoundedSearchChunk = {
@@ -50,7 +52,13 @@ export async function scanBoundedBlockRange<T>({
   const requestedBlocks = Math.max(0, toBlock - fromBlock + 1)
   const effectiveChunkSize = Math.max(1, Math.floor(chunkSize))
   const effectiveConcurrency = Math.max(1, Math.floor(concurrency))
-  const effectiveMaxScanBlocks = Math.max(1, Math.min(Math.floor(maxScanBlocks ?? requestedBlocks), requestedBlocks))
+  /* An operator ceiling sits above whatever the tool asked for. Clamping here
+     rather than refusing means the scan still runs and still reports what it
+     covered: reachedMaxScanBlocks and hasUnscannedBlocks already drive
+     _coverage.result_complete, so a capped scan tells the truth by the same
+     path a scan that hit its compiled bound does. */
+  const guarded = applyGuardrail('max_scan_blocks', Math.floor(maxScanBlocks ?? requestedBlocks))
+  const effectiveMaxScanBlocks = Math.max(1, Math.min(guarded.value, requestedBlocks))
   let items: T[] = []
   let scannedFromBlock = scanOrder === 'earliest' ? fromBlock : toBlock
   let scannedToBlock = scanOrder === 'earliest' ? fromBlock : toBlock

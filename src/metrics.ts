@@ -156,6 +156,37 @@ export const portalAdmissionWait = new Histogram({
   registers: [register],
 })
 
+/* Cost guardrails. `would_block` is the whole point of shadow mode: an
+   operator runs it on production, reads this counter, and only then enforces.
+   Labels are the work class and the limit name, both from a fixed set. */
+export const guardrailAdmittedTotal = new Counter({
+  name: 'mcp_guardrail_admitted_total',
+  help: 'Tool work admitted by the cost guardrails, by work class',
+  labelNames: ['class'] as const,
+  registers: [register],
+})
+
+export const guardrailWouldBlockTotal = new Counter({
+  name: 'mcp_guardrail_would_block_total',
+  help: 'Tool work shadow mode would have capped, by work class and limit',
+  labelNames: ['class', 'limit'] as const,
+  registers: [register],
+})
+
+export const guardrailBlockedTotal = new Counter({
+  name: 'mcp_guardrail_blocked_total',
+  help: 'Tool work enforce mode capped or refused, by work class and limit',
+  labelNames: ['class', 'limit'] as const,
+  registers: [register],
+})
+
+export const guardrailFailOpenTotal = new Counter({
+  name: 'mcp_guardrail_fail_open_total',
+  help: 'Guardrail evaluations that could not be made and let the work through',
+  labelNames: ['reason'] as const,
+  registers: [register],
+})
+
 export const tokenListRequestsTotal = new Counter({
   name: 'mcp_token_list_requests_total',
   help: 'Total number of external token-list fetch attempts by source, chain, and outcome',
