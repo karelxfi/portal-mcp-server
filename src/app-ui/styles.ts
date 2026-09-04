@@ -235,14 +235,7 @@ button { color: inherit; }
    Inline, the host already frames the card, so a panel is a section: a mono
    label, a hairline, the instrument. Fullscreen, panels sit on the raised
    surface at the SQD pane radius and share one workspace grid. */
-.sqd-grid { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 16px; align-items: start; }
 .sqd-card { min-width: 0; overflow: hidden; }
-.sqd-grid .sqd-card { grid-column: span 12; }
-.sqd-grid .sqd-card--half { grid-column: span 6; }
-.sqd-grid--dashboard:not(.sqd-grid--single) .sqd-card:not(.sqd-card--primary) { grid-column: span 6; }
-.sqd-grid--split:not(.sqd-grid--single) .sqd-card:not(.sqd-card--primary) { grid-column: span 6; }
-.sqd-grid--chart_focus .sqd-card { grid-column: span 12; }
-.sqd-grid--compact { gap: 14px; }
 .sqd-card-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 0 0 8px; border-bottom: 1px solid var(--edge); }
 .sqd-card-title { margin: 0; color: var(--fg-secondary); font: 500 11px/16px var(--sqd-font-mono); text-transform: uppercase; letter-spacing: 0.06em; }
 .sqd-card-subtitle { max-width: 70ch; margin: 2px 0 0; color: var(--fg-muted); font-size: 11.5px; line-height: 16px; }
@@ -435,7 +428,7 @@ button.sqd-chart-hit[aria-pressed='true'] { background: var(--accent-subtle); bo
 .sqd-progress { position: relative; height: 2px; overflow: hidden; margin: -8px 0 -6px; background: var(--edge); border-radius: 1px; }
 .sqd-progress::after { content: ''; position: absolute; inset: 0; width: 40%; background: var(--accent); border-radius: 1px; animation: sqd-progress 1.1s var(--ease-soft) infinite; }
 @keyframes sqd-progress { from { transform: translateX(-100%); } to { transform: translateX(260%); } }
-.sqd-shell[aria-busy='true'] .sqd-grid, .sqd-shell[aria-busy='true'] .sqd-workspace, .sqd-shell[aria-busy='true'] .sqd-metrics { opacity: 0.55; transition: opacity var(--duration-normal) var(--ease-soft); }
+.sqd-shell[aria-busy='true'] .sqd-workspace, .sqd-shell[aria-busy='true'] .sqd-metrics { opacity: 0.55; transition: opacity var(--duration-normal) var(--ease-soft); }
 .sqd-shell[aria-busy='true'] .sqd-followups .sqd-button { pointer-events: none; }
 
 /* ── Evidence receipt · the sheet's footer band ─────────────────────────── */
@@ -484,8 +477,6 @@ button.sqd-chart-hit[aria-pressed='true'] { background: var(--accent-subtle); bo
 }
 @container sqd (max-width: 820px) {
   .sqd-title { max-width: none; }
-  .sqd-grid .sqd-card--half { grid-column: span 12; }
-  .sqd-grid--dashboard .sqd-card:not(.sqd-card--primary), .sqd-grid--split .sqd-card:not(.sqd-card--primary) { grid-column: span 12; }
   .sqd-stat-list { grid-template-columns: 1fr; }
     }
 @container sqd (max-width: 520px) {
