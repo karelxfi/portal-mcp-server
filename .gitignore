@@ -66,7 +66,13 @@ data/
 # Local planning and working notes (public Markdown is tracked)
 CLAUDE.md
 plans/
-docs/
+# docs/ holds local working notes by default. A document written for people
+# outside this checkout has to be named here, because `git add` skips an
+# ignored path without saying so: docs/explorer-design.md was written, added,
+# committed, referenced from the changelog and the pull request template, and
+# never actually entered the repository.
+docs/*
+!docs/explorer-design.md
 V*_SCOPE.md
 test-report-*.md
 NOTES*.md
