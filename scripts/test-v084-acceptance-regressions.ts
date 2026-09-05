@@ -1,6 +1,11 @@
 #!/usr/bin/env tsx
 
+import { readFileSync } from 'node:fs'
+
 import { assert, callToolWithRetry, closeTestClient, connectTestClient } from './test-helpers.js'
+
+/* The exact released version, so a release bump cannot silently drift from this gate. */
+const npmVersion: string = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version
 
 const POLKADOT_SAMPLE_FROM_BLOCK = 30_736_840
 const POLKADOT_SAMPLE_TO_BLOCK = 30_736_842
@@ -21,7 +26,10 @@ function assertEvidence(data: any, label: string, options?: { allowEmpty?: boole
   assert(typeof data?._evidence?.result?.row_count === 'number', `${label} must include an evidence row count`)
   if (!options?.allowEmpty) {
     assert(data._evidence.result.row_count > 0, `${label} evidence must point to returned data`)
-    assert(typeof data?._evidence?.result?.primary_evidence_path === 'string', `${label} must identify its evidence path`)
+    assert(
+      typeof data?._evidence?.result?.primary_evidence_path === 'string',
+      `${label} must identify its evidence path`,
+    )
   }
 }
 
@@ -53,7 +61,7 @@ async function main() {
     assert(invalidNetwork.isError, 'the negative fixture must return a structured error')
     assert(
       invalidNetwork.structuredContent?._server?.name === 'SQD' &&
-        invalidNetwork.structuredContent?._server?.version === '0.8.4',
+        invalidNetwork.structuredContent?._server?.version === npmVersion,
       'structured errors must identify the exact server version',
     )
 
@@ -65,12 +73,21 @@ async function main() {
     assert(!recentActivity.isError, `Base recent activity failed: ${recentActivity.text.slice(0, 240)}`)
     assertAppDelivery(recentActivity.data, 'Base recent activity')
     assert((recentActivity.data?._ui?.metric_cards ?? []).length >= 3, 'recent activity must include useful metrics')
-    assert(recentActivity.data?._freshness?.timestamp_bounds?.from, 'recent activity must report the resolved lower timestamp')
-    assert(recentActivity.data?._freshness?.timestamp_bounds?.to, 'recent activity must report the resolved upper timestamp')
+    assert(
+      recentActivity.data?._freshness?.timestamp_bounds?.from,
+      'recent activity must report the resolved lower timestamp',
+    )
+    assert(
+      recentActivity.data?._freshness?.timestamp_bounds?.to,
+      'recent activity must report the resolved upper timestamp',
+    )
 
-    const activeRow = (recentActivity.data?.items ?? []).find((row: any) =>
-      typeof row?.sender === 'string' || typeof row?.recipient === 'string' ||
-      typeof row?.from === 'string' || typeof row?.to === 'string',
+    const activeRow = (recentActivity.data?.items ?? []).find(
+      (row: any) =>
+        typeof row?.sender === 'string' ||
+        typeof row?.recipient === 'string' ||
+        typeof row?.from === 'string' ||
+        typeof row?.to === 'string',
     )
     const activeAddress = activeRow?.sender ?? activeRow?.recipient ?? activeRow?.from ?? activeRow?.to
     assert(/^0x[0-9a-fA-F]{40}$/.test(String(activeAddress ?? '')), 'recent Base activity must expose a wallet fixture')
@@ -96,7 +113,9 @@ async function main() {
     assert(wallet.data?.assets?.token_transfers === undefined, 'omitted token data must not be reported as zero')
     assert(wallet.data?.assets?.nft_transfers === undefined, 'omitted NFT data must not be reported as zero')
     assert(
-      !(wallet.data?._ui?.metric_cards ?? []).some((card: any) => ['token-transfers', 'nft-transfers'].includes(card?.id)),
+      !(wallet.data?._ui?.metric_cards ?? []).some((card: any) =>
+        ['token-transfers', 'nft-transfers'].includes(card?.id),
+      ),
       'omitted wallet sections must not produce zero-valued App cards',
     )
     assertNoDanglingWalletTables(wallet.data)
@@ -147,7 +166,10 @@ async function main() {
     )
     assert(!solanaInstructions.isError, `Solana one-hour instructions failed: ${solanaInstructions.text.slice(0, 240)}`)
     assert((solanaInstructions.data?.items ?? []).length === 3, 'Solana instructions must honor limit=3')
-    assert(Buffer.byteLength(solanaInstructions.text, 'utf8') < 50 * 1024, 'Solana instructions must fit a 50KB MCP result')
+    assert(
+      Buffer.byteLength(solanaInstructions.text, 'utf8') < 50 * 1024,
+      'Solana instructions must fit a 50KB MCP result',
+    )
     assert(
       solanaInstructions.data?._coverage?.result_complete === false,
       'a limited Solana instruction preview must stay marked partial',
@@ -162,12 +184,18 @@ async function main() {
     assert(!resolvedPool.isError, `Base pool-name discovery failed: ${resolvedPool.text.slice(0, 240)}`)
     assert((resolvedPool.data?.matches ?? []).length > 0, 'pool-name discovery must return Base WETH/USDC candidates')
     assert(
-      resolvedPool.data.matches.every((match: any) =>
-        match.validation_status === 'external_indexer_match' && match.base_token?.address && match.quote_token?.address,
+      resolvedPool.data.matches.every(
+        (match: any) =>
+          match.validation_status === 'external_indexer_match' &&
+          match.base_token?.address &&
+          match.quote_token?.address,
       ),
       'pool-name matches must include externally matched token-pair metadata',
     )
-    assert(resolvedPool.data?.suggested_arguments?.pool_address, 'pool discovery must provide an OHLC-ready pool address')
+    assert(
+      resolvedPool.data?.suggested_arguments?.pool_address,
+      'pool discovery must provide an OHLC-ready pool address',
+    )
 
     const solanaAnalytics = await callToolWithRetry(
       connected.client,
@@ -217,7 +245,10 @@ async function main() {
     assert(!substrateAnalytics.isError, `Substrate analytics failed: ${substrateAnalytics.text.slice(0, 240)}`)
     assertAppDelivery(substrateAnalytics.data, 'Substrate analytics')
     assertEvidence(substrateAnalytics.data, 'Substrate analytics')
-    assert(substrateAnalytics.data?.overview?.sampled === false, 'one-hour Polkadot analytics must analyze the complete window')
+    assert(
+      substrateAnalytics.data?.overview?.sampled === false,
+      'one-hour Polkadot analytics must analyze the complete window',
+    )
     assert(
       substrateAnalytics.data?._coverage?.requested_blocks === substrateAnalytics.data?._coverage?.analyzed_blocks,
       'Polkadot analytics requested and analyzed block counts must match',
@@ -244,7 +275,10 @@ async function main() {
       timestamp: '1h ago',
     })
     assert(!timestampBoundary.isError, `Bitcoin timestamp lookup failed: ${timestampBoundary.text.slice(0, 240)}`)
-    assert(timestampBoundary.data?.resolution === 'verified_boundary', 'timestamp lookup must describe its actual boundary semantics')
+    assert(
+      timestampBoundary.data?.resolution === 'verified_boundary',
+      'timestamp lookup must describe its actual boundary semantics',
+    )
     assert(
       typeof timestampBoundary.data?.timestamp_delta_seconds === 'number',
       'timestamp lookup must expose the difference between requested and resolved timestamps',

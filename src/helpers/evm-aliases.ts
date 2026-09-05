@@ -56,13 +56,18 @@ function asArray(value: string | string[] | undefined): string[] {
 }
 
 function normalizeAlias(value: string): string {
-  return value.trim().toLowerCase().replace(/[\s-]+/g, '_')
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, '_')
 }
 
 function normalizeHex4(value: string): string {
   const trimmed = value.trim().toLowerCase()
   if (!/^0x[0-9a-f]{8}$/.test(trimmed)) {
-    throw new Error(`Invalid method sighash: ${value}. Use a 4-byte hex string like 0xa9059cbb or a known method alias.`)
+    throw new Error(
+      `Invalid method sighash: ${value}. Use a 4-byte hex string like 0xa9059cbb or a known method alias.`,
+    )
   }
   return trimmed
 }
@@ -80,19 +85,23 @@ function unique(values: string[]): string[] {
 }
 
 export function resolveMethodSighashes(method: string | string[] | undefined): string[] {
-  return unique(asArray(method).flatMap((entry) => {
-    const alias = normalizeAlias(entry)
-    if (METHOD_ALIASES[alias]) return METHOD_ALIASES[alias]
-    return [normalizeHex4(entry)]
-  }))
+  return unique(
+    asArray(method).flatMap((entry) => {
+      const alias = normalizeAlias(entry)
+      if (METHOD_ALIASES[alias]) return METHOD_ALIASES[alias]
+      return [normalizeHex4(entry)]
+    }),
+  )
 }
 
 export function resolveEventTopic0(event: string | string[] | undefined): string[] {
-  return unique(asArray(event).flatMap((entry) => {
-    const alias = normalizeAlias(entry)
-    if (EVENT_ALIASES[alias]) return EVENT_ALIASES[alias]
-    return [normalizeTopic0(entry)]
-  }))
+  return unique(
+    asArray(event).flatMap((entry) => {
+      const alias = normalizeAlias(entry)
+      if (EVENT_ALIASES[alias]) return EVENT_ALIASES[alias]
+      return [normalizeTopic0(entry)]
+    }),
+  )
 }
 
 export function listMethodAliases(): string[] {

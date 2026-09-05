@@ -466,7 +466,12 @@ The `asset` filter matches the raw hex `asset_name` verbatim (`31303035313537` =
 
 ## MCP Tool Availability
 
-There are **no Tron-specific Portal MCP tools yet** (no `portal_tron_query_*`). Dataset-agnostic tools work with `tron-mainnet`: `portal_list_networks`, `portal_get_network_info`, `portal_get_head`, `portal_debug_resolve_time_to_block`, `portal_debug_query_blocks`. For actual Tron data queries, use the raw Portal Stream API as shown above.
+Two Portal MCP tools query Tron natively and accept any address form (Base58 `T...`, `41...` hex, or 20-byte hex):
+
+- `portal_tron_query_transactions`: native TRX transfers (`kind: "transfer"`), TRC-10 transfers (`kind: "transfer_asset"`), smart-contract calls by `contract_addresses` and `method` (`kind: "trigger_smart_contract"`), or any contract type filtered by `types` (`kind: "all"`), with `include_logs` and `include_internal_transactions`. Rows carry hex and Base58 addresses, `success`, and `fee_trx`. A native TRX transfer carries `amount_sun` with `amount_trx` decoded from it and `amount_unit: "TRX"`. A TRC-10 transfer carries `asset_amount` as an exact integer in that asset's own base units plus `asset_name`, and no TRX amount, because TRC-10 decimals belong to the asset rather than the chain.
+- `portal_tron_query_logs`: TVM event logs by `addresses`, `event` alias or `topic0`, and `topic1`-`topic3` (an address is padded to a topic), with the parent transaction hash joined onto every row and `decode: true` for known events.
+
+Dataset-agnostic tools also work with `tron-mainnet`: `portal_list_networks`, `portal_get_network_info`, `portal_get_head`, `portal_debug_resolve_time_to_block`, `portal_debug_query_blocks`. Use the raw Stream API below for anything the tools do not expose, such as `internalTransactions` as a primary query or `includeAllBlocks`.
 
 ## Official Docs
 

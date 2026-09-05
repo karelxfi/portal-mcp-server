@@ -1,0 +1,4 @@
+permissions: {}
+jobs:
+  a:
+    uses: octo-org/example/.github/workflows/build.yml@main

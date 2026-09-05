@@ -5,12 +5,12 @@ import { ActionableError, RequestCancelledError } from './errors.js'
 import {
   type CoinGeckoToken,
   type CoinGeckoTokenListResult,
-  type DexScreenerPair,
   type DefiLlamaProtocol,
+  type DexScreenerPair,
   getCoinGeckoTokenListWithStatus,
+  getDefiLlamaProtocols,
   getDexScreenerPair,
   getDexScreenerTokenPairs,
-  getDefiLlamaProtocols,
 } from './external-apis.js'
 import { isValidEvmAddress, normalizeEvmAddress } from './validation.js'
 
@@ -314,6 +314,7 @@ export async function resolveTokenQueryFromList({
   dataset: string
   query: string
   matches: ResolvedTokenEntity[]
+  total_matches: number
   source: TokenListSource
   lookup: TokenListLookupMetadata
 }> {
@@ -343,6 +344,7 @@ export async function resolveTokenQueryFromList({
     dataset,
     query: trimmed,
     matches: matches.slice(0, normalizedLimit).map((token) => asResolvedToken(dataset, tokenListChain, token)),
+    total_matches: matches.length,
     source: 'coingecko_token_list',
     lookup: lookupFromTokenListResult(result),
   }
@@ -461,7 +463,13 @@ export async function resolveContractQuery({
   network: string
   query: string
   limit?: number
-}): Promise<{ dataset: string; query: string; matches: ResolvedContractEntity[]; source: EntityResolverSource }> {
+}): Promise<{
+  dataset: string
+  query: string
+  matches: ResolvedContractEntity[]
+  total_matches: number
+  source: EntityResolverSource
+}> {
   const dataset = await resolveDataset(network)
   if (detectChainType(dataset) !== 'evm') {
     throw new ActionableError(`Contract alias resolution is only supported for EVM datasets. Got ${dataset}.`, [
@@ -491,27 +499,29 @@ export async function resolveContractQuery({
           source: 'input_address',
         },
       ],
+      total_matches: 1,
       source: 'input_address',
     }
   }
 
   const alias = normalizeEntityAlias(trimmed)
-  const matches = Object.values(KNOWN_CONTRACT_ALIASES[dataset] ?? {})
-    .filter((entry) => entry.aliases.some((entryAlias) => entryAlias === alias || entryAlias.includes(alias)))
-    .slice(0, normalizedLimit)
-    .map((entry) => ({
-      kind: 'contract' as const,
-      network: dataset,
-      address: entry.address,
-      alias: trimmed,
-      name: entry.name,
-      source: 'built_in_contract_alias' as const,
-    }))
+  const aliasCandidates = Object.values(KNOWN_CONTRACT_ALIASES[dataset] ?? {}).filter((entry) =>
+    entry.aliases.some((entryAlias) => entryAlias === alias || entryAlias.includes(alias)),
+  )
+  const matches = aliasCandidates.slice(0, normalizedLimit).map((entry) => ({
+    kind: 'contract' as const,
+    network: dataset,
+    address: entry.address,
+    alias: trimmed,
+    name: entry.name,
+    source: 'built_in_contract_alias' as const,
+  }))
 
   return {
     dataset,
     query: trimmed,
     matches,
+    total_matches: aliasCandidates.length,
     source: 'built_in_contract_alias',
   }
 }
@@ -527,13 +537,12 @@ function protocolScore(protocol: DefiLlamaProtocol, query: string) {
   return 99
 }
 
-export async function resolveProtocolQuery({
-  query,
-  limit = 10,
-}: {
+export async function resolveProtocolQuery({ query, limit = 10 }: { query: string; limit?: number }): Promise<{
   query: string
-  limit?: number
-}): Promise<{ query: string; matches: ResolvedProtocolEntity[]; source: 'defillama_protocols' }> {
+  matches: ResolvedProtocolEntity[]
+  total_matches: number
+  source: 'defillama_protocols'
+}> {
   const trimmed = query.trim()
   if (!trimmed) {
     throw new ActionableError('Protocol query cannot be empty.', [
@@ -543,29 +552,29 @@ export async function resolveProtocolQuery({
 
   const normalizedLimit = Math.min(Math.max(Math.floor(limit), 1), 50)
   const protocols = await getDefiLlamaProtocols()
-  const matches = protocols
+  const protocolCandidates = protocols
     .map((protocol) => ({ protocol, score: protocolScore(protocol, trimmed) }))
     .filter((entry) => entry.score < 99)
     .sort((left, right) => {
       if (left.score !== right.score) return left.score - right.score
       return (right.protocol.tvl ?? 0) - (left.protocol.tvl ?? 0)
     })
-    .slice(0, normalizedLimit)
-    .map(({ protocol }) => ({
-      kind: 'protocol' as const,
-      name: protocol.name,
-      slug: protocol.slug,
-      symbol: protocol.symbol || undefined,
-      category: protocol.category || undefined,
-      chains: protocol.chains ?? [],
-      url: protocol.url || undefined,
-      tvl_usd: typeof protocol.tvl === 'number' ? protocol.tvl : undefined,
-      source: 'defillama_protocols' as const,
-    }))
+  const matches = protocolCandidates.slice(0, normalizedLimit).map(({ protocol }) => ({
+    kind: 'protocol' as const,
+    name: protocol.name,
+    slug: protocol.slug,
+    symbol: protocol.symbol || undefined,
+    category: protocol.category || undefined,
+    chains: protocol.chains ?? [],
+    url: protocol.url || undefined,
+    tvl_usd: typeof protocol.tvl === 'number' ? protocol.tvl : undefined,
+    source: 'defillama_protocols' as const,
+  }))
 
   return {
     query: trimmed,
     matches,
+    total_matches: protocolCandidates.length,
     source: 'defillama_protocols',
   }
 }
@@ -608,8 +617,19 @@ function parsePoolQuery(query: string): { symbols: string[]; dexHint?: string; v
           : undefined
   const versionHint = normalized.match(/\bv([234])\b/)?.[0]
   const ignored = new Set([
-    'POOL', 'PAIR', 'UNISWAP', 'AERODROME', 'PANCAKE', 'PANCAKESWAP', 'SUSHI', 'SUSHISWAP',
-    'SWAP', 'DEX', 'V2', 'V3', 'V4',
+    'POOL',
+    'PAIR',
+    'UNISWAP',
+    'AERODROME',
+    'PANCAKE',
+    'PANCAKESWAP',
+    'SUSHI',
+    'SUSHISWAP',
+    'SWAP',
+    'DEX',
+    'V2',
+    'V3',
+    'V4',
   ])
   const symbols = Array.from(
     new Set((query.toUpperCase().match(/[A-Z][A-Z0-9._-]{1,14}/g) ?? []).filter((value) => !ignored.has(value))),
@@ -629,6 +649,12 @@ export async function resolvePoolQuery({
   dataset: string
   query: string
   matches: ResolvedPoolEntity[]
+  total_matches: number
+  /* False when the candidate space was not searched to the end: the pair
+     lookup is bounded to a few token variants and a failed lookup is skipped.
+     `total_matches` then counts what was searched, not what exists, so the
+     caller must not be told the answer is complete. */
+  search_complete: boolean
   source: 'user_input_format' | 'dexscreener_pair_metadata'
 }> {
   const dataset = await resolveDataset(network)
@@ -642,9 +668,9 @@ export async function resolvePoolQuery({
   const trimmed = query.trim()
   const lower = trimmed.toLowerCase()
   const identifierType = /^0x[0-9a-f]{40}$/.test(lower)
-    ? 'evm_address' as const
+    ? ('evm_address' as const)
     : /^0x[0-9a-f]{64}$/.test(lower)
-      ? 'evm_bytes32_pool_id' as const
+      ? ('evm_bytes32_pool_id' as const)
       : undefined
   const dexChain = getDexScreenerChainForDataset(dataset)
 
@@ -657,6 +683,8 @@ export async function resolvePoolQuery({
             dataset,
             query: trimmed,
             matches: [asResolvedPool(dataset, pair)],
+            total_matches: 1,
+            search_complete: true,
             source: 'dexscreener_pair_metadata',
           }
         }
@@ -668,25 +696,43 @@ export async function resolvePoolQuery({
     return {
       dataset,
       query: trimmed,
-      matches: [{
-        kind: 'pool',
-        network: dataset,
-        identifier: lower,
-        identifier_type: identifierType,
-        validation_status: 'format_only',
-        source: 'user_input_format',
-      }],
+      matches: [
+        {
+          kind: 'pool',
+          network: dataset,
+          identifier: lower,
+          identifier_type: identifierType,
+          validation_status: 'format_only',
+          source: 'user_input_format',
+        },
+      ],
+      total_matches: 1,
+      search_complete: true,
       source: 'user_input_format',
     }
   }
 
   if (!dexChain) {
-    return { dataset, query: trimmed, matches: [], source: 'user_input_format' }
+    return {
+      dataset,
+      query: trimmed,
+      matches: [],
+      total_matches: 0,
+      search_complete: true,
+      source: 'user_input_format',
+    }
   }
 
   const parsed = parsePoolQuery(trimmed)
   if (parsed.symbols.length < 2) {
-    return { dataset, query: trimmed, matches: [], source: 'user_input_format' }
+    return {
+      dataset,
+      query: trimmed,
+      matches: [],
+      total_matches: 0,
+      search_complete: true,
+      source: 'user_input_format',
+    }
   }
 
   const symbolResolution = await resolveTokenSymbolsForQuery({
@@ -700,21 +746,34 @@ export async function resolvePoolQuery({
     (symbolResolution.resolutions[1]?.selected_addresses ?? []).map((address) => address.toLowerCase()),
   )
   if (firstAddresses.length === 0 || secondAddresses.size === 0) {
-    return { dataset, query: trimmed, matches: [], source: 'user_input_format' }
+    return {
+      dataset,
+      query: trimmed,
+      matches: [],
+      total_matches: 0,
+      search_complete: true,
+      source: 'user_input_format',
+    }
   }
 
+  const MAX_SEARCHED_ADDRESSES = 3
+  const searchedAddresses = firstAddresses.slice(0, MAX_SEARCHED_ADDRESSES)
+  let searchComplete = searchedAddresses.length === firstAddresses.length
   const candidates: DexScreenerPair[] = []
-  for (const address of firstAddresses.slice(0, 3)) {
+  for (const address of searchedAddresses) {
     try {
-      candidates.push(...await getDexScreenerTokenPairs(dexChain, address))
+      candidates.push(...(await getDexScreenerTokenPairs(dexChain, address)))
     } catch (error) {
       if (error instanceof RequestCancelledError) throw error
+      // A lookup that failed searched nothing, so the candidate space is not
+      // covered and no total taken from it is exact.
+      searchComplete = false
     }
   }
 
   const normalizedLimit = Math.min(Math.max(Math.floor(limit), 1), 50)
   const seen = new Set<string>()
-  const matches = candidates
+  const poolCandidates = candidates
     .filter((pair) => pair.chainId.toLowerCase() === dexChain)
     .filter((pair) => {
       const base = pair.baseToken.address.toLowerCase()
@@ -734,24 +793,24 @@ export async function resolvePoolQuery({
       seen.add(key)
       return true
     })
-    .slice(0, normalizedLimit)
-    .map((pair) => asResolvedPool(dataset, pair))
+  const matches = poolCandidates.slice(0, normalizedLimit).map((pair) => asResolvedPool(dataset, pair))
 
   return {
     dataset,
     query: trimmed,
     matches,
+    total_matches: poolCandidates.length,
+    search_complete: searchComplete,
     source: matches.length > 0 ? 'dexscreener_pair_metadata' : 'user_input_format',
   }
 }
 
-export function resolveHyperliquidCoinQuery({
-  query,
-  limit = 10,
-}: {
+export function resolveHyperliquidCoinQuery({ query, limit = 10 }: { query: string; limit?: number }): {
   query: string
-  limit?: number
-}): { query: string; matches: ResolvedHyperliquidCoinEntity[]; source: EntityResolverSource } {
+  matches: ResolvedHyperliquidCoinEntity[]
+  total_matches: number
+  source: EntityResolverSource
+} {
   const trimmed = query.trim()
   if (!trimmed) {
     throw new ActionableError('Hyperliquid coin query cannot be empty.', [
@@ -763,21 +822,20 @@ export function resolveHyperliquidCoinQuery({
   const aliasKey = normalizeEntityAlias(trimmed)
   const aliasMatches = HYPERLIQUID_COIN_ALIASES[aliasKey] ?? []
   const candidates = aliasMatches.length > 0 ? aliasMatches : [trimmed.toUpperCase().replace(/[^A-Z0-9_.-]/g, '')]
-  const matches = uniqueStrings(candidates)
-    .filter(Boolean)
-    .slice(0, normalizedLimit)
-    .map((coin) => ({
-      kind: 'hyperliquid_coin' as const,
-      network: 'hyperliquid-fills' as const,
-      coin,
-      input: trimmed,
-      validation_status: 'not_validated' as const,
-      source: aliasMatches.length > 0 ? ('built_in_coin_alias' as const) : ('user_input_normalized' as const),
-    }))
+  const coinCandidates = uniqueStrings(candidates).filter(Boolean)
+  const matches = coinCandidates.slice(0, normalizedLimit).map((coin) => ({
+    kind: 'hyperliquid_coin' as const,
+    network: 'hyperliquid-fills' as const,
+    coin,
+    input: trimmed,
+    validation_status: 'not_validated' as const,
+    source: aliasMatches.length > 0 ? ('built_in_coin_alias' as const) : ('user_input_normalized' as const),
+  }))
 
   return {
     query: trimmed,
     matches,
+    total_matches: coinCandidates.length,
     source: aliasMatches.length > 0 ? 'built_in_coin_alias' : 'user_input_normalized',
   }
 }

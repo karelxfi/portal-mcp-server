@@ -60,19 +60,27 @@ examples/
 *.duckdb
 *.parquet
 *.arrow
-cache/
-data/
+# Anchored to the repository root. Unanchored, `cache/` matches any directory
+# of that name at any depth, so it swallowed src/cache/ and hid
+# src/cache/datasets.test.ts from the repository: the suite ran locally and
+# never ran in CI.
+/cache/
+/data/
 
-# Markdown files (except selected public docs)
-*.md
-!README.md
-!CHANGELOG.md
-!THIRD_PARTY_NOTICES.md
-!RELEASE_ASSURANCE.md
-!LICENSE.md
-!CONTRIBUTING.md
-!plugins/*/skills/**/*.md
-!plugins/*/skills/**/*.log
+# Local planning and working notes (public Markdown is tracked)
+CLAUDE.md
+plans/
+# docs/ holds local working notes by default. A document written for people
+# outside this checkout has to be named here, because `git add` skips an
+# ignored path without saying so: docs/explorer-design.md was written, added,
+# committed, referenced from the changelog and the pull request template, and
+# never actually entered the repository.
+docs/*
+!docs/explorer-design.md
+V*_SCOPE.md
+test-report-*.md
+NOTES*.md
+TODO*.md
 
 # Environment files with secrets
 .env
@@ -86,9 +94,8 @@ data/
 !.agents/plugins/
 !.agents/plugins/marketplace.json
 
-# Package manager lock files (keep package-lock.json, ignore others)
+# Package manager lock files (package-lock.json is tracked; it is the only lockfile)
 yarn.lock
-pnpm-lock.yaml
 
 # Coverage reports
 coverage/
@@ -105,3 +112,10 @@ coverage/
 mcp-config.json
 charts-demo.html
 V*_SCOPE.md
+
+# Generated Explorer bundle: built by scripts/ensure-app-bundle.mjs and npm run build
+src/generated/
+
+# Layout baselines are recorded per platform; only the CI platform is committed.
+scripts/app-ui-baselines/layout-*.json
+!scripts/app-ui-baselines/layout-linux.json

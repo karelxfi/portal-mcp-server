@@ -352,3 +352,58 @@ export function buildSubstrateEventFields() {
     args: true,
   }
 }
+
+// ============================================================================
+// Tron (native `type: "tron"` queries; bare hex, millisecond timestamps)
+// ============================================================================
+
+export function buildTronBlockFields() {
+  return {
+    number: true,
+    hash: true,
+    timestamp: true,
+  }
+}
+
+export function buildTronTransactionFields(options?: { includeParameter?: boolean; includeRaw?: boolean }) {
+  return {
+    transactionIndex: true,
+    hash: true,
+    type: true,
+    contractAddress: true,
+    result: true,
+    ret: true,
+    timestamp: true,
+    expiration: true,
+    fee: true,
+    energyUsageTotal: true,
+    energyFee: true,
+    netUsage: true,
+    netFee: true,
+    ...(options?.includeParameter === false ? {} : { parameter: true }),
+    ...(options?.includeRaw ? { rawDataHex: true, signature: true } : {}),
+  }
+}
+
+export function buildTronLogFields() {
+  return {
+    transactionIndex: true,
+    logIndex: true,
+    address: true,
+    topics: true,
+    data: true,
+  }
+}
+
+export function buildTronInternalTransactionFields() {
+  return {
+    transactionIndex: true,
+    internalTransactionIndex: true,
+    hash: true,
+    callerAddress: true,
+    transferToAddress: true,
+    callValueInfo: true,
+    note: true,
+    rejected: true,
+  }
+}

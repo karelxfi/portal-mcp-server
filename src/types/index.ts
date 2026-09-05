@@ -31,4 +31,11 @@ export interface BlockHead {
   hash: string
 }
 
-export type ChainType = 'evm' | 'tron' | 'solana' | 'bitcoin' | 'substrate' | 'hyperliquidFills' | 'hyperliquidReplicaCmds'
+export type ChainType =
+  | 'evm'
+  | 'tron'
+  | 'solana'
+  | 'bitcoin'
+  | 'substrate'
+  | 'hyperliquidFills'
+  | 'hyperliquidReplicaCmds'

@@ -1,3 +1,5 @@
+import { applyGuardrail } from './guardrails.js'
+
 export type BoundedSearchScanOrder = 'earliest' | 'latest'
 
 export type BoundedSearchChunk = {
@@ -50,7 +52,13 @@ export async function scanBoundedBlockRange<T>({
   const requestedBlocks = Math.max(0, toBlock - fromBlock + 1)
   const effectiveChunkSize = Math.max(1, Math.floor(chunkSize))
   const effectiveConcurrency = Math.max(1, Math.floor(concurrency))
-  const effectiveMaxScanBlocks = Math.max(1, Math.min(Math.floor(maxScanBlocks ?? requestedBlocks), requestedBlocks))
+  /* An operator ceiling sits above whatever the tool asked for. Clamping here
+     rather than refusing means the scan still runs and still reports what it
+     covered: reachedMaxScanBlocks and hasUnscannedBlocks already drive
+     _coverage.result_complete, so a capped scan tells the truth by the same
+     path a scan that hit its compiled bound does. */
+  const guarded = applyGuardrail('max_scan_blocks', Math.floor(maxScanBlocks ?? requestedBlocks))
+  const effectiveMaxScanBlocks = Math.max(1, Math.min(guarded.value, requestedBlocks))
   let items: T[] = []
   let scannedFromBlock = scanOrder === 'earliest' ? fromBlock : toBlock
   let scannedToBlock = scanOrder === 'earliest' ? fromBlock : toBlock
@@ -161,7 +169,14 @@ export function buildBoundedSearchExecution(result: BoundedSearchResult<unknown>
   }
 }
 
+/* A scan leaves blocks unread for one of two reasons, and only one of them
+   is cured by a bigger cap. When the scan stopped because it had what the
+   page needed, the unread rest is reached through the cursor, and telling the
+   caller to raise max_scan_blocks would send them the wrong way. */
 export function buildBoundedSearchNotice(result: BoundedSearchResult<unknown>, label: string): string | undefined {
   if (!result.hasUnscannedBlocks) return undefined
-  return `${label} searched only blocks ${result.scannedFromBlock}-${result.scannedToBlock} of requested window ${result.requestedFromBlock}-${result.requestedToBlock}; narrow filters, page forward, or raise max_scan_blocks for deeper coverage.`
+  const scanned = `${label} searched only blocks ${result.scannedFromBlock}-${result.scannedToBlock} of requested window ${result.requestedFromBlock}-${result.requestedToBlock}`
+  return result.reachedMaxScanBlocks
+    ? `${scanned}; narrow filters or raise max_scan_blocks for deeper coverage.`
+    : `${scanned}; the scan stopped once it had what this page needed.`
 }

@@ -96,9 +96,7 @@
       "id": 1,
       "options": {
         "legend": {
-          "calcs": [
-            "lastNotNull"
-          ],
+          "calcs": ["lastNotNull"],
           "displayMode": "table",
           "placement": "right"
         },
@@ -151,9 +149,7 @@
       "id": 2,
       "options": {
         "legend": {
-          "calcs": [
-            "lastNotNull"
-          ],
+          "calcs": ["lastNotNull"],
           "displayMode": "table",
           "placement": "right"
         },
@@ -193,9 +189,7 @@
       "id": 3,
       "options": {
         "legend": {
-          "calcs": [
-            "lastNotNull"
-          ],
+          "calcs": ["lastNotNull"],
           "displayMode": "table",
           "placement": "right"
         },
@@ -235,9 +229,7 @@
       "id": 4,
       "options": {
         "legend": {
-          "calcs": [
-            "lastNotNull"
-          ],
+          "calcs": ["lastNotNull"],
           "displayMode": "table",
           "placement": "right"
         },
@@ -289,9 +281,7 @@
         "justifyMode": "auto",
         "orientation": "auto",
         "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
+          "calcs": ["lastNotNull"],
           "fields": "",
           "values": false
         },
@@ -339,9 +329,7 @@
         "justifyMode": "auto",
         "orientation": "auto",
         "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
+          "calcs": ["lastNotNull"],
           "fields": "",
           "values": false
         },
@@ -395,9 +383,7 @@
         "justifyMode": "auto",
         "orientation": "auto",
         "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
+          "calcs": ["lastNotNull"],
           "fields": "",
           "values": false
         },
@@ -448,9 +434,7 @@
         "justifyMode": "auto",
         "orientation": "auto",
         "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
+          "calcs": ["lastNotNull"],
           "fields": "",
           "values": false
         },
@@ -490,9 +474,7 @@
         "cellHeight": "sm",
         "footer": {
           "countRows": false,
-          "reducer": [
-            "sum"
-          ],
+          "reducer": ["sum"],
           "show": false
         },
         "showHeader": true
@@ -531,9 +513,7 @@
         "cellHeight": "sm",
         "footer": {
           "countRows": false,
-          "reducer": [
-            "sum"
-          ],
+          "reducer": ["sum"],
           "show": false
         },
         "showHeader": true
@@ -571,9 +551,7 @@
       "id": 11,
       "options": {
         "legend": {
-          "calcs": [
-            "lastNotNull"
-          ],
+          "calcs": ["lastNotNull"],
           "displayMode": "table",
           "placement": "right"
         },
@@ -614,9 +592,7 @@
         "cellHeight": "sm",
         "footer": {
           "countRows": false,
-          "reducer": [
-            "sum"
-          ],
+          "reducer": ["sum"],
           "show": false
         },
         "showHeader": true
@@ -712,9 +688,7 @@
       "id": 15,
       "options": {
         "legend": {
-          "calcs": [
-            "lastNotNull"
-          ],
+          "calcs": ["lastNotNull"],
           "displayMode": "table",
           "placement": "right"
         },
@@ -757,9 +731,7 @@
         "cellHeight": "sm",
         "footer": {
           "show": false,
-          "reducer": [
-            "sum"
-          ],
+          "reducer": ["sum"],
           "countRows": false
         }
       },
@@ -794,9 +766,7 @@
       "id": 17,
       "options": {
         "legend": {
-          "calcs": [
-            "lastNotNull"
-          ],
+          "calcs": ["lastNotNull"],
           "displayMode": "table",
           "placement": "right"
         },
@@ -840,9 +810,7 @@
       "id": 18,
       "options": {
         "legend": {
-          "calcs": [
-            "lastNotNull"
-          ],
+          "calcs": ["lastNotNull"],
           "displayMode": "table",
           "placement": "right"
         },
@@ -886,9 +854,7 @@
       "id": 19,
       "options": {
         "legend": {
-          "calcs": [
-            "lastNotNull"
-          ],
+          "calcs": ["lastNotNull"],
           "displayMode": "table",
           "placement": "right"
         },
@@ -942,9 +908,7 @@
       "id": 20,
       "options": {
         "legend": {
-          "calcs": [
-            "lastNotNull"
-          ],
+          "calcs": ["lastNotNull"],
           "displayMode": "table",
           "placement": "right"
         },
@@ -988,9 +952,7 @@
       "id": 21,
       "options": {
         "legend": {
-          "calcs": [
-            "lastNotNull"
-          ],
+          "calcs": ["lastNotNull"],
           "displayMode": "table",
           "placement": "right"
         },
@@ -1013,16 +975,66 @@
       ],
       "title": "MCP App payload and bundle size",
       "type": "timeseries"
+    },
+    {
+      "datasource": "${DS_PROMETHEUS}",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "calcs": ["lastNotNull"],
+          "displayMode": "table",
+          "placement": "right"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "type": "timeseries",
+      "title": "Cost guardrails: what the ceilings are cutting",
+      "id": 22,
+      "gridPos": {
+        "h": 7,
+        "w": 24,
+        "x": 0,
+        "y": 78
+      },
+      "targets": [
+        {
+          "expr": "sum by (class, limit) (rate(mcp_guardrail_would_block_total[$__interval]))",
+          "legendFormat": "would block {{class}} {{limit}}",
+          "refId": "A"
+        },
+        {
+          "expr": "sum by (class, limit) (rate(mcp_guardrail_blocked_total[$__interval]))",
+          "legendFormat": "blocked {{class}} {{limit}}",
+          "refId": "B"
+        },
+        {
+          "expr": "sum by (class) (rate(mcp_guardrail_admitted_total[$__interval]))",
+          "legendFormat": "admitted {{class}}",
+          "refId": "C"
+        },
+        {
+          "expr": "sum by (reason) (rate(mcp_guardrail_fail_open_total[$__interval]))",
+          "legendFormat": "fail open {{reason}}",
+          "refId": "D"
+        }
+      ]
     }
   ],
   "refresh": "30s",
   "schemaVersion": 39,
   "style": "dark",
-  "tags": [
-    "mcp",
-    "portal",
-    "observability"
-  ],
+  "tags": ["mcp", "portal", "observability"],
   "templating": {
     "list": [
       {

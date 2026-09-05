@@ -1,8 +1,8 @@
 import { App, applyDocumentTheme, applyHostFonts, applyHostStyleVariables } from '@modelcontextprotocol/ext-apps'
 
+import { buildEvidenceExport, downloadEvidence } from './export.js'
 import { evidenceArguments, planFollowup } from './followup-state.js'
-import { downloadEvidence } from './export.js'
-import { type ExplorerActions, type ExplorerState, isRecord, renderExplorer } from './view.js'
+import { type ChartView, type ExplorerActions, type ExplorerState, isRecord, renderExplorer } from './view.js'
 
 declare const __SQD_APP_VERSION__: string
 
@@ -25,13 +25,33 @@ let historyIndex = -1
 
 const app = new App(
   { name: 'sqd-blockchain-activity-explorer', version: __SQD_APP_VERSION__ },
-  {},
-  { strict: true },
+  { availableDisplayModes: ['inline', 'fullscreen'] },
+  /* The options object replaces the SDK default, so autoResize has to be
+     restated: it is what tells the host how tall the inline card should be. */
+  { strict: true, autoResize: true },
 )
 
+/*
+ * A render replaces the whole tree, so whatever had focus is detached. The
+ * control that started the change is found again by its focus key and given
+ * focus back, which keeps a keyboard user where they were instead of at the
+ * top of the document after every follow-up.
+ */
 function update(next: Partial<ExplorerState>) {
+  const active = document.activeElement
+  const focusKey = active instanceof HTMLElement ? active.dataset.focusKey : undefined
+  const selectionStart = active instanceof HTMLInputElement ? active.selectionStart : null
+
   state = { ...state, ...next }
   renderExplorer(root!, state, actions)
+
+  if (!focusKey) return
+  const restored = root?.querySelector<HTMLElement>(`[data-focus-key="${CSS.escape(focusKey)}"]`)
+  if (!restored || restored.hasAttribute('disabled')) return
+  restored.focus()
+  if (restored instanceof HTMLInputElement && selectionStart !== null) {
+    restored.setSelectionRange(selectionStart, selectionStart)
+  }
 }
 
 function showSnapshot(index: number) {
@@ -70,10 +90,59 @@ function applyHostContext(context: ReturnType<typeof app.getHostContext>) {
   if (context.theme) applyDocumentTheme(context.theme)
   if (context.styles?.variables) applyHostStyleVariables(context.styles.variables)
   if (context.styles?.css?.fonts) applyHostFonts(context.styles.css.fonts)
-  update({ displayMode: context.displayMode })
+  /* The host composer can overlay the bottom of an inline app, and mobile
+     chrome the edges; safe-area insets become root padding. */
+  const insets = context.safeAreaInsets
+  const rootStyle = document.documentElement.style
+  rootStyle.setProperty('--safe-top', `${insets?.top ?? 0}px`)
+  rootStyle.setProperty('--safe-right', `${insets?.right ?? 0}px`)
+  rootStyle.setProperty('--safe-bottom', `${insets?.bottom ?? 0}px`)
+  rootStyle.setProperty('--safe-left', `${insets?.left ?? 0}px`)
+  update({ displayMode: context.displayMode, availableDisplayModes: context.availableDisplayModes })
+}
+
+/*
+ * What the reader has zoomed to is worth telling the model, because the next
+ * question is usually about the part they are looking at. It goes to the host
+ * as context rather than a message, so it waits for their next turn instead of
+ * interrupting; only the newest one survives, which is why a burst of wheel
+ * events is collapsed into one send. The text describes the view and nothing
+ * else: it never restates coverage, which belongs to the tool result.
+ */
+let contextTimer: ReturnType<typeof setTimeout> | undefined
+let lastContext = ''
+let chartView = ''
+let pinned = ''
+
+function sendViewContext() {
+  if (!app.getHostCapabilities()?.updateModelContext) return
+  const text = [chartView, pinned].filter(Boolean).join(' ')
+  if (!text || text === lastContext) return
+  lastContext = text
+  if (contextTimer) clearTimeout(contextTimer)
+  contextTimer = setTimeout(() => {
+    app.updateModelContext({ content: [{ type: 'text', text }] }).catch(() => {
+      /* A host that declines the update leaves the chart working. */
+    })
+  }, 400)
+}
+
+function sendChartView(view: ChartView) {
+  chartView =
+    view.shown >= view.total
+      ? `The reader has the whole returned series in view: all ${view.total} points of "${view.chart}".`
+      : `The reader has zoomed "${view.chart}" to ${view.shown} of the ${view.total} returned points, ${view.firstLabel} through ${view.lastLabel}. This is a view of the same result, not a new query.`
+  sendViewContext()
+}
+
+function sendSelection(selection: string | null) {
+  pinned = selection ? `They have pinned the point ${selection}.` : ''
+  sendViewContext()
 }
 
 const actions: ExplorerActions = {
+  reportChartView: sendChartView,
+  reportSelection: sendSelection,
   async runFollowup(intent, target, action) {
     if ((intent === 'drilldown' || intent === 'show_raw') && target) {
       const value = state.payload
@@ -94,7 +163,7 @@ const actions: ExplorerActions = {
     const toolName =
       typeof action?.tool === 'string' ? action.tool : typeof contract?.name === 'string' ? contract.name : undefined
     if (!toolName) {
-      update({ payload: null, error: 'This result does not include a safe follow-up tool.' })
+      update({ loading: false, error: 'This result does not include a safe follow-up tool.' })
       return
     }
     const pagination = state.payload && isRecord(state.payload._pagination) ? state.payload._pagination : undefined
@@ -105,7 +174,7 @@ const actions: ExplorerActions = {
       actionArguments: action?.arguments,
     })
     if (plan.error || !plan.callArgs || !plan.persistedArgs) {
-      update({ payload: null, error: plan.error ?? 'This follow-up cannot be reconstructed safely.' })
+      update({ loading: false, error: plan.error ?? 'This follow-up cannot be reconstructed safely.' })
       return
     }
     update({ loading: true, error: '' })
@@ -114,13 +183,9 @@ const actions: ExplorerActions = {
       const rawText = extractText(result.content)
       const payload = isRecord(result.structuredContent) ? result.structuredContent : parseText(rawText)
       if (result.isError) {
-        update({
-          payload: null,
-          rawText,
-          currentArgs: plan.persistedArgs,
-          loading: false,
-          error: rawText || 'SQD returned an error.',
-        })
+        /* A failed follow-up keeps the last good result on screen and reports
+           the failure above it, so nothing the user was reading disappears. */
+        update({ loading: false, error: rawText || 'SQD returned an error.' })
         return
       }
       remember({
@@ -130,14 +195,25 @@ const actions: ExplorerActions = {
         error: '',
       })
     } catch (error) {
-      update({ payload: null, loading: false, error: error instanceof Error ? error.message : 'The follow-up request failed.' })
+      update({ loading: false, error: error instanceof Error ? error.message : 'The follow-up request failed.' })
     }
   },
   async requestFullscreen() {
+    const available = app.getHostContext()?.availableDisplayModes
+    if (available && !available.includes('fullscreen')) return
     try {
-      await app.requestDisplayMode({ mode: 'fullscreen' })
+      const result = await app.requestDisplayMode({ mode: 'fullscreen' })
+      update({ displayMode: result.mode })
     } catch {
       /* Host can decline full screen. */
+    }
+  },
+  async requestInline() {
+    try {
+      const result = await app.requestDisplayMode({ mode: 'inline' })
+      update({ displayMode: result.mode })
+    } catch {
+      /* Host can decline. */
     }
   },
   goBack() {
@@ -147,7 +223,31 @@ const actions: ExplorerActions = {
     showSnapshot(historyIndex + 1)
   },
   exportEvidence(format) {
-    if (state.payload) downloadEvidence(state.payload, format)
+    if (!state.payload) return
+    /* Hosts that offer file downloads deliver the file themselves; a
+       sandboxed iframe cannot save one on its own. */
+    if (app.getHostCapabilities()?.downloadFile) {
+      const exported = buildEvidenceExport(state.payload, format)
+      app
+        .downloadFile({
+          contents: [
+            {
+              type: 'resource',
+              resource: { uri: `file:///${exported.filename}`, mimeType: exported.mimeType, text: exported.content },
+            },
+          ],
+        })
+        .catch(() => downloadEvidence(state.payload!, format))
+      return
+    }
+    downloadEvidence(state.payload, format)
+  },
+  openLink(url) {
+    if (app.getHostCapabilities()?.openLinks) {
+      app.openLink({ url }).catch(() => window.open(url, '_blank', 'noopener'))
+      return
+    }
+    window.open(url, '_blank', 'noopener')
   },
 }
 
@@ -173,8 +273,7 @@ app.ontoolresult = (result) => {
     error: '',
   })
 }
-app.ontoolcancelled = () =>
-  update({ payload: null, loading: false, error: 'The request was cancelled. You can run it again.' })
+app.ontoolcancelled = () => update({ loading: false, error: 'The request was cancelled. You can run it again.' })
 app.onhostcontextchanged = applyHostContext
 
 renderExplorer(root, state, actions)

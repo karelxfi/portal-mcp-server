@@ -57,9 +57,7 @@ function toNumber(value: unknown): number | undefined {
 function normalizeCallAddress(value: unknown): number[] | undefined {
   if (!Array.isArray(value)) return undefined
 
-  const parts = value
-    .map((entry) => toNumber(entry))
-    .filter((entry): entry is number => typeof entry === 'number')
+  const parts = value.map((entry) => toNumber(entry)).filter((entry): entry is number => typeof entry === 'number')
 
   return parts.length === value.length ? parts : undefined
 }
@@ -116,7 +114,9 @@ function decorateSubstrateCall(call: RecordLike): RecordLike {
 function decorateSubstrateEvent(event: RecordLike): RecordLike {
   return {
     ...event,
-    ...(substrateCallAddressLabel(event.callAddress) ? { call_address: substrateCallAddressLabel(event.callAddress) } : {}),
+    ...(substrateCallAddressLabel(event.callAddress)
+      ? { call_address: substrateCallAddressLabel(event.callAddress) }
+      : {}),
   }
 }
 
@@ -135,8 +135,10 @@ export function buildSubstrateWindowLabel(params: {
   const { timeframe, from_timestamp, to_timestamp, from_block, to_block, resolvedWindow } = params
 
   if (from_timestamp !== undefined || to_timestamp !== undefined) {
-    const fromLabel = resolvedWindow.from_lookup?.normalized_input ?? (from_timestamp !== undefined ? String(from_timestamp) : 'start')
-    const toLabel = resolvedWindow.to_lookup?.normalized_input ?? (to_timestamp !== undefined ? String(to_timestamp) : 'now')
+    const fromLabel =
+      resolvedWindow.from_lookup?.normalized_input ?? (from_timestamp !== undefined ? String(from_timestamp) : 'start')
+    const toLabel =
+      resolvedWindow.to_lookup?.normalized_input ?? (to_timestamp !== undefined ? String(to_timestamp) : 'now')
     return `${fromLabel} -> ${toLabel}`
   }
 
@@ -194,9 +196,7 @@ export function flattenSubstrateEvents(
         ...(options.include_extrinsic && extrinsicIndex !== undefined
           ? { extrinsic: extrinsicsByIndex.get(extrinsicIndex) }
           : {}),
-        ...(options.include_call && callAddressKey !== undefined
-          ? { call: callsByAddress.get(callAddressKey) }
-          : {}),
+        ...(options.include_call && callAddressKey !== undefined ? { call: callsByAddress.get(callAddressKey) } : {}),
         ...(options.include_stack && callAddressKey !== undefined
           ? {
               call_stack: buildParentAddressKeys(event.callAddress)
@@ -292,4 +292,3 @@ export function getSubstrateCallSortKey(item: RecordLike): string {
   const fromAlias = typeof item.call_address === 'string' ? item.call_address : undefined
   return fromAlias ?? substrateCallAddressLabel(item.address) ?? String(item.name ?? '')
 }
-

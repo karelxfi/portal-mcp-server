@@ -1,13 +1,12 @@
 #!/usr/bin/env tsx
 
-import { getBlockHead } from '../dist/cache/datasets.js'
-import { getDatasets } from '../dist/cache/datasets.js'
-import { buildQueryFreshness } from '../dist/helpers/result-metadata.js'
+import { getBlockHead, getDatasets } from '../dist/cache/datasets.js'
 import { detectChainType } from '../dist/helpers/chain.js'
+import { buildQueryFreshness } from '../dist/helpers/result-metadata.js'
 import {
-  getTimestampWindowNotices,
   getBlockTimestamp,
   getHeadTimestamp,
+  getTimestampWindowNotices,
   parseTimeframeToSeconds,
   parseTimestampInput,
   resolveBlockAtTimestamp,
@@ -23,10 +22,7 @@ function assert(condition: boolean, message: string) {
   }
 }
 
-async function retryPortalProbe<T>(
-  probe: () => Promise<T>,
-  accept: (value: T) => boolean = () => true,
-): Promise<T> {
+async function retryPortalProbe<T>(probe: () => Promise<T>, accept: (value: T) => boolean = () => true): Promise<T> {
   let lastError: Error | undefined
   let lastValue: T | undefined
 
@@ -74,7 +70,10 @@ async function assertRealtimeTimestampMatrix() {
       const headTimestamp = await getHeadTimestamp(dataset.dataset, head.number)
       const window = await resolveTimeframeOrBlocks({ dataset: dataset.dataset, timeframe: '1h' })
 
-      assert(Number.isFinite(headTimestamp) && headTimestamp > 1_000_000_000, `${dataset.dataset} should expose a latest block timestamp`)
+      assert(
+        Number.isFinite(headTimestamp) && headTimestamp > 1_000_000_000,
+        `${dataset.dataset} should expose a latest block timestamp`,
+      )
       assert(window.to_block === head.number, `${dataset.dataset} 1h window should anchor to the latest indexed head`)
       assert(window.from_block <= window.to_block, `${dataset.dataset} 1h window should be ordered`)
 
@@ -94,14 +93,21 @@ async function assertRealtimeTimestampMatrix() {
     return acc
   }, {})
 
-  console.log(`PASS  real-time timestamp matrix -> ${rows.length} datasets (${Object.entries(byKind).map(([kind, count]) => `${kind}:${count}`).join(', ')})`)
+  console.log(
+    `PASS  real-time timestamp matrix -> ${rows.length} datasets (${Object.entries(byKind)
+      .map(([kind, count]) => `${kind}:${count}`)
+      .join(', ')})`,
+  )
 }
 
 async function assertHyperliquidFillsExactTimestampLookup() {
   const dataset = 'hyperliquid-fills'
   const head = await getBlockHead(dataset)
   const headTimestamp = await getHeadTimestamp(dataset, head.number)
-  assert(Number.isFinite(headTimestamp) && headTimestamp > 1_000_000_000, 'Hyperliquid fills head timestamp should resolve from block.timestamp')
+  assert(
+    Number.isFinite(headTimestamp) && headTimestamp > 1_000_000_000,
+    'Hyperliquid fills head timestamp should resolve from block.timestamp',
+  )
 
   const targetTimestamp = headTimestamp - 300
   const exactProbeBlock = await retryPortalProbe(() => timestampToBlock(dataset, targetTimestamp))
@@ -110,13 +116,25 @@ async function assertHyperliquidFillsExactTimestampLookup() {
     (window) => window.from_lookup?.resolution === 'verified_boundary',
   )
 
-  assert(fiveMinuteWindow.to_block === head.number, '5m Hyperliquid fills window should anchor to the cached latest block')
-  assert(fiveMinuteWindow.from_block < fiveMinuteWindow.to_block, '5m Hyperliquid fills window should produce an ordered block range')
-  assert(fiveMinuteWindow.from_lookup?.resolution === 'verified_boundary', '5m Hyperliquid fills window should use a verified Portal timestamp boundary')
-  assert(fiveMinuteWindow.from_lookup.block_number === fiveMinuteWindow.from_block, '5m Hyperliquid fills lookup metadata should match the resolved window')
   assert(
-    fiveMinuteWindow.from_lookup.block_timestamp !== undefined
-      && fiveMinuteWindow.from_lookup.block_timestamp >= targetTimestamp,
+    fiveMinuteWindow.to_block === head.number,
+    '5m Hyperliquid fills window should anchor to the cached latest block',
+  )
+  assert(
+    fiveMinuteWindow.from_block < fiveMinuteWindow.to_block,
+    '5m Hyperliquid fills window should produce an ordered block range',
+  )
+  assert(
+    fiveMinuteWindow.from_lookup?.resolution === 'verified_boundary',
+    '5m Hyperliquid fills window should use a verified Portal timestamp boundary',
+  )
+  assert(
+    fiveMinuteWindow.from_lookup.block_number === fiveMinuteWindow.from_block,
+    '5m Hyperliquid fills lookup metadata should match the resolved window',
+  )
+  assert(
+    fiveMinuteWindow.from_lookup.block_timestamp !== undefined &&
+      fiveMinuteWindow.from_lookup.block_timestamp >= targetTimestamp,
     '5m Hyperliquid fills boundary should expose a verified block timestamp inside the requested window',
   )
   assert(exactProbeBlock <= head.number, 'Hyperliquid fills timestamp endpoint should return a block at or before head')
@@ -125,10 +143,15 @@ async function assertHyperliquidFillsExactTimestampLookup() {
     () => resolveBlockAtTimestamp(dataset, targetTimestamp),
     (lookup) => lookup.resolution === 'verified_boundary',
   )
-  assert(directLookup.resolution === 'verified_boundary', 'Hyperliquid fills timestamp lookup should use a verified indexed boundary')
+  assert(
+    directLookup.resolution === 'verified_boundary',
+    'Hyperliquid fills timestamp lookup should use a verified indexed boundary',
+  )
   assert(directLookup.block_number <= head.number, 'Hyperliquid fills direct lookup should not exceed indexed head')
 
-  console.log(`PASS  Hyperliquid fills 5m window -> ${fiveMinuteWindow.from_block}..${fiveMinuteWindow.to_block} (verified boundary)`)
+  console.log(
+    `PASS  Hyperliquid fills 5m window -> ${fiveMinuteWindow.from_block}..${fiveMinuteWindow.to_block} (verified boundary)`,
+  )
 }
 
 async function assertSubstrateTimestampBoundaryIsVerified() {
@@ -193,7 +216,7 @@ async function assertFutureWindowFailsClosed() {
 
 function assertNaturalLanguageTimeInputs() {
   const now = 1_778_923_600
-  const cases: Array<[string, number]> = [
+  const cases: [string, number][] = [
     ['30m', 1_800],
     ['past 30 minutes', 1_800],
     ['in the past 1h', 3_600],
@@ -212,7 +235,10 @@ function assertNaturalLanguageTimeInputs() {
   }
 
   assert(parseTimestampInput('last hour', now).normalized_input === '1h ago', 'last hour should normalize to 1h ago')
-  assert(parseTimestampInput('in last 38 mins', now).normalized_input === '38m ago', 'in last 38 mins should normalize to 38m ago')
+  assert(
+    parseTimestampInput('in last 38 mins', now).normalized_input === '38m ago',
+    'in last 38 mins should normalize to 38m ago',
+  )
 
   console.log('PASS  natural-language time inputs -> past 30 minutes / in the past 1h / in last 38 mins')
 }
@@ -223,7 +249,10 @@ async function assertHyperliquidReplicaExactTimestampLookup() {
     () => resolveTimeframeOrBlocks({ dataset, timeframe: '5m' }),
     (candidate) => candidate.from_lookup?.resolution === 'verified_boundary',
   )
-  assert(window.from_lookup?.resolution === 'verified_boundary', 'Hyperliquid replica timeframe should use a verified timestamp boundary')
+  assert(
+    window.from_lookup?.resolution === 'verified_boundary',
+    'Hyperliquid replica timeframe should use a verified timestamp boundary',
+  )
   assert(window.from_lookup?.boundary === 'from', 'Hyperliquid replica timeframe should expose a from boundary')
   assert(
     (window.from_lookup?.block_timestamp ?? 0) >= window.from_lookup!.timestamp,
@@ -260,7 +289,10 @@ async function main() {
   const dataset = 'solana-mainnet'
   const head = await getBlockHead(dataset)
   const headTimestamp = await getHeadTimestamp(dataset, head.number)
-  assert(Number.isFinite(headTimestamp) && headTimestamp > 1_000_000_000, 'Solana head timestamp should resolve from block.timestamp')
+  assert(
+    Number.isFinite(headTimestamp) && headTimestamp > 1_000_000_000,
+    'Solana head timestamp should resolve from block.timestamp',
+  )
 
   const targetTimestamp = headTimestamp - 3600
   const exactFromBlock = await retryPortalProbe(() => timestampToBlock(dataset, targetTimestamp))
@@ -271,7 +303,10 @@ async function main() {
 
   assert(oneHourWindow.to_block === head.number, '1h Solana window should anchor to the cached latest slot')
   if (oneHourWindow.from_lookup?.resolution === 'verified_boundary') {
-    assert(oneHourWindow.from_lookup.timestamp === targetTimestamp, '1h Solana lookup should be anchored to the resolved head timestamp')
+    assert(
+      oneHourWindow.from_lookup.timestamp === targetTimestamp,
+      '1h Solana lookup should be anchored to the resolved head timestamp',
+    )
     assert(
       Math.abs(oneHourWindow.from_block - exactFromBlock) <= 50,
       '1h Solana timestamp lookup should stay within a small live-index tolerance',
@@ -282,7 +317,9 @@ async function main() {
       'A transient Solana timestamp failure should expose estimated timeframe provenance',
     )
     assert(
-      ['timestamp_endpoint_down', 'timestamp_endpoint_unavailable'].includes(oneHourWindow.estimated_timeframe?.reason ?? ''),
+      ['timestamp_endpoint_down', 'timestamp_endpoint_unavailable'].includes(
+        oneHourWindow.estimated_timeframe?.reason ?? '',
+      ),
       'A transient Solana timestamp fallback should explain why exact resolution was unavailable',
     )
     assert(
@@ -290,8 +327,8 @@ async function main() {
       'A transient Solana timestamp fallback should identify the source dataset',
     )
     assert(
-      oneHourWindow.estimated_timeframe?.from_block === oneHourWindow.from_block
-        && oneHourWindow.estimated_timeframe?.to_block === oneHourWindow.to_block,
+      oneHourWindow.estimated_timeframe?.from_block === oneHourWindow.from_block &&
+        oneHourWindow.estimated_timeframe?.to_block === oneHourWindow.to_block,
       'A transient Solana timestamp fallback should describe the exact returned block bounds',
     )
   }

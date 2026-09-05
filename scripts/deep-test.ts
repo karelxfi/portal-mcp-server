@@ -1,7 +1,7 @@
 #!/usr/bin/env tsx
 
-import { TOOL_SPECS, loadToolTestContext } from './tool-manifest.ts'
 import { callToolWithRetry, classifySpeed, closeTestClient, connectTestClient } from './test-helpers.ts'
+import { TOOL_SPECS, loadToolTestContext } from './tool-manifest.ts'
 
 async function main() {
   console.log(`Deep testing all ${TOOL_SPECS.length} MCP tools with realistic queries...\n`)

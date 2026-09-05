@@ -1,24 +1,33 @@
 import type { McpServer } from '@modelcontextprotocol/server'
-
-import { registerPortalTool } from '../../helpers/mcp-registration.js'
 import { z } from 'zod'
 
 import { resolveDataset, validateBlockRange } from '../../cache/datasets.js'
-import { buildTableDescriptor, type TableColumnDescriptor } from '../../helpers/chart-metadata.js'
+import { type TableColumnDescriptor, buildTableDescriptor } from '../../helpers/chart-metadata.js'
 import { formatResult } from '../../helpers/format.js'
+import { registerPortalTool } from '../../helpers/mcp-registration.js'
 import { normalizeHyperliquidFillResult } from '../../helpers/normalized-results.js'
-import { buildPaginationInfo, decodeRecentPageCursor, encodeRecentPageCursor, paginateAscendingItems } from '../../helpers/pagination.js'
-import { buildChronologicalPageOrdering, buildQueryCoverage, buildQueryFreshness } from '../../helpers/result-metadata.js'
-import { applyResponseFormat, resolveDefaultResponseFormat, type ResponseFormat } from '../../helpers/response-modes.js'
 import {
-  getTimestampWindowNotices,
+  buildPaginationInfo,
+  decodeRecentPageCursor,
+  encodeRecentPageCursor,
+  paginateAscendingItems,
+} from '../../helpers/pagination.js'
+import { type ResponseFormat, applyResponseFormat, resolveDefaultResponseFormat } from '../../helpers/response-modes.js'
+import {
+  buildChronologicalPageOrdering,
+  buildQueryCoverage,
+  buildQueryFreshness,
+} from '../../helpers/result-metadata.js'
+import {
   type BlockAtTimestampResult,
   type EstimatedTimeframeResolution,
   type TimestampInput,
+  getTimestampWindowNotices,
   resolveTimeframeOrBlocks,
 } from '../../helpers/timeframe.js'
 import { buildExecutionMetadata, buildToolDescription } from '../../helpers/tool-ux.js'
 import { buildMetricCard, buildPortalUi, buildTablePanel, buildTimelinePanel } from '../../helpers/ui-metadata.js'
+import { assertHyperliquidDataset, normalizeHyperliquidAddresses } from './dataset-guard.js'
 import { fetchRecentHyperliquidFillBlocks } from './fill-stream.js'
 
 // ============================================================================
@@ -81,11 +90,7 @@ function sortFills(items: HyperliquidFillItem[]) {
   })
 }
 
-function buildHyperliquidFillTable(params: {
-  rowCount: number
-  includePnl: boolean
-  includeBuilderInfo: boolean
-}) {
+function buildHyperliquidFillTable(params: { rowCount: number; includePnl: boolean; includeBuilderInfo: boolean }) {
   const columns: TableColumnDescriptor[] = [
     { key: 'timestamp_human', label: 'Time', kind: 'time', format: 'timestamp_human' },
     { key: 'coin', label: 'Coin', kind: 'dimension' },
@@ -97,7 +102,14 @@ function buildHyperliquidFillTable(params: {
   ]
 
   if (params.includePnl) {
-    columns.push({ key: 'closedPnl', label: 'Closed PnL', kind: 'metric', format: 'currency_usd', unit: 'USD', align: 'right' })
+    columns.push({
+      key: 'closedPnl',
+      label: 'Closed PnL',
+      kind: 'metric',
+      format: 'currency_usd',
+      unit: 'USD',
+      align: 'right',
+    })
   }
 
   columns.push({ key: 'sender', path: 'sender', label: 'Trader', kind: 'dimension', format: 'address' })
@@ -121,11 +133,7 @@ function buildHyperliquidFillTable(params: {
   })
 }
 
-function buildHyperliquidFillUi(params: {
-  title: string
-  subtitle: string
-  nextCursor?: string
-}) {
+function buildHyperliquidFillUi(params: { title: string; subtitle: string; nextCursor?: string }) {
   return buildPortalUi({
     version: 'portal_ui_v1',
     layout: 'split',
@@ -136,7 +144,13 @@ function buildHyperliquidFillUi(params: {
       subtitle: params.subtitle,
     },
     metric_cards: [
-      buildMetricCard({ id: 'visible-fills', label: 'Visible fills', value_path: 'page_summary.visible_fills', format: 'integer', emphasis: 'primary' }),
+      buildMetricCard({
+        id: 'visible-fills',
+        label: 'Visible fills',
+        value_path: 'page_summary.visible_fills',
+        format: 'integer',
+        emphasis: 'primary',
+      }),
     ],
     panels: [
       buildTimelinePanel({
@@ -160,14 +174,17 @@ function buildHyperliquidFillUi(params: {
       }),
     ],
     follow_up_actions: [
-      ...(params.nextCursor ? [{ label: 'Load older fills', intent: 'continue' as const, target: '_pagination.next_cursor' }] : []),
+      ...(params.nextCursor
+        ? [{ label: 'Load older fills', intent: 'continue' as const, target: '_pagination.next_cursor' }]
+        : []),
       { label: 'Show raw rows', intent: 'show_raw', target: 'items' },
     ],
   })
 }
 
 export function registerQueryHyperliquidFillsTool(server: McpServer) {
-  registerPortalTool(server,
+  registerPortalTool(
+    server,
     'portal_hyperliquid_query_fills',
     buildToolDescription('portal_hyperliquid_query_fills'),
     {
@@ -176,24 +193,28 @@ export function registerQueryHyperliquidFillsTool(server: McpServer) {
         .optional()
         .default('hyperliquid-fills')
         .describe("Network name (default: 'hyperliquid-fills'). Optional when continuing with cursor."),
-      timeframe: z
-        .string()
-        .optional()
-        .describe("Time range (e.g., '1h', '24h'). Alternative to from_block/to_block."),
+      timeframe: z.string().optional().describe("Time range (e.g., '1h', '24h'). Alternative to from_block/to_block."),
       from_block: z.number().optional().describe('Starting block number (use this OR timeframe)'),
       to_block: z.number().optional().describe('Ending block number'),
       from_timestamp: z
         .union([z.number(), z.string()])
         .optional()
-        .describe('Starting timestamp. Accepts Unix seconds, Unix milliseconds, ISO datetime, or relative input like "1h ago".'),
+        .describe(
+          'Starting timestamp. Accepts Unix seconds, Unix milliseconds, ISO datetime, or relative input like "1h ago".',
+        ),
       to_timestamp: z
         .union([z.number(), z.string()])
         .optional()
-        .describe('Ending timestamp. Accepts Unix seconds, Unix milliseconds, ISO datetime, or relative input like "now".'),
+        .describe(
+          'Ending timestamp. Accepts Unix seconds, Unix milliseconds, ISO datetime, or relative input like "now".',
+        ),
       finalized_only: z.boolean().optional().default(false).describe('Only query finalized blocks'),
       user: z.array(z.string()).optional().describe('Trader wallet addresses (0x-prefixed, lowercase)'),
       coin: z.array(z.string()).optional().describe('Asset symbols (e.g., "ETH", "BTC", "SOL")'),
-      dir: z.array(z.string()).optional().describe('Trade direction: "Open Long", "Close Long", "Open Short", "Close Short"'),
+      dir: z
+        .array(z.string())
+        .optional()
+        .describe('Trade direction: "Open Long", "Close Long", "Open Short", "Close Short"'),
       builder: z.array(z.string()).optional().describe('Builder addresses (0x-prefixed, lowercase)'),
       fee_token: z.array(z.string()).optional().describe('Fee token symbols'),
       cloid: z.array(z.string()).optional().describe('Client order IDs (0x-prefixed hex)'),
@@ -204,10 +225,17 @@ export function registerQueryHyperliquidFillsTool(server: McpServer) {
         .max(RETAINED_FILL_LIMIT_MAX)
         .optional()
         .default(20)
-        .describe('Requested fills per page (default: 20). Values up to the retained compatibility maximum of 200 are accepted, while each response is safely capped at 25 rows and remains cursorable.'),
+        .describe(
+          'Requested fills per page (default: 20). Values up to the retained compatibility maximum of 200 are accepted, while each response is safely capped at 25 rows and remains cursorable.',
+        ),
       include_pnl: z.boolean().optional().default(true).describe('Include closedPnl and startPosition fields'),
       include_builder_info: z.boolean().optional().default(false).describe('Include builder and builderFee fields'),
-      response_format: z.enum(['full', 'compact', 'summary']).optional().describe("Response format: defaults to 'compact' for chat-friendly output. Use 'summary' for aggregate stats or 'full' when you truly need every fill field."),
+      response_format: z
+        .enum(['full', 'compact', 'summary'])
+        .optional()
+        .describe(
+          "Response format: defaults to 'compact' for chat-friendly output. Use 'summary' for aggregate stats or 'full' when you truly need every fill field.",
+        ),
       cursor: z.string().optional().describe('Continuation cursor from a previous response'),
     },
     async ({
@@ -235,6 +263,9 @@ export function registerQueryHyperliquidFillsTool(server: McpServer) {
         ? decodeRecentPageCursor<HyperliquidFillsRequest>(cursor, 'portal_hyperliquid_query_fills')
         : undefined
       let dataset = paginationCursor?.dataset ?? (network ? await resolveDataset(network) : 'hyperliquid-fills')
+      assertHyperliquidDataset('portal_hyperliquid_query_fills', dataset, 'hyperliquidFills')
+      const userFilter = normalizeHyperliquidAddresses(user)
+      const builderFilter = normalizeHyperliquidAddresses(builder)
       if (paginationCursor) {
         dataset = paginationCursor.dataset
         timeframe = paginationCursor.request.timeframe
@@ -262,7 +293,8 @@ export function registerQueryHyperliquidFillsTool(server: McpServer) {
             from_block: paginationCursor.window_from_block,
             to_block: paginationCursor.window_to_block,
             range_kind:
-              paginationCursor.request.from_timestamp !== undefined || paginationCursor.request.to_timestamp !== undefined
+              paginationCursor.request.from_timestamp !== undefined ||
+              paginationCursor.request.to_timestamp !== undefined
                 ? 'timestamp_range'
                 : paginationCursor.request.timeframe
                   ? 'timeframe'
@@ -294,10 +326,10 @@ export function registerQueryHyperliquidFillsTool(server: McpServer) {
 
       // Build fill filter
       const fillFilter: Record<string, unknown> = {}
-      if (user) fillFilter.user = user.map((u) => u.toLowerCase())
+      if (userFilter) fillFilter.user = userFilter
       if (coin) fillFilter.coin = coin
       if (dir) fillFilter.dir = dir
-      if (builder) fillFilter.builder = builder.map((b) => b.toLowerCase())
+      if (builderFilter) fillFilter.builder = builderFilter
       if (fee_token) fillFilter.feeToken = fee_token
       if (cloid) fillFilter.cloid = cloid
 
@@ -320,7 +352,12 @@ export function registerQueryHyperliquidFillsTool(server: McpServer) {
         feeToken: true,
       }
 
-      if (include_pnl) {
+      /* A summary reports total_realized_pnl, which it can only do if closedPnl
+         was requested. With include_pnl off it summed absent values and answered
+         a confident 0 over fills that closed real positions, so a summary asks
+         for the field whatever the flag says. The rows the caller sees still
+         follow the flag: the summary replaces them rather than listing them. */
+      if (include_pnl || effectiveResponseFormat === 'summary') {
         fillFields.closedPnl = true
         fillFields.startPosition = true
       }
@@ -351,7 +388,7 @@ export function registerQueryHyperliquidFillsTool(server: McpServer) {
         results.flatMap((block: unknown) => {
           const b = block as {
             header?: { number: number; timestamp: number }
-            fills?: Array<Record<string, unknown>>
+            fills?: Record<string, unknown>[]
           }
           return (b.fills || []).map((fill) =>
             normalizeHyperliquidFillResult({
@@ -373,37 +410,38 @@ export function registerQueryHyperliquidFillsTool(server: McpServer) {
             }
           : undefined,
       )
-      const nextCursor = page.hasMore && page.nextBoundary
-        ? encodeRecentPageCursor<HyperliquidFillsRequest>({
-            tool: 'portal_hyperliquid_query_fills',
-            dataset,
-            request: {
-              ...(timeframe ? { timeframe } : {}),
-              ...(from_timestamp !== undefined ? { from_timestamp } : {}),
-              ...(to_timestamp !== undefined ? { to_timestamp } : {}),
-              limit: pageLimit,
-              finalized_only,
-              ...(user ? { user } : {}),
-              ...(coin ? { coin } : {}),
-              ...(dir ? { dir } : {}),
-              ...(builder ? { builder } : {}),
-              ...(fee_token ? { fee_token } : {}),
-              ...(cloid ? { cloid } : {}),
-              include_pnl,
-              include_builder_info,
-              response_format: effectiveResponseFormat,
-              ...(resolvedBlocks.from_lookup ? { from_lookup: resolvedBlocks.from_lookup } : {}),
-              ...(resolvedBlocks.to_lookup ? { to_lookup: resolvedBlocks.to_lookup } : {}),
-              ...(resolvedBlocks.estimated_timeframe
-                ? { estimated_timeframe: resolvedBlocks.estimated_timeframe }
-                : {}),
-            },
-            window_from_block: resolvedFromBlock,
-            window_to_block: endBlock,
-            page_to_block: page.nextBoundary.page_to_block,
-            skip_inclusive_block: page.nextBoundary.skip_inclusive_block,
-          })
-        : undefined
+      const nextCursor =
+        page.hasMore && page.nextBoundary
+          ? encodeRecentPageCursor<HyperliquidFillsRequest>({
+              tool: 'portal_hyperliquid_query_fills',
+              dataset,
+              request: {
+                ...(timeframe ? { timeframe } : {}),
+                ...(from_timestamp !== undefined ? { from_timestamp } : {}),
+                ...(to_timestamp !== undefined ? { to_timestamp } : {}),
+                limit: pageLimit,
+                finalized_only,
+                ...(user ? { user } : {}),
+                ...(coin ? { coin } : {}),
+                ...(dir ? { dir } : {}),
+                ...(builder ? { builder } : {}),
+                ...(fee_token ? { fee_token } : {}),
+                ...(cloid ? { cloid } : {}),
+                include_pnl,
+                include_builder_info,
+                response_format: effectiveResponseFormat,
+                ...(resolvedBlocks.from_lookup ? { from_lookup: resolvedBlocks.from_lookup } : {}),
+                ...(resolvedBlocks.to_lookup ? { to_lookup: resolvedBlocks.to_lookup } : {}),
+                ...(resolvedBlocks.estimated_timeframe
+                  ? { estimated_timeframe: resolvedBlocks.estimated_timeframe }
+                  : {}),
+              },
+              window_from_block: resolvedFromBlock,
+              window_to_block: endBlock,
+              page_to_block: page.nextBoundary.page_to_block,
+              skip_inclusive_block: page.nextBoundary.skip_inclusive_block,
+            })
+          : undefined
 
       const formattedData = applyResponseFormat(page.pageItems, effectiveResponseFormat, 'hyperliquid_fills')
       const notices = getTimestampWindowNotices(resolvedBlocks)
@@ -426,6 +464,7 @@ export function registerQueryHyperliquidFillsTool(server: McpServer) {
         items: page.pageItems,
         getBlockNumber,
         hasMore: page.hasMore,
+        windowComplete: recentFetch.exhausted,
       })
 
       const showFillPresentation = Array.isArray(formattedData)
@@ -436,15 +475,16 @@ export function registerQueryHyperliquidFillsTool(server: McpServer) {
             includeBuilderInfo: include_builder_info,
           })
         : undefined
-      const responsePayload = showFillPresentation && fillTable
-        ? {
-            page_summary: {
-              visible_fills: page.pageItems.length,
-            },
-            items: formattedData,
-            tables: [fillTable],
-          }
-        : formattedData
+      const responsePayload =
+        showFillPresentation && fillTable
+          ? {
+              page_summary: {
+                visible_fills: page.pageItems.length,
+              },
+              items: formattedData,
+              tables: [fillTable],
+            }
+          : formattedData
 
       return formatResult(
         responsePayload,

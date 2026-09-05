@@ -7,7 +7,7 @@ async function filesUnder(root, directory = root) {
   const files = []
   for (const entry of entries) {
     const path = join(directory, entry.name)
-    if (entry.isDirectory()) files.push(...await filesUnder(root, path))
+    if (entry.isDirectory()) files.push(...(await filesUnder(root, path)))
     else if (entry.isFile()) files.push({ path, name: relative(root, path) })
   }
   return files
@@ -27,8 +27,9 @@ export async function digestClientCandidate(params) {
     path: resolve(path),
     name: `runtime/${relative(resolve(params.projectRoot), resolve(path))}`,
   }))
-  const entries = [...manifestEntries, ...runtimeEntries, ...metadataEntries]
-    .sort((left, right) => left.name < right.name ? -1 : left.name > right.name ? 1 : 0)
+  const entries = [...manifestEntries, ...runtimeEntries, ...metadataEntries].sort((left, right) =>
+    left.name < right.name ? -1 : left.name > right.name ? 1 : 0,
+  )
 
   const digest = createHash('sha256')
   for (const entry of entries) {

@@ -1,0 +1,75 @@
+name: Model Eval
+
+on:
+  schedule:
+    - cron: "41 3 * * *"
+  workflow_dispatch:
+    inputs:
+      model:
+        description: Anthropic model id (default claude-sonnet-5)
+        required: false
+        default: ""
+
+permissions: {}
+
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+    steps:
+      - name: Check out
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Require the API key
+        if: env.ANTHROPIC_API_KEY == ''
+        run: |
+          echo "::error::ANTHROPIC_API_KEY is not configured for this repository; the model eval cannot run."
+          exit 1
+
+      - name: Download previous eval artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p evals-history
+          for run_id in $(gh run list --workflow model-eval.yml --status success --limit 7 --json databaseId --jq '.[].databaseId'); do
+            gh run download "$run_id" --name model-loop-eval --dir "evals-history/$run_id" || true
+          done
+          find evals-history -name '*.json' | wc -l
+
+      - name: Run the model-in-the-loop eval
+        env:
+          EVAL_MODEL: ${{ inputs.model }}
+          EVAL_HISTORY_DIR: evals-history
+        run: |
+          if [ -n "$EVAL_MODEL" ]; then
+            npm run eval:model-loop -- --model "$EVAL_MODEL"
+          else
+            npm run eval:model-loop
+          fi
+
+      - name: Upload eval artifact
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: model-loop-eval
+          path: artifacts/model-eval/
+          if-no-files-found: error
+          retention-days: 90

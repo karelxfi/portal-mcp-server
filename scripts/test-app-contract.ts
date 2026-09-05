@@ -5,6 +5,13 @@ import { readFile } from 'node:fs/promises'
 import { Client } from '@modelcontextprotocol/client'
 import { InMemoryTransport } from '@modelcontextprotocol/server'
 
+import { EXPLORER_CHART_CAPABILITIES } from '../src/app-ui/capabilities.js'
+import { CHAINS, LOGO_CDN, LOGO_ORIGINS } from '../src/app-ui/chains.generated.js'
+import { chainLogoUrl, explorerLink } from '../src/app-ui/explorers.js'
+import { buildEvidenceExport } from '../src/app-ui/export.js'
+import { APP_FIXTURES } from '../src/app-ui/fixtures.js'
+import { evidenceArguments, planFollowup, shorterDuration } from '../src/app-ui/followup-state.js'
+import { formatValue } from '../src/app-ui/view.js'
 import {
   ACTIVITY_EXPLORER_RESOURCE_URI,
   ACTIVITY_EXPLORER_TOOLS,
@@ -15,9 +22,6 @@ import {
   resolveActivityExplorerSurface,
 } from '../src/apps/activity-explorer.js'
 import { ACTIVITY_EXPLORER_BYTES, ACTIVITY_EXPLORER_HASH } from '../src/generated/activity-explorer.version.js'
-import { evidenceArguments, planFollowup, shorterDuration } from '../src/app-ui/followup-state.js'
-import { buildEvidenceExport } from '../src/app-ui/export.js'
-import { APP_FIXTURES } from '../src/app-ui/fixtures.js'
 import { buildCandlestickChart, buildTimeSeriesChart } from '../src/helpers/chart-metadata.js'
 import { formatResult } from '../src/helpers/format.js'
 import { register } from '../src/metrics.js'
@@ -55,6 +59,7 @@ async function main() {
   const appResult = buildAppResult()
   assert(
     appResult.structuredContent?._app?.name === 'SQD Explorer' &&
+      appResult.structuredContent?._app?.stage === 'beta' &&
       appResult.structuredContent?._app?.server_delivery_state === 'ready' &&
       appResult.structuredContent?._app?.host_render_state === 'not_observable_from_tool_result' &&
       appResult.structuredContent?._app?.required_host_extension === 'io.modelcontextprotocol/ui' &&
@@ -112,18 +117,49 @@ async function main() {
     ['time series', timeSeriesContract],
     ['candlestick', candleContract],
   ] as const) {
-    assert(chart.interactions?.hover?.enabled === true, `${name} charts should declare exact point inspection`)
-    assert(chart.interactions?.zoom?.enabled === true, `${name} charts should declare implemented x-axis range focus`)
+    /* The contract may only name controls the app has actually built. For two
+       releases it offered a PNG export and a visual switch that did not exist;
+       the app now publishes what it implements and the declaration is held
+       against that list rather than against a comment. */
+    assert(
+      chart.interactions?.hover?.enabled === EXPLORER_CHART_CAPABILITIES.hover &&
+        chart.interactions?.hover?.crosshair === EXPLORER_CHART_CAPABILITIES.crosshair &&
+        chart.interactions?.hover?.snap_to_data === EXPLORER_CHART_CAPABILITIES.snapToData,
+      `${name} charts should declare exactly the hover behaviour the app implements`,
+    )
+    assert(
+      chart.interactions?.zoom?.enabled === true &&
+        chart.interactions?.zoom?.axis === EXPLORER_CHART_CAPABILITIES.zoomAxis &&
+        chart.interactions?.zoom?.brush === EXPLORER_CHART_CAPABILITIES.brush,
+      `${name} charts should declare the range focus the app implements`,
+    )
     assert(chart.interactions?.toolbar?.enabled === true, `${name} charts should expose the implemented range controls`)
     assert(
-      chart.interactions?.toolbar?.actions.includes('reset_zoom') === true,
-      `${name} charts should expose reset range`,
+      JSON.stringify(chart.interactions?.toolbar?.actions) ===
+        JSON.stringify([...EXPLORER_CHART_CAPABILITIES.toolbarActions]),
+      `${name} charts must name every toolbar control the app builds and no others (got ${JSON.stringify(chart.interactions?.toolbar?.actions)})`,
+    )
+    assert(
+      chart.interactions?.legend?.toggle_series === undefined ||
+        chart.interactions.legend.toggle_series === EXPLORER_CHART_CAPABILITIES.legendToggle,
+      `${name} charts should declare series toggling only where the app implements it`,
     )
   }
-  const shortChart = buildTimeSeriesChart({ interval: '1m', totalPoints: 4 })
+  const shortChart = buildTimeSeriesChart({
+    interval: '1m',
+    totalPoints: EXPLORER_CHART_CAPABILITIES.minimumPointsForZoom - 1,
+  })
   assert(
-    shortChart.interactions?.zoom?.enabled === false,
+    shortChart.interactions?.zoom?.enabled === false && shortChart.interactions.toolbar?.actions.length === 0,
     'short charts should not advertise unnecessary range controls',
+  )
+  const zoomableChart = buildTimeSeriesChart({
+    interval: '1m',
+    totalPoints: EXPLORER_CHART_CAPABILITIES.minimumPointsForZoom,
+  })
+  assert(
+    zoomableChart.interactions?.zoom?.enabled === true,
+    'a chart at the app minimum should advertise the controls the app draws',
   )
 
   const jsonExport = buildEvidenceExport(APP_FIXTURES.hyperliquid, 'json')
@@ -144,13 +180,12 @@ async function main() {
   )
   const activityJson = buildEvidenceExport(APP_FIXTURES.activity, 'json')
   const activityCsv = buildEvidenceExport(APP_FIXTURES.activity, 'csv')
-  const exactActivityHash = String((APP_FIXTURES.activity.items as Array<Record<string, unknown>>)[0]?.tx_hash)
+  const exactActivityHash = String((APP_FIXTURES.activity.items as Record<string, unknown>[])[0]?.tx_hash)
   for (const exported of [activityJson, activityCsv]) {
     assert(
       exported.content.includes(exactActivityHash),
       'evidence exports should keep transaction hashes byte-for-byte exact',
     )
-    assert(exported.content.includes('0.000000009 USDC'), 'evidence exports should keep tiny non-zero amounts exact')
   }
   assert(
     ACTIVITY_EXPLORER_HASH !== 'unbuilt' && /^[a-f0-9]{12}$/.test(ACTIVITY_EXPLORER_HASH),
@@ -160,10 +195,28 @@ async function main() {
     ACTIVITY_EXPLORER_RESOURCE_URI.includes(ACTIVITY_EXPLORER_HASH),
     'resource URI must use the bundle hash as its cache key',
   )
+  /*
+   * Two numbers, because they answer different questions. 700,000 is the hard
+   * gate: past it the resource is too big to send a host on every session.
+   * 600,000 is where the bundle stops having room to grow, and a build that
+   * crosses it says so while still passing, so the next feature is a decision
+   * rather than a surprise.
+   *
+   * The measured floor is about 490,000 before a line of app code:
+   * lightweight-charts 156,427, zod 137,297, the MCP client 58,832, and the
+   * mono font subset 16,052. A target below that is not reachable by trimming
+   * app code, and pretending otherwise would put a gate on the release that
+   * only a dependency change could satisfy.
+   */
   assert(
     ACTIVITY_EXPLORER_BYTES > 20_000 && ACTIVITY_EXPLORER_BYTES < 700_000,
-    'embedded app must stay inside its release byte budget',
+    `embedded app must stay inside its release byte budget (${ACTIVITY_EXPLORER_BYTES} bytes)`,
   )
+  if (ACTIVITY_EXPLORER_BYTES > 600_000) {
+    console.warn(
+      `WARN  the Explorer bundle is ${ACTIVITY_EXPLORER_BYTES} bytes, past the 600,000 headroom mark and ${700_000 - ACTIVITY_EXPLORER_BYTES} from the gate`,
+    )
+  }
   for (const tool of [
     'portal_list_networks',
     'portal_get_network_info',
@@ -180,7 +233,7 @@ async function main() {
   await defaultClient.connect(defaultClientTransport)
   try {
     const listedTools = await defaultClient.listTools()
-    assert(listedTools.tools.length === 28, 'opting out of the beta app must not change the 28-tool catalog')
+    assert(listedTools.tools.length === 31, 'opting out of the beta app must not change the 31-tool catalog')
     for (const tool of listedTools.tools) {
       const meta = tool._meta as Record<string, any> | undefined
       assert(
@@ -256,7 +309,7 @@ async function main() {
   await client.connect(clientTransport)
   try {
     const listedTools = await client.listTools()
-    assert(listedTools.tools.length === 28, 'the MCP App must not change the 28-tool catalog')
+    assert(listedTools.tools.length === 31, 'the MCP App must not change the 31-tool catalog')
     const advertisedAppTools = listedTools.tools
       .filter((tool) => Boolean((tool._meta as Record<string, any> | undefined)?.['ui/resourceUri']))
       .map((tool) => tool.name)
@@ -320,9 +373,10 @@ async function main() {
         content.text.includes('viewBox="0 0 306 306"') &&
         content.text.includes('#08090a') &&
         content.text.includes('#818cf8') &&
-        content.text.includes('Inter SQD') &&
-        content.text.includes('JetBrains Mono SQD'),
-      'the app should contain the official SQD mark, dark product tokens, and embedded typefaces',
+        content.text.includes('JetBrains Mono SQD') &&
+        // The sans face is the host's to supply; only the mono face ships.
+        !content.text.includes('Inter SQD'),
+      'the app should contain the official SQD mark, dark product tokens, and the embedded mono face only',
     )
     assert(
       !content.text.includes('<script src=') && !content.text.includes('<link rel='),
@@ -332,25 +386,37 @@ async function main() {
       content.text.includes('https://www.tradingview.com/'),
       'the bundled market chart must retain the required TradingView product-creator link',
     )
-    const publicCopySources = await Promise.all([
-      readFile('src/app-ui/view.ts', 'utf8'),
-      readFile('src/app-ui/index.ts', 'utf8'),
-      readFile('src/app-ui/fixtures.ts', 'utf8'),
-    ])
-    assert(
-      publicCopySources.every((source) => !source.includes('—')),
-      'public app copy must not contain em dashes',
-    )
+    /* Every module the reader can end up looking at. The Explorer was one
+       file; it is now `view.ts` over `masthead.ts`, `charts/`, `tables.ts`,
+       `panels.ts`, `states.ts` and `common.ts`, and copy can hide in any of
+       them. */
+    const APP_COPY_MODULES = [
+      'src/app-ui/view.ts',
+      'src/app-ui/index.ts',
+      'src/app-ui/fixtures.ts',
+      'src/app-ui/common.ts',
+      'src/app-ui/masthead.ts',
+      'src/app-ui/tables.ts',
+      'src/app-ui/panels.ts',
+      'src/app-ui/states.ts',
+      'src/app-ui/charts/range.ts',
+      'src/app-ui/charts/terminal.ts',
+    ]
+    const publicCopySources = await Promise.all(APP_COPY_MODULES.map((path) => readFile(path, 'utf8')))
+    for (const [index, source] of publicCopySources.entries()) {
+      assert(!source.includes('—'), `public app copy must not contain em dashes (${APP_COPY_MODULES[index]})`)
+    }
     const appBridgeSource = publicCopySources[1]
+    const chartSource = publicCopySources[APP_COPY_MODULES.indexOf('src/app-ui/charts/terminal.ts')]
     assert(
-      publicCopySources[0].includes("'Charts by TradingView'") &&
-        publicCopySources[0].includes("attribution.href = 'https://www.tradingview.com/'"),
+      chartSource.includes("'Charts by TradingView'") &&
+        chartSource.includes("attribution.href = 'https://www.tradingview.com/'"),
       'the market chart must keep the required TradingView attribution visible',
     )
     assert(
       appBridgeSource.includes("from '@modelcontextprotocol/ext-apps'") &&
         appBridgeSource.includes('new App(') &&
-        appBridgeSource.includes('{ strict: true }') &&
+        appBridgeSource.includes('{ strict: true, autoResize: true }') &&
         appBridgeSource.includes('app.callServerTool') &&
         appBridgeSource.includes('app.requestDisplayMode'),
       'the app should use the strict portable MCP Apps bridge for results, follow-ups, and display mode',
@@ -360,7 +426,82 @@ async function main() {
       'the app should keep ephemeral history in the active UI instance instead of browser storage',
     )
     assert(content._meta?.ui?.csp?.connectDomains?.length === 0, 'the app must not make external network requests')
-    assert(content._meta?.ui?.csp?.resourceDomains?.length === 0, 'the app must not load external resources')
+    assert(
+      JSON.stringify(content._meta?.ui?.csp?.resourceDomains) ===
+        JSON.stringify(['https://cdn.subsquid.io', 'https://sqd.dev']),
+      'the app loads chain logos only from SQD domains',
+    )
+    assert(
+      JSON.stringify(content._meta?.['openai/widgetCSP']?.resource_domains) ===
+        JSON.stringify(content._meta?.ui?.csp?.resourceDomains),
+      'the ChatGPT CSP alias must allow the same logo origins as the standard declaration',
+    )
+    const cspOrigins: string[] = content._meta?.ui?.csp?.resourceDomains ?? []
+    assert(
+      LOGO_ORIGINS.every((origin) => cspOrigins.includes(origin)) && LOGO_CDN.startsWith(`${LOGO_ORIGINS[0]}/`),
+      'the generated chain map must only name origins the CSP allows',
+    )
+    const logoUrls = Object.values(CHAINS)
+      .map((chain) => chainLogoUrl(chain))
+      .filter(Boolean)
+    assert(
+      logoUrls.length > 100 && logoUrls.every((url) => cspOrigins.some((origin) => url.startsWith(`${origin}/`))),
+      'every chain logo must load from an origin the App CSP allows',
+    )
+    const testnetsWithExplorer = Object.entries(CHAINS).filter(
+      ([dataset, chain]) =>
+        chain.explorer && /testnet|sepolia|devnet|holesky|hoodi|amoy|alfajores|moonbase|cardona/.test(dataset),
+    )
+    assert(
+      testnetsWithExplorer.length === 0,
+      `testnet datasets must not link to a mainnet explorer: ${testnetsWithExplorer.map(([d]) => d).join(', ')}`,
+    )
+    assert(
+      explorerLink('ethereum-sepolia', 'address', '0x1111111111111111111111111111111111111111') === undefined,
+      'testnets have no explorer link',
+    )
+    const hash = `0x${'ab'.repeat(32)}`
+    assert(
+      explorerLink('ethereum-mainnet', 'tx', `${hash}:12`)?.url === `https://etherscan.io/tx/${hash}`,
+      'a hash:logIndex composite links to its transaction',
+    )
+    assert(
+      explorerLink('polkadot', 'tx', '23456789:3') === undefined,
+      'a Substrate block:eventIndex id is not a transaction',
+    )
+    assert(
+      explorerLink('hyperliquid-mainnet', 'tx', '812345678:4') === undefined,
+      'a replica block:actionIndex id is not a transaction',
+    )
+    assert(
+      explorerLink('polkadot', 'block', '23456789')?.url === 'https://polkadot.subscan.io/block/23456789',
+      'block links stay numeric',
+    )
+    const signature = '5VERv8NMvzbJMEkV8xnrLkEaWRtSz9CosKDYjCJjBRnbJLgp8uirBgmQpjKhoR4tjF3ZpRzrFmBV6UjKdiSZkQUW'
+    assert(
+      explorerLink('solana-mainnet', 'tx', signature)?.url.endsWith(`/tx/${signature}`) === true,
+      'a base58 Solana signature links as a transaction',
+    )
+    assert(
+      formatValue('9007199254740993', 'integer') === '9,007,199,254,740,993' &&
+        formatValue('43841943497649594000.000000000000000001', 'decimal', 'USDC') ===
+          '43,841,943,497,649,594,000.000000000000000001 USDC' &&
+        formatValue('0.30000003', 'btc') === '0.30000003 BTC' &&
+        formatValue('0.000000009', 'decimal') === '0.000000009' &&
+        formatValue(9e-9, 'decimal') === '0.000000009' &&
+        formatValue('1234.5', 'decimal') === '1,234.5',
+      'App cells must keep exact decimal strings and never show exponent notation',
+    )
+    assert(
+      planFollowup({ intent: 'widen', currentArgs: { network: 'base-mainnet', timeframe: '1h' } }).callArgs
+        ?.timeframe === '2h',
+      'widen must double a timeframe window with the same argument key',
+    )
+    assert(
+      planFollowup({ intent: 'zoom_in', currentArgs: { network: 'base-mainnet', duration: '24h' } }).callArgs
+        ?.duration === '12h',
+      'zoom_in must halve a duration window with the same argument key',
+    )
     assert(
       content._meta?.['openai/widgetDomain'] === 'https://portal.sqd.dev',
       'ChatGPT compatibility metadata should use the canonical SQD domain',
@@ -443,6 +584,7 @@ async function main() {
   console.log('PASS  28 tool contracts remain intact with selective app metadata')
   console.log('PASS  versioned self-contained resource exposes exact standard and ChatGPT metadata')
   console.log('PASS  capability states and app runtime metrics are bounded and deterministic')
+  console.log('PASS  chart contracts name exactly the interactions the app implements')
 }
 
 main().catch((error) => {

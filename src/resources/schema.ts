@@ -17,6 +17,7 @@ import {
   buildSolanaTransactionFields,
 } from '../helpers/fields.js'
 import { type ToolGuideEntry, getToolGuideEntries, getToolGuideEntry } from '../helpers/tool-ux.js'
+import { captureToolActivePredicate } from '../toolsets.js'
 import type { BlockHead, DatasetMetadata } from '../types/index.js'
 import { npmVersion } from '../version.js'
 
@@ -32,8 +33,47 @@ function groupToolsByCategory(tools: ToolGuideEntry[]) {
   }, {})
 }
 
-function buildDeveloperToolGuide() {
+/* A route is only worth reading when the tool it starts from is registered,
+   and the tools it hands off to are filtered to the ones this deployment
+   serves. Without this the guide read as though the full catalog were
+   available and sent callers at tools that are not there. */
+function activeRoutes<T extends { start_with: string; then_use: string[] }>(
+  routes: T[],
+  isActive: (toolName: string) => boolean,
+): T[] {
+  return routes
+    .filter((route) => isActive(route.start_with))
+    .map((route) => ({ ...route, then_use: route.then_use.filter((tool) => isActive(tool)) }))
+    .filter((route) => route.then_use.length > 0)
+    .filter((route) => !('reason' in route) || mentionsOnlyActiveTools(String(route.reason), isActive))
+}
+
+/*
+ * Prose in the guide names tools too, in `integration_notes`, in a route's
+ * `reason`, and in a tool entry's own advice. Filtering the lists while
+ * leaving the sentences alone still pointed a trimmed connection at tools it
+ * does not serve, so a sentence is dropped when a tool it names is absent.
+ */
+function mentionsOnlyActiveTools(text: string, isActive: (toolName: string) => boolean): boolean {
+  return (text.match(/portal_[a-z0-9_]+/g) ?? []).every((tool) => isActive(tool))
+}
+
+function activeNotes(notes: string[], isActive: (toolName: string) => boolean): string[] {
+  return notes.filter((note) => mentionsOnlyActiveTools(note, isActive))
+}
+
+function pruneToolEntryProse(tool: ToolGuideEntry, isActive: (toolName: string) => boolean): ToolGuideEntry {
+  return {
+    ...tool,
+    when_to_use: activeNotes(tool.when_to_use, isActive),
+    ...(tool.avoid_when ? { avoid_when: activeNotes(tool.avoid_when, isActive) } : {}),
+  }
+}
+
+function buildDeveloperToolGuide(isActive: (toolName: string) => boolean) {
   const tools = getToolGuideEntries()
+    .filter((tool) => isActive(tool.name))
+    .map((tool) => pruneToolEntryProse(tool, isActive))
   const publicTools = tools.filter((tool) => tool.audience === 'public')
   const advancedTools = tools.filter((tool) => tool.audience === 'advanced')
 
@@ -78,67 +118,87 @@ function buildDeveloperToolGuide() {
         tool: 'portal_get_time_series',
         reason: 'Use when the developer or model needs time-series, grouped trend, or compare-previous output.',
       },
-    ],
-    common_question_routes: [
-      {
-        ask: 'Investigate this wallet or suspicious address',
-        start_with: 'portal_get_wallet_summary',
-        then_use: [
-          'portal_evm_query_transactions',
-          'portal_evm_query_token_transfers',
-          'portal_solana_query_transactions',
-          'portal_hyperliquid_query_fills',
-        ],
-        reason:
-          'Wallet summary returns fund_flow, separate activity and asset-movement counterparties, largest movements within each asset, and investigation pivots before raw record drill-down.',
-      },
-      {
-        ask: 'Trace USDC or token outflows',
-        start_with: 'portal_resolve_entity',
-        then_use: ['portal_evm_query_token_transfers', 'portal_get_wallet_summary'],
-        reason:
-          'Resolve the token symbol first, then query exact transfer evidence and summarize the sender or recipient wallet.',
-      },
-      {
-        ask: 'Explain why network or contract activity spiked',
-        start_with: 'portal_get_time_series',
-        then_use: ['portal_evm_query_logs', 'portal_evm_query_transactions', 'portal_evm_get_contract_activity'],
-        reason:
-          'Use complete buckets to find the spike, then pivot into exact logs, transactions, or contract activity.',
-      },
-      {
-        ask: 'What did this contract do recently?',
-        start_with: 'portal_evm_get_contract_activity',
-        then_use: ['portal_evm_query_logs', 'portal_evm_query_transactions'],
-        reason: 'Contract activity gives the overview; raw logs and transactions provide exact evidence rows.',
-      },
-    ],
-    integration_notes: [
-      'Prefer public tools for normal agent flows; advanced tools are for debugging Portal coverage or exact block resolution.',
-      'Use network parameters in public APIs. Raw Portal dataset names are resolved internally.',
-      'Most query tools support timeframe or timestamp inputs, so clients rarely need to calculate block ranges themselves.',
-      'Use portal_resolve_entity or token_symbols on supported EVM tools instead of hardcoding entity identifiers in client code.',
-      'Raw query tools default to compact output. Use response_format: "full" only when the caller needs chain-specific raw fields.',
-      'Wallet investigations should start from fund_flow and investigation.pivots, then use raw tools only for evidence drill-down.',
-      'For chartable responses, read chart and tables metadata before inferring visual structure from raw arrays.',
-    ],
+    ].filter((entry) => isActive(entry.tool)),
+    common_question_routes: activeRoutes(
+      [
+        {
+          ask: 'Investigate this wallet or suspicious address',
+          start_with: 'portal_get_wallet_summary',
+          then_use: [
+            'portal_evm_query_transactions',
+            'portal_evm_query_token_transfers',
+            'portal_evm_query_traces',
+            'portal_solana_query_transactions',
+            'portal_hyperliquid_query_fills',
+          ],
+          reason:
+            'Wallet summary returns fund_flow, separate activity and asset-movement counterparties, largest movements within each asset, and investigation pivots before raw record drill-down.',
+        },
+        {
+          ask: 'Trace USDC or token outflows',
+          start_with: 'portal_resolve_entity',
+          then_use: ['portal_evm_query_token_transfers', 'portal_get_wallet_summary'],
+          reason:
+            'Resolve the token symbol first, then query exact transfer evidence and summarize the sender or recipient wallet.',
+        },
+        {
+          ask: 'Explain why network or contract activity spiked',
+          start_with: 'portal_get_time_series',
+          then_use: ['portal_evm_query_logs', 'portal_evm_query_transactions', 'portal_evm_get_contract_activity'],
+          reason:
+            'Use complete buckets to find the spike, then pivot into exact logs, transactions, or contract activity.',
+        },
+        {
+          ask: 'What did this contract do recently?',
+          start_with: 'portal_evm_get_contract_activity',
+          then_use: ['portal_evm_query_logs', 'portal_evm_query_transactions', 'portal_evm_query_traces'],
+          reason:
+            'Contract activity gives the overview; raw logs, transactions, and traces provide exact evidence rows.',
+        },
+        {
+          ask: 'What did this transaction call internally?',
+          start_with: 'portal_evm_query_traces',
+          then_use: ['portal_evm_query_logs', 'portal_evm_get_contract_deployment'],
+          reason:
+            'Traces filtered by transaction_hash return every internal call, creation, and value move with a deterministic id; logs and deployment lookups add the emitted events and creation context.',
+        },
+      ],
+      isActive,
+    ),
+    integration_notes: activeNotes(
+      [
+        'Prefer public tools for normal agent flows; advanced tools are for debugging Portal coverage or exact block resolution.',
+        'Use network parameters in public APIs. Raw Portal dataset names are resolved internally.',
+        'Most query tools support timeframe or timestamp inputs, so clients rarely need to calculate block ranges themselves.',
+        'Use portal_resolve_entity or token_symbols on supported EVM tools instead of hardcoding entity identifiers in client code.',
+        'Raw query tools default to compact output. Use response_format: "full" only when the caller needs chain-specific raw fields.',
+        'Wallet investigations should start from fund_flow and investigation.pivots, then use raw tools only for evidence drill-down.',
+        'For chartable responses, read chart and tables metadata before inferring visual structure from raw arrays.',
+      ],
+      isActive,
+    ),
     categories: groupToolsByCategory(tools),
     tools,
   }
 }
 
 export function registerSchemaResource(server: McpServer) {
+  const isActive = captureToolActivePredicate()
+
+  /* These four resources now vary with the connection's toolset selection, so a
+   response cached for one caller must never be replayed to another. `public`
+   invited exactly that: a full-catalog client's copy served to a trimmed one. */
   server.registerResource(
     'tool-guide',
     'sqd://tools',
-    { mimeType: 'application/json', cacheHint: { ttlMs: 300_000, cacheScope: 'public' } },
+    { mimeType: 'application/json', cacheHint: { ttlMs: 300_000, cacheScope: 'private' } },
     async (uri) => {
       return {
         contents: [
           {
             uri: uri.href,
             mimeType: 'application/json',
-            text: JSON.stringify(buildDeveloperToolGuide(), null, 2),
+            text: JSON.stringify(buildDeveloperToolGuide(isActive), null, 2),
           },
         ],
       }
@@ -148,11 +208,11 @@ export function registerSchemaResource(server: McpServer) {
   server.registerResource(
     'tool-guide-entry',
     new ResourceTemplate('sqd://tools/{name}', { list: undefined }),
-    { mimeType: 'application/json', cacheHint: { ttlMs: 300_000, cacheScope: 'public' } },
+    { mimeType: 'application/json', cacheHint: { ttlMs: 300_000, cacheScope: 'private' } },
     async (uri, { name }) => {
       const toolName = Array.isArray(name) ? name[0] : name
       const tool = getToolGuideEntry(toolName)
-      if (!tool) {
+      if (!tool || !isActive(tool.name)) {
         throw new Error(`Unknown Portal MCP tool "${toolName}". Read sqd://tools for the current tool guide.`)
       }
 
@@ -161,7 +221,10 @@ export function registerSchemaResource(server: McpServer) {
           {
             uri: uri.href,
             mimeType: 'application/json',
-            text: JSON.stringify(tool, null, 2),
+            // Pruned the same way the guide's own list is: this entry's
+            // advice names other tools, and serving it raw put back exactly
+            // the prose the list had already filtered out.
+            text: JSON.stringify(pruneToolEntryProse(tool, isActive), null, 2),
           },
         ],
       }

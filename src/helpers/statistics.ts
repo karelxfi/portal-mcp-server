@@ -29,7 +29,10 @@ export function calculatePercentile(values: number[], percentile: number): numbe
   return Number.parseFloat(interpolated.toPrecision(12))
 }
 
-export function buildPercentileSummary(values: number[], percentiles: number[] = [50, 95]): Record<string, number> | undefined {
+export function buildPercentileSummary(
+  values: number[],
+  percentiles: number[] = [50, 95],
+): Record<string, number> | undefined {
   if (values.length === 0) return undefined
 
   const summary: Record<string, number> = {}

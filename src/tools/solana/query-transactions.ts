@@ -1,18 +1,11 @@
 import type { McpServer } from '@modelcontextprotocol/server'
-
-import { registerPortalTool } from '../../helpers/mcp-registration.js'
 import { z } from 'zod'
 
 import { resolveDataset, validateBlockRange } from '../../cache/datasets.js'
 import { PORTAL_URL } from '../../constants/index.js'
 import { detectChainType } from '../../helpers/chain.js'
 import { ActionableError, createUnsupportedChainError } from '../../helpers/errors.js'
-import { portalFetchRecentRecords } from '../../helpers/fetch.js'
-import { normalizeSolanaTransactionResult } from '../../helpers/normalized-results.js'
-import { buildPaginationInfo, decodeRecentPageCursor, encodeRecentPageCursor, paginateAscendingItems } from '../../helpers/pagination.js'
-import { buildChronologicalPageOrdering, buildQueryCoverage, buildQueryFreshness } from '../../helpers/result-metadata.js'
-import { getTimestampWindowNotices, type TimestampInput, resolveTimeframeOrBlocks } from '../../helpers/timeframe.js'
-import { buildExecutionMetadata, buildToolDescription } from '../../helpers/tool-ux.js'
+import { portalFetchRecentRecordsWithScan } from '../../helpers/fetch.js'
 import {
   buildSolanaBalanceFields,
   buildSolanaInstructionFields,
@@ -22,7 +15,22 @@ import {
   buildSolanaTransactionFields,
 } from '../../helpers/fields.js'
 import { formatResult } from '../../helpers/format.js'
-import { applyResponseFormat, resolveDefaultResponseFormat, type ResponseFormat } from '../../helpers/response-modes.js'
+import { registerPortalTool } from '../../helpers/mcp-registration.js'
+import { normalizeSolanaTransactionResult } from '../../helpers/normalized-results.js'
+import {
+  buildPaginationInfo,
+  decodeRecentPageCursor,
+  encodeRecentPageCursor,
+  paginateAscendingItems,
+} from '../../helpers/pagination.js'
+import { type ResponseFormat, applyResponseFormat, resolveDefaultResponseFormat } from '../../helpers/response-modes.js'
+import {
+  buildChronologicalPageOrdering,
+  buildQueryCoverage,
+  buildQueryFreshness,
+} from '../../helpers/result-metadata.js'
+import { type TimestampInput, getTimestampWindowNotices, resolveTimeframeOrBlocks } from '../../helpers/timeframe.js'
+import { buildExecutionMetadata, buildToolDescription } from '../../helpers/tool-ux.js'
 import { getValidationNotices, isValidSolanaAddress, validateSolanaQuerySize } from '../../helpers/validation.js'
 
 // ============================================================================
@@ -85,11 +93,12 @@ export function registerQuerySolanaTransactionsTool(server: McpServer) {
   const normalizeTokenBalance = (balance: Record<string, unknown>) => {
     const preAmount = exactIntegerText(balance.preAmount)
     const postAmount = exactIntegerText(balance.postAmount)
-    const decimals = typeof balance.postDecimals === 'number'
-      ? balance.postDecimals
-      : typeof balance.preDecimals === 'number'
-        ? balance.preDecimals
-        : undefined
+    const decimals =
+      typeof balance.postDecimals === 'number'
+        ? balance.postDecimals
+        : typeof balance.preDecimals === 'number'
+          ? balance.preDecimals
+          : undefined
     let change: string | undefined
     if (preAmount !== undefined && postAmount !== undefined) {
       change = (BigInt(postAmount) - BigInt(preAmount)).toString()
@@ -104,7 +113,8 @@ export function registerQuerySolanaTransactionsTool(server: McpServer) {
     }
   }
 
-  const getBlockNumber = (item: SolanaTransactionItem) => typeof item.block_number === 'number' ? item.block_number : undefined
+  const getBlockNumber = (item: SolanaTransactionItem) =>
+    typeof item.block_number === 'number' ? item.block_number : undefined
   const getTransactionIndex = (item: SolanaTransactionItem) => {
     if (typeof item.transactionIndex === 'number') return item.transactionIndex
     if (typeof item.transactionIndex === 'string') {
@@ -126,7 +136,8 @@ export function registerQuerySolanaTransactionsTool(server: McpServer) {
       return String(left.tx_hash ?? '').localeCompare(String(right.tx_hash ?? ''))
     })
 
-  registerPortalTool(server,
+  registerPortalTool(
+    server,
     'portal_solana_query_transactions',
     buildToolDescription('portal_solana_query_transactions'),
     {
@@ -137,44 +148,41 @@ export function registerQuerySolanaTransactionsTool(server: McpServer) {
       from_timestamp: z
         .union([z.number(), z.string()])
         .optional()
-        .describe('Starting timestamp. Accepts Unix seconds, Unix milliseconds, ISO datetime, or relative input like "1h ago".'),
+        .describe(
+          'Starting timestamp. Accepts Unix seconds, Unix milliseconds, ISO datetime, or relative input like "1h ago".',
+        ),
       to_timestamp: z
         .union([z.number(), z.string()])
         .optional()
-        .describe('Ending timestamp. Accepts Unix seconds, Unix milliseconds, ISO datetime, or relative input like "now".'),
+        .describe(
+          'Ending timestamp. Accepts Unix seconds, Unix milliseconds, ISO datetime, or relative input like "now".',
+        ),
       finalized_only: z.boolean().optional().default(false).describe('Only query finalized slots'),
       fee_payer: z.array(z.string()).optional().describe('Fee payer addresses'),
-      mentions_account: z
-        .array(z.string())
-        .optional()
-        .describe('Accounts mentioned anywhere in the transaction'),
-      include_instructions: z
-        .boolean()
-        .optional()
-        .default(false)
-        .describe('Include instruction data'),
-      include_balances: z
-        .boolean()
-        .optional()
-        .default(false)
-        .describe('Include SOL balance changes'),
-      include_token_balances: z
-        .boolean()
-        .optional()
-        .default(false)
-        .describe('Include SPL token balance changes'),
-      include_logs: z
-        .boolean()
-        .optional()
-        .default(false)
-        .describe('Include program logs'),
+      mentions_account: z.array(z.string()).optional().describe('Accounts mentioned anywhere in the transaction'),
+      include_instructions: z.boolean().optional().default(false).describe('Include instruction data'),
+      include_balances: z.boolean().optional().default(false).describe('Include SOL balance changes'),
+      include_token_balances: z.boolean().optional().default(false).describe('Include SPL token balance changes'),
+      include_logs: z.boolean().optional().default(false).describe('Include program logs'),
       include_rewards: z
         .boolean()
         .optional()
         .default(false)
         .describe('Include block rewards (validator staking rewards). Filter by pubkey using mentions_account.'),
-      limit: z.number().int().min(1).max(25).optional().default(20).describe('Max transactions to return (default: 20, max: 25)'),
-      response_format: z.enum(['full', 'compact', 'summary']).optional().describe("Response format: defaults to 'compact' for chat-friendly output, or stays 'full' when inline instruction, balance, log, or reward context is requested. Use 'summary' for aggregate stats."),
+      limit: z
+        .number()
+        .int()
+        .min(1)
+        .max(25)
+        .optional()
+        .default(20)
+        .describe('Max transactions to return (default: 20, max: 25)'),
+      response_format: z
+        .enum(['full', 'compact', 'summary'])
+        .optional()
+        .describe(
+          "Response format: defaults to 'compact' for chat-friendly output, or stays 'full' when inline instruction, balance, log, or reward context is requested. Use 'summary' for aggregate stats.",
+        ),
       cursor: z.string().optional().describe('Continuation cursor from a previous response'),
     },
     async ({
@@ -237,22 +245,23 @@ export function registerQuerySolanaTransactionsTool(server: McpServer) {
       for (const [label, values] of [
         ['fee_payer', fee_payer],
         ['mentions_account', mentions_account],
-      ] as Array<[string, string[] | undefined]>) {
+      ] as [string, string[] | undefined][]) {
         const invalid = values?.find((value) => !isValidSolanaAddress(value))
         if (invalid) {
-          throw new ActionableError(`${label} contains an invalid Solana public key.`, [
-            'Use a base58-encoded 32-byte Solana public key.',
-            'Correct or remove the invalid filter before retrying.',
-          ], { field: label }, { code: 'invalid_request', origin: 'client_input', retryable: false })
+          throw new ActionableError(
+            `${label} contains an invalid Solana public key.`,
+            [
+              'Use a base58-encoded 32-byte Solana public key.',
+              'Correct or remove the invalid filter before retrying.',
+            ],
+            { field: label },
+            { code: 'invalid_request', origin: 'client_input', retryable: false },
+          )
         }
       }
       const effectiveResponseFormat = resolveDefaultResponseFormat(response_format, {
         preserveFullIf:
-          include_instructions
-          || include_balances
-          || include_token_balances
-          || include_logs
-          || include_rewards,
+          include_instructions || include_balances || include_token_balances || include_logs || include_rewards,
       })
 
       const resolvedBlocks = paginationCursor
@@ -260,14 +269,20 @@ export function registerQuerySolanaTransactionsTool(server: McpServer) {
             from_block: paginationCursor.window_from_block,
             to_block: paginationCursor.window_to_block,
             range_kind:
-              paginationCursor.request.from_timestamp !== undefined || paginationCursor.request.to_timestamp !== undefined
+              paginationCursor.request.from_timestamp !== undefined ||
+              paginationCursor.request.to_timestamp !== undefined
                 ? 'timestamp_range'
                 : paginationCursor.request.timeframe
                   ? 'timeframe'
                   : 'block_range',
           }
         : await resolveTimeframeOrBlocks({
-            dataset, timeframe, from_block, to_block, from_timestamp, to_timestamp,
+            dataset,
+            timeframe,
+            from_block,
+            to_block,
+            from_timestamp,
+            to_timestamp,
           })
       const resolvedFromBlock = resolvedBlocks.from_block
       const resolvedToBlock = resolvedBlocks.to_block
@@ -333,50 +348,59 @@ export function registerQuerySolanaTransactionsTool(server: McpServer) {
 
       const cursorSkip = paginationCursor?.skip_inclusive_block ?? 0
       const fetchLimit = limit + cursorSkip + 1
-      const results = await portalFetchRecentRecords(`${PORTAL_URL}/datasets/${dataset}/stream`, query, {
-        itemKeys: ['transactions'],
-        limit: fetchLimit,
-        chunkSize: hasFilters ? 500 : Math.max(1, Math.min(10, limit)),
-      })
+      const { records: results, scan: recentScan } = await portalFetchRecentRecordsWithScan(
+        `${PORTAL_URL}/datasets/${dataset}/stream`,
+        query,
+        {
+          itemKeys: ['transactions'],
+          limit: fetchLimit,
+          chunkSize: hasFilters ? 500 : Math.max(1, Math.min(10, limit)),
+        },
+      )
 
-      const allTxs = sortTransactions(results.flatMap((block: unknown) => {
-        const typedBlock = block as {
-          number?: number
-          timestamp?: number
-          header?: { number?: number; timestamp?: number }
-          transactions?: Array<Record<string, unknown>>
-          balances?: Array<Record<string, unknown>>
-          tokenBalances?: Array<Record<string, unknown>>
-        }
-        const blockNumber = typedBlock.number ?? typedBlock.header?.number
-        const timestamp = typedBlock.timestamp ?? typedBlock.header?.timestamp
+      const allTxs = sortTransactions(
+        results.flatMap((block: unknown) => {
+          const typedBlock = block as {
+            number?: number
+            timestamp?: number
+            header?: { number?: number; timestamp?: number }
+            transactions?: Record<string, unknown>[]
+            balances?: Record<string, unknown>[]
+            tokenBalances?: Record<string, unknown>[]
+          }
+          const blockNumber = typedBlock.number ?? typedBlock.header?.number
+          const timestamp = typedBlock.timestamp ?? typedBlock.header?.timestamp
 
-        return (typedBlock.transactions || []).map((tx) => {
-          const transactionIndex = typeof tx.transactionIndex === 'number'
-            ? tx.transactionIndex
-            : typeof tx.transactionIndex === 'string'
-              ? Number(tx.transactionIndex)
-              : undefined
-          const balances = include_balances && Number.isFinite(transactionIndex)
-            ? (typedBlock.balances || [])
-                .filter((balance) => Number(balance.transactionIndex) === transactionIndex)
-                .map(normalizeBalance)
-            : undefined
-          const tokenBalances = include_token_balances && Number.isFinite(transactionIndex)
-            ? (typedBlock.tokenBalances || [])
-                .filter((balance) => Number(balance.transactionIndex) === transactionIndex)
-                .map(normalizeTokenBalance)
-            : undefined
+          return (typedBlock.transactions || []).map((tx) => {
+            const transactionIndex =
+              typeof tx.transactionIndex === 'number'
+                ? tx.transactionIndex
+                : typeof tx.transactionIndex === 'string'
+                  ? Number(tx.transactionIndex)
+                  : undefined
+            const balances =
+              include_balances && Number.isFinite(transactionIndex)
+                ? (typedBlock.balances || [])
+                    .filter((balance) => Number(balance.transactionIndex) === transactionIndex)
+                    .map(normalizeBalance)
+                : undefined
+            const tokenBalances =
+              include_token_balances && Number.isFinite(transactionIndex)
+                ? (typedBlock.tokenBalances || [])
+                    .filter((balance) => Number(balance.transactionIndex) === transactionIndex)
+                    .map(normalizeTokenBalance)
+                : undefined
 
-          return normalizeSolanaTransactionResult({
-            ...tx,
-            ...(blockNumber !== undefined ? { block_number: blockNumber, slot_number: blockNumber } : {}),
-            ...(timestamp !== undefined ? { timestamp } : {}),
-            ...(balances ? { balances } : {}),
-            ...(tokenBalances ? { token_balances: tokenBalances } : {}),
-          }) as SolanaTransactionItem
-        })
-      }))
+            return normalizeSolanaTransactionResult({
+              ...tx,
+              ...(blockNumber !== undefined ? { block_number: blockNumber, slot_number: blockNumber } : {}),
+              ...(timestamp !== undefined ? { timestamp } : {}),
+              ...(balances ? { balances } : {}),
+              ...(tokenBalances ? { token_balances: tokenBalances } : {}),
+            }) as SolanaTransactionItem
+          })
+        }),
+      )
       const page = paginateAscendingItems(
         allTxs,
         limit,
@@ -388,31 +412,32 @@ export function registerQuerySolanaTransactionsTool(server: McpServer) {
             }
           : undefined,
       )
-      const nextCursor = page.hasMore && page.nextBoundary
-        ? encodeRecentPageCursor<SolanaTransactionsRequest>({
-            tool: 'portal_solana_query_transactions',
-            dataset,
-            request: {
-              ...(timeframe ? { timeframe } : {}),
-              ...(from_timestamp !== undefined ? { from_timestamp } : {}),
-              ...(to_timestamp !== undefined ? { to_timestamp } : {}),
-              limit,
-              finalized_only,
-              ...(fee_payer ? { fee_payer } : {}),
-              ...(mentions_account ? { mentions_account } : {}),
-              include_instructions,
-              include_balances,
-              include_token_balances,
-              include_logs,
-              include_rewards,
-              response_format: effectiveResponseFormat,
-            },
-            window_from_block: resolvedFromBlock,
-            window_to_block: endBlock,
-            page_to_block: page.nextBoundary.page_to_block,
-            skip_inclusive_block: page.nextBoundary.skip_inclusive_block,
-          })
-        : undefined
+      const nextCursor =
+        page.hasMore && page.nextBoundary
+          ? encodeRecentPageCursor<SolanaTransactionsRequest>({
+              tool: 'portal_solana_query_transactions',
+              dataset,
+              request: {
+                ...(timeframe ? { timeframe } : {}),
+                ...(from_timestamp !== undefined ? { from_timestamp } : {}),
+                ...(to_timestamp !== undefined ? { to_timestamp } : {}),
+                limit,
+                finalized_only,
+                ...(fee_payer ? { fee_payer } : {}),
+                ...(mentions_account ? { mentions_account } : {}),
+                include_instructions,
+                include_balances,
+                include_token_balances,
+                include_logs,
+                include_rewards,
+                response_format: effectiveResponseFormat,
+              },
+              window_from_block: resolvedFromBlock,
+              window_to_block: endBlock,
+              page_to_block: page.nextBoundary.page_to_block,
+              skip_inclusive_block: page.nextBoundary.skip_inclusive_block,
+            })
+          : undefined
 
       const formattedData = applyResponseFormat(page.pageItems, effectiveResponseFormat, 'solana_transactions')
       const notices = [...getTimestampWindowNotices(resolvedBlocks), ...getValidationNotices(validation)]
@@ -430,6 +455,7 @@ export function registerQuerySolanaTransactionsTool(server: McpServer) {
         items: page.pageItems,
         getBlockNumber,
         hasMore: page.hasMore,
+        windowComplete: recentScan?.exhausted ?? true,
       })
 
       return formatResult(

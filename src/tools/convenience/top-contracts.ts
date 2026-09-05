@@ -1,20 +1,29 @@
 import type { McpServer } from '@modelcontextprotocol/server'
-
-import { registerPortalTool } from '../../helpers/mcp-registration.js'
 import { z } from 'zod'
 
 import { getBlockHead, resolveDataset } from '../../cache/datasets.js'
 import { createQueryCache, stableCacheKey } from '../../cache/query-cache.js'
-
 import { PORTAL_URL } from '../../constants/index.js'
-import { buildTableDescriptor } from '../../helpers/chart-metadata.js'
 import { detectChainType } from '../../helpers/chain.js'
+import { buildTableDescriptor } from '../../helpers/chart-metadata.js'
 import { ActionableError, createUnsupportedChainError } from '../../helpers/errors.js'
 import { getRecordBlockNumber, portalFetchStreamRangeVisit } from '../../helpers/fetch.js'
 import { formatResult, humanizeLabel } from '../../helpers/format.js'
+import { registerPortalTool } from '../../helpers/mcp-registration.js'
+import {
+  buildPaginationInfo,
+  decodeOffsetPageCursor,
+  encodeOffsetPageCursor,
+  paginateOffsetItems,
+} from '../../helpers/pagination.js'
 import { buildAnalysisCoverage, buildQueryFreshness, buildRankedOrdering } from '../../helpers/result-metadata.js'
-import { buildPaginationInfo, decodeOffsetPageCursor, encodeOffsetPageCursor, paginateOffsetItems } from '../../helpers/pagination.js'
-import { describeTimeWindowInput, getTimestampWindowNotices, type ResolvedBlockWindow, type TimestampInput, resolveTimeframeOrBlocks } from '../../helpers/timeframe.js'
+import {
+  type ResolvedBlockWindow,
+  type TimestampInput,
+  describeTimeWindowInput,
+  getTimestampWindowNotices,
+  resolveTimeframeOrBlocks,
+} from '../../helpers/timeframe.js'
 import { buildExecutionMetadata, buildToolDescription } from '../../helpers/tool-ux.js'
 import { buildMetricCard, buildPortalUi, buildRankedBarsPanel, buildTablePanel } from '../../helpers/ui-metadata.js'
 
@@ -64,11 +73,17 @@ const evmAnalyticsCache = createQueryCache<{
  * Perfect for "which contracts are trending?" questions.
  */
 export function registerGetTopContractsTool(server: McpServer) {
-  registerPortalTool(server,
+  registerPortalTool(
+    server,
     'portal_evm_get_analytics',
     buildToolDescription('portal_evm_get_analytics'),
     {
-      network: z.string().optional().describe("Network name (supports short names: 'ethereum', 'polygon', 'base', etc.). Optional when continuing with cursor."),
+      network: z
+        .string()
+        .optional()
+        .describe(
+          "Network name (supports short names: 'ethereum', 'polygon', 'base', etc.). Optional when continuing with cursor.",
+        ),
       num_blocks: z
         .number()
         .max(10000)
@@ -79,11 +94,15 @@ export function registerGetTopContractsTool(server: McpServer) {
       from_timestamp: z
         .union([z.number(), z.string()])
         .optional()
-        .describe('Starting timestamp. Accepts Unix seconds, Unix milliseconds, ISO datetime, or relative input like "1h ago".'),
+        .describe(
+          'Starting timestamp. Accepts Unix seconds, Unix milliseconds, ISO datetime, or relative input like "1h ago".',
+        ),
       to_timestamp: z
         .union([z.number(), z.string()])
         .optional()
-        .describe('Ending timestamp. Accepts Unix seconds, Unix milliseconds, ISO datetime, or relative input like "now".'),
+        .describe(
+          'Ending timestamp. Accepts Unix seconds, Unix milliseconds, ISO datetime, or relative input like "now".',
+        ),
       limit: z
         .number()
         .max(100)
@@ -99,12 +118,16 @@ export function registerGetTopContractsTool(server: McpServer) {
         .enum(['fast', 'deep'])
         .optional()
         .default('deep')
-        .describe('Execution depth. Defaults to complete requested-window analysis; the optional fast value is only for explicitly bounded previews.'),
+        .describe(
+          'Execution depth. Defaults to complete requested-window analysis; the optional fast value is only for explicitly bounded previews.',
+        ),
       cursor: z.string().optional().describe('Continuation cursor from a previous response'),
     },
     async ({ network, num_blocks, timeframe, from_timestamp, to_timestamp, limit, include_details, mode, cursor }) => {
       const queryStartTime = Date.now()
-      const paginationCursor = cursor ? decodeOffsetPageCursor<TopContractsCursorRequest>(cursor, 'portal_evm_get_analytics') : undefined
+      const paginationCursor = cursor
+        ? decodeOffsetPageCursor<TopContractsCursorRequest>(cursor, 'portal_evm_get_analytics')
+        : undefined
       const requestedDataset = network ? await resolveDataset(network) : undefined
       let dataset = paginationCursor?.dataset ?? requestedDataset
       if (!dataset) {
@@ -131,13 +154,17 @@ export function registerGetTopContractsTool(server: McpServer) {
 
       const head = await getBlockHead(dataset)
       if (paginationCursor && requestedDataset && paginationCursor.dataset !== requestedDataset) {
-        throw new ActionableError('This cursor belongs to a different network.', [
-          'Reuse the cursor with the same network as the previous response.',
-          'Omit cursor to start a fresh EVM analytics query.',
-        ], {
-          cursor_dataset: paginationCursor.dataset,
-          requested_dataset: requestedDataset,
-        })
+        throw new ActionableError(
+          'This cursor belongs to a different network.',
+          [
+            'Reuse the cursor with the same network as the previous response.',
+            'Omit cursor to start a fresh EVM analytics query.',
+          ],
+          {
+            cursor_dataset: paginationCursor.dataset,
+            requested_dataset: requestedDataset,
+          },
+        )
       }
 
       const resolvedWindow: ResolvedBlockWindow = paginationCursor
@@ -145,29 +172,31 @@ export function registerGetTopContractsTool(server: McpServer) {
             from_block: paginationCursor.request.window_from_block,
             to_block: paginationCursor.request.window_to_block,
             range_kind:
-              paginationCursor.request.from_timestamp !== undefined || paginationCursor.request.to_timestamp !== undefined
+              paginationCursor.request.from_timestamp !== undefined ||
+              paginationCursor.request.to_timestamp !== undefined
                 ? 'timestamp_range'
                 : paginationCursor.request.timeframe
                   ? 'timeframe'
                   : 'block_range',
           }
-        : (from_timestamp !== undefined || to_timestamp !== undefined || timeframe
-            ? await resolveTimeframeOrBlocks({
-                dataset,
-                timeframe,
-                from_timestamp,
-                to_timestamp,
-              })
-            : {
-                from_block: Math.max(0, head.number - num_blocks + 1),
-                to_block: head.number,
-                range_kind: 'block_range' as const,
-              })
+        : from_timestamp !== undefined || to_timestamp !== undefined || timeframe
+          ? await resolveTimeframeOrBlocks({
+              dataset,
+              timeframe,
+              from_timestamp,
+              to_timestamp,
+            })
+          : {
+              from_block: Math.max(0, head.number - num_blocks + 1),
+              to_block: head.number,
+              range_kind: 'block_range' as const,
+            }
 
-      const rangeLabel = paginationCursor?.request.range_label
-        ?? (resolvedWindow.range_kind === 'timestamp_range'
+      const rangeLabel =
+        paginationCursor?.request.range_label ??
+        (resolvedWindow.range_kind === 'timestamp_range'
           ? `${resolvedWindow.from_lookup?.normalized_input ?? 'window start'} -> ${resolvedWindow.to_lookup?.normalized_input ?? 'window end'}`
-          : timeframe ?? `${num_blocks} blocks`)
+          : (timeframe ?? `${num_blocks} blocks`))
 
       const request = paginationCursor?.request ?? {
         num_blocks,
@@ -187,9 +216,10 @@ export function registerGetTopContractsTool(server: McpServer) {
       const latestBlock = request.window_to_block
       const pageSize = request.limit
       const currentOffset = paginationCursor?.offset ?? 0
-      const windowDescription = request.range_label.includes('->') || request.range_label.endsWith('blocks')
-        ? request.range_label
-        : describeTimeWindowInput(request.range_label)
+      const windowDescription =
+        request.range_label.includes('->') || request.range_label.endsWith('blocks')
+          ? request.range_label
+          : describeTimeWindowInput(request.range_label)
 
       let analyzedFromBlock = requestedFromBlock
       const requestedWindowSize = latestBlock - requestedFromBlock + 1
@@ -233,39 +263,46 @@ export function registerGetTopContractsTool(server: McpServer) {
           let chunkTotalTxs = 0
 
           try {
-            const processed = await portalFetchStreamRangeVisit(`${PORTAL_URL}/datasets/${dataset}/stream`, {
-              ...query,
-              fromBlock: currentFrom,
-              toBlock: plannedTo,
-            }, {
-              onRecord: (record) => {
-                const transactions = (record as {
-                  transactions?: Array<{ to?: string; hash?: string }>
-                }).transactions || []
-
-                lastProcessedBlock = getRecordBlockNumber(record) ?? lastProcessedBlock
-
-                transactions.forEach((tx) => {
-                  chunkTotalTxs++
-                  if (!tx.to) {
-                    return
-                  }
-
-                  const address = tx.to.toLowerCase()
-
-                  if (!chunkCounts.has(address)) {
-                    chunkCounts.set(address, { count: 0, samples: [] })
-                  }
-
-                  const entry = chunkCounts.get(address)!
-                  entry.count++
-
-                  if (include_details && tx.hash && entry.samples.length < 5) {
-                    entry.samples.push(tx.hash)
-                  }
-                })
+            const processed = await portalFetchStreamRangeVisit(
+              `${PORTAL_URL}/datasets/${dataset}/stream`,
+              {
+                ...query,
+                fromBlock: currentFrom,
+                toBlock: plannedTo,
               },
-            })
+              {
+                onRecord: (record) => {
+                  const transactions =
+                    (
+                      record as {
+                        transactions?: Array<{ to?: string; hash?: string }>
+                      }
+                    ).transactions || []
+
+                  lastProcessedBlock = getRecordBlockNumber(record) ?? lastProcessedBlock
+
+                  transactions.forEach((tx) => {
+                    chunkTotalTxs++
+                    if (!tx.to) {
+                      return
+                    }
+
+                    const address = tx.to.toLowerCase()
+
+                    if (!chunkCounts.has(address)) {
+                      chunkCounts.set(address, { count: 0, samples: [] })
+                    }
+
+                    const entry = chunkCounts.get(address)!
+                    entry.count++
+
+                    if (include_details && tx.hash && entry.samples.length < 5) {
+                      entry.samples.push(tx.hash)
+                    }
+                  })
+                },
+              },
+            )
 
             if (processed === 0 || lastProcessedBlock === undefined || lastProcessedBlock < currentFrom) {
               break
@@ -344,14 +381,14 @@ export function registerGetTopContractsTool(server: McpServer) {
         page_returned: pageItems.length,
         top_contract: sortedContracts[0]?.address,
         top_contract_txs: sortedContracts[0]?.transaction_count,
-        ...(cachedScan.analyzedFromBlock !== requestedFromBlock
-          ? { requested_from_block: requestedFromBlock }
-          : {}),
+        ...(cachedScan.analyzedFromBlock !== requestedFromBlock ? { requested_from_block: requestedFromBlock } : {}),
       }
 
       const notices = getTimestampWindowNotices(resolvedWindow)
       if (cachedScan.autoChunked) {
-        notices.push('Large activity windows were automatically scanned in smaller block chunks to stay within Portal response limits.')
+        notices.push(
+          'Large activity windows were automatically scanned in smaller block chunks to stay within Portal response limits.',
+        )
       }
       if (cachedScan.analyzedFromBlock !== requestedFromBlock) {
         notices.push(
@@ -359,7 +396,9 @@ export function registerGetTopContractsTool(server: McpServer) {
         )
       }
       if (hasMore) {
-        notices.push(`Showing ranked contracts ${currentOffset + 1}-${currentOffset + pageItems.length}. Call the same tool again with _pagination.next_cursor to load more.`)
+        notices.push(
+          `Showing ranked contracts ${currentOffset + 1}-${currentOffset + pageItems.length}. Call the same tool again with _pagination.next_cursor to load more.`,
+        )
       }
 
       return formatResult(
@@ -425,7 +464,11 @@ export function registerGetTopContractsTool(server: McpServer) {
             from_block: cachedScan.analyzedFromBlock,
             to_block: latestBlock,
             range_kind: resolvedWindow.range_kind,
-            notes: [include_details ? 'Sample transaction hashes were included for ranked contracts.' : 'Compact ranked-contract view.'],
+            notes: [
+              include_details
+                ? 'Sample transaction hashes were included for ranked contracts.'
+                : 'Compact ranked-contract view.',
+            ],
           }),
           ui: buildPortalUi({
             version: 'portal_ui_v1',
@@ -437,9 +480,25 @@ export function registerGetTopContractsTool(server: McpServer) {
               subtitle: windowDescription,
             },
             metric_cards: [
-              buildMetricCard({ id: 'total-transactions', label: 'Transactions', value_path: 'summary.total_transactions', format: 'integer', emphasis: 'primary' }),
-              buildMetricCard({ id: 'unique-contracts', label: 'Unique contracts', value_path: 'summary.unique_contracts', format: 'integer' }),
-              buildMetricCard({ id: 'top-contract-txs', label: 'Top contract txs', value_path: 'summary.top_contract_txs', format: 'integer' }),
+              buildMetricCard({
+                id: 'total-transactions',
+                label: 'Transactions',
+                value_path: 'summary.total_transactions',
+                format: 'integer',
+                emphasis: 'primary',
+              }),
+              buildMetricCard({
+                id: 'unique-contracts',
+                label: 'Unique contracts',
+                value_path: 'summary.unique_contracts',
+                format: 'integer',
+              }),
+              buildMetricCard({
+                id: 'top-contract-txs',
+                label: 'Top contract txs',
+                value_path: 'summary.top_contract_txs',
+                format: 'integer',
+              }),
             ],
             panels: [
               buildRankedBarsPanel({
@@ -463,12 +522,27 @@ export function registerGetTopContractsTool(server: McpServer) {
               }),
             ],
             follow_up_actions: [
-              ...(nextCursor ? [{ label: 'Load more ranked contracts', intent: 'continue' as const, target: '_pagination.next_cursor' }] : []),
+              ...(nextCursor
+                ? [
+                    {
+                      label: 'Load more ranked contracts',
+                      intent: 'continue' as const,
+                      target: '_pagination.next_cursor',
+                    },
+                  ]
+                : []),
               { label: 'Show raw ranked rows', intent: 'show_raw', target: 'top_contracts' },
             ],
           }),
           llm: {
-            answer_sequence: ['overview', 'summary.total_transactions', 'summary.unique_contracts', 'summary.top_contract', 'summary.top_contract_txs', 'top_contracts'],
+            answer_sequence: [
+              'overview',
+              'summary.total_transactions',
+              'summary.unique_contracts',
+              'summary.top_contract',
+              'summary.top_contract_txs',
+              'top_contracts',
+            ],
             parser_notes: [
               'overview is the network and window context; top_contracts is the ranked result set for the actual leaders.',
               'top_contracts is sorted by transaction_count descending, so rank 1 is the most active contract in the selected window.',

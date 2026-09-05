@@ -85,6 +85,13 @@ export const toolAdmissionQueued = new Gauge({
   registers: [register],
 })
 
+export const toolAdmissionActiveByFamily = new Gauge({
+  name: 'mcp_tool_admission_active_by_family',
+  help: 'Complete MCP tool calls currently admitted per bounded client family',
+  labelNames: ['client_family'] as const,
+  registers: [register],
+})
+
 export const toolAdmissionRejectedTotal = new Counter({
   name: 'mcp_tool_admission_rejected_total',
   help: 'Complete MCP tool calls rejected by the bounded weighted scheduler',
@@ -149,6 +156,37 @@ export const portalAdmissionWait = new Histogram({
   registers: [register],
 })
 
+/* Cost guardrails. `would_block` is the whole point of shadow mode: an
+   operator runs it on production, reads this counter, and only then enforces.
+   Labels are the work class and the limit name, both from a fixed set. */
+export const guardrailAdmittedTotal = new Counter({
+  name: 'mcp_guardrail_admitted_total',
+  help: 'Tool work admitted by the cost guardrails, by work class',
+  labelNames: ['class'] as const,
+  registers: [register],
+})
+
+export const guardrailWouldBlockTotal = new Counter({
+  name: 'mcp_guardrail_would_block_total',
+  help: 'Tool work shadow mode would have capped, by work class and limit',
+  labelNames: ['class', 'limit'] as const,
+  registers: [register],
+})
+
+export const guardrailBlockedTotal = new Counter({
+  name: 'mcp_guardrail_blocked_total',
+  help: 'Tool work enforce mode capped or refused, by work class and limit',
+  labelNames: ['class', 'limit'] as const,
+  registers: [register],
+})
+
+export const guardrailFailOpenTotal = new Counter({
+  name: 'mcp_guardrail_fail_open_total',
+  help: 'Guardrail evaluations that could not be made and let the work through',
+  labelNames: ['reason'] as const,
+  registers: [register],
+})
+
 export const tokenListRequestsTotal = new Counter({
   name: 'mcp_token_list_requests_total',
   help: 'Total number of external token-list fetch attempts by source, chain, and outcome',
@@ -181,8 +219,8 @@ export const datasetQueriesTotal = new Counter({
 
 export const toolClientCallsTotal = new Counter({
   name: 'mcp_tool_client_calls_total',
-  help: 'Total tool calls by bounded MCP client family and major version',
-  labelNames: ['transport', 'client_family', 'client_major'] as const,
+  help: 'Total tool calls by bounded MCP client family, major version, and active toolset',
+  labelNames: ['transport', 'client_family', 'client_major', 'toolset'] as const,
   registers: [register],
 })
 

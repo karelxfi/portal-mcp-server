@@ -271,7 +271,7 @@ Both come back in Portal's structured envelope (see Error Handling below):
 
 ## MCP Tools Quick Reference
 
-If Portal MCP tools are available, prefer them for bounded interactive work. The current Portal MCP server exposes 25 public tools plus 3 advanced/debug tools. Legacy aliases are not exposed. Public query params use `network`; discovery filters use `vm`.
+If Portal MCP tools are available, prefer them for bounded interactive work. The current Portal MCP server exposes 28 public tools plus 3 advanced/debug tools. Legacy aliases are not exposed. Public query params use `network`; discovery filters use `vm`.
 
 Use `tools/list`, `sqd://tools`, and `sqd://tools/{tool_name}` for the live catalog and exact schemas. The duplicate HTTP `/tools` endpoint is retired. The table below is a compact orientation, not the source of truth.
 
@@ -300,6 +300,7 @@ Current hosted-server behaviors worth relying on:
 |------|----------|
 | `portal_evm_query_logs` | Query event logs with address/topic filters |
 | `portal_evm_query_transactions` | Query transactions by sender/recipient/sighash |
+| `portal_evm_query_traces` | Internal calls, contract creations, self-destructs, and rewards |
 | `portal_evm_query_token_transfers` | ERC20/ERC721/ERC1155 transfers with optional token info |
 | `portal_evm_get_contract_activity` | Contract interaction stats |
 | `portal_evm_get_contract_deployment` | Look up deployment block/tx for a contract address |
@@ -337,10 +338,12 @@ Current hosted-server behaviors worth relying on:
 |------|----------|
 | `portal_bitcoin_query_transactions` | Raw Bitcoin txs by block/time range; optionally attach inputs and outputs inline (`include_inputs`/`include_outputs`). Use the Stream API for address or type filtering. |
 | `portal_bitcoin_get_analytics` | Bitcoin network snapshot: block cadence, fees, SegWit/Taproot adoption, unique-address activity |
+| `portal_tron_query_transactions` | Raw Tron transactions: native TRX transfers, TRC-10 transfers, or contract calls by contract and method; Base58 or hex addresses; optional inline logs and internal transactions |
+| `portal_tron_query_logs` | Tron TVM event logs (TRC-20 transfers) by contract and topics with the parent transaction hash on every row and optional decoding |
 
 ### Tron Queries
 
-No Tron-specific MCP tools yet. Dataset-agnostic tools (`portal_list_networks`, `portal_get_network_info`, `portal_get_head`, `portal_debug_resolve_time_to_block`) accept `tron-mainnet`. For Tron data queries, use the raw Portal Stream API with `"type": "tron"` and see `references/tron.md`.
+Use `portal_tron_query_transactions` for native TRX transfers, TRC-10 transfers, and smart-contract calls, and `portal_tron_query_logs` for TVM event logs. Addresses may be given as Base58, 41-prefixed hex, or 20-byte hex. Dataset-agnostic tools (`portal_list_networks`, `portal_get_network_info`, `portal_get_head`, `portal_debug_resolve_time_to_block`) also accept `tron-mainnet`. For query shapes the tools do not cover, see `references/tron.md`.
 
 ### Cross-Chain Analytics
 

@@ -63,7 +63,9 @@ function rankAddressCounts(transactions: any[], field: 'from' | 'to', limit = 5)
   }
   return [...counts.entries()]
     .map(([address, transaction_count]) => ({ address, transaction_count }))
-    .sort((left, right) => right.transaction_count - left.transaction_count || left.address.localeCompare(right.address))
+    .sort(
+      (left, right) => right.transaction_count - left.transaction_count || left.address.localeCompare(right.address),
+    )
     .slice(0, limit)
 }
 
@@ -502,9 +504,15 @@ async function main() {
           assert(senderRows.length > 0, 'Expected top_senders rows')
           expectDescending(senderRows, 'transaction_count', 'Top senders')
           assert(senders.data._execution?.candidate_limit_reached === true, 'Expected candidate ceiling disclosure')
-          assert(senders.data.summary?.window_complete === false, 'Expected busy 500-block ranking to disclose partial coverage')
+          assert(
+            senders.data.summary?.window_complete === false,
+            'Expected busy 500-block ranking to disclose partial coverage',
+          )
           assert(senders.data._coverage?.window_complete === false, 'Expected partial aggregate coverage metadata')
-          assert(senders.data.tables?.[0]?.title === 'Partial Sender Ranking', 'Expected an explicit partial table title')
+          assert(
+            senders.data.tables?.[0]?.title === 'Partial Sender Ranking',
+            'Expected an explicit partial table title',
+          )
           assert(/^Partial ranking/.test(senders.data.answer), 'Expected partial aggregate answer wording')
           const aggregateNotices = [senders.data._notice, ...(senders.data._notices ?? [])].filter(Boolean)
           assert(
@@ -552,7 +560,10 @@ async function main() {
             })
             assert(!result.isError, `Expected exact ${aggregateBy} ranking: ${result.text.slice(0, 300)}`)
             assert(result.data.summary?.window_complete === true, `Expected complete ${aggregateBy} ranking`)
-            assert(result.data._coverage?.window_complete === true, `Expected complete ${aggregateBy} coverage metadata`)
+            assert(
+              result.data._coverage?.window_complete === true,
+              `Expected complete ${aggregateBy} coverage metadata`,
+            )
             const actual = (result.data[key] ?? []).map((row: any) => ({
               address: String(row.address).toLowerCase(),
               transaction_count: Number(row.transaction_count),

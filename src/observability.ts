@@ -1,11 +1,11 @@
 import { detectChainType } from './helpers/chain.js'
 import {
   RequestCancelledError,
-  describeToolError,
-  sanitizeText,
   type ToolErrorCode,
   type ToolErrorDescriptor,
   type ToolErrorOrigin,
+  describeToolError,
+  sanitizeText,
 } from './helpers/errors.js'
 import { getToolContract } from './helpers/tool-ux.js'
 import {
@@ -17,6 +17,7 @@ import {
   toolOutcomesTotal,
   toolResponseSizeBytes,
 } from './metrics.js'
+import { currentTraceIds } from './tracing.js'
 import { npmVersion } from './version.js'
 
 export type TransportKind = 'stdio' | 'http'
@@ -29,6 +30,12 @@ export type RuntimeRequestContext = {
   protocolVersion?: string
   /** Whether this connection opted into the beta SQD Explorer app surface. */
   appEnabled?: boolean
+  /** Toolsets this connection asked for (`?toolsets=` or `X-MCP-Toolsets`); only ever narrows the deployment. */
+  toolsets?: string[]
+  /** Bounded label of the active selection: `all`, one toolset name, or `custom`. */
+  toolsetLabel?: string
+  /** Hashed connection identifier used only as a fairness key; never logged or labelled. */
+  connectionKey?: string
 }
 
 export type ToolEventStatus = 'success' | 'partial' | 'tool_error' | 'request_error' | 'cancelled'
@@ -39,6 +46,10 @@ type ObservabilityEvent = {
   timestamp: string
   invocation_id: string
   request_id?: string
+  /* Present only while tracing is on, so a log line and its span can be
+     looked up from each other. Both are random ids, never caller input. */
+  trace_id?: string
+  span_id?: string
   transport: TransportKind
   protocol_version?: string
   server_version: string
@@ -231,10 +242,7 @@ function isEmptyPayload(payload: Record<string, unknown> | undefined): boolean {
   return resultArrays.length > 0 && resultArrays.every(([, value]) => (value as unknown[]).length === 0)
 }
 
-export function classifyToolResultState(params: {
-  status: ToolEventStatus
-  result?: unknown
-}): ToolResultState {
+export function classifyToolResultState(params: { status: ToolEventStatus; result?: unknown }): ToolResultState {
   const { status, result } = params
   if (status === 'cancelled') return 'cancelled'
   if (status === 'tool_error' || status === 'request_error') return 'error'
@@ -292,15 +300,56 @@ function extractExecutionField(payload: Record<string, unknown> | undefined, key
   return typeof execution?.[key] === 'string' ? String(execution[key]) : undefined
 }
 
+/** Bounded client family for a declared client name: claude, openai, grok, gemini, cursor, or unknown. */
+export function classifyClientFamily(name?: string): string {
+  return normalizeClientIdentity(name).family
+}
+
+const SLOW_REQUEST_MS = (() => {
+  const parsed = Number(process.env.MCP_SLOW_REQUEST_MS)
+  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : 5_000
+})()
+
+/**
+ * One JSON line on stderr for a tool call slower than MCP_SLOW_REQUEST_MS, with
+ * phase timings and bounded client identity only.
+ */
+export function recordSlowToolCall(params: {
+  toolName: string
+  durationMs: number
+  admissionWaitMs: number
+  status: ToolEventStatus
+  runtime: RuntimeRequestContext
+  invocationId: string
+}) {
+  if (params.durationMs < SLOW_REQUEST_MS) return
+  const client = normalizeClientIdentity(params.runtime.clientName, params.runtime.clientVersion)
+  console.error(
+    JSON.stringify({
+      event: 'mcp_slow_tool_call',
+      timestamp: new Date().toISOString(),
+      invocation_id: params.invocationId,
+      ...(params.runtime.requestId ? { request_id: params.runtime.requestId } : {}),
+      ...currentTraceIds(),
+      tool: params.toolName,
+      transport: params.runtime.transport,
+      client_family: client.family,
+      client_major: client.major,
+      status: params.status,
+      duration_ms: params.durationMs,
+      admission_wait_ms: params.admissionWaitMs,
+      execution_ms: Math.max(0, params.durationMs - params.admissionWaitMs),
+      threshold_ms: SLOW_REQUEST_MS,
+    }),
+  )
+}
+
 function normalizeClientIdentity(name?: string, version?: string): { family: string; major: string } {
   const normalizedName = name?.trim().toLowerCase() ?? ''
   let family = 'unknown'
   if (normalizedName.includes('claude') || normalizedName.includes('anthropic')) family = 'claude'
-  else if (
-    normalizedName.includes('codex') ||
-    normalizedName.includes('chatgpt') ||
-    normalizedName.includes('openai')
-  ) family = 'openai'
+  else if (normalizedName.includes('codex') || normalizedName.includes('chatgpt') || normalizedName.includes('openai'))
+    family = 'openai'
   else if (normalizedName.includes('grok') || normalizedName.includes('xai')) family = 'grok'
   else if (normalizedName.includes('gemini') || normalizedName.includes('google')) family = 'gemini'
   else if (normalizedName.includes('cursor')) family = 'cursor'
@@ -547,6 +596,7 @@ export function recordToolOutcome(params: {
     transport: runtime.transport,
     client_family: client.family,
     client_major: client.major,
+    toolset: runtime.toolsetLabel ?? 'all',
   })
 
   if (toolContract?.intent) {
@@ -574,6 +624,7 @@ export function recordToolOutcome(params: {
     timestamp: new Date().toISOString(),
     invocation_id: invocationId,
     ...(runtime.requestId ? { request_id: runtime.requestId } : {}),
+    ...currentTraceIds(),
     transport: runtime.transport,
     ...(runtime.protocolVersion ? { protocol_version: runtime.protocolVersion } : {}),
     server_version: npmVersion,
@@ -601,9 +652,7 @@ export function recordToolOutcome(params: {
             origin: errorDescriptor.origin,
             summary: truncateText(sanitizeText(errorDescriptor.summary), 280),
             retryable: errorDescriptor.retryable,
-            ...(errorDescriptor.retryAfterMs !== undefined
-              ? { retry_after_ms: errorDescriptor.retryAfterMs }
-              : {}),
+            ...(errorDescriptor.retryAfterMs !== undefined ? { retry_after_ms: errorDescriptor.retryAfterMs } : {}),
           },
         }
       : {}),

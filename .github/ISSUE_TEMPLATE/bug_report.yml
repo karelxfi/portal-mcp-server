@@ -1,0 +1,40 @@
+name: Bug report
+description: A tool result, the Explorer, or the server behaved wrongly
+labels: [bug]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: From `/health`, from `_server.version` in any tool result, or the release tag.
+      placeholder: 0.8.5
+    validations:
+      required: true
+  - type: input
+    id: client
+    attributes:
+      label: Client and transport
+      placeholder: Claude Desktop (stdio), ChatGPT (hosted HTTP), Codex plugin
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Tool call and arguments
+      description: The exact tool name and arguments. Remove anything you consider private.
+      render: json
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: What happened
+      description: Paste the `answer`, `_coverage`, `_pagination`, `error`, and `_evidence` blocks when you have them.
+    validations:
+      required: true

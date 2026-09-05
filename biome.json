@@ -1,12 +1,25 @@
 {
-  "$schema": "https://biomejs.dev/schemas/2.3.5/schema.json",
+  "$schema": "https://biomejs.dev/schemas/2.4.7/schema.json",
   "vcs": {
     "enabled": false,
     "clientKind": "git",
     "useIgnoreFile": true
   },
   "files": {
-    "ignoreUnknown": false
+    "ignoreUnknown": false,
+    "includes": [
+      "**",
+      "!src/apps/activity-explorer-compat.ts",
+      "!src/generated/**",
+      "!src/app-ui/fixtures.recorded.ts",
+      "!src/app-ui/chains.generated.ts",
+      "!scripts/app-ui-baselines/**",
+      "!dist/**",
+      "!output/**",
+      "!artifacts/**",
+      "!node_modules/**",
+      "!plugins/portal/skills/**"
+    ]
   },
   "assist": {
     "actions": {
@@ -20,7 +33,6 @@
               ":BLANK_LINE:",
               [":PACKAGE:", ":PACKAGE_WITH_PROTOCOL:"],
               ":BLANK_LINE:",
-
               ["~/**"],
               ":BLANK_LINE:"
             ]
@@ -73,36 +85,5 @@
       "quoteStyle": "single",
       "semicolons": "asNeeded"
     }
-  },
-  "overrides": [
-    {
-      "linter": {
-        "rules": {
-          "correctness": {
-            "noConstAssign": "off",
-            "noGlobalObjectCalls": "off",
-            "noInvalidBuiltinInstantiation": "off",
-            "noInvalidConstructorSuper": "off",
-            "noSetterReturn": "off",
-            "noUndeclaredVariables": "off",
-            "noUnreachable": "off",
-            "noUnreachableSuper": "off"
-          },
-          "style": {
-            "useConst": "error"
-          },
-          "suspicious": {
-            "noDuplicateClassMembers": "off",
-            "noDuplicateObjectKeys": "off",
-            "noDuplicateParameters": "off",
-            "noFunctionAssign": "off",
-            "noImportAssign": "off",
-            "noRedeclare": "off",
-            "noUnsafeNegation": "off",
-            "useGetterReturn": "off"
-          }
-        }
-      }
-    }
-  ]
+  }
 }

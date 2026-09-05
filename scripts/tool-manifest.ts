@@ -5,6 +5,10 @@ import { assert, callToolWithRetry, extractJson, getText, isBoundedUpstreamToolE
 
 const POLKADOT_SAMPLE_FROM_BLOCK = 30_736_840
 const POLKADOT_SAMPLE_TO_BLOCK = 30_736_842
+const TRON_SAMPLE_BLOCK = 84_000_000
+const TRON_USDT_BASE58 = 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t'
+const TRACE_SAMPLE_BLOCK = 12_244_145
+const TRACE_SAMPLE_TX = '0x851bad0415758075a1eb86776749c829b866d43179c57c3e4a4b9359a0358231'
 const BASE_RPC_URL = 'https://mainnet.base.org'
 const PORTAL_API_URL = 'https://portal.sqd.dev'
 const BASE_UNISWAP_V4_POOL_MANAGER = '0x498581ff718922c3f8e6a244956af099b2652b2b'
@@ -175,7 +179,7 @@ async function portalStream(dataset: string, body: Record<string, unknown>) {
     .map((line) => JSON.parse(line) as Record<string, unknown>)
 }
 
-function pickCreateTrace(records: Array<Record<string, unknown>>) {
+function pickCreateTrace(records: Record<string, unknown>[]) {
   for (const block of [...records].reverse()) {
     const blockNumber =
       typeof block.number === 'number'
@@ -183,7 +187,7 @@ function pickCreateTrace(records: Array<Record<string, unknown>>) {
         : typeof (block.header as Record<string, unknown> | undefined)?.number === 'number'
           ? ((block.header as Record<string, unknown>).number as number)
           : undefined
-    const traces = Array.isArray(block.traces) ? (block.traces as Array<Record<string, unknown>>) : []
+    const traces = Array.isArray(block.traces) ? (block.traces as Record<string, unknown>[]) : []
     for (const trace of [...traces].reverse()) {
       const contractAddress =
         typeof trace.createResultAddress === 'string'
@@ -536,8 +540,14 @@ export const TOOL_SPECS: ToolSpec[] = [
       const firstNetworks = new Set(getItems(first).map((item: any) => item.network))
       const secondNetworks = getItems(second.data).map((item: any) => item.network)
       assert(secondNetworks.length > 0, 'Expected a second network catalog page')
-      assert(secondNetworks.every((network: string) => !firstNetworks.has(network)), 'Expected disjoint network catalog pages')
-      assert(second.data.page_offset === first.items.length, 'Expected network catalog offset to advance by the first page size')
+      assert(
+        secondNetworks.every((network: string) => !firstNetworks.has(network)),
+        'Expected disjoint network catalog pages',
+      )
+      assert(
+        second.data.page_offset === first.items.length,
+        'Expected network catalog offset to advance by the first page size',
+      )
     },
   },
   {
@@ -626,10 +636,7 @@ export const TOOL_SPECS: ToolSpec[] = [
 
       const hyperliquidCoinData = hyperliquidCoinResult.data
       assert(hyperliquidCoinData.matches?.[0]?.coin === 'BTC', 'Expected bitcoin to normalize to BTC')
-      assert(
-        hyperliquidCoinData.suggested_arguments?.coin?.includes('BTC'),
-        'Expected Hyperliquid coin suggestion',
-      )
+      assert(hyperliquidCoinData.suggested_arguments?.coin?.includes('BTC'), 'Expected Hyperliquid coin suggestion')
 
       const poolData = poolResult.data
       assert(poolData.matches?.[0]?.identifier === context.baseUniswapV4PoolId, 'Expected pool id match')
@@ -809,8 +816,14 @@ export const TOOL_SPECS: ToolSpec[] = [
 
       if (!groupedResult.isError) {
         const groupedData = groupedResult.data
-        assert(Array.isArray(groupedData.top_contracts) && groupedData.top_contracts.length > 0, 'Expected top_contracts')
-        assert(groupedData.chart?.grouped_value_field === 'contract_address', 'Expected grouped contract chart metadata')
+        assert(
+          Array.isArray(groupedData.top_contracts) && groupedData.top_contracts.length > 0,
+          'Expected top_contracts',
+        )
+        assert(
+          groupedData.chart?.grouped_value_field === 'contract_address',
+          'Expected grouped contract chart metadata',
+        )
         expectWindowMetadata(groupedData, 'portal_get_time_series grouped')
         expectGapDiagnostics(groupedData, 'portal_get_time_series grouped')
         expectPresentation(groupedData, 'portal_get_time_series grouped', {
@@ -857,9 +870,9 @@ export const TOOL_SPECS: ToolSpec[] = [
           'Expected Hyperliquid coverage to return every aligned bucket',
         )
         assert(
-          hyperliquidRows.every((row: any) =>
-            typeof row.bucket_complete === 'boolean' &&
-            ['closed', 'open_or_partial'].includes(row.bucket_state),
+          hyperliquidRows.every(
+            (row: any) =>
+              typeof row.bucket_complete === 'boolean' && ['closed', 'open_or_partial'].includes(row.bucket_state),
           ),
           'Expected every Hyperliquid time-series bucket to disclose its completion state',
         )
@@ -1010,6 +1023,80 @@ export const TOOL_SPECS: ToolSpec[] = [
       })
       const tokenSymbolItems = getItems(tokenSymbolResult.data)
       assert(tokenSymbolItems.length === 1, 'Expected token_symbols to resolve USDC log filters')
+    },
+  },
+  {
+    name: 'portal_evm_query_traces',
+    prompt: 'what did this Ethereum transaction call internally',
+    args: () => ({
+      network: 'ethereum-mainnet',
+      from_block: TRACE_SAMPLE_BLOCK,
+      to_block: TRACE_SAMPLE_BLOCK,
+      transaction_hash: TRACE_SAMPLE_TX,
+      limit: 25,
+    }),
+    validate: (text) => {
+      const data = extractJson(text)
+      const items = getItems(data)
+      assert(items.length > 1, 'Expected the internal calls of the pinned transaction')
+      assert(
+        items.every((item: any) => item.tx_hash === TRACE_SAMPLE_TX),
+        'Expected every trace row to carry the requested transaction hash',
+      )
+      assert(
+        items.every((item: any) => typeof item.primary_id === 'string' && item.primary_id.includes(':')),
+        'Expected a deterministic trace id built from the hash and the trace address',
+      )
+      assert(
+        items.every((item: any) => item.action === undefined && item.result === undefined),
+        'Expected flattened trace fields rather than nested action and result objects',
+      )
+      assert(
+        items.some((item: any) => item.call_sighash !== undefined || item.created_contract_address !== undefined),
+        'Expected the flattened selector or created contract address on trace rows',
+      )
+      assert(
+        items.every((item: any) => item.sender !== undefined || item.type !== 'call'),
+        'Expected every call trace to carry its caller',
+      )
+      expectCompactDefault(data, 'portal_evm_query_traces')
+      expectWindowMetadata(data, 'portal_evm_query_traces')
+      expectOrdering(data, 'portal_evm_query_traces')
+    },
+    validateFollowUp: async (_text, client, context) => {
+      const methodResult = await callToolWithRetry(client, 'portal_evm_query_traces', {
+        network: 'base',
+        from_block: context.baseHead - 200,
+        to_block: context.baseHead,
+        type: ['call'],
+        call_to: [context.usdcBase],
+        method: 'transfer',
+        limit: 3,
+      })
+      const methodItems = getItems(methodResult.data)
+      assert(methodItems.length > 0, 'Expected USDC transfer call traces on Base')
+      assert(
+        methodItems.every((item: any) => String(item.recipient || '').toLowerCase() === context.usdcBase),
+        'Expected the call_to filter to hold on the normalized recipient',
+      )
+      assert(
+        methodItems.every((item: any) => item.call_sighash === '0xa9059cbb'),
+        'Expected the transfer method alias to resolve to its selector',
+      )
+      expectWindowMetadata(methodResult.data, 'portal_evm_query_traces method')
+
+      const summaryResult = await callToolWithRetry(client, 'portal_evm_query_traces', {
+        network: 'ethereum-mainnet',
+        from_block: TRACE_SAMPLE_BLOCK,
+        to_block: TRACE_SAMPLE_BLOCK,
+        response_format: 'summary',
+        limit: 25,
+      })
+      const summary = summaryResult.data
+      assert(summary.error === undefined, 'Trace summaries should not fail')
+      assert(typeof summary.total_traces === 'number' && summary.total_traces > 0, 'Expected a trace count')
+      assert(typeof summary.type_breakdown === 'object' && summary.type_breakdown !== null, 'Expected a type breakdown')
+      expectWindowMetadata(summary, 'portal_evm_query_traces summary')
     },
   },
   {
@@ -1307,10 +1394,7 @@ export const TOOL_SPECS: ToolSpec[] = [
       const data = result.data
       const items = getItems(data)
       assert(items.length > 0, 'Expected Solana program instruction rows')
-      assert(
-        data._execution !== undefined,
-        'Expected Solana execution window metadata',
-      )
+      assert(data._execution !== undefined, 'Expected Solana execution window metadata')
       expectWindowMetadata(data, 'portal_solana_query_instructions token program')
       expectOrdering(data, 'portal_solana_query_instructions token program')
     },
@@ -1519,6 +1603,31 @@ export const TOOL_SPECS: ToolSpec[] = [
       const traderItems = getItems(traderResult.data)
       assert(traderItems.length > 0, 'Expected Hyperliquid trader fill rows')
       expectWindowMetadata(traderResult.data, 'portal_hyperliquid_query_fills trader')
+
+      const summaryResult = await callToolWithRetry(client, 'portal_hyperliquid_query_fills', {
+        network: 'hyperliquid-fills',
+        timeframe: '1h',
+        coin: ['BTC'],
+        response_format: 'summary',
+        limit: 25,
+      })
+      const summary = summaryResult.data
+      assert(summary.error === undefined, 'Hyperliquid fill summaries should not fail')
+      assert(summary.items === undefined, 'Hyperliquid fill summaries should replace rows with aggregates')
+      assert(typeof summary.total_fills === 'number' && summary.total_fills > 0, 'Expected a fill count in the summary')
+      for (const key of ['total_volume_usd', 'total_fees_usd', 'total_realized_pnl']) {
+        assert(
+          typeof summary[key] === 'number' && Number.isFinite(summary[key]),
+          `Expected a finite ${key} in the Hyperliquid fill summary`,
+        )
+      }
+      assert(
+        typeof summary.direction_breakdown === 'object' && summary.direction_breakdown !== null,
+        'Expected a direction breakdown in the Hyperliquid fill summary',
+      )
+      assert(summary._execution?.response_format === 'summary', 'Expected the summary response format to be reported')
+      assert(summary._pagination?.returned > 0, 'Expected the summary response to keep its _pagination block')
+      expectWindowMetadata(summary, 'portal_hyperliquid_query_fills summary')
     },
   },
   {
@@ -1543,8 +1652,7 @@ export const TOOL_SPECS: ToolSpec[] = [
       const candles = Array.isArray(data.ohlc) ? data.ohlc : getItems(data)
       assert(candles.length > 0, 'Expected Hyperliquid candles')
       assert(
-        candles.length === data._coverage?.expected_buckets &&
-        candles.length === data._coverage?.returned_buckets,
+        candles.length === data._coverage?.expected_buckets && candles.length === data._coverage?.returned_buckets,
         'Expected every aligned Hyperliquid candle reported by coverage',
       )
       assert(
@@ -1552,9 +1660,9 @@ export const TOOL_SPECS: ToolSpec[] = [
         'Expected Hyperliquid candles to include non-empty buckets',
       )
       assert(
-        candles.every((candle: any) =>
-          typeof candle.bucket_complete === 'boolean' &&
-          ['closed', 'open_or_partial'].includes(candle.bucket_state),
+        candles.every(
+          (candle: any) =>
+            typeof candle.bucket_complete === 'boolean' && ['closed', 'open_or_partial'].includes(candle.bucket_state),
         ),
         'Expected every Hyperliquid candle to disclose its completion state',
       )
@@ -1579,9 +1687,129 @@ export const TOOL_SPECS: ToolSpec[] = [
           (data._coverage?.window_complete === true && data.summary?.all_buckets_complete === true),
         'OHLC must be complete only when source coverage and every requested candle are complete',
       )
-      assert(data._pagination?.continuation_scope === 'adjacent_window', 'OHLC cursor should be labeled as an older adjacent window')
+      assert(
+        data._pagination?.continuation_scope === 'adjacent_window',
+        'OHLC cursor should be labeled as an older adjacent window',
+      )
       if (data._coverage?.result_complete === true) {
-        assert(data.investigation?.status !== 'partial_page', 'A complete OHLC window should not be labeled as a partial page')
+        assert(
+          data.investigation?.status !== 'partial_page',
+          'A complete OHLC window should not be labeled as a partial page',
+        )
+      }
+    },
+  },
+  {
+    name: 'portal_tron_query_transactions',
+    prompt: 'show me native TRX transfers and USDT contract calls on tron',
+    args: () => ({
+      network: 'tron-mainnet',
+      from_block: TRON_SAMPLE_BLOCK,
+      to_block: TRON_SAMPLE_BLOCK,
+      kind: 'transfer',
+      limit: 3,
+    }),
+    validate: (text) => {
+      const data = extractJson(text)
+      const items = expectItems(text, 'portal_tron_query_transactions', 1)
+      expectCompactDefault(data, 'portal_tron_query_transactions')
+      expectWindowMetadata(data, 'portal_tron_query_transactions')
+      expectOrdering(data, 'portal_tron_query_transactions')
+      assert(items[0].chain_kind === 'tron', 'Tron transactions should carry chain_kind tron')
+      assert(items[0].type === 'TransferContract', 'kind=transfer should return TransferContract rows')
+      assert(/^41[0-9a-f]{40}$/.test(items[0].sender), 'Tron sender should be 41-prefixed hex')
+      assert(/^T[1-9A-HJ-NP-Za-km-z]{33}$/.test(items[0].sender_base58), 'Tron sender should also be shown as Base58')
+      assert(typeof items[0].amount_trx === 'string', 'Native transfers should carry an exact TRX amount')
+      assert(
+        items.every((item: any) => item.asset_amount === undefined),
+        'A native TRX transfer must not carry a TRC-10 asset amount',
+      )
+      assert(items[0].timestamp_human?.startsWith('2026-06-28'), 'Tron timestamps should be decoded from milliseconds')
+    },
+    validateFollowUp: async (_text, client) => {
+      const calls = await callToolWithRetry(client, 'portal_tron_query_transactions', {
+        network: 'tron-mainnet',
+        from_block: TRON_SAMPLE_BLOCK,
+        to_block: TRON_SAMPLE_BLOCK,
+        contract_addresses: [TRON_USDT_BASE58],
+        method: 'transfer',
+        include_logs: true,
+        limit: 2,
+      })
+      if (calls.isError) {
+        assert(
+          isBoundedUpstreamToolError(calls),
+          `Expected only a bounded upstream Tron error, got: ${calls.text.slice(0, 240)}`,
+        )
+        return
+      }
+      const items = getItems(calls.data)
+      assert(items.length > 0, 'USDT transfer calls should exist in the sample block')
+      assert(items[0].type === 'TriggerSmartContract', 'contract filter should return TriggerSmartContract rows')
+      assert(items[0].contract_base58 === TRON_USDT_BASE58, 'contract address should round-trip to Base58')
+      assert(items[0].method_sighash === 'a9059cbb', 'method alias transfer should resolve to a9059cbb')
+      assert(Array.isArray(items[0].logs) && items[0].logs.length > 0, 'include_logs should attach the emitted logs')
+      assert(items[0].logs[0].tx_hash === items[0].tx_hash, 'inline logs should carry the parent hash')
+
+      const summary = await callToolWithRetry(client, 'portal_tron_query_transactions', {
+        network: 'tron-mainnet',
+        from_block: TRON_SAMPLE_BLOCK,
+        to_block: TRON_SAMPLE_BLOCK,
+        kind: 'transfer',
+        response_format: 'summary',
+        limit: 25,
+      })
+      assert(!summary.isError, `Tron transaction summaries should not fail: ${summary.text.slice(0, 200)}`)
+      assert(typeof summary.data.total_trx_transferred === 'string', 'summary should total TRX moved')
+      assert(summary.data.type_breakdown?.TransferContract > 0, 'summary should break down by contract type')
+    },
+  },
+  {
+    name: 'portal_tron_query_logs',
+    prompt: 'show me USDT transfer events on tron with the transaction hash',
+    args: () => ({
+      network: 'tron-mainnet',
+      from_block: TRON_SAMPLE_BLOCK,
+      to_block: TRON_SAMPLE_BLOCK,
+      addresses: [TRON_USDT_BASE58],
+      event: 'transfer',
+      decode: true,
+      limit: 3,
+    }),
+    validate: (text) => {
+      const data = extractJson(text)
+      const items = expectItems(text, 'portal_tron_query_logs', 1)
+      expectCompactDefault(data, 'portal_tron_query_logs')
+      expectWindowMetadata(data, 'portal_tron_query_logs')
+      expectOrdering(data, 'portal_tron_query_logs')
+      assert(items[0].chain_kind === 'tron', 'Tron logs should carry chain_kind tron')
+      assert(/^[0-9a-f]{64}$/.test(items[0].tx_hash), 'every Tron log should carry the parent transaction hash')
+      assert(items[0].contract_base58 === TRON_USDT_BASE58, 'log address should round-trip to Base58')
+      assert(
+        items[0].topic0 === EVENT_SIGNATURES.TRANSFER_ERC20.slice(2),
+        'event alias transfer should resolve to the bare topic0',
+      )
+      assert(items[0].decoded_log?.event_name === 'Transfer', 'decode should name the Transfer event')
+      assert(
+        /^T[1-9A-HJ-NP-Za-km-z]{33}$/.test(items[0].decoded_log?.decoded?.to ?? ''),
+        'decoded addresses should be Base58',
+      )
+    },
+    validateFollowUp: async (text, client) => {
+      const data = extractJson(text)
+      const cursor = data._pagination?.next_cursor
+      assert(typeof cursor === 'string', 'a 3-row page of USDT transfers should offer a cursor')
+      const next = await callToolWithRetry(client, 'portal_tron_query_logs', { cursor })
+      if (next.isError) {
+        assert(
+          isBoundedUpstreamToolError(next),
+          `Expected only a bounded upstream Tron error, got: ${next.text.slice(0, 240)}`,
+        )
+        return
+      }
+      const firstIds = new Set(getItems(data).map((item: any) => item.primary_id))
+      for (const item of getItems(next.data)) {
+        assert(!firstIds.has(item.primary_id), 'continuation must not repeat rows from the first page')
       }
     },
   },

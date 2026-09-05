@@ -1,13 +1,15 @@
 import { DEFAULT_RETRIES, DEFAULT_TIMEOUT, STREAM_TIMEOUT } from '../constants/index.js'
 import { portalRequestsTotal } from '../metrics.js'
+import { type UpstreamSpan, startUpstreamSpan } from '../tracing.js'
+import { portalAdmission } from './admission.js'
 import { ActionableError, RequestCancelledError, createTimeoutError, parsePortalError, wrapError } from './errors.js'
+import { applyGuardrail } from './guardrails.js'
 import {
   type RequestAbortContext,
   createRequestAbortContext,
   getPortalRequestSignal,
   isAbortLike,
 } from './request-context.js'
-import { portalAdmission } from './admission.js'
 
 // ============================================================================
 
@@ -129,17 +131,29 @@ export interface PortalFetchRecentRecordsOptions extends PortalFetchStreamRangeO
   initialSequentialChunks?: number
 }
 
+/* The byte budget is usually tens of megabytes, but an operator ceiling can set
+   it far lower, and rounding that to megabytes reported a 2KB cap as ">0MB". */
+function humanBytes(bytes: number): string {
+  if (bytes >= 1024 * 1024) return `${Math.round(bytes / 1024 / 1024)}MB`
+  if (bytes >= 1024) return `${Math.round(bytes / 1024)}KB`
+  return `${bytes} bytes`
+}
+
 function normalizePortalFetchStreamOptions(
   timeoutOrOptions: number | PortalFetchStreamOptions,
   maxBlocks: number,
   maxBytes: number,
   retries: number,
 ) {
+  /* An operator ceiling lowers the byte budget the stream already enforces, so
+     an over-budget response ends in the same `response_too_large` refusal it
+     ends in today rather than a shape nothing has seen before. */
+  const guarded = (requested: number) => applyGuardrail('max_upstream_bytes', requested).value
   if (typeof timeoutOrOptions === 'object') {
     return {
       timeout: timeoutOrOptions.timeout ?? STREAM_TIMEOUT,
       maxBlocks: timeoutOrOptions.maxBlocks ?? 0,
-      maxBytes: timeoutOrOptions.maxBytes ?? 50 * 1024 * 1024,
+      maxBytes: guarded(timeoutOrOptions.maxBytes ?? 50 * 1024 * 1024),
       retries: timeoutOrOptions.retries ?? DEFAULT_RETRIES,
       stopAfterItems: timeoutOrOptions.stopAfterItems,
     }
@@ -148,7 +162,7 @@ function normalizePortalFetchStreamOptions(
   return {
     timeout: timeoutOrOptions,
     maxBlocks,
-    maxBytes,
+    maxBytes: guarded(maxBytes),
     retries,
     stopAfterItems: undefined,
   }
@@ -219,15 +233,20 @@ export async function portalFetch<T>(
     if (attemptTimeout <= 0) break
     const abortContext = createRequestAbortContext(attemptTimeout)
     let releaseAdmission: (() => void) | undefined
+    let upstream: UpstreamSpan | undefined
 
     try {
       releaseAdmission = await portalAdmission.acquire(abortContext.signal)
+      upstream = startUpstreamSpan({ method, url, attempt })
       const fetchOptions: RequestInit = {
         method,
         headers: {
           'Accept-Encoding': 'gzip',
           'Content-Type': 'application/json',
           Accept: 'application/json',
+          /* Nothing when tracing is off, and a W3C traceparent when it is on,
+             so a Portal-side trace can join this one. */
+          ...upstream.headers(),
         },
         signal: abortContext.signal,
       }
@@ -238,6 +257,12 @@ export async function portalFetch<T>(
 
       const response = await fetch(url, fetchOptions)
 
+      upstream.setAttribute('http.response.status_code', response.status)
+      /* This path parses JSON rather than counting bytes, so the declared
+         length is the only size there is. Absent it, say nothing: `Number(null)`
+         is 0, and a reported zero would be a claim rather than a gap. */
+      const declaredBytes = Number(response.headers.get('content-length') ?? Number.NaN)
+      if (Number.isFinite(declaredBytes)) upstream.setAttribute('mcp.upstream.bytes', declaredBytes)
       portalRequestsTotal.inc({ method, status_code: response.status })
 
       // Handle specific status codes
@@ -289,6 +314,9 @@ export async function portalFetch<T>(
       if (!(await waitForRetry(attempt, retries, retryStartedAt, retryDelay ?? computeRetryDelayMs(attempt)))) break
     } finally {
       releaseAdmission?.()
+      /* Closed here rather than after the fetch, so the span covers reading
+         the body as well: on a streaming read that is nearly all of it. */
+      upstream?.end()
       abortContext.cleanup()
     }
   }
@@ -324,20 +352,26 @@ export async function portalFetchStream(
     if (attemptTimeout <= 0) break
     const abortContext = createRequestAbortContext(attemptTimeout)
     let releaseAdmission: (() => void) | undefined
+    let upstream: UpstreamSpan | undefined
 
     try {
       releaseAdmission = await portalAdmission.acquire(abortContext.signal)
+      upstream = startUpstreamSpan({ method: 'POST', url, attempt })
       const response = await fetch(url, {
         method: 'POST',
         headers: {
           'Accept-Encoding': 'gzip',
           'Content-Type': 'application/json',
           Accept: 'application/x-ndjson',
+          /* Nothing when tracing is off, and a W3C traceparent when it is on,
+             so a Portal-side trace can join this one. */
+          ...upstream.headers(),
         },
         body: JSON.stringify(body),
         signal: abortContext.signal,
       })
 
+      upstream.setAttribute('http.response.status_code', response.status)
       portalRequestsTotal.inc({ method: 'POST', status_code: response.status })
 
       if (response.status === 204) {
@@ -444,9 +478,7 @@ export async function portalFetchStream(
 
           if (totalBytes > options.maxBytes) {
             await reader.cancel()
-            throw new Error(
-              `Response too large (>${Math.round(options.maxBytes / 1024 / 1024)}MB). Add filters or reduce block range.`,
-            )
+            throw new Error(`Response too large (>${humanBytes(options.maxBytes)}). Add filters or reduce block range.`)
           }
         }
 
@@ -462,6 +494,8 @@ export async function portalFetchStream(
           }
         }
       } finally {
+        /* Once, on the way out, rather than on every chunk. */
+        upstream?.setAttribute('mcp.upstream.bytes', totalBytes)
         reader.releaseLock()
       }
 
@@ -475,9 +509,13 @@ export async function portalFetchStream(
       releaseAdmission?.()
       releaseAdmission = undefined
       const retryDelay = lastError instanceof ActionableError ? lastError.retryAfterMs : undefined
-      if (!(await waitForRetry(attempt, options.retries, retryStartedAt, retryDelay ?? computeRetryDelayMs(attempt)))) break
+      if (!(await waitForRetry(attempt, options.retries, retryStartedAt, retryDelay ?? computeRetryDelayMs(attempt))))
+        break
     } finally {
       releaseAdmission?.()
+      /* Closed here rather than after the fetch, so the span covers reading
+         the body as well: on a streaming read that is nearly all of it. */
+      upstream?.end()
       abortContext.cleanup()
     }
   } // end for loop
@@ -506,20 +544,26 @@ export async function portalFetchStreamVisit(
     if (attemptTimeout <= 0) break
     const abortContext = createRequestAbortContext(attemptTimeout)
     let releaseAdmission: (() => void) | undefined
+    let upstream: UpstreamSpan | undefined
 
     try {
       releaseAdmission = await portalAdmission.acquire(abortContext.signal)
+      upstream = startUpstreamSpan({ method: 'POST', url, attempt })
       const response = await fetch(url, {
         method: 'POST',
         headers: {
           'Accept-Encoding': 'gzip',
           'Content-Type': 'application/json',
           Accept: 'application/x-ndjson',
+          /* Nothing when tracing is off, and a W3C traceparent when it is on,
+             so a Portal-side trace can join this one. */
+          ...upstream.headers(),
         },
         body: JSON.stringify(body),
         signal: abortContext.signal,
       })
 
+      upstream.setAttribute('http.response.status_code', response.status)
       portalRequestsTotal.inc({ method: 'POST', status_code: response.status })
 
       if (response.status === 204) {
@@ -627,7 +671,7 @@ export async function portalFetchStreamVisit(
           if (totalBytes > normalizedOptions.maxBytes) {
             await reader.cancel()
             throw new Error(
-              `Response too large (>${Math.round(normalizedOptions.maxBytes / 1024 / 1024)}MB). Add filters or reduce block range.`,
+              `Response too large (>${humanBytes(normalizedOptions.maxBytes)}). Add filters or reduce block range.`,
             )
           }
         }
@@ -641,6 +685,8 @@ export async function portalFetchStreamVisit(
           await options.onRecord(parsed)
         }
       } finally {
+        /* Once, on the way out, rather than on every chunk. */
+        upstream?.setAttribute('mcp.upstream.bytes', totalBytes)
         reader.releaseLock()
       }
 
@@ -665,6 +711,9 @@ export async function portalFetchStreamVisit(
         break
     } finally {
       releaseAdmission?.()
+      /* Closed here rather than after the fetch, so the span covers reading
+         the body as well: on a streaming read that is nearly all of it. */
+      upstream?.end()
       abortContext.cleanup()
     }
   }
@@ -848,6 +897,18 @@ export async function portalFetchStreamRangeVisit(
   return processedRecords
 }
 
+/* Where a backward scan stopped. `exhausted` means every block of the
+   requested window was read. A scan that filled its page early, or ran into
+   maxChunks, leaves the blocks below scannedFromBlock unread, and a response
+   that calls such a window complete is describing blocks it never opened. */
+export interface RecentScanSummary {
+  scannedFromBlock: number
+  scannedToBlock: number
+  exhausted: boolean
+  chunksVisited: number
+  matchedItems: number
+}
+
 /**
  * Fetch recent matching records from the end of a range, chunking backward so
  * limit-based "recent" queries return the latest matches rather than the oldest
@@ -858,8 +919,20 @@ export async function portalFetchRecentRecords(
   body: unknown,
   options: PortalFetchRecentRecordsOptions,
 ): Promise<unknown[]> {
+  const result = await portalFetchRecentRecordsWithScan(url, body, options)
+  return result.records
+}
+
+/* The same fetch, with the scan summary a caller needs to say how much of
+   the window it actually read. A body without a block range streams the
+   whole range and has no scan to summarise. */
+export async function portalFetchRecentRecordsWithScan(
+  url: string,
+  body: unknown,
+  options: PortalFetchRecentRecordsOptions,
+): Promise<{ records: unknown[]; scan: RecentScanSummary | undefined }> {
   if (!body || typeof body !== 'object') {
-    return portalFetchStreamRange(url, body, options)
+    return { records: await portalFetchStreamRange(url, body, options), scan: undefined }
   }
 
   const typedBody = body as Record<string, unknown>
@@ -867,7 +940,7 @@ export async function portalFetchRecentRecords(
   const requestedTo = parseBlockNumber(typedBody.toBlock)
 
   if (requestedFrom === undefined || requestedTo === undefined || requestedFrom > requestedTo) {
-    return portalFetchStreamRange(url, body, options)
+    return { records: await portalFetchStreamRange(url, body, options), scan: undefined }
   }
 
   const chunkSize = Math.max(1, options.chunkSize)
@@ -877,6 +950,7 @@ export async function portalFetchRecentRecords(
   let matchedItems = 0
   let currentTo = requestedTo
   let chunksVisited = 0
+  let scannedFromBlock = requestedTo + 1
 
   while (currentTo >= requestedFrom && matchedItems < options.limit) {
     if (options.maxChunks !== undefined && chunksVisited >= options.maxChunks) {
@@ -916,6 +990,7 @@ export async function portalFetchRecentRecords(
       const outcome = outcomes[index]
       if (outcome.status === 'rejected') throw outcome.reason
       chunksVisited += 1
+      scannedFromBlock = batch[index].fromBlock
 
       if (outcome.value.length > 0) {
         recentRecords.unshift(...outcome.value)
@@ -933,5 +1008,14 @@ export async function portalFetchRecentRecords(
     currentTo = batch[batch.length - 1].fromBlock - 1
   }
 
-  return recentRecords
+  return {
+    records: recentRecords,
+    scan: {
+      scannedFromBlock,
+      scannedToBlock: requestedTo,
+      exhausted: scannedFromBlock <= requestedFrom,
+      chunksVisited,
+      matchedItems,
+    },
+  }
 }

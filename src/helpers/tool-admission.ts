@@ -1,5 +1,6 @@
 import {
   toolAdmissionActive,
+  toolAdmissionActiveByFamily,
   toolAdmissionActiveWeight,
   toolAdmissionQueued,
   toolAdmissionRejectedTotal,
@@ -21,11 +22,36 @@ export type ToolAdmissionSnapshot = {
   queuedCalls: number
   maxWeight: number
   maxQueued: number
+  maxClientWeight: number
+  maxClientQueued: number
+  activeCallsByFamily: Record<string, number>
+}
+
+/**
+ * Who is asking. `key` is the connection identifier alone (a hashed address on
+ * HTTP, the literal `stdio` on stdio); it is only ever a map key, never a
+ * metric label or a log field. `family` is the bounded client family, used for
+ * the metric label only: it is whatever the client calls itself, so keying a
+ * share on it let one connection hold a share per name it declared.
+ */
+export type ToolCaller = {
+  key: string
+  family: string
+  /** A caller that is the only possible caller (stdio) is counted but never share-limited. */
+  exempt?: boolean
+}
+
+export type ToolAdmissionOptions = {
+  /** Share of the global weight budget one caller may hold at once, 0 to 1. Default 0.5. */
+  clientWeightShare?: number
+  /** Queued calls one caller may hold. Default 16. */
+  maxClientQueued?: number
 }
 
 type QueueEntry = {
   profile: ToolWorkProfile
   transport: RuntimeRequestContext['transport']
+  caller?: ToolCaller
   enqueuedAt: number
   resolve: (value: ToolAdmissionLease) => void
   reject: (error: Error) => void
@@ -87,13 +113,20 @@ function boundedInteger(value: string | undefined, fallback: number, minimum: nu
   return Math.max(minimum, Math.min(maximum, Math.floor(parsed)))
 }
 
-function overloadError(reason: 'queue_full' | 'queue_timeout', snapshot: ToolAdmissionSnapshot): ActionableError {
+function overloadError(
+  reason: 'queue_full' | 'queue_timeout' | 'client_share',
+  snapshot: ToolAdmissionSnapshot,
+): ActionableError {
   const retryAfterMs = reason === 'queue_full' ? 500 : 250
   return new ActionableError(
-    'SQD is busy and could not start this blockchain request inside its bounded wait budget.',
+    reason === 'client_share'
+      ? 'SQD is busy with earlier requests from this client and could not start another one inside its fair share.'
+      : 'SQD is busy and could not start this blockchain request inside its bounded wait budget.',
     [
       `Retry this request after ${retryAfterMs}ms`,
-      'Reduce the number of simultaneous analytics or wallet requests',
+      reason === 'client_share'
+        ? 'Wait for your earlier requests to finish before starting more'
+        : 'Reduce the number of simultaneous analytics or wallet requests',
       'Use a smaller timeframe for expensive analysis',
     ],
     {
@@ -102,6 +135,9 @@ function overloadError(reason: 'queue_full' | 'queue_timeout', snapshot: ToolAdm
       queued_calls: snapshot.queuedCalls,
       max_weight: snapshot.maxWeight,
       max_queued_calls: snapshot.maxQueued,
+      ...(reason === 'client_share'
+        ? { max_client_weight: snapshot.maxClientWeight, max_client_queued_calls: snapshot.maxClientQueued }
+        : {}),
     },
     { code: 'overloaded', origin: 'server', retryable: true, retryAfterMs },
   )
@@ -112,17 +148,34 @@ export class WeightedToolAdmissionController {
   private activeCalls = 0
   private readonly activeByKey = new Map<string, number>()
   private readonly queuedByKey = new Map<string, number>()
+  private readonly activeWeightByCaller = new Map<string, number>()
+  private readonly queuedByCaller = new Map<string, number>()
+  private readonly activeCallsByFamily = new Map<string, number>()
   private readonly queue: QueueEntry[] = []
+  readonly maxClientWeight: number
+  readonly maxClientQueued: number
 
   constructor(
     readonly maxWeight: number,
     readonly maxQueued: number,
     readonly queueTimeoutMs: number,
     private readonly emitMetrics = true,
+    options: ToolAdmissionOptions = {},
   ) {
     if (!Number.isInteger(maxWeight) || maxWeight < 1) throw new Error('maxWeight must be a positive integer')
     if (!Number.isInteger(maxQueued) || maxQueued < 0) throw new Error('maxQueued must be a non-negative integer')
     if (!Number.isFinite(queueTimeoutMs) || queueTimeoutMs < 1) throw new Error('queueTimeoutMs must be positive')
+    const share = options.clientWeightShare ?? 0.5
+    if (!Number.isFinite(share) || share <= 0 || share > 1) throw new Error('clientWeightShare must be in (0, 1]')
+    // One caller never gets more than its share, but a share below the heaviest
+    // single profile would make that profile unschedulable, so the floor is the
+    // heaviest weight.
+    const heaviest = Math.max(...Object.values(PROFILES).map((profile) => profile.weight), WALLET_PROFILE.weight)
+    this.maxClientWeight = Math.min(maxWeight, Math.max(heaviest, Math.floor(maxWeight * share)))
+    this.maxClientQueued = options.maxClientQueued ?? 16
+    if (!Number.isInteger(this.maxClientQueued) || this.maxClientQueued < 0) {
+      throw new Error('maxClientQueued must be a non-negative integer')
+    }
     this.syncMetrics()
   }
 
@@ -133,6 +186,9 @@ export class WeightedToolAdmissionController {
       queuedCalls: this.queue.length,
       maxWeight: this.maxWeight,
       maxQueued: this.maxQueued,
+      maxClientWeight: this.maxClientWeight,
+      maxClientQueued: this.maxClientQueued,
+      activeCallsByFamily: Object.fromEntries(this.activeCallsByFamily),
     }
   }
 
@@ -140,19 +196,28 @@ export class WeightedToolAdmissionController {
     profile: ToolWorkProfile,
     transport: RuntimeRequestContext['transport'],
     signal?: AbortSignal,
+    caller?: ToolCaller,
   ): Promise<ToolAdmissionLease> {
     if (profile.weight > this.maxWeight) throw new Error(`Tool weight ${profile.weight} exceeds the scheduler budget`)
     if (signal?.aborted) throw new RequestCancelledError()
     const now = Date.now()
-    if (this.canGrant(profile.weight) && this.queue.length === 0) return this.grant(profile, transport, now)
+    if (this.canGrant(profile.weight, caller) && this.queue.length === 0) {
+      return this.grant(profile, transport, now, caller)
+    }
     if (this.queue.length >= this.maxQueued) {
       this.rejectMetric(profile, transport, 'queue_full')
       throw overloadError('queue_full', this.snapshot())
+    }
+    if (caller && !caller.exempt && (this.queuedByCaller.get(caller.key) ?? 0) >= this.maxClientQueued) {
+      // This caller already holds its fair share of the queue; others keep flowing.
+      this.rejectMetric(profile, transport, 'client_share')
+      throw overloadError('client_share', this.snapshot())
     }
     return new Promise<ToolAdmissionLease>((resolve, reject) => {
       const entry = {} as QueueEntry
       entry.profile = profile
       entry.transport = transport
+      entry.caller = caller
       entry.enqueuedAt = now
       entry.resolve = resolve
       entry.reject = reject
@@ -171,13 +236,16 @@ export class WeightedToolAdmissionController {
       signal?.addEventListener('abort', entry.abort, { once: true })
       this.queue.push(entry)
       this.adjustMap(this.queuedByKey, this.key(profile, transport), 1)
+      if (caller) this.adjustMap(this.queuedByCaller, caller.key, 1)
       this.syncMetrics(profile, transport)
       this.promote()
     })
   }
 
-  private canGrant(weight: number): boolean {
-    return this.activeWeight + weight <= this.maxWeight
+  private canGrant(weight: number, caller?: ToolCaller): boolean {
+    if (this.activeWeight + weight > this.maxWeight) return false
+    if (!caller || caller.exempt) return true
+    return (this.activeWeightByCaller.get(caller.key) ?? 0) + weight <= this.maxClientWeight
   }
 
   private key(profile: ToolWorkProfile, transport: RuntimeRequestContext['transport']): string {
@@ -197,6 +265,7 @@ export class WeightedToolAdmissionController {
     clearTimeout(entry.timeoutId)
     entry.signal?.removeEventListener('abort', entry.abort)
     this.adjustMap(this.queuedByKey, this.key(entry.profile, entry.transport), -1)
+    if (entry.caller) this.adjustMap(this.queuedByCaller, entry.caller.key, -1)
     this.syncMetrics(entry.profile, entry.transport)
     return true
   }
@@ -205,11 +274,22 @@ export class WeightedToolAdmissionController {
     profile: ToolWorkProfile,
     transport: RuntimeRequestContext['transport'],
     enqueuedAt: number,
+    caller?: ToolCaller,
   ): ToolAdmissionLease {
     const waitMs = Math.max(0, Date.now() - enqueuedAt)
     this.activeWeight += profile.weight
     this.activeCalls += 1
     this.adjustMap(this.activeByKey, this.key(profile, transport), 1)
+    if (caller) {
+      this.adjustMap(this.activeWeightByCaller, caller.key, profile.weight)
+      this.adjustMap(this.activeCallsByFamily, caller.family, 1)
+      if (this.emitMetrics) {
+        toolAdmissionActiveByFamily.set(
+          { client_family: caller.family },
+          this.activeCallsByFamily.get(caller.family) ?? 0,
+        )
+      }
+    }
     if (this.emitMetrics) toolAdmissionWait.observe({ tool_class: profile.class, transport }, waitMs / 1000)
     this.syncMetrics(profile, transport)
     let released = false
@@ -221,6 +301,16 @@ export class WeightedToolAdmissionController {
         this.activeWeight = Math.max(0, this.activeWeight - profile.weight)
         this.activeCalls = Math.max(0, this.activeCalls - 1)
         this.adjustMap(this.activeByKey, this.key(profile, transport), -1)
+        if (caller) {
+          this.adjustMap(this.activeWeightByCaller, caller.key, -profile.weight)
+          this.adjustMap(this.activeCallsByFamily, caller.family, -1)
+          if (this.emitMetrics) {
+            toolAdmissionActiveByFamily.set(
+              { client_family: caller.family },
+              this.activeCallsByFamily.get(caller.family) ?? 0,
+            )
+          }
+        }
         this.syncMetrics(profile, transport)
         this.promote()
       },
@@ -231,19 +321,20 @@ export class WeightedToolAdmissionController {
     let promoted = true
     while (promoted && this.queue.length > 0) {
       promoted = false
-      const index = this.queue.findIndex((entry) => this.canGrant(entry.profile.weight))
+      const index = this.queue.findIndex((entry) => this.canGrant(entry.profile.weight, entry.caller))
       if (index < 0) break
       const entry = this.queue.splice(index, 1)[0]!
       clearTimeout(entry.timeoutId)
       entry.signal?.removeEventListener('abort', entry.abort)
       this.adjustMap(this.queuedByKey, this.key(entry.profile, entry.transport), -1)
+      if (entry.caller) this.adjustMap(this.queuedByCaller, entry.caller.key, -1)
       this.syncMetrics(entry.profile, entry.transport)
       if (entry.signal?.aborted) {
         entry.reject(new RequestCancelledError())
         promoted = true
         continue
       }
-      entry.resolve(this.grant(entry.profile, entry.transport, entry.enqueuedAt))
+      entry.resolve(this.grant(entry.profile, entry.transport, entry.enqueuedAt, entry.caller))
       promoted = true
     }
   }
@@ -281,4 +372,9 @@ export const toolAdmission = new WeightedToolAdmissionController(
   boundedInteger(process.env.MCP_TOOL_WEIGHT_BUDGET, DEFAULT_TOOL_WEIGHT_BUDGET, 16, 256),
   boundedInteger(process.env.MCP_TOOL_MAX_QUEUE, 64, 0, 1024),
   boundedInteger(process.env.MCP_TOOL_QUEUE_TIMEOUT_MS, 5_000, 50, 30_000),
+  true,
+  {
+    clientWeightShare: boundedInteger(process.env.MCP_TOOL_CLIENT_WEIGHT_SHARE, 50, 1, 100) / 100,
+    maxClientQueued: boundedInteger(process.env.MCP_TOOL_CLIENT_MAX_QUEUE, 16, 0, 1024),
+  },
 )

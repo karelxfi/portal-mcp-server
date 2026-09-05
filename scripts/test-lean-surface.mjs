@@ -10,7 +10,8 @@ async function collectTypeScriptFiles(directory) {
     const details = await stat(path)
     if (details.isDirectory()) {
       files.push(...(await collectTypeScriptFiles(path)))
-    } else if (name.endsWith('.ts')) {
+    } else if (name.endsWith('.ts') && !name.endsWith('.test.ts')) {
+      /* Unit tests sit next to the code and are not runtime modules. */
       files.push(path)
     }
   }
@@ -98,8 +99,8 @@ const portalRegistrationCount = toolSources.reduce(
   (total, [, source]) => total + [...source.matchAll(/registerPortalTool\s*\(/g)].length,
   0,
 )
-if (portalRegistrationCount !== 28) {
-  throw new Error(`Expected all 28 tools on registerPortalTool(), found ${portalRegistrationCount}`)
+if (portalRegistrationCount !== 31) {
+  throw new Error(`Expected all 31 tools on registerPortalTool(), found ${portalRegistrationCount}`)
 }
 const directToolRegistrations = toolSources
   .filter(([, source]) => /server\.registerTool\s*\(/.test(source))
@@ -116,5 +117,5 @@ const sourceLines = [...sources.entries()]
   .filter(([file]) => runtimeReachable.has(file) || appBuildReachable.has(file))
   .reduce((total, [, source]) => total + source.split('\n').length, 0)
 console.log(
-  `Lean surface OK: ${runtimeReachable.size} runtime modules, ${appBuildReachable.size} app build modules, ${sourceLines} source lines, 28/28 instrumented registrations, 0 legacy surfaces`,
+  `Lean surface OK: ${runtimeReachable.size} runtime modules, ${appBuildReachable.size} app build modules, ${sourceLines} source lines, 31/31 instrumented registrations, 0 legacy surfaces`,
 )

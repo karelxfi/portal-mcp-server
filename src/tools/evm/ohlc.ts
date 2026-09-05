@@ -41,6 +41,7 @@ import {
 } from '../../helpers/timeframe.js'
 import { buildExecutionMetadata, buildToolDescription } from '../../helpers/tool-ux.js'
 import { buildChartPanel, buildMetricCard, buildPortalUi, buildTablePanel } from '../../helpers/ui-metadata.js'
+import { untrustedLabel } from '../../helpers/untrusted-text.js'
 import { normalizeEvmAddress } from '../../helpers/validation.js'
 
 type OhlcDuration = '1h' | '6h' | '12h' | '24h' | '7d' | '30d'
@@ -405,7 +406,7 @@ function shortenAddressLabel(address: string) {
 }
 
 function resolveTokenLabel(side: BaseTokenSide, symbol?: string, address?: string) {
-  return symbol || (address ? shortenAddressLabel(address) : side)
+  return untrustedLabel(symbol) || (address ? shortenAddressLabel(address) : side)
 }
 
 function isStableLikeLabel(label: string) {
@@ -1371,16 +1372,18 @@ export function registerEvmOhlcTool(server: McpServer) {
       const poolPairTokens = poolPairMetadata
         ? [poolPairMetadata.baseToken, poolPairMetadata.quoteToken]
             .filter((token) => /^0x[0-9a-fA-F]{40}$/.test(token.address))
-            .sort((left, right) => compareHexAddresses(normalizeEvmAddress(left.address), normalizeEvmAddress(right.address)))
+            .sort((left, right) =>
+              compareHexAddresses(normalizeEvmAddress(left.address), normalizeEvmAddress(right.address)),
+            )
         : []
       const poolToken0 = poolPairTokens[0]
       const poolToken1 = poolPairTokens[1]
       const effectiveToken0Address = token0_address
         ? normalizeEvmAddress(token0_address)
-        : normalizedCurrency0Address ?? (poolToken0 ? normalizeEvmAddress(poolToken0.address) : undefined)
+        : (normalizedCurrency0Address ?? (poolToken0 ? normalizeEvmAddress(poolToken0.address) : undefined))
       const effectiveToken1Address = token1_address
         ? normalizeEvmAddress(token1_address)
-        : normalizedCurrency1Address ?? (poolToken1 ? normalizeEvmAddress(poolToken1.address) : undefined)
+        : (normalizedCurrency1Address ?? (poolToken1 ? normalizeEvmAddress(poolToken1.address) : undefined))
       let tokenListMetadataFailed = false
       const tokenListMetadataLookups: TokenListLookupMetadata[] = []
       const [token0ListMetadata, token1ListMetadata] = await Promise.all([
@@ -1674,11 +1677,15 @@ export function registerEvmOhlcTool(server: McpServer) {
       // Headline totals must reconcile with the exact candle rows returned below.
       // The initial scan can include events outside the bucket-aligned series window.
       const totalBaseVolumeRaw = ohlcByBase[baseTokenSide].reduce(
-        (sum, _, index) => sum + (bucketsByBase[baseTokenSide].get(seriesStartTimestamp + index * intervalSeconds)?.base_volume_raw ?? 0n),
+        (sum, _, index) =>
+          sum +
+          (bucketsByBase[baseTokenSide].get(seriesStartTimestamp + index * intervalSeconds)?.base_volume_raw ?? 0n),
         0n,
       )
       const totalQuoteVolumeRaw = ohlcByBase[baseTokenSide].reduce(
-        (sum, _, index) => sum + (bucketsByBase[baseTokenSide].get(seriesStartTimestamp + index * intervalSeconds)?.quote_volume_raw ?? 0n),
+        (sum, _, index) =>
+          sum +
+          (bucketsByBase[baseTokenSide].get(seriesStartTimestamp + index * intervalSeconds)?.quote_volume_raw ?? 0n),
         0n,
       )
       const baseDecimals = baseTokenSide === 'token0' ? resolvedToken0Decimals : resolvedToken1Decimals
@@ -1725,7 +1732,9 @@ export function registerEvmOhlcTool(server: McpServer) {
       const recentTrades =
         volumePanel && include_recent_trades
           ? recentTradeCandidates
-              .filter((trade) => trade.timestamp >= seriesStartTimestamp && trade.timestamp < indexedEvidenceEndExclusive)
+              .filter(
+                (trade) => trade.timestamp >= seriesStartTimestamp && trade.timestamp < indexedEvidenceEndExclusive,
+              )
               .sort((left, right) => right.timestamp - left.timestamp || (right.log_index ?? 0) - (left.log_index ?? 0))
               .slice(0, tradeLimit)
               .map((trade) =>
@@ -1978,6 +1987,7 @@ export function registerEvmOhlcTool(server: McpServer) {
         window_start_timestamp_human: formatTimestamp(seriesStartTimestamp),
         window_end_exclusive: indexedEvidenceEndExclusive,
         window_end_exclusive_human: formatTimestamp(indexedEvidenceEndExclusive),
+        bucket_alignment: 'interval_boundary',
         final_bucket_complete: ohlc.at(-1)?.bucket_complete ?? false,
         ...(firstFilled ? { series_open: firstFilled.open } : {}),
         ...(lastFilled ? { series_close: lastFilled.close } : {}),

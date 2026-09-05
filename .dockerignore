@@ -4,8 +4,17 @@ dist
 .claude
 *.md
 !THIRD_PARTY_NOTICES.md
+# The image runs `npm run build`, so every script that build reaches has to be
+# named here. An allowlist is silent when it is short by one file: adding
+# zod-locale-plugin.mjs to the bundler and not to this list broke the image
+# build while every other check stayed green. `npm run test:distribution`
+# follows the relative imports from the build entry points and fails if one of
+# them is missing from this list.
 scripts/*
 !scripts/clean-dist.mjs
 !scripts/generate-app-compat-manifest.mjs
 !scripts/build-activity-explorer.mjs
+!scripts/compact-stylesheet-plugin.mjs
+!scripts/zod-locale-plugin.mjs
 !scripts/copy-third-party-licenses.mjs
+src/generated

@@ -25,6 +25,26 @@ function isNumber(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value)
 }
 
+/**
+ * Coerce a numeric field to a finite number for aggregation.
+ *
+ * Normalizers emit exact decimal amounts as text (`px`, `sz`, `fee`,
+ * `closedPnl`, Bitcoin values), so `total += item.field || 0` silently turns an
+ * accumulator into a string and the later `toFixed` call throws. Every summary
+ * aggregate goes through this helper; unparseable or missing values count as 0
+ * instead of poisoning the total with NaN.
+ */
+function toFiniteNumber(value: unknown): number {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : 0
+  if (typeof value === 'string') {
+    const trimmed = value.trim()
+    if (trimmed === '') return 0
+    const parsed = Number(trimmed)
+    return Number.isFinite(parsed) ? parsed : 0
+  }
+  return 0
+}
+
 function pickCommonAliases(item: any): Record<string, unknown> {
   const aliases: Record<string, unknown> = {}
 
@@ -236,22 +256,22 @@ export function summarizeHyperliquidFills(fills: any[]): any {
   const traders = new Set<string>()
   const coins = new Set<string>()
   const dirCounts: Record<string, number> = {}
-  let totalVolume = 0, totalFees = 0, totalPnl = 0
+  let totalVolume = 0,
+    totalFees = 0,
+    totalPnl = 0
 
+  const byCoin = new Map<string, number>()
   fills.forEach((fill) => {
     if (fill.user) traders.add(fill.user)
     if (fill.coin) coins.add(fill.coin)
-    totalVolume += (fill.px || 0) * (fill.sz || 0)
-    totalFees += Math.abs(fill.fee || 0)
-    totalPnl += fill.closedPnl || 0
+    const notional = toFiniteNumber(fill.px) * toFiniteNumber(fill.sz)
+    totalVolume += notional
+    totalFees += toFiniteNumber(fill.fee)
+    totalPnl += toFiniteNumber(fill.closedPnl)
     const dir = fill.dir || 'Unknown'
     dirCounts[dir] = (dirCounts[dir] || 0) + 1
-  })
-
-  const byCoin = new Map<string, number>()
-  fills.forEach((f) => {
-    const c = f.coin || 'unknown'
-    byCoin.set(c, (byCoin.get(c) || 0) + (f.px || 0) * (f.sz || 0))
+    const coin = fill.coin || 'unknown'
+    byCoin.set(coin, (byCoin.get(coin) || 0) + notional)
   })
   const topCoins = Array.from(byCoin.entries())
     .sort((a, b) => b[1] - a[1])
@@ -263,6 +283,8 @@ export function summarizeHyperliquidFills(fills: any[]): any {
     unique_traders: traders.size,
     unique_coins: coins.size,
     total_volume_usd: parseFloat(totalVolume.toFixed(2)),
+    // Signed: Hyperliquid maker rebates are negative fees. Summing absolute
+    // values reported a trader who only earned rebates as having paid fees.
     total_fees_usd: parseFloat(totalFees.toFixed(2)),
     total_realized_pnl: parseFloat(totalPnl.toFixed(2)),
     direction_breakdown: dirCounts,
@@ -295,7 +317,8 @@ export function summarizeSolanaTransactions(txs: any[]): any {
   if (txs.length === 0) return { count: 0, summary: 'No transactions found' }
 
   const feePayers = new Set<string>()
-  let totalFees = 0, totalComputeUnits = 0
+  let totalFees = 0,
+    totalComputeUnits = 0
   let errorCount = 0
 
   txs.forEach((tx) => {
@@ -428,7 +451,8 @@ export function compactSubstrateEvents(events: any[]): any[] {
     event_name: event.event_name || event.name,
     extrinsic_index: event.extrinsicIndex ?? event.extrinsic_index,
     phase: event.phase,
-    call_address: event.call_address || (Array.isArray(event.callAddress) ? event.callAddress.join('.') : event.callAddress),
+    call_address:
+      event.call_address || (Array.isArray(event.callAddress) ? event.callAddress.join('.') : event.callAddress),
     blockNumber: getBlockNumber(event),
     timestamp: getTimestamp(event),
     ...(compactSubstrateExtrinsic(event.extrinsic) ? { extrinsic: compactSubstrateExtrinsic(event.extrinsic) } : {}),
@@ -508,7 +532,9 @@ export function compactSubstrateCalls(calls: any[]): any[] {
 export function summarizeBitcoinTransactions(txs: any[]): any {
   if (txs.length === 0) return { count: 0, summary: 'No transactions found' }
 
-  let totalSize = 0, totalVsize = 0, totalWeight = 0
+  let totalSize = 0,
+    totalVsize = 0,
+    totalWeight = 0
   const versions = new Map<number, number>()
 
   txs.forEach((tx) => {
@@ -575,7 +601,7 @@ export function summarizeBitcoinInputs(inputs: any[]): any {
     scriptTypes.set(sType, (scriptTypes.get(sType) || 0) + 1)
     const iType = input.type || 'tx'
     types.set(iType, (types.get(iType) || 0) + 1)
-    totalValue += input.prevoutValue || 0
+    totalValue += toFiniteNumber(input.prevoutValue)
   })
 
   return {
@@ -617,7 +643,7 @@ export function summarizeBitcoinOutputs(outputs: any[]): any {
     if (output.scriptPubKeyAddress) addresses.add(output.scriptPubKeyAddress)
     const sType = output.scriptPubKeyType || 'unknown'
     scriptTypes.set(sType, (scriptTypes.get(sType) || 0) + 1)
-    totalValue += output.value || 0
+    totalValue += toFiniteNumber(output.value)
   })
 
   return {
@@ -643,12 +669,207 @@ export function compactBitcoinOutputs(outputs: any[]): any[] {
 }
 
 /**
+ * Summarize Tron transactions: contract types, success, TRX moved, callers.
+ */
+export function summarizeTronTransactions(txs: any[]): any {
+  if (txs.length === 0) return { count: 0, summary: 'No transactions found' }
+
+  const byType = new Map<string, number>()
+  const bySender = new Map<string, number>()
+  const byContract = new Map<string, number>()
+  let successCount = 0
+  let failedCount = 0
+  let amountSun = 0n
+  let feeSun = 0n
+  txs.forEach((tx) => {
+    const type = typeof tx.type === 'string' ? tx.type : 'unknown'
+    byType.set(type, (byType.get(type) || 0) + 1)
+    if (tx.success === true) successCount += 1
+    if (tx.success === false) failedCount += 1
+    if (typeof tx.sender === 'string') bySender.set(tx.sender, (bySender.get(tx.sender) || 0) + 1)
+    if (typeof tx.contract_address === 'string')
+      byContract.set(tx.contract_address, (byContract.get(tx.contract_address) || 0) + 1)
+    if (typeof tx.amount_sun === 'string' && /^\d+$/.test(tx.amount_sun)) amountSun += BigInt(tx.amount_sun)
+    if (typeof tx.fee === 'string' && /^\d+$/.test(tx.fee)) feeSun += BigInt(tx.fee)
+  })
+  const trx = (sun: bigint) => {
+    const whole = sun / 1_000_000n
+    const fraction = (sun % 1_000_000n).toString().padStart(6, '0').replace(/0+$/, '')
+    return `${whole}${fraction ? `.${fraction}` : ''}`
+  }
+  const blocks = txs.map((t) => getBlockNumber(t)).filter(isNumber)
+  const rank = (map: Map<string, number>, key: string) =>
+    Array.from(map.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5)
+      .map(([value, count]) => ({ [key]: value, transaction_count: count }))
+
+  return {
+    total_transactions: txs.length,
+    type_breakdown: Object.fromEntries(byType),
+    successful_transactions: successCount,
+    failed_transactions: failedCount,
+    // Only native TRX transfers carry amount_sun, so TRC-10 amounts no longer
+    // inflate this total.
+    total_trx_transferred: trx(amountSun),
+    total_fees_trx: trx(feeSun),
+    unique_senders: bySender.size,
+    top_senders: rank(bySender, 'address'),
+    top_contracts: rank(byContract, 'address'),
+    block_range: blocks.length > 0 ? { from: Math.min(...blocks), to: Math.max(...blocks) } : undefined,
+  }
+}
+
+export function compactTronTransactions(txs: any[]): any[] {
+  return txs.map((tx) => ({
+    ...pickCommonAliases(tx),
+    hash: tx.hash,
+    transactionIndex: tx.transactionIndex,
+    type: tx.type,
+    ...(tx.sender_base58 !== undefined ? { sender_base58: tx.sender_base58 } : {}),
+    ...(tx.recipient_base58 !== undefined ? { recipient_base58: tx.recipient_base58 } : {}),
+    ...(tx.contract_address !== undefined ? { contract_address: tx.contract_address } : {}),
+    ...(tx.contract_base58 !== undefined ? { contract_base58: tx.contract_base58 } : {}),
+    ...(tx.method_sighash !== undefined ? { method_sighash: tx.method_sighash } : {}),
+    ...(tx.amount_trx !== undefined ? { amount_trx: tx.amount_trx, amount_sun: tx.amount_sun } : {}),
+    ...(tx.asset_amount !== undefined
+      ? { asset_amount: tx.asset_amount, asset_amount_unit: tx.asset_amount_unit }
+      : {}),
+    ...(tx.asset_name !== undefined ? { asset_name: tx.asset_name } : {}),
+    ...(tx.success !== undefined ? { success: tx.success } : {}),
+    ...(tx.result !== undefined && tx.result !== null ? { result: tx.result } : {}),
+    ...(tx.fee_trx !== undefined ? { fee_trx: tx.fee_trx } : {}),
+    ...(tx.energyUsageTotal !== undefined && tx.energyUsageTotal !== null
+      ? { energy_usage_total: tx.energyUsageTotal }
+      : {}),
+    ...(Array.isArray(tx.logs) && tx.logs.length > 0 ? { logs: compactTronLogs(tx.logs) } : {}),
+    ...(Array.isArray(tx.internal_transactions) && tx.internal_transactions.length > 0
+      ? { internal_transaction_count: tx.internal_transactions.length }
+      : {}),
+  }))
+}
+
+export function summarizeTronLogs(logs: any[]): any {
+  const summary = summarizeLogs(logs)
+  if (logs.length === 0) return summary
+  const byTransaction = new Set(logs.map((log) => log.tx_hash).filter((value) => typeof value === 'string'))
+  return { ...summary, unique_transactions: byTransaction.size }
+}
+
+export function compactTronLogs(logs: any[]): any[] {
+  return logs.map((log) => ({
+    ...pickCommonAliases(log),
+    logIndex: log.logIndex,
+    transactionIndex: log.transactionIndex,
+    address: log.address,
+    contract_address: log.contract_address || log.address,
+    ...(log.contract_base58 !== undefined ? { contract_base58: log.contract_base58 } : {}),
+    topic0: log.topic0 || log.topics?.[0],
+    topics: log.topics,
+    data: log.data,
+    ...(log.decoded_log !== undefined ? { decoded_log: log.decoded_log } : {}),
+    ...(log.transaction && typeof log.transaction === 'object' && !Array.isArray(log.transaction)
+      ? { transaction: compactTronTransactions([log.transaction])[0] }
+      : {}),
+  }))
+}
+
+/**
+ * Summarize EVM traces: types, call kinds, failures, value moved, top callers and callees.
+ */
+export function summarizeTraces(traces: any[]): any {
+  if (traces.length === 0) return { count: 0, summary: 'No traces found' }
+  const byType = new Map<string, number>()
+  const byCallType = new Map<string, number>()
+  const byCaller = new Map<string, number>()
+  const byCallee = new Map<string, number>()
+  const bySighash = new Map<string, number>()
+  const transactions = new Set<string>()
+  let failed = 0
+  let wei = 0n
+  for (const trace of traces) {
+    const type = typeof trace.type === 'string' ? trace.type : 'unknown'
+    byType.set(type, (byType.get(type) || 0) + 1)
+    if (typeof trace.call_type === 'string') byCallType.set(trace.call_type, (byCallType.get(trace.call_type) || 0) + 1)
+    if (typeof trace.sender === 'string') byCaller.set(trace.sender, (byCaller.get(trace.sender) || 0) + 1)
+    if (typeof trace.recipient === 'string') byCallee.set(trace.recipient, (byCallee.get(trace.recipient) || 0) + 1)
+    if (typeof trace.call_sighash === 'string')
+      bySighash.set(trace.call_sighash, (bySighash.get(trace.call_sighash) || 0) + 1)
+    if (typeof trace.tx_hash === 'string') transactions.add(trace.tx_hash)
+    if (trace.success === false) failed += 1
+    const value = trace.call_value ?? trace.create_value ?? trace.reward_value ?? trace.suicide_balance
+    if (typeof value === 'string' && /^0x[0-9a-fA-F]+$/.test(value)) wei += BigInt(value)
+  }
+  const eth = (value: bigint) => {
+    const whole = value / 1_000_000_000_000_000_000n
+    const fraction = (value % 1_000_000_000_000_000_000n).toString().padStart(18, '0').replace(/0+$/, '')
+    return `${whole}${fraction ? `.${fraction}` : ''}`
+  }
+  const rank = (map: Map<string, number>, key: string) =>
+    Array.from(map.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5)
+      .map(([value, count]) => ({ [key]: value, count }))
+  const blocks = traces.map((t) => getBlockNumber(t)).filter(isNumber)
+  return {
+    total_traces: traces.length,
+    unique_transactions: transactions.size,
+    type_breakdown: Object.fromEntries(byType),
+    call_type_breakdown: Object.fromEntries(byCallType),
+    failed_traces: failed,
+    total_value_eth: eth(wei),
+    top_callers: rank(byCaller, 'address'),
+    top_callees: rank(byCallee, 'address'),
+    top_sighashes: rank(bySighash, 'sighash'),
+    block_range: blocks.length > 0 ? { from: Math.min(...blocks), to: Math.max(...blocks) } : undefined,
+  }
+}
+
+export function compactTraces(traces: any[]): any[] {
+  return traces.map((trace) => ({
+    ...pickCommonAliases(trace),
+    type: trace.type,
+    trace_address: trace.trace_address,
+    transactionIndex: trace.transactionIndex,
+    subtraces: trace.subtraces,
+    ...(trace.call_type !== undefined ? { call_type: trace.call_type } : {}),
+    ...(trace.call_sighash !== undefined ? { call_sighash: trace.call_sighash } : {}),
+    ...(trace.value_eth !== undefined ? { value_eth: trace.value_eth } : {}),
+    ...(trace.created_contract_address !== undefined
+      ? { created_contract_address: trace.created_contract_address }
+      : {}),
+    ...(trace.suicide_address !== undefined
+      ? { suicide_address: trace.suicide_address, refund_address: trace.refund_address }
+      : {}),
+    ...(trace.reward_type !== undefined ? { reward_type: trace.reward_type } : {}),
+    ...(trace.gas_used !== undefined ? { gas_used: trace.gas_used } : {}),
+    ...(trace.success !== undefined ? { success: trace.success } : {}),
+    ...(trace.error ? { error: trace.error } : {}),
+    ...(trace.transaction && typeof trace.transaction === 'object' && !Array.isArray(trace.transaction)
+      ? { transaction: compactTransactions([trace.transaction])[0] }
+      : {}),
+  }))
+}
+
+/**
  * Apply response format to data
  */
 export function applyResponseFormat(
   data: any,
   format: ResponseFormat,
-  dataType: 'logs' | 'transactions' | 'bitcoin_transactions' | 'bitcoin_inputs' | 'bitcoin_outputs' | 'hyperliquid_fills' | 'solana_transactions' | 'substrate_events' | 'substrate_calls',
+  dataType:
+    | 'logs'
+    | 'transactions'
+    | 'bitcoin_transactions'
+    | 'bitcoin_inputs'
+    | 'bitcoin_outputs'
+    | 'hyperliquid_fills'
+    | 'solana_transactions'
+    | 'substrate_events'
+    | 'substrate_calls'
+    | 'tron_transactions'
+    | 'tron_logs'
+    | 'traces',
 ): any {
   if (format === 'full' || !Array.isArray(data)) {
     return data
@@ -656,31 +877,63 @@ export function applyResponseFormat(
 
   if (format === 'summary') {
     switch (dataType) {
-      case 'logs': return summarizeLogs(data)
-      case 'transactions': return summarizeTransactions(data)
-      case 'bitcoin_transactions': return summarizeBitcoinTransactions(data)
-      case 'bitcoin_inputs': return summarizeBitcoinInputs(data)
-      case 'bitcoin_outputs': return summarizeBitcoinOutputs(data)
-      case 'hyperliquid_fills': return summarizeHyperliquidFills(data)
-      case 'solana_transactions': return summarizeSolanaTransactions(data)
-      case 'substrate_events': return summarizeSubstrateEvents(data)
-      case 'substrate_calls': return summarizeSubstrateCalls(data)
-      default: return data
+      case 'logs':
+        return summarizeLogs(data)
+      case 'transactions':
+        return summarizeTransactions(data)
+      case 'bitcoin_transactions':
+        return summarizeBitcoinTransactions(data)
+      case 'bitcoin_inputs':
+        return summarizeBitcoinInputs(data)
+      case 'bitcoin_outputs':
+        return summarizeBitcoinOutputs(data)
+      case 'hyperliquid_fills':
+        return summarizeHyperliquidFills(data)
+      case 'solana_transactions':
+        return summarizeSolanaTransactions(data)
+      case 'substrate_events':
+        return summarizeSubstrateEvents(data)
+      case 'substrate_calls':
+        return summarizeSubstrateCalls(data)
+      case 'tron_transactions':
+        return summarizeTronTransactions(data)
+      case 'tron_logs':
+        return summarizeTronLogs(data)
+      case 'traces':
+        return summarizeTraces(data)
+      default:
+        return data
     }
   }
 
   if (format === 'compact') {
     switch (dataType) {
-      case 'logs': return compactLogs(data)
-      case 'transactions': return compactTransactions(data)
-      case 'bitcoin_transactions': return compactBitcoinTransactions(data)
-      case 'bitcoin_inputs': return compactBitcoinInputs(data)
-      case 'bitcoin_outputs': return compactBitcoinOutputs(data)
-      case 'hyperliquid_fills': return compactHyperliquidFills(data)
-      case 'solana_transactions': return compactSolanaTransactions(data)
-      case 'substrate_events': return compactSubstrateEvents(data)
-      case 'substrate_calls': return compactSubstrateCalls(data)
-      default: return data
+      case 'logs':
+        return compactLogs(data)
+      case 'transactions':
+        return compactTransactions(data)
+      case 'bitcoin_transactions':
+        return compactBitcoinTransactions(data)
+      case 'bitcoin_inputs':
+        return compactBitcoinInputs(data)
+      case 'bitcoin_outputs':
+        return compactBitcoinOutputs(data)
+      case 'hyperliquid_fills':
+        return compactHyperliquidFills(data)
+      case 'solana_transactions':
+        return compactSolanaTransactions(data)
+      case 'substrate_events':
+        return compactSubstrateEvents(data)
+      case 'substrate_calls':
+        return compactSubstrateCalls(data)
+      case 'tron_transactions':
+        return compactTronTransactions(data)
+      case 'tron_logs':
+        return compactTronLogs(data)
+      case 'traces':
+        return compactTraces(data)
+      default:
+        return data
     }
   }
 

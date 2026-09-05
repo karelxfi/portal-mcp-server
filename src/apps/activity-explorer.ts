@@ -2,6 +2,7 @@ import { AsyncLocalStorage } from 'node:async_hooks'
 
 import { CLIENT_CAPABILITIES_META_KEY, type McpServer } from '@modelcontextprotocol/server'
 
+import { LOGO_ORIGINS } from '../app-ui/chains.generated.js'
 import { ACTIVITY_EXPLORER_HTML } from '../generated/activity-explorer.generated.js'
 import { ACTIVITY_EXPLORER_BYTES, ACTIVITY_EXPLORER_HASH } from '../generated/activity-explorer.version.js'
 import { appRenderPayloadBytes, appResourceReadsTotal, appResourceSizeBytes, appToolResultsTotal } from '../metrics.js'
@@ -141,13 +142,15 @@ export function recordActivityExplorerResult(params: {
   appRenderPayloadBytes.observe({ tool: params.toolName, transport: params.transport }, bytes)
 }
 
+/* Chain logos come from SQD's own CDN and site; nothing else loads. The
+   generated chain map is filtered to these origins, and both CSP
+   declarations name the same list. */
 const resourceUiMeta = {
   csp: {
     connectDomains: [] as string[],
-    resourceDomains: [] as string[],
+    resourceDomains: [...LOGO_ORIGINS],
   },
   domain: 'https://portal.sqd.dev',
-  prefersBorder: true,
 }
 
 export function registerActivityExplorerResource(server: McpServer, runtime: RuntimeRequestContext) {
@@ -164,7 +167,7 @@ export function registerActivityExplorerResource(server: McpServer, runtime: Run
         title: 'SQD Explorer',
         description:
           index === 0
-            ? 'Interactive evidence views for blockchain activity, wallets, contracts, token flows, markets, and network analytics.'
+            ? 'Beta. Interactive evidence views for blockchain activity, wallets, contracts, token flows, markets, and network analytics. Opt in per deployment with MCP_APP_ENABLED=true or per connection with ?app=1; ?app=0 opts a connection out.'
             : 'Retained SQD Explorer URI for installed-client compatibility.',
         mimeType: MCP_APP_MIME_TYPE,
         cacheHint: { ttlMs: 86_400_000, cacheScope: 'public' },
@@ -182,8 +185,7 @@ export function registerActivityExplorerResource(server: McpServer, runtime: Run
                 ui: resourceUiMeta,
                 'openai/widgetDescription':
                   'Explore the exact blockchain evidence returned by SQD with charts, metrics, tables, timelines, coverage, freshness, and continuation controls.',
-                'openai/widgetPrefersBorder': true,
-                'openai/widgetCSP': { connect_domains: [], resource_domains: [] },
+                'openai/widgetCSP': { connect_domains: [], resource_domains: [...LOGO_ORIGINS] },
                 'openai/widgetDomain': 'https://portal.sqd.dev',
               },
             },

@@ -1,12 +1,25 @@
 import { Buffer } from 'node:buffer'
-import { createHmac, timingSafeEqual } from 'node:crypto'
+import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
 
 import { ActionableError } from './errors.js'
 
 const CURSOR_VERSION = 1
-// Production deployments should set MCP_CURSOR_SECRET. The fallback is
-// deterministic only so local dev/tests can continue cursors across restarts.
-const LOCAL_DEV_CURSOR_SECRET = 'sqd-portal-mcp-local-dev-cursor-secret-v1'
+/*
+ * Cursors are signed so a caller cannot hand back a window the tool would
+ * never have offered. The fallback used to be a constant in this file, which
+ * is to say a signing key published with the source: an auditor forged a
+ * cursor against a default deployment and the server ran the window they
+ * chose, past the limits the schema enforces on a first request.
+ *
+ * The fallback is now random per process. Nothing can be forged without the
+ * key, and the cost is that a cursor stops working when the process restarts
+ * or the request lands on another instance. That is a real cost, and it is the
+ * reason `MCP_CURSOR_SECRET` exists: any deployment running more than one
+ * process should set it, and the HTTP entry point says so at startup when it
+ * is missing. A cursor that expires early is a retry; a cursor anyone can mint
+ * is not.
+ */
+const PROCESS_CURSOR_SECRET = randomBytes(32).toString('base64url')
 
 type CursorPayload = {
   version?: number
@@ -46,9 +59,12 @@ export interface OffsetPageCursor<TRequest extends Record<string, unknown>> {
   offset: number
 }
 
+export function hasConfiguredCursorSecret(env: NodeJS.ProcessEnv = process.env): boolean {
+  return Boolean(env.MCP_CURSOR_SECRET?.trim())
+}
+
 function getCursorSecret(): string {
-  const configured = process.env.MCP_CURSOR_SECRET?.trim()
-  return configured || LOCAL_DEV_CURSOR_SECRET
+  return process.env.MCP_CURSOR_SECRET?.trim() || PROCESS_CURSOR_SECRET
 }
 
 function signCursorPayload(payload: string): string {
@@ -157,11 +173,15 @@ export function decodeCursor<T extends CursorPayload>(cursor: string, expectedTo
     return parsed
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error)
-    throw new ActionableError('Invalid pagination cursor.', [
-      'Use the exact next_cursor value from the previous response.',
-      'Do not edit or truncate the cursor string.',
-      'Start a fresh query without cursor if you want a new preview window.',
-    ], { expected_tool: expectedTool, detail })
+    throw new ActionableError(
+      'Invalid pagination cursor.',
+      [
+        'Use the exact next_cursor value from the previous response.',
+        'Do not edit or truncate the cursor string.',
+        'Start a fresh query without cursor if you want a new preview window.',
+      ],
+      { expected_tool: expectedTool, detail },
+    )
   }
 }
 
@@ -239,11 +259,21 @@ export function paginateAscendingItems<T>(
   }
 }
 
+/**
+ * has_more answers one question: can the next page be requested with
+ * next_cursor. It is derived from the cursor by construction. A response that
+ * knows more rows exist but cannot hand out a cursor for them says so in
+ * _coverage (result_complete false, continuation 'none') and its answer names
+ * the remedy. Setting has_more without a cursor produced pages that told the
+ * caller to page forward beside a continuation of 'none'.
+ */
 export function buildPaginationInfo(
   pageSize: number,
   returned: number,
   nextCursor?: string,
-  options?: { continuationScope?: 'remaining_results' | 'adjacent_window' },
+  options?: {
+    continuationScope?: 'remaining_results' | 'adjacent_window'
+  },
 ): PaginationInfo {
   return {
     type: 'cursor',
@@ -268,6 +298,43 @@ export function encodeRecentPageCursor<TRequest extends Record<string, unknown>>
   params: RecentPageCursor<TRequest>,
 ): string {
   return encodeCursor(params)
+}
+
+/**
+ * Page a forward (oldest-first) scan by offset. Such a scan collects the
+ * oldest rows of the window from its start, so its continuation cannot be a
+ * block boundary the way a backward scan's is: the next page is "skip what was
+ * already shown", and the cursor carries that count with the window end as its
+ * page_to_block. The follow-up call re-scans from the window start past the
+ * offset, which is what makes the cursor exact rather than a guess.
+ */
+export function paginateForwardItems<T>(
+  items: T[],
+  limit: number,
+  offset: number,
+  windowToBlock: number,
+): {
+  pageItems: T[]
+  hasMore: boolean
+  nextBoundary?: BlockBoundaryCursor
+} {
+  const skip = Math.max(0, Math.floor(offset))
+  const pageItems = items.slice(skip, skip + limit)
+  const hasMore = items.length > skip + limit
+  return {
+    pageItems,
+    hasMore,
+    ...(hasMore
+      ? { nextBoundary: { page_to_block: windowToBlock, skip_inclusive_block: skip + pageItems.length } }
+      : {}),
+  }
+}
+
+/** A backward scan's cursor leads to older rows; a forward scan's leads to newer ones. */
+export function buildCursorDirectionNotice(scanOrder: 'earliest' | 'latest'): string {
+  return scanOrder === 'earliest'
+    ? 'Newer results are available via _pagination.next_cursor.'
+    : 'Older results are available via _pagination.next_cursor.'
 }
 
 export function paginateOffsetItems<T>(

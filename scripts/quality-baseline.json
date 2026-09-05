@@ -1,0 +1,201 @@
+{
+  "version": "0.8.4",
+  "captured_at": "2026-09-02T19:34:26.675Z",
+  "note": "Measured on the v0.8.5 branch across all 31 tools, including portal_evm_query_traces. The previous snapshot was captured at v0.7.9 and no longer matched the indexed network list, Solana instruction rows, or the time-to-block resolver.",
+  "passes": ["cold", "warm"],
+  "sample_count": 62,
+  "aggregate": {
+    "median_chars": 10861,
+    "p90_chars": 22090,
+    "max_median_chars": 11947,
+    "max_p90_chars": 24299
+  },
+  "tools": {
+    "portal_bitcoin_get_analytics": {
+      "median_chars": 6067,
+      "p95_chars": 6067,
+      "max_median_chars": 6674,
+      "max_p95_chars": 6674
+    },
+    "portal_bitcoin_query_transactions": {
+      "median_chars": 10637,
+      "p95_chars": 10655,
+      "max_median_chars": 11701,
+      "max_p95_chars": 11721
+    },
+    "portal_debug_hyperliquid_query_replica_commands": {
+      "median_chars": 9152,
+      "p95_chars": 9152,
+      "max_median_chars": 10067,
+      "max_p95_chars": 10067
+    },
+    "portal_debug_query_blocks": {
+      "median_chars": 7900,
+      "p95_chars": 7902,
+      "max_median_chars": 8690,
+      "max_p95_chars": 8692
+    },
+    "portal_debug_resolve_time_to_block": {
+      "median_chars": 4023,
+      "p95_chars": 4023,
+      "max_median_chars": 4425,
+      "max_p95_chars": 4425
+    },
+    "portal_evm_get_analytics": {
+      "median_chars": 13287,
+      "p95_chars": 13293,
+      "max_median_chars": 14616,
+      "max_p95_chars": 14622
+    },
+    "portal_evm_get_contract_activity": {
+      "median_chars": 5764,
+      "p95_chars": 5764,
+      "max_median_chars": 6340,
+      "max_p95_chars": 6340
+    },
+    "portal_evm_get_contract_deployment": {
+      "median_chars": 5997,
+      "p95_chars": 5998,
+      "max_median_chars": 6597,
+      "max_p95_chars": 6598
+    },
+    "portal_evm_get_ohlc": {
+      "median_chars": 26517,
+      "p95_chars": 26517,
+      "max_median_chars": 29169,
+      "max_p95_chars": 29169
+    },
+    "portal_evm_query_logs": {
+      "median_chars": 11094,
+      "p95_chars": 11095,
+      "max_median_chars": 12203,
+      "max_p95_chars": 12205
+    },
+    "portal_evm_query_token_transfers": {
+      "median_chars": 11682,
+      "p95_chars": 11683,
+      "max_median_chars": 12850,
+      "max_p95_chars": 12851
+    },
+    "portal_evm_query_traces": {
+      "median_chars": 19463,
+      "p95_chars": 19463,
+      "max_median_chars": 21409,
+      "max_p95_chars": 21409
+    },
+    "portal_evm_query_transactions": {
+      "median_chars": 11359,
+      "p95_chars": 11360,
+      "max_median_chars": 12495,
+      "max_p95_chars": 12496
+    },
+    "portal_get_head": {
+      "median_chars": 2758,
+      "p95_chars": 2758,
+      "max_median_chars": 3034,
+      "max_p95_chars": 3034
+    },
+    "portal_get_network_info": {
+      "median_chars": 3885,
+      "p95_chars": 3885,
+      "max_median_chars": 4274,
+      "max_p95_chars": 4274
+    },
+    "portal_get_recent_activity": {
+      "median_chars": 10861,
+      "p95_chars": 10876,
+      "max_median_chars": 11947,
+      "max_p95_chars": 11964
+    },
+    "portal_get_time_series": {
+      "median_chars": 14290,
+      "p95_chars": 14293,
+      "max_median_chars": 15719,
+      "max_p95_chars": 15722
+    },
+    "portal_get_wallet_summary": {
+      "median_chars": 22089,
+      "p95_chars": 22090,
+      "max_median_chars": 24298,
+      "max_p95_chars": 24299
+    },
+    "portal_hyperliquid_get_analytics": {
+      "median_chars": 23804,
+      "p95_chars": 23857,
+      "max_median_chars": 26184,
+      "max_p95_chars": 26243
+    },
+    "portal_hyperliquid_get_ohlc": {
+      "median_chars": 18350,
+      "p95_chars": 18350,
+      "max_median_chars": 20185,
+      "max_p95_chars": 20185
+    },
+    "portal_hyperliquid_query_fills": {
+      "median_chars": 17980,
+      "p95_chars": 17980,
+      "max_median_chars": 19778,
+      "max_p95_chars": 19778
+    },
+    "portal_list_networks": {
+      "median_chars": 6142,
+      "p95_chars": 6142,
+      "max_median_chars": 6756,
+      "max_p95_chars": 6756
+    },
+    "portal_resolve_entity": {
+      "median_chars": 4120,
+      "p95_chars": 4120,
+      "max_median_chars": 4532,
+      "max_p95_chars": 4532
+    },
+    "portal_solana_get_analytics": {
+      "median_chars": 6242,
+      "p95_chars": 6548,
+      "max_median_chars": 6866,
+      "max_p95_chars": 7203
+    },
+    "portal_solana_query_instructions": {
+      "median_chars": 8976,
+      "p95_chars": 8978,
+      "max_median_chars": 9874,
+      "max_p95_chars": 9876
+    },
+    "portal_solana_query_transactions": {
+      "median_chars": 11182,
+      "p95_chars": 11182,
+      "max_median_chars": 12300,
+      "max_p95_chars": 12300
+    },
+    "portal_substrate_get_analytics": {
+      "median_chars": 8535,
+      "p95_chars": 8535,
+      "max_median_chars": 9389,
+      "max_p95_chars": 9389
+    },
+    "portal_substrate_query_calls": {
+      "median_chars": 27621,
+      "p95_chars": 27621,
+      "max_median_chars": 30383,
+      "max_p95_chars": 30383
+    },
+    "portal_substrate_query_events": {
+      "median_chars": 10088,
+      "p95_chars": 10088,
+      "max_median_chars": 11097,
+      "max_p95_chars": 11097
+    },
+    "portal_tron_query_logs": {
+      "median_chars": 12249,
+      "p95_chars": 12249,
+      "max_median_chars": 13474,
+      "max_p95_chars": 13474
+    },
+    "portal_tron_query_transactions": {
+      "median_chars": 11109,
+      "p95_chars": 11109,
+      "max_median_chars": 12220,
+      "max_p95_chars": 12220
+    }
+  }
+}

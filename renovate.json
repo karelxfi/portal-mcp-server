@@ -1,0 +1,8 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended", ":pinGitHubActionDigests", "helpers:pinGitHubActionDigestsToSemver"],
+  "enabledManagers": ["github-actions"],
+  "labels": ["dependencies", "github-actions"],
+  "schedule": ["before 6am on monday"],
+  "prConcurrentLimit": 3
+}

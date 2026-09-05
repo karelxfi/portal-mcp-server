@@ -47,9 +47,15 @@ function validateMetadata() {
     server.remotes?.some((remote) => remote.url === SERVER_URL),
     'server.json must publish the hosted MCP URL',
   )
-  assert(/130\+ SQD Portal datasets/.test(server.description), 'server.json description must state the conservative dataset coverage')
+  assert(
+    /130\+ SQD Portal datasets/.test(server.description),
+    'server.json description must state the conservative dataset coverage',
+  )
   assert(/Tron/.test(server.description), 'server.json description must include Tron')
-  assert(/heads and timestamps/.test(server.description), 'server.json must describe the bounded Tron MCP capability')
+  assert(
+    /Tron (?:transactions|records|activity)/.test(server.description),
+    'server.json must describe the native Tron query capability',
+  )
   assert(!/[\u2013\u2014]/.test(server.description), 'server.json description must not use en or em dashes')
 
   for (const [name, manifest] of [
@@ -69,10 +75,11 @@ function validateMetadata() {
     'default-branch Docker builds must not overwrite an immutable semantic-version image tag',
   )
   assert(
-    dockerWorkflow.includes('type=raw,value=latest,enable={{is_default_branch}}') &&
+    dockerWorkflow.includes('type=raw,value=edge,enable={{is_default_branch}}') &&
+      dockerWorkflow.includes("type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}") &&
       dockerWorkflow.includes('type=semver,pattern={{version}}') &&
       dockerWorkflow.includes('type=sha'),
-    'Docker builds must keep latest for main, semantic versions for release tags, and immutable SHA tags',
+    'Docker builds must publish edge for main, latest only for release tags, semantic versions, and immutable SHA tags',
   )
 
   assert(targets.repository === REPOSITORY, 'distribution repository must use the canonical GitHub URL')
@@ -86,6 +93,7 @@ function validateMetadata() {
     'cursor-marketplace',
     'official-mcp-registry',
     'gemini-cli',
+    'claude-desktop-bundle',
     'glama',
     'awesome-mcp-servers',
     'smithery',
@@ -109,8 +117,8 @@ function validateMetadata() {
     assert(/Hyperliquid/.test(packet?.description ?? ''), `${targetId} submission must mention Hyperliquid`)
     assert(/Tron/.test(packet?.description ?? ''), `${targetId} submission must mention Tron`)
     assert(
-      /Tron dataset heads and timestamps|Tron datasets and resolve their heads and timestamps/.test(packet?.description ?? ''),
-      `${targetId} submission must describe the bounded Tron MCP capability`,
+      /(?:and|,) Tron (?:records|activity)/.test(packet?.description ?? ''),
+      `${targetId} submission must list Tron with the other queryable networks`,
     )
     assert(
       !/[\u2013\u2014]/.test(`${packet?.tagline} ${packet?.description}`),
@@ -120,6 +128,118 @@ function validateMetadata() {
 
   if (errors.length > 0) fail(errors.join('\n'))
   return { version: packageJson.version, targets }
+}
+
+/*
+ * The Docker image runs `npm run build`, and .dockerignore excludes scripts/*
+ * with an allowlist of the ones the build needs. An allowlist is silent when it
+ * is short by one file: the bundler gained zod-locale-plugin.mjs, the list did
+ * not, and the image build broke with ERR_MODULE_NOT_FOUND while the offline
+ * gate stayed green, because nothing else builds the image. This follows the
+ * relative imports out of the build entry points and fails on the first one the
+ * image would not receive.
+ */
+function checkDockerBuildInputs() {
+  const dockerignore = readFileSync('.dockerignore', 'utf8')
+  const allowed = new Set(
+    dockerignore
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line.startsWith('!'))
+      .map((line) => line.slice(1)),
+  )
+  /* `build` is mostly `npm run <other>`, so the script names have to be
+     followed before any file path shows up. */
+  const scripts = readJson('package.json').scripts
+  const entries = []
+  const visitedScripts = new Set()
+  const scriptQueue = ['build']
+  while (scriptQueue.length > 0) {
+    const name = scriptQueue.shift()
+    if (visitedScripts.has(name) || scripts[name] === undefined) continue
+    visitedScripts.add(name)
+    const body = scripts[name]
+    entries.push(...[...body.matchAll(/scripts\/[A-Za-z0-9._-]+\.mjs/g)].map((match) => match[0]))
+    scriptQueue.push(...[...body.matchAll(/npm run (?:--silent )?([A-Za-z0-9:_-]+)/g)].map((match) => match[1]))
+  }
+
+  const errors = []
+  const seen = new Set()
+  const queue = [...new Set(entries)]
+  while (queue.length > 0) {
+    const path = queue.shift()
+    if (seen.has(path)) continue
+    seen.add(path)
+    if (!allowed.has(path)) {
+      errors.push(`${path} is reachable from npm run build but .dockerignore does not let it into the image`)
+      continue
+    }
+    let source
+    try {
+      source = readFileSync(path, 'utf8')
+    } catch {
+      errors.push(`${path} is reachable from npm run build but does not exist`)
+      continue
+    }
+    for (const match of source.matchAll(/from '(\.\/[A-Za-z0-9._-]+\.mjs)'/g)) {
+      queue.push(`scripts/${match[1].slice(2)}`)
+    }
+  }
+
+  if (errors.length > 0) fail(`Docker build inputs:\n  - ${errors.join('\n  - ')}`)
+  return result('docker-build-inputs', 'pass', `${seen.size} build scripts are all copied into the image`)
+}
+
+/*
+ * The offline gate is the required check and runs inside the pinned Playwright
+ * image, which is not a full developer machine: it carries no `zip` and no
+ * `unzip`. Two scripts shelled out to them, so packaging and unpacking the
+ * MCPB bundle failed there while every local run passed, and each one only
+ * surfaced on its own CI round trip. Anything the gate reaches may use node
+ * and npm and nothing else; where a task looks like it needs a system tool,
+ * there is usually a library or CLI already in devDependencies that does it
+ * (the MCPB CLI packs and unpacks its own format).
+ */
+const OFFLINE_GATE_BINARIES = new Set(['node', 'npm', 'npx'])
+
+function checkOfflineGateBinaries() {
+  const scripts = readJson('package.json').scripts
+  const bodies = []
+  const visited = new Set()
+  const queue = ['test:offline']
+  while (queue.length > 0) {
+    const name = queue.shift()
+    if (visited.has(name) || scripts[name] === undefined) continue
+    visited.add(name)
+    const body = scripts[name]
+    bodies.push(body)
+    queue.push(...[...body.matchAll(/npm run (?:--silent )?([A-Za-z0-9:_-]+)/g)].map((match) => match[1]))
+    /* A `pre<name>` script runs on its own and is easy to forget. */
+    queue.push(`pre${name.replace(/:/g, ':')}`)
+  }
+
+  const files = new Set()
+  for (const body of bodies) {
+    for (const match of body.matchAll(/scripts\/[A-Za-z0-9._-]+\.(?:mjs|ts)/g)) files.add(match[0])
+  }
+
+  const errors = []
+  for (const file of [...files].sort()) {
+    let source
+    try {
+      source = readFileSync(file, 'utf8')
+    } catch {
+      continue
+    }
+    for (const match of source.matchAll(/(?:spawnSync|execFileSync|execSync|spawn)\(\s*'([a-z][a-z0-9._-]*)'/g)) {
+      if (!OFFLINE_GATE_BINARIES.has(match[1])) {
+        errors.push(`${file} runs the system binary '${match[1]}'; the offline gate's container has node and npm only`)
+      }
+    }
+  }
+
+  if (errors.length > 0) fail(`Offline gate binaries:\n  - ${errors.join('\n  - ')}`)
+  return result('offline-gate-binaries', 'pass', `${files.size} gate scripts shell out to node and npm only`)
 }
 
 async function fetchText(url) {
@@ -186,6 +306,18 @@ async function checkGeminiPrerequisites(version) {
   return result('Gemini discovery prerequisites', 'pass', `topic and v${version} release archive are present`)
 }
 
+async function checkMcpbAsset(version) {
+  const release = JSON.parse(
+    await fetchText(`https://api.github.com/repos/subsquid-labs/portal-mcp-server/releases/tags/v${version}`),
+  )
+  const asset = release.assets?.find((entry) => entry.name === 'sqd.mcpb')
+  if (!asset) return result('Claude Desktop MCP Bundle', 'fail', `release v${version} is missing sqd.mcpb`)
+  if (asset.size > 15 * 1024 * 1024) {
+    return result('Claude Desktop MCP Bundle', 'fail', `sqd.mcpb is ${asset.size} bytes, above the 15 MB budget`)
+  }
+  return result('Claude Desktop MCP Bundle', 'pass', `v${version} release carries sqd.mcpb (${asset.size} bytes)`)
+}
+
 async function checkGlama(version) {
   const body = await fetchText('https://glama.ai/mcp/servers/subsquid-labs/portal-mcp-server')
   if (body.includes('Unclaimed servers have limited discoverability.')) {
@@ -211,15 +343,27 @@ async function checkAwesomeList() {
   return result('Awesome MCP Servers', 'pass', 'canonical repository is listed')
 }
 
+/* The listing page is rendered in the browser, so the check reads the
+   registry API. Smithery fronts the server with its own remote URL. */
 async function checkSmithery() {
-  const body = await fetchText('https://smithery.ai/servers/sqd/sqd')
-  if (!body.includes('Connect AI agents to live blockchain data across 130+ networks')) {
-    return result('Smithery', 'fail', 'official listing metadata is missing')
+  const body = await fetchText('https://registry.smithery.ai/servers/sqd/sqd')
+  const listing = JSON.parse(body)
+  if (listing.qualifiedName !== 'sqd/sqd' || listing.displayName !== 'SQD') {
+    return result('Smithery', 'fail', 'official sqd/sqd listing metadata is missing')
   }
-  if (!body.includes(SERVER_URL)) {
-    return result('Smithery', 'fail', 'hosted MCP endpoint is missing')
+  if (!/SQD Portal/.test(listing.description ?? '') || !/blockchain/i.test(listing.description ?? '')) {
+    return result('Smithery', 'fail', 'listing description no longer names SQD Portal blockchain data')
   }
-  return result('Smithery', 'pass', 'official sqd/sqd listing is live')
+  const remote = listing.remote === true && (listing.connections ?? []).some((connection) => connection.type === 'http')
+  if (!remote) return result('Smithery', 'fail', 'hosted MCP connection is missing')
+  if (!Array.isArray(listing.tools) || listing.tools.length < 20) {
+    return result(
+      'Smithery',
+      'fail',
+      `listing exposes ${listing.tools?.length ?? 0} tools, expected the public catalog`,
+    )
+  }
+  return result('Smithery', 'pass', `official sqd/sqd listing is live with ${listing.tools.length} tools`)
 }
 
 async function checkGrokPullRequest() {
@@ -237,6 +381,7 @@ async function runLiveChecks(version) {
     ['Official MCP Registry', () => checkRegistry(version)],
     ['Gemini discovery prerequisites', () => checkGeminiPrerequisites(version)],
     ['Gemini CLI Extension Gallery', () => checkGemini(version)],
+    ['Claude Desktop MCP Bundle', () => checkMcpbAsset(version)],
     ['Glama', () => checkGlama(version)],
     ['Awesome MCP Servers', checkAwesomeList],
     ['Smithery', checkSmithery],
@@ -260,9 +405,11 @@ function renderMarkdown(version, results) {
 }
 
 const { version } = validateMetadata()
+const dockerInputs = checkDockerBuildInputs()
+const gateBinaries = checkOfflineGateBinaries()
 const results = LIVE
-  ? await runLiveChecks(version)
-  : [result('Distribution metadata', 'pass', `all manifests match version ${version}`)]
+  ? [dockerInputs, gateBinaries, ...(await runLiveChecks(version))]
+  : [result('Distribution metadata', 'pass', `all manifests match version ${version}`), dockerInputs, gateBinaries]
 const report = {
   checkedAt: new Date().toISOString(),
   expectedVersion: version,
@@ -273,5 +420,12 @@ const report = {
 if (outputPath) writeFileSync(outputPath, `${JSON.stringify(report, null, 2)}\n`)
 if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, renderMarkdown(version, results))
 
+/* pending means a review queue or an open marketplace pull request; it is
+   reported but only a failed required target turns the run red. */
+const required = new Set(
+  readJson('distribution/targets.json')
+    .targets.filter((target) => target.required !== false)
+    .map((target) => target.name),
+)
 for (const entry of results) console.log(`${entry.status.toUpperCase()} ${entry.target}: ${entry.detail}`)
-if (results.some((entry) => entry.status === 'fail')) process.exitCode = 1
+if (results.some((entry) => entry.status === 'fail' && required.has(entry.target))) process.exitCode = 1

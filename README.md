@@ -2,17 +2,19 @@
 
 [![SQD Portal MCP server](https://glama.ai/mcp/servers/subsquid-labs/portal-mcp-server/badges/score.svg)](https://glama.ai/mcp/servers/subsquid-labs/portal-mcp-server)
 
-Thin MCP wrapper around the [SQD Portal API](https://portal.sqd.dev) for blockchain data queries.
+An MCP server that answers blockchain questions from [SQD Portal](https://portal.sqd.dev) data: transactions, logs, token transfers, wallets, analytics, time series, and candles across EVM, Solana, Bitcoin, Substrate, and Hyperliquid networks, with an optional in-host Explorer.
 
-This server does not index chains itself. It validates user input, maps it onto Portal requests, and returns MCP-friendly responses.
+The server does not index chains itself. It validates input, plans bounded Portal queries, and returns results with coverage, freshness, pagination, and evidence metadata so an assistant can say exactly what it saw. See `CONTRIBUTING.md` to work on it and `SECURITY.md` to report a vulnerability.
 
-The current v0.8.4 release supports the stateless MCP `2026-07-28` protocol over HTTP and stdio, while retaining the SDK-managed legacy negotiation path for clients still rolling out the revision. No SQD account, API key, or client credential is required.
+The current v0.8.5 release supports the stateless MCP `2026-07-28` protocol over HTTP and stdio, while retaining the SDK-managed legacy negotiation path for clients still rolling out the revision. No SQD account, API key, or client credential is required.
 
-v0.8.4 makes factual completeness a release gate. It verifies requested and actual time bounds, stable row identities, exact page continuation, wallet membership, Bitcoin units, transaction and candle totals, input validation, and response budgets against direct Portal evidence across EVM, Solana, Bitcoin, Substrate, Hyperliquid, and applicable Tron metadata paths. Tool results expose the exact `_server.version`. The SQD Explorer uses the current SQD Design System, retains cached App URIs from supported releases, preserves exact hashes and tiny decimal amounts across every display and export surface, and adds honest App identity, explicit open-bucket state, safe failed-follow-up states, and client-side paging for large evidence tables.
+Factual completeness is a release gate, carried forward from v0.8.4. It verifies requested and actual time bounds, stable row identities, exact page continuation, wallet membership, Bitcoin units, transaction and candle totals, input validation, and response budgets against direct Portal evidence across EVM, Solana, Bitcoin, Substrate, Hyperliquid, and applicable Tron metadata paths. Tool results expose the exact `_server.version`. The SQD Explorer uses the current SQD Design System, retains cached App URIs from supported releases, preserves exact hashes and tiny decimal amounts across every display and export surface, and adds honest App identity, explicit open-bucket state, safe failed-follow-up states, and client-side paging for large evidence tables.
+
+v0.8.5 ships the SQD Explorer as an opt-in beta that fits its host: the inline card reports its exact height, results lead with their subject and primary number, identifiers link to public explorers, network chips carry SQD chain logos, and every control is verified through the official MCP Apps bridge.
 
 ## Current public surface
 
-- `25` public tools
+- `28` public tools
 - `3` advanced/debug tools
 - public params use `network`
 - discovery filters use `vm`
@@ -42,6 +44,7 @@ Cross-chain convenience:
 EVM:
 - `portal_evm_query_transactions`
 - `portal_evm_query_logs`
+- `portal_evm_query_traces`
 - `portal_evm_query_token_transfers`
 - `portal_evm_get_contract_deployment`
 - `portal_evm_get_contract_activity`
@@ -67,15 +70,21 @@ Hyperliquid:
 - `portal_hyperliquid_get_analytics`
 - `portal_hyperliquid_get_ohlc`
 
+Tron:
+- `portal_tron_query_transactions`
+- `portal_tron_query_logs`
+
 Advanced/debug:
 - `portal_debug_query_blocks`
 - `portal_debug_resolve_time_to_block`
 - `portal_debug_hyperliquid_query_replica_commands`
 
+These groups are also the toolsets (`discovery`, `convenience`, `evm`, `solana`, `bitcoin`, `substrate`, `hyperliquid`, `tron`, `debug`). A deployment can trim the catalog with `MCP_TOOLSETS` or `MCP_TOOLS`, and an HTTP connection can narrow it further with `?toolsets=` or an `X-MCP-Toolsets` header; see the HTTP deployment notes. With nothing configured the full 31-tool surface is served, and the hosted endpoint keeps that default.
+
 ## Supported data
 
 - EVM networks indexed by Portal, including Base, Ethereum, Optimism, Arbitrum, Monad, Hyperliquid EVM, and many others
-- Tron discovery, head, freshness, and timestamp metadata, with native Tron stream queries documented in the bundled SQD plugin skill
+- Tron native transactions (TRX transfers, TRC-10 transfers, contract calls with inline logs and internal transactions) and TVM event logs such as TRC-20 transfers, with Base58 or hex addresses, exact TRX amounts, and the parent transaction hash on every log; the bundled SQD plugin skill documents the raw Stream API for anything beyond that
 - Solana mainnet
 - Bitcoin mainnet
 - Hyperliquid fills and replica commands
@@ -98,7 +107,7 @@ Most tools return the same envelope in MCP `structuredContent` and in a compact 
 
 `investigation` is a compact evidence guide for agents: it identifies the primary result path, bounded window, useful pivot fields such as addresses or transaction hashes, follow-up filters, and limitations before a result is treated as complete. Successful material results also carry an `_evidence` receipt with canonical arguments, a deterministic digest, row reconciliation, source windows, and either exact or semantic replay semantics. Exact receipts pin their evidence window. Semantic receipts disclose that rerunning a moving relative window can return a newer snapshot.
 
-When a response uses estimated, partial, sampled, capped, or paginated data, the top-level answer and metadata disclose it. Safe pagination follow-ups include executable tool-call metadata with explicit cursor arguments; suggestions that cannot be reconstructed safely are marked non-executable.
+When a response uses estimated, partial, sampled, capped, or paginated data, the top-level answer and metadata disclose it. `_pagination.has_more` is true exactly when `next_cursor` is present, and `_coverage` states whether the requested window was read through (`window_complete`) and whether the response holds every matching row (`result_complete`). Safe pagination follow-ups include executable tool-call metadata with explicit cursor arguments; suggestions that cannot be reconstructed safely are marked non-executable.
 
 Chart-oriented tools also return chart and table descriptors so MCP clients or LLMs can render them without reverse-engineering the payload.
 
@@ -109,7 +118,7 @@ SQD Explorer is in beta and is off by default. A default deployment answers with
 
 The app resource stays registered either way, so a host can read it directly without anyone opting in.
 
-v0.8.4 includes one portable SQD Explorer for 21 data tools. When it is enabled, compatible MCP App hosts receive linked overview, chart, evidence, and investigation sections; exact metrics, multi-series and signed-value charts, right-scaled price candles with linked volume, tables, timelines, coverage, freshness, and continuation controls; range-focused follow-ups; current-session investigation history; and JSON or CSV export of the received evidence. Pointer and keyboard inspection expose exact plotted values. Large received tables page in 20-row views without discarding evidence. Missing buckets remain visible as gaps, identifiers stay unshortened, and any local row cap is separate from server completeness. Failed calls clear stale success data. The app is self-contained, does not use persistent browser storage, and makes no browser-side network requests. Hosts without MCP App support receive the same `structuredContent` and compact JSON text fallback, so the underlying answer never depends on the UI.
+v0.8.5 includes one portable SQD Explorer (beta) for 21 data tools. When it is enabled, compatible MCP App hosts receive an inline card sized to its content and a full-screen workspace: exact metrics led by the primary number, multi-series and signed-value charts, right-scaled price candles with linked volume and a fixed readout, ranked and timeline panels that show ten rows with a Show all control, evidence tables that page ten rows with search across every row, explorer links for addresses, hashes, and blocks, chain logos and names from SQD network metadata, continuation controls, current-session history, and JSON or CSV export through the host. Pointer and keyboard inspection expose exact plotted values. Missing buckets remain visible as gaps, identifiers stay unshortened, and any local row cap is separate from server completeness. Failed follow-ups keep the last good result under the error. The app is self-contained and does not use persistent browser storage; its only browser-side requests are chain logo images from `cdn.subsquid.io` and `sqd.dev`, the two origins declared in the resource CSP. Hosts without MCP App support receive the same `structuredContent` and compact JSON text fallback, so the underlying answer never depends on the UI.
 
 Three MCP prompts provide reproducible starting points without adding tools:
 
@@ -188,7 +197,7 @@ Grok Build reads Claude Code plugins directly, so it uses the same package rathe
 grok plugin install --trust subsquid-labs/portal-mcp-server#plugins/portal
 ```
 
-The v0.8.4 release gate validates the Codex, Claude Code, Grok Build, Gemini CLI, and Cursor packages, then runs the same discovery, prompt, resource, fallback, evidence, continuation, concurrency, and recovery journeys for all five declared client families. It also compares material results with direct Portal evidence and rejects missing or duplicate normalized identities. Real installed-client calls are recorded separately so package validation is never presented as runtime proof.
+The release gate validates the Codex, Claude Code, Grok Build, Gemini CLI, and Cursor packages, then runs the same discovery, prompt, resource, fallback, evidence, continuation, concurrency, and recovery journeys for all five declared client families. It also compares material results with direct Portal evidence and rejects missing or duplicate normalized identities. Real installed-client calls are recorded separately so package validation is never presented as runtime proof.
 
 ## ChatGPT
 
@@ -196,7 +205,9 @@ In a workspace with custom MCP apps enabled, open **Settings → Apps → Create
 
 ## Claude Desktop
 
-Add an entry like this to `claude_desktop_config.json`:
+Download `sqd.mcpb` from the [latest release](https://github.com/subsquid-labs/portal-mcp-server/releases/latest) and open it: Claude Desktop installs the bundle with one click and lists the 31 tools. The bundle carries the server, its production dependencies, and one optional setting, "SQD Explorer (beta)", which is off by default. It needs Node 22 or newer on the machine.
+
+Manual fallback, from a local clone after `npm run build`, add an entry like this to `claude_desktop_config.json`:
 
 ```json
 {
@@ -220,23 +231,133 @@ Add an entry like this to `claude_desktop_config.json`:
 
 ## HTTP Deployment Notes
 
-HTTP mode exposes MCP at `/` and `/mcp`, with local health state at `/health`. The hosted service exposes the same versioned health response at `https://portal.sqd.dev/mcp/health`.
+HTTP mode exposes MCP at `/` and `/mcp`, liveness at `/health`, and readiness at `/ready`. The hosted service exposes the same versioned health response at `https://portal.sqd.dev/mcp/health`.
 
 - MCP and health are public in v0.8.x. User authentication is deferred to a unified `auth.sqd.dev` flow in v0.9.0.
 - Tool and resource discovery use the MCP protocol; retired `/tools` and `/tools.json` routes return `404`.
-- Set `MCP_CURSOR_SECRET` in production so pagination cursors are signed with a deployment-specific secret. Local development uses a deterministic fallback for convenience.
+- Set `MCP_CURSOR_SECRET` on any deployment running more than one process, so a cursor one instance issues is accepted by the next. Unset, each process signs with its own random key, and a cursor stops working across a restart or a load-balanced hop.
+- `/health` reports `version` and `commit`, the git commit the image was built from, and every tool result repeats both in `_server`. Docker Hub tags: `latest`, `X.Y.Z`, and `X.Y` come only from a `v*` release tag; `edge` and `sha-<commit>` come from every `main` push. Pin a version tag in production.
+- `/ready` is `200` only after the dataset catalog has loaded once and the latest Portal probe succeeded within `MCP_READY_MAX_AGE_MS`; otherwise it is `503` with a `reason` and `Retry-After`. Point orchestrator readiness checks at `/ready` and liveness checks at `/health`. The Docker image's `HEALTHCHECK` uses `/ready`.
+- The server binds `127.0.0.1` unless `MCP_BIND` says otherwise, and every route checks the `Host` header (and `Origin`, when a browser sends one) against an allowlist, so a DNS-rebound page cannot reach a local instance. Loopback hosts and origins always pass; requests without `Origin` always pass the origin check. A non-loopback bind must set `MCP_ALLOWED_HOSTS` and `MCP_ALLOWED_ORIGINS`; if either is missing the server logs a startup error and serves without that check. The Docker image sets `MCP_BIND=0.0.0.0`, so set both variables in the deployment, or `*` behind a proxy that already validates them.
+- Every request is bounded: headers within `MCP_HEADERS_TIMEOUT_MS`, the whole request within `MCP_REQUEST_TIMEOUT_MS`, idle keep-alive within `MCP_KEEP_ALIVE_TIMEOUT_MS`, and MCP bodies above `MCP_MAX_BODY_BYTES` are refused with `413` before parsing (`411` for a chunked body with no length).
 
 Useful environment variables:
 
 - `MCP_CURSOR_SECRET` to sign pagination cursors
+- `MCP_TOOLSETS` comma-separated toolsets to serve (`discovery`, `convenience`, `evm`, `solana`, `bitcoin`, `substrate`, `hyperliquid`, `tron`, `debug`; `all` or `default` for everything). Unknown names are ignored with a startup error. Wins over `MCP_TOOLS`. Default: all nine, the full 31-tool catalog.
+- `MCP_TOOLS` comma-separated exact tool names to serve when `MCP_TOOLSETS` is unset.
+- Per connection, `?toolsets=evm` on the endpoint URL or an `X-MCP-Toolsets: evm` header narrows the deployment's set for that connection only; it can never add a toolset. Prompts that reference a tool outside the active set are not offered. The active set is a bounded label (`all`, one toolset name, or `custom`) on `mcp_tool_client_calls_total`.
+- `MCP_BIND` interface to listen on, default `127.0.0.1` (`0.0.0.0` in the Docker image)
+- `MCP_ALLOWED_HOSTS` comma-separated hostnames accepted in `Host` (port ignored) on top of loopback; `*` disables the check. Required for a non-loopback bind.
+- `MCP_ALLOWED_ORIGINS` comma-separated hostnames accepted in `Origin` on top of loopback; `*` disables the check. Required for a non-loopback bind.
+- `MCP_REQUEST_TIMEOUT_MS`, `MCP_HEADERS_TIMEOUT_MS`, `MCP_KEEP_ALIVE_TIMEOUT_MS` request timing bounds, defaults `120000`, `30000`, `65000`
+- `MCP_MAX_BODY_BYTES` MCP request body cap, default `1048576`
+- `MCP_READY_PROBE_INTERVAL_MS` and `MCP_READY_MAX_AGE_MS` readiness probe cadence and freshness, defaults `30000` and `90000`
 - `MCP_APP_ENABLED` to offer the beta SQD Explorer to compatible hosts, default off. Accepts `true` or `1`. Per-connection `?app=1` and `?app=0` override it.
 - `MCP_TOOL_WEIGHT_BUDGET` to bound the combined cost of active tool calls, default `32`. Measured profiles allow up to 32 lookups, 4 raw or summary calls, or 2 analytics calls at once while queued work remains cancellation-aware.
 - `MCP_TOOL_MAX_QUEUE` to bound queued tool calls, default `64`
 - `MCP_TOOL_QUEUE_TIMEOUT_MS` to bound tool admission wait time, default `5000`
+- `MCP_TOOL_CLIENT_WEIGHT_SHARE` percent of the weight budget one caller (one connection, identified by a hashed address) may hold at once, default `50`; never below the heaviest single tool so every tool stays schedulable. `MCP_TOOL_CLIENT_MAX_QUEUE` bounds one caller's queued calls, default `16`. A caller over its share gets the retryable `overloaded` result with `reason: client_share` while others keep flowing.
+- `MCP_TRUST_PROXY` set to `1` (or to the number of proxies in front of the server) to key fairness on the address those proxies observed instead of the socket address. The header is read only when the immediate peer is itself a trusted proxy, and the hop is counted from the right of `X-Forwarded-For`, because a caller can write anything to the left of it. The address is hashed and never stored or labelled.
+- `MCP_TRUSTED_PROXY_PREFIXES` a comma-separated list of address prefixes that count as your proxies, matched against the start of the peer address (for example `203.0.113.` or `2606:4700:`). Setting it **replaces** the default rather than adding to it, so include loopback or your private range if a co-located proxy also reaches the server. With it unset, loopback and private ranges are trusted, which is where a co-located proxy sits; on a shared private network that means any host on that network can present a forwarded address, so name your proxies explicitly there.
+- `MCP_SLOW_REQUEST_MS` threshold for one JSON line on stderr per slow tool call with admission wait and execution timings and the bounded client family, default `5000`.
+- `MCP_CURSOR_SECRET` the key pagination cursors are signed with. **Set it on any deployment running more than one process.** Unset, each process signs with its own random key, so a cursor issued by one instance is rejected by the next and clients lose their place across a restart or a load-balanced hop. It is not optional for correctness on a multi-instance deployment, and it is what stops a caller minting a cursor for a window the tool would never have offered.
+
+### Cost guardrails
+
+Every scan bound in the server is compiled in and set per tool: a filtered trace
+scan stops at 5,000 blocks, a contract-deployment search at 1,000,000. Guardrails
+add a second ceiling above those that a deployment sets from the environment, so
+an endpoint under load can be turned down without shipping a new image.
+
+- `MCP_GUARDRAIL_MODE` one of `off` (default), `shadow`, or `enforce`.
+- `MCP_GUARDRAIL_<CLASS>_<LIMIT>` sets one ceiling, where `<CLASS>` is
+  `LOOKUP`, `RAW_QUERY`, `SUMMARY`, or `ANALYTICS`, and `<LIMIT>` is
+  `MAX_SCAN_BLOCKS`, `MAX_WINDOW_SECONDS`, or `MAX_UPSTREAM_BYTES`. For example
+  `MCP_GUARDRAIL_RAW_QUERY_MAX_SCAN_BLOCKS=50000`.
+
+**There are no numeric defaults.** A class with nothing set has no extra ceiling,
+so `off` and `enforce` with nothing configured are the same server. The only way a
+guardrail changes behaviour is if you set a number.
+
+`shadow` evaluates every ceiling and records what enforcing would have done,
+without changing a single response. `enforce` acts:
+
+- A scan over its ceiling stops at the ceiling and reports what it covered
+  through the same partial-coverage path a scan that hits its compiled bound
+  already uses, so `_coverage.result_complete` becomes `false` and the response
+  names the blocks it searched. It never claims a complete answer it did not get.
+- A query window over its ceiling is refused before anything is fetched, with the
+  cap named in the error and the next steps, because there is no honest partial
+  to return for a request that was never allowed to start.
+
+Four counters, all with bounded labels: `mcp_guardrail_admitted_total{class}`,
+`mcp_guardrail_would_block_total{class,limit}`,
+`mcp_guardrail_blocked_total{class,limit}`, and
+`mcp_guardrail_fail_open_total{reason}`.
+
+**Recommended rollout.** Set the ceilings you are considering and run `shadow` for
+a week. Read `mcp_guardrail_would_block_total`: it is exactly the set of real
+requests the ceiling would have cut. If that set is larger than you expected, the
+ceiling is wrong, not the traffic. Move to `enforce` once it is the size you
+intended.
+
+### Traces
+
+Metrics say how often and how long; a trace says where the time went inside one
+call. Traces are off unless you set `OTEL_EXPORTER_OTLP_ENDPOINT`. With it unset
+nothing here is imported, allocated, or sent, and the OpenTelemetry packages need
+not be installed at all.
+
+The SDK is not a dependency of this package. It and its exporter pull about 74
+packages against a published tarball of roughly 3.4MB, and almost nobody running
+this over stdio wants any of it, so they are declared as optional peers. To turn
+traces on, install them alongside the server and point it at your collector:
+
+```bash
+npm i @opentelemetry/sdk-node @opentelemetry/exporter-trace-otlp-http
+```
+
+```bash
+OTEL_EXPORTER_OTLP_ENDPOINT=http://collector:4318
+```
+
+One tool call is one tree:
+
+```
+mcp.request                       (HTTP only: method, transport)
+└─ tools/call portal_evm_query_logs
+   ├─ mcp.admission               (the wait for a slot)
+   ├─ portal.fetch                (one per attempt: dataset, status, bytes, resend count)
+   ├─ portal.fetch
+   └─ mcp.format_result           (hashing the answer for the evidence receipt)
+```
+
+`OTEL_*` variables are read by the OpenTelemetry SDK itself, so sampling,
+headers, batching, and protocol are configured the standard way. The rest:
+
+- A `traceparent` on the HTTP request, or in the tool call's `_meta`, makes the
+  call part of the caller's trace rather than starting a new one. The `_meta`
+  value wins, because it is the more specific claim about which turn this call
+  belongs to.
+- Each Portal request carries a `traceparent` naming its own fetch span, so a
+  Portal-side trace can join this one. Nothing is added when tracing is off.
+- The JSON log lines carry `trace_id` and `span_id` while tracing is on, so a log
+  event and its span can be looked up from each other.
+- `/health` reports whether tracing is configured, whether it started, and whether
+  argument capture is on.
+
+**Span attributes carry no arguments, addresses, hashes, cursors, or free text.**
+They are the tool name, its work class, the dataset, bounded counts, and a bounded
+outcome. A span leaves the process for a collector the query itself never reaches,
+so the rule is the one the metric labels follow, and stricter than the logs, which
+at least stay on your own stderr. `MCP_OTEL_INCLUDE_ARGS=1` adds the raw tool
+arguments to the tool span. It is off by default and **unsafe for production**: a
+tool argument is routinely a wallet address, and often a user's own words.
 
 ## Tests
 
-The [release-assurance contract](RELEASE_ASSURANCE.md) defines the complete v0.8.2 baseline and the additional v0.8.3 and v0.8.4 gates. “100%” refers to every applicable cell in the declared matrix, not a claim that upstream networks can never fail.
+The [release-assurance contract](RELEASE_ASSURANCE.md) defines the complete v0.8.2 baseline and every gate added since, through v0.8.5. “100%” refers to every applicable cell in the declared matrix, not a claim that upstream networks can never fail.
 
 ```bash
 npm test
@@ -260,6 +381,8 @@ npm run test:quality
 npm run test:client-journeys
 npm run test:ci
 ```
+
+A nightly model-in-the-loop eval (`npm run eval:model-loop`, [scripts/README.md](scripts/README.md#model-in-the-loop-eval)) has a model answer pinned questions through the server and reports pass rate, tool calls, and tokens; `--model mock` verifies the question set without an API key.
 
 ## License
 

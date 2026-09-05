@@ -26,7 +26,7 @@ export function buildTimeSeriesPipesRecipe(params: {
   address?: string
   compare_previous?: boolean
   group_by?: string
-}) : PipesRecipe {
+}): PipesRecipe {
   const networkLabel = humanizeLabel(params.network) ?? params.network
   const metricLabel = humanizeLabel(params.metric) ?? params.metric
 
@@ -35,9 +35,10 @@ export function buildTimeSeriesPipesRecipe(params: {
     title: `Need more data? Build a custom ${metricLabel.toLowerCase()} pipeline`,
     summary: `Use Pipes when you need a longer lookback, protocol-specific joins, or a derived ${metricLabel.toLowerCase()} view that goes beyond the built-in Portal chart.`,
     goal: `Create a custom ${metricLabel.toLowerCase()} time-series indexer for ${networkLabel}${params.address ? ` filtered to ${params.address}` : ''}.`,
-    entities: params.group_by === 'contract'
-      ? ['blocks', 'transactions', 'contracts', 'derived bucket metrics']
-      : ['blocks', 'transactions', 'derived bucket metrics'],
+    entities:
+      params.group_by === 'contract'
+        ? ['blocks', 'transactions', 'contracts', 'derived bucket metrics']
+        : ['blocks', 'transactions', 'derived bucket metrics'],
     filters: omitUndefined({
       network: params.network,
       metric: params.metric,
@@ -60,7 +61,8 @@ export function buildTimeSeriesPipesRecipe(params: {
     ],
     recommended_skills: ['pipes-new-indexer', 'pipes-troubleshooting', 'portal-query'],
     starter_prompt: `Build a Pipes-based ${metricLabel.toLowerCase()} time-series workflow for ${networkLabel}. Reuse the current Portal query as the validation baseline, keep ${params.interval} buckets, and produce both chart-ready rows and a summary table. Prefer SQD agent skills when scaffolding or debugging the indexer.`,
-    client_limitations: 'Chat clients usually cannot create the full indexer for you inline, so treat this as a handoff recipe for Codex, Claude Code, or another terminal agent with the Pipes SDK.',
+    client_limitations:
+      'Chat clients usually cannot create the full indexer for you inline, so treat this as a handoff recipe for Codex, Claude Code, or another terminal agent with the Pipes SDK.',
   }
 }
 
@@ -71,13 +73,14 @@ export function buildWalletPipesRecipe(params: {
   mode: 'fast' | 'deep'
   include_tokens?: boolean
   include_nfts?: boolean
-}) : PipesRecipe {
+}): PipesRecipe {
   const networkLabel = humanizeLabel(params.network) ?? params.network
 
   return {
     version: 'pipes_recipe_v1',
     title: 'Need more data? Build a custom wallet investigation pipeline',
-    summary: 'Use Pipes when you want protocol-specific wallet attribution, longer history, or custom joins across transfers, swaps, positions, and derived balances.',
+    summary:
+      'Use Pipes when you want protocol-specific wallet attribution, longer history, or custom joins across transfers, swaps, positions, and derived balances.',
     goal: `Create a custom wallet investigation workflow for ${params.address} on ${networkLabel}.`,
     entities: [
       'transactions',
@@ -107,6 +110,7 @@ export function buildWalletPipesRecipe(params: {
     ],
     recommended_skills: ['pipes-new-indexer', 'pipes-troubleshooting', 'portal-query'],
     starter_prompt: `Build a Pipes-based wallet investigation workflow for ${params.address} on ${networkLabel}. Keep a normalized activity table, add counterparty and asset summaries, and validate the first output against portal_get_wallet_summary. Prefer SQD agent skills when scaffolding or debugging the indexer.`,
-    client_limitations: 'Chat clients usually cannot scaffold and run the full Pipes project inline, so this recipe is designed for a terminal agent or local development handoff.',
+    client_limitations:
+      'Chat clients usually cannot scaffold and run the full Pipes project inline, so this recipe is designed for a terminal agent or local development handoff.',
   }
 }

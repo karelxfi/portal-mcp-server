@@ -1,6 +1,4 @@
 import type { McpServer } from '@modelcontextprotocol/server'
-
-import { registerPortalTool } from '../../helpers/mcp-registration.js'
 import { z } from 'zod'
 
 import { resolveDataset, validateBlockRange } from '../../cache/datasets.js'
@@ -13,14 +11,14 @@ import {
 import { detectChainType, isL2Chain } from '../../helpers/chain.js'
 import { buildTableDescriptor } from '../../helpers/chart-metadata.js'
 import {
+  type TokenListLookupMetadata,
   type TokenSymbolResolution,
   buildTokenListLookupNotices,
-  type TokenListLookupMetadata,
   resolveTokenSymbolsForQuery,
 } from '../../helpers/entity-resolution.js'
 import { createUnsupportedChainError } from '../../helpers/errors.js'
 import { resolveMethodSighashes } from '../../helpers/evm-aliases.js'
-import { portalFetchRecentRecords, portalFetchStreamRange } from '../../helpers/fetch.js'
+import { portalFetchRecentRecordsWithScan, portalFetchStreamRange } from '../../helpers/fetch.js'
 import { getTransactionFields } from '../../helpers/field-presets.js'
 import {
   buildEvmLogFields,
@@ -28,10 +26,11 @@ import {
   buildEvmTraceFields,
   buildEvmTransactionFields,
 } from '../../helpers/fields.js'
-import { formatResult } from '../../helpers/format.js'
-import { formatTimestamp, formatTransactionFields } from '../../helpers/format.js'
+import { formatResult, formatTimestamp, formatTransactionFields } from '../../helpers/format.js'
+import { registerPortalTool } from '../../helpers/mcp-registration.js'
 import { normalizeEvmTransactionResult } from '../../helpers/normalized-results.js'
 import {
+  buildCursorDirectionNotice,
   buildPaginationInfo,
   decodeRecentPageCursor,
   encodeRecentPageCursor,
@@ -45,6 +44,7 @@ import {
 } from '../../helpers/result-metadata.js'
 import { type TimestampInput, getTimestampWindowNotices, resolveTimeframeOrBlocks } from '../../helpers/timeframe.js'
 import { buildExecutionMetadata, buildToolDescription } from '../../helpers/tool-ux.js'
+import { quoteUntrusted } from '../../helpers/untrusted-text.js'
 import {
   getQueryExamples,
   getValidationNotices,
@@ -65,7 +65,7 @@ function flattenTransactionsWithBlockContext(results: unknown[]) {
         number?: number
         timestamp?: number
       }
-      transactions?: Array<Record<string, unknown>>
+      transactions?: Record<string, unknown>[]
     }
 
     const blockNumber = typedBlock.number ?? typedBlock.header?.number
@@ -175,12 +175,12 @@ function buildTokenResolutionNotices(
   for (const resolution of resolutions) {
     if (resolution.matches.length > 1) {
       notices.push(
-        `${fieldName} ${resolution.symbol} resolved to ${resolution.matches.length} token-list matches; all selected addresses were included. Use from_addresses/to_addresses for deterministic single-contract filters.`,
+        `${fieldName} ${quoteUntrusted(resolution.symbol)} resolved to ${resolution.matches.length} token-list matches; all selected addresses were included. Use from_addresses/to_addresses for deterministic single-contract filters.`,
       )
     }
     if (resolution.truncated) {
       notices.push(
-        `${fieldName} ${resolution.symbol} had more matches than max_token_symbol_matches; results were capped.`,
+        `${fieldName} ${quoteUntrusted(resolution.symbol)} had more matches than max_token_symbol_matches; results were capped.`,
       )
     }
   }
@@ -493,8 +493,7 @@ async function fetchTransactionsByScanOrder({
 }) {
   const targetCount = offset + limit + 1
   const effectiveCandidateLimit =
-    candidateLimit ??
-    (orderBy && orderBy !== 'chronological' ? Math.max((offset + limit) * 20, 500) : targetCount)
+    candidateLimit ?? (orderBy && orderBy !== 'chronological' ? Math.max((offset + limit) * 20, 500) : targetCount)
   const collected: EvmTransactionItem[] = []
   let candidateLimitReached = false
   const scan = await scanBoundedBlockRange<EvmTransactionItem>({
@@ -507,13 +506,14 @@ async function fetchTransactionsByScanOrder({
     fetchChunk: async (chunk) => {
       const records = await fetchAdaptiveTransactionRange(chunk.fromBlock, chunk.toBlock, (rangeFrom, rangeTo) =>
         portalFetchStreamRange(url, {
-            ...query,
-            fromBlock: rangeFrom,
-            toBlock: rangeTo,
-          }),
+          ...query,
+          fromBlock: rangeFrom,
+          toBlock: rangeTo,
+        }),
       )
-      const txs = sortTransactions(flattenTransactionsWithBlockContext(records) as EvmTransactionItem[])
-        .filter((tx) => matchesClientTransactionFilters(tx, clientFilters))
+      const txs = sortTransactions(flattenTransactionsWithBlockContext(records) as EvmTransactionItem[]).filter((tx) =>
+        matchesClientTransactionFilters(tx, clientFilters),
+      )
       const orderedChunk = scanOrder === 'latest' ? txs.reverse() : txs
       const selected: EvmTransactionItem[] = []
       for (const tx of orderedChunk) {
@@ -529,9 +529,20 @@ async function fetchTransactionsByScanOrder({
   })
 
   const ordered = orderTransactionsForOutput(collected, orderBy)
+  // A 'latest' scan accumulates candidates from the newest end, while the
+  // chronological output is oldest-first. Offsetting from the oldest end then
+  // moved the window by exactly as many rows as each new page added, so every
+  // continuation returned the same page and the newest match was never shown.
+  // Rank-ordered output is genuinely offset from its top, so it keeps slicing
+  // from the front.
+  const chronological = !orderBy || orderBy === 'chronological'
+  const items =
+    chronological && scanOrder === 'latest'
+      ? ordered.slice(Math.max(0, ordered.length - offset - limit), Math.max(0, ordered.length - offset))
+      : ordered.slice(offset, offset + limit)
   return {
     ...scan,
-    items: ordered.slice(offset, offset + limit),
+    items,
     candidates: ordered,
     hasMore: collected.length > offset + limit,
     candidateCount: collected.length,
@@ -543,7 +554,8 @@ async function fetchTransactionsByScanOrder({
 }
 
 export function registerQueryTransactionsTool(server: McpServer) {
-  registerPortalTool(server,
+  registerPortalTool(
+    server,
     'portal_evm_query_transactions',
     buildToolDescription('portal_evm_query_transactions'),
     {
@@ -688,7 +700,9 @@ export function registerQueryTransactionsTool(server: McpServer) {
         .max(25)
         .optional()
         .default(20)
-        .describe('Max transactions (default: 20, max: 25). This verified ceiling keeps pages within MCP client budgets.'),
+        .describe(
+          'Max transactions (default: 20, max: 25). This verified ceiling keeps pages within MCP client budgets.',
+        ),
       field_preset: z
         .enum(['minimal', 'standard', 'full'])
         .optional()
@@ -853,7 +867,7 @@ export function registerQueryTransactionsTool(server: McpServer) {
         fromTokenSymbolLookup = resolvedSymbols.lookup
         if (resolvedFromTokenSymbolAddresses.length === 0 && normalizedFromAddressFilters.length === 0) {
           throw new Error(
-            `No token-list matches found for from_token_symbols: ${from_token_symbols.join(', ')}. Use portal_resolve_entity to inspect matches or pass from_addresses directly.`,
+            `No token-list matches found for from_token_symbols: ${from_token_symbols.map((symbol) => quoteUntrusted(symbol)).join(', ')}. Use portal_resolve_entity to inspect matches or pass from_addresses directly.`,
           )
         }
       }
@@ -869,7 +883,7 @@ export function registerQueryTransactionsTool(server: McpServer) {
         toTokenSymbolLookup = resolvedSymbols.lookup
         if (resolvedToTokenSymbolAddresses.length === 0 && normalizedToAddressFilters.length === 0) {
           throw new Error(
-            `No token-list matches found for to_token_symbols: ${to_token_symbols.join(', ')}. Use portal_resolve_entity to inspect matches or pass to_addresses directly.`,
+            `No token-list matches found for to_token_symbols: ${to_token_symbols.map((symbol) => quoteUntrusted(symbol)).join(', ')}. Use portal_resolve_entity to inspect matches or pass to_addresses directly.`,
           )
         }
       }
@@ -944,8 +958,16 @@ export function registerQueryTransactionsTool(server: McpServer) {
       if (include_traces) txFilter.traces = true
       if (include_state_diffs) txFilter.stateDiffs = true
 
-      // Use field preset to control response size
-      const presetFields = getTransactionFields(field_preset || 'standard')
+      // Use field preset to control response size. A summary adds up gas, which
+      // the 'minimal' preset does not request, so a minimal summary reported a
+      // confident total_gas of 0 over transactions that burned real gas. Same
+      // defect and same fix as portal_evm_query_traces: a summary reads at
+      // least the standard field set.
+      const effectiveFieldPreset =
+        effectiveResponseFormat === 'summary' && (field_preset || 'standard') === 'minimal'
+          ? 'standard'
+          : field_preset || 'standard'
+      const presetFields = getTransactionFields(effectiveFieldPreset)
       const fields: Record<string, unknown> = { ...presetFields }
       fields.block = {
         ...((fields.block as Record<string, boolean> | undefined) ?? {}),
@@ -1020,13 +1042,15 @@ export function registerQueryTransactionsTool(server: McpServer) {
           )
       const portalUrl = `${PORTAL_URL}/datasets/${dataset}/stream`
       const scanPath = effectiveScanOrder === 'earliest' || hasClientFilters
-      const results = scanPath
-        ? []
-        : await portalFetchRecentRecords(portalUrl, query, {
+      const recentFetch = scanPath
+        ? undefined
+        : await portalFetchRecentRecordsWithScan(portalUrl, query, {
             itemKeys: ['transactions'],
             limit: fetchLimit,
             chunkSize: adaptiveChunkSize,
           })
+      const results = recentFetch?.records ?? []
+      const recentScan = recentFetch?.scan
 
       const scanResult = scanPath
         ? await fetchTransactionsByScanOrder({
@@ -1110,27 +1134,28 @@ export function registerQueryTransactionsTool(server: McpServer) {
         include_state_diffs,
         include_l2_fields,
       }
-      const nextCursor = scanResult && page.hasMore
-        ? encodeRecentPageCursor<QueryTransactionsRequest>({
-            tool: 'portal_evm_query_transactions',
-            dataset,
-            request: cursorRequest,
-            window_from_block: resolvedFromBlock,
-            window_to_block: endBlock,
-            page_to_block: endBlock,
-            skip_inclusive_block: scanResult.offset + page.pageItems.length,
-          })
-        : !scanResult && page.hasMore && page.nextBoundary
+      const nextCursor =
+        scanResult && page.hasMore
           ? encodeRecentPageCursor<QueryTransactionsRequest>({
               tool: 'portal_evm_query_transactions',
               dataset,
               request: cursorRequest,
               window_from_block: resolvedFromBlock,
               window_to_block: endBlock,
-              page_to_block: page.nextBoundary.page_to_block,
-              skip_inclusive_block: page.nextBoundary.skip_inclusive_block,
+              page_to_block: endBlock,
+              skip_inclusive_block: scanResult.offset + page.pageItems.length,
             })
-          : undefined
+          : !scanResult && page.hasMore && page.nextBoundary
+            ? encodeRecentPageCursor<QueryTransactionsRequest>({
+                tool: 'portal_evm_query_transactions',
+                dataset,
+                request: cursorRequest,
+                window_from_block: resolvedFromBlock,
+                window_to_block: endBlock,
+                page_to_block: page.nextBoundary.page_to_block,
+                skip_inclusive_block: page.nextBoundary.skip_inclusive_block,
+              })
+            : undefined
 
       const notices = [
         ...getTimestampWindowNotices(resolvedBlocks),
@@ -1157,9 +1182,10 @@ export function registerQueryTransactionsTool(server: McpServer) {
             `Aggregation is bounded to ${scanResult.candidateCount.toLocaleString()} scanned candidate transactions across blocks ${scanResult.scannedFromBlock}-${scanResult.scannedToBlock}; narrow the window or raise max_scan_blocks for deeper coverage.`,
           )
         }
-        const boundedSearchNotice = scanResult && !scanResult.candidateLimitReached
-          ? buildBoundedSearchNotice(scanResult, 'EVM transaction aggregation')
-          : undefined
+        const boundedSearchNotice =
+          scanResult && !scanResult.candidateLimitReached
+            ? buildBoundedSearchNotice(scanResult, 'EVM transaction aggregation')
+            : undefined
         if (boundedSearchNotice) notices.push(boundedSearchNotice)
 
         const aggregatePayload = {
@@ -1169,21 +1195,20 @@ export function registerQueryTransactionsTool(server: McpServer) {
             aggregate_metric: effectiveAggregateMetric,
             scanned_transactions: scanResult?.candidateCount ?? allTxs.length,
             scanned_blocks: scanResult?.scannedBlocks,
-            window_complete: scanResult ? !scanResult.hasUnscannedBlocks : true,
+            window_complete: scanResult ? !scanResult.hasUnscannedBlocks : (recentScan?.exhausted ?? true),
             candidate_limit_reached: scanResult?.candidateLimitReached ?? false,
           },
           tables: [
             buildTableDescriptor({
               id: aggregateKey,
               dataKey: aggregateKey,
-              title:
-                scanResult?.hasUnscannedBlocks
-                  ? aggregate_by === 'sender'
-                    ? 'Partial Sender Ranking'
-                    : 'Partial Receiver Ranking'
-                  : aggregate_by === 'sender'
-                    ? 'Top Senders'
-                    : 'Top Receivers',
+              title: scanResult?.hasUnscannedBlocks
+                ? aggregate_by === 'sender'
+                  ? 'Partial Sender Ranking'
+                  : 'Partial Receiver Ranking'
+                : aggregate_by === 'sender'
+                  ? 'Top Senders'
+                  : 'Top Receivers',
               rowCount: aggregateRows.length,
               keyField: 'address',
               defaultSort: {
@@ -1240,7 +1265,7 @@ export function registerQueryTransactionsTool(server: McpServer) {
           items: scanResult?.candidates ?? allTxs,
           getBlockNumber,
           hasMore: false,
-          windowComplete: scanResult ? !scanResult.hasUnscannedBlocks : true,
+          windowComplete: scanResult ? !scanResult.hasUnscannedBlocks : (recentScan?.exhausted ?? true),
         })
 
         return formatResult(
@@ -1296,7 +1321,7 @@ export function registerQueryTransactionsTool(server: McpServer) {
       // Apply response format (summary/compact/full)
       const formattedData = applyResponseFormat(page.pageItems, effectiveResponseFormat, 'transactions')
       if (nextCursor) {
-        notices.push('Older results are available via _pagination.next_cursor.')
+        notices.push(buildCursorDirectionNotice(effectiveScanOrder))
       }
       if (scanResult && page.hasMore) {
         notices.push(
@@ -1318,12 +1343,12 @@ export function registerQueryTransactionsTool(server: McpServer) {
         items: page.pageItems,
         getBlockNumber,
         hasMore: page.hasMore,
-        windowComplete: scanResult ? !scanResult.hasUnscannedBlocks : true,
+        windowComplete: scanResult ? !scanResult.hasUnscannedBlocks : (recentScan?.exhausted ?? true),
       })
 
       const message =
         effectiveResponseFormat === 'summary'
-          ? `Transaction summary for ${page.pageItems.length} transactions${page.hasMore ? ' (latest preview page)' : ''}`
+          ? `Transaction summary for ${page.pageItems.length} transactions${page.hasMore ? ' (preview page)' : ''}`
           : scanResult
             ? `Retrieved ${page.pageItems.length} transactions by scanning ${effectiveScanOrder === 'earliest' ? 'forward' : 'backward'} from the ${effectiveScanOrder === 'earliest' ? 'start' : 'end'} of the window${effectiveOrderBy !== 'chronological' ? ` and ranking by ${effectiveOrderBy}` : ''}`
             : `Retrieved ${page.pageItems.length} transactions${page.hasMore ? ` from the most recent matching blocks (preview page limited to ${limit})` : ''}`
@@ -1335,6 +1360,9 @@ export function registerQueryTransactionsTool(server: McpServer) {
         ordering: buildChronologicalPageOrdering({
           sortedBy: 'block_number',
           tieBreakers: ['transactionIndex', 'hash'],
+          ...(effectiveScanOrder === 'earliest'
+            ? { windowFocus: 'oldest_matches' as const, continuation: 'newer' as const }
+            : {}),
         }),
         freshness,
         coverage,

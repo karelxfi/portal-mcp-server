@@ -1,6 +1,4 @@
 import type { McpServer } from '@modelcontextprotocol/server'
-
-import { registerPortalTool } from '../../helpers/mcp-registration.js'
 import { z } from 'zod'
 
 import { resolveDataset, validateBlockRange } from '../../cache/datasets.js'
@@ -12,24 +10,26 @@ import {
 } from '../../helpers/bounded-search.js'
 import { detectChainType, isL2Chain } from '../../helpers/chain.js'
 import {
+  type TokenListLookupMetadata,
   type TokenSymbolResolution,
   buildTokenListLookupNotices,
-  type TokenListLookupMetadata,
   resolveTokenSymbolsForQuery,
 } from '../../helpers/entity-resolution.js'
 import { createUnsupportedChainError } from '../../helpers/errors.js'
 import { resolveEventTopic0 } from '../../helpers/evm-aliases.js'
-import { portalFetchRecentRecords, portalFetchStreamRange } from '../../helpers/fetch.js'
+import { portalFetchRecentRecordsWithScan, portalFetchStreamRange } from '../../helpers/fetch.js'
 import { getLogFields } from '../../helpers/field-presets.js'
 import { buildEvmLogFields, buildEvmTraceFields, buildEvmTransactionFields } from '../../helpers/fields.js'
-import { formatResult } from '../../helpers/format.js'
-import { formatTimestamp } from '../../helpers/format.js'
+import { formatResult, formatTimestamp } from '../../helpers/format.js'
+import { registerPortalTool } from '../../helpers/mcp-registration.js'
 import { normalizeEvmLogResult } from '../../helpers/normalized-results.js'
 import {
+  buildCursorDirectionNotice,
   buildPaginationInfo,
   decodeRecentPageCursor,
   encodeRecentPageCursor,
   paginateAscendingItems,
+  paginateForwardItems,
 } from '../../helpers/pagination.js'
 import { type ResponseFormat, applyResponseFormat, resolveDefaultResponseFormat } from '../../helpers/response-modes.js'
 import {
@@ -39,6 +39,7 @@ import {
 } from '../../helpers/result-metadata.js'
 import { type TimestampInput, getTimestampWindowNotices, resolveTimeframeOrBlocks } from '../../helpers/timeframe.js'
 import { buildExecutionMetadata, buildToolDescription } from '../../helpers/tool-ux.js'
+import { quoteUntrusted } from '../../helpers/untrusted-text.js'
 import {
   getQueryExamples,
   getValidationNotices,
@@ -136,12 +137,12 @@ function buildTokenResolutionNotices(resolutions: TokenSymbolResolution[], unres
   for (const resolution of resolutions) {
     if (resolution.matches.length > 1) {
       notices.push(
-        `Token symbol ${resolution.symbol} resolved to ${resolution.matches.length} token-list matches; all selected addresses were included. Use addresses for a single deterministic contract.`,
+        `Token symbol ${quoteUntrusted(resolution.symbol)} resolved to ${resolution.matches.length} token-list matches; all selected addresses were included. Use addresses for a single deterministic contract.`,
       )
     }
     if (resolution.truncated) {
       notices.push(
-        `Token symbol ${resolution.symbol} had more matches than max_token_symbol_matches; results were capped.`,
+        `Token symbol ${quoteUntrusted(resolution.symbol)} had more matches than max_token_symbol_matches; results were capped.`,
       )
     }
   }
@@ -218,7 +219,7 @@ async function fetchLogsByScanOrder({
   query,
   fromBlock,
   toBlock,
-  limit,
+  targetCount,
   chunkSize,
   scanOrder,
   concurrency = 1,
@@ -228,13 +229,12 @@ async function fetchLogsByScanOrder({
   query: Record<string, unknown>
   fromBlock: number
   toBlock: number
-  limit: number
+  targetCount: number
   chunkSize: number
   scanOrder: 'earliest' | 'latest'
   concurrency?: number
   maxScanBlocks?: number
 }) {
-  const targetCount = limit + 1
   const scan = await scanBoundedBlockRange<EvmLogItem>({
     fromBlock,
     toBlock,
@@ -253,17 +253,17 @@ async function fetchLogsByScanOrder({
       return scanOrder === 'latest' ? logs.reverse() : logs
     },
   })
-  const collected = scan.items
-
+  /* Every collected row, oldest first. The caller pages them: by offset for
+     a forward scan, by block boundary for a backward one. */
   return {
     ...scan,
-    items: sortLogs(collected.slice(0, limit)),
-    hasMore: collected.length > limit,
+    items: sortLogs([...scan.items]),
   }
 }
 
 export function registerQueryLogsTool(server: McpServer) {
-  registerPortalTool(server,
+  registerPortalTool(
+    server,
     'portal_evm_query_logs',
     buildToolDescription('portal_evm_query_logs'),
     {
@@ -355,7 +355,9 @@ export function registerQueryLogsTool(server: McpServer) {
         .max(25)
         .optional()
         .default(20)
-        .describe('Max logs to return (default: 20, max: 25). This verified ceiling keeps pages within MCP client budgets.'),
+        .describe(
+          'Max logs to return (default: 20, max: 25). This verified ceiling keeps pages within MCP client budgets.',
+        ),
       field_preset: z
         .enum(['minimal', 'standard', 'full'])
         .optional()
@@ -521,7 +523,7 @@ export function registerQueryLogsTool(server: McpServer) {
         tokenSymbolLookup = resolvedSymbols.lookup
         if (resolvedTokenSymbolAddresses.length === 0 && normalizedAddressFilters.length === 0) {
           throw new Error(
-            `No token-list matches found for token_symbols: ${token_symbols.join(', ')}. Use portal_resolve_entity to inspect matches or pass addresses directly.`,
+            `No token-list matches found for token_symbols: ${token_symbols.map((symbol) => quoteUntrusted(symbol)).join(', ')}. Use portal_resolve_entity to inspect matches or pass addresses directly.`,
           )
         }
       }
@@ -626,7 +628,7 @@ export function registerQueryLogsTool(server: McpServer) {
               query,
               fromBlock: resolvedFromBlock,
               toBlock: pageToBlock,
-              limit,
+              targetCount: fetchLimit,
               chunkSize: boundedFilteredLatestScan
                 ? getSelectiveLatestLogChunkSize(inclusiveBlockRange)
                 : getRecentLogChunkSize(inclusiveBlockRange, hasFilters),
@@ -637,34 +639,42 @@ export function registerQueryLogsTool(server: McpServer) {
                 : max_scan_blocks,
             })
           : undefined
-      const results = scanResult
-        ? []
-        : await portalFetchRecentRecords(portalUrl, query, {
+      const recentFetch = scanResult
+        ? undefined
+        : await portalFetchRecentRecordsWithScan(portalUrl, query, {
             itemKeys: ['logs'],
             limit: fetchLimit,
             chunkSize: getRecentLogChunkSize(inclusiveBlockRange, hasFilters),
           })
+      const results = recentFetch?.records ?? []
+      const recentScan = recentFetch?.scan
 
       const allLogs = scanResult ? scanResult.items : sortLogs(flattenLogsWithBlockContext(results) as EvmLogItem[])
-      const page = scanResult
+      const cursorBoundary = paginationCursor
         ? {
-            pageItems: scanResult.items,
-            hasMore: scanResult.hasMore,
-            nextBoundary: undefined,
+            page_to_block: paginationCursor.page_to_block,
+            skip_inclusive_block: paginationCursor.skip_inclusive_block,
           }
-        : paginateAscendingItems(
-            allLogs,
-            limit,
-            getBlockNumber,
-            paginationCursor
-              ? {
-                  page_to_block: paginationCursor.page_to_block,
-                  skip_inclusive_block: paginationCursor.skip_inclusive_block,
-                }
-              : undefined,
-          )
+        : undefined
+      /* A forward scan pages by offset: the cursor records how many rows of
+         the window were already shown and the next call re-scans past them. A
+         backward scan pages by block boundary, and when max_scan_blocks stopped
+         it with the page unfilled, the cursor starts just below the scanned
+         slice so the next call reads on into the window. */
+      const page = (() => {
+        if (scanResult && scan_order === 'earliest') {
+          return paginateForwardItems(allLogs, limit, cursorSkip, endBlock)
+        }
+        const boundaryPage = paginateAscendingItems(allLogs, limit, getBlockNumber, cursorBoundary)
+        if (!scanResult || !scanResult.hasUnscannedBlocks || boundaryPage.hasMore) return boundaryPage
+        return {
+          pageItems: boundaryPage.pageItems,
+          hasMore: true,
+          nextBoundary: { page_to_block: scanResult.scannedFromBlock - 1, skip_inclusive_block: 0 },
+        }
+      })()
       const nextCursor =
-        !scanResult && page.hasMore && page.nextBoundary
+        page.hasMore && page.nextBoundary
           ? encodeRecentPageCursor<QueryLogsRequest>({
               tool: 'portal_evm_query_logs',
               dataset,
@@ -742,15 +752,7 @@ export function registerQueryLogsTool(server: McpServer) {
           `Used a bounded filtered latest scan strategy: scan backward from the indexed head in small concurrent chunks, inspecting at most ${(max_scan_blocks ?? DEFAULT_SELECTIVE_LATEST_SCAN_BLOCKS).toLocaleString()} blocks unless a match is proven sooner.`,
         )
       }
-      if (nextCursor) notices.push('Older results are available via _pagination.next_cursor.')
-      if (scanResult && page.hasMore && scan_order === 'earliest')
-        notices.push(
-          `More matching logs exist in the scanned ${scanResult.scannedFromBlock}-${scanResult.scannedToBlock} block slice; narrow filters or reduce limit pressure before expanding the window.`,
-        )
-      if (scanResult && page.hasMore && scan_order === 'latest')
-        notices.push(
-          `Older matching logs also exist in the scanned ${scanResult.scannedFromBlock}-${scanResult.scannedToBlock} block slice; the returned rows are the latest matches by block/log index.`,
-        )
+      if (nextCursor) notices.push(buildCursorDirectionNotice(scan_order))
       const boundedSearchNotice = scanResult ? buildBoundedSearchNotice(scanResult, 'EVM log scan') : undefined
       if (boundedSearchNotice) notices.push(boundedSearchNotice)
       const freshness = buildQueryFreshness({
@@ -766,19 +768,24 @@ export function registerQueryLogsTool(server: McpServer) {
         items: page.pageItems,
         getBlockNumber,
         hasMore: page.hasMore,
-        windowComplete: scanResult ? !scanResult.hasUnscannedBlocks : true,
+        /* A backward scan stops once the page is full, so the blocks below
+           its last chunk were never read; the fetch says whether it got to
+           the window start. */
+        windowComplete: scanResult ? !scanResult.hasUnscannedBlocks : (recentScan?.exhausted ?? true),
       })
 
+      const scannedEndLabel = scan_order === 'earliest' ? 'oldest' : 'newest'
+      const unscannedEndLabel = scan_order === 'earliest' ? 'newer' : 'older'
       const message =
         effectiveResponseFormat === 'summary'
-          ? `Log summary for ${page.pageItems.length} logs${page.hasMore ? ' (latest preview page)' : ''}`
+          ? `Log summary for ${page.pageItems.length} logs${page.hasMore ? ' (preview page)' : ''}`
           : scanResult?.hasUnscannedBlocks
             ? page.pageItems.length > 0
-              ? `Retrieved ${page.pageItems.length} logs from the newest ${scanResult.scannedBlocks.toLocaleString()} blocks; older requested blocks were not scanned`
-              : `No matching logs found in the newest ${scanResult.scannedBlocks.toLocaleString()} blocks; older requested blocks were not scanned`
-          : scanResult
-            ? `Retrieved ${page.pageItems.length} logs by scanning ${scan_order === 'latest' ? 'backward from the end' : 'forward from the start'} of the window`
-            : `Retrieved ${page.pageItems.length} logs${page.hasMore ? ` from the most recent matching blocks (preview page limited to ${limit})` : ''}`
+              ? `Retrieved ${page.pageItems.length} logs from the ${scannedEndLabel} ${scanResult.scannedBlocks.toLocaleString()} blocks; ${unscannedEndLabel} requested blocks were not scanned`
+              : `No matching logs found in the ${scannedEndLabel} ${scanResult.scannedBlocks.toLocaleString()} blocks; ${unscannedEndLabel} requested blocks were not scanned`
+            : scanResult
+              ? `Retrieved ${page.pageItems.length} logs by scanning ${scan_order === 'latest' ? 'backward from the end' : 'forward from the start'} of the window`
+              : `Retrieved ${page.pageItems.length} logs${page.hasMore ? ` from the most recent matching blocks (preview page limited to ${limit})` : ''}`
 
       return formatResult(formattedData, message, {
         toolName: 'portal_evm_query_logs',
@@ -787,6 +794,9 @@ export function registerQueryLogsTool(server: McpServer) {
         ordering: buildChronologicalPageOrdering({
           sortedBy: 'block_number',
           tieBreakers: ['logIndex', 'transactionIndex', 'transactionHash'],
+          ...(scan_order === 'earliest'
+            ? { windowFocus: 'oldest_matches' as const, continuation: 'newer' as const }
+            : {}),
         }),
         freshness,
         coverage,

@@ -94,7 +94,7 @@ export function divideExactDecimals(
 ): { value: string | null; rounded: boolean } {
   if (denominator.coefficient === 0n) return { value: null, rounded: false }
   const safePrecision = safeScale(precision)
-  const negative = (numerator.coefficient < 0n) !== (denominator.coefficient < 0n)
+  const negative = numerator.coefficient < 0n !== denominator.coefficient < 0n
   const numeratorMagnitude = numerator.coefficient < 0n ? -numerator.coefficient : numerator.coefficient
   const denominatorMagnitude = denominator.coefficient < 0n ? -denominator.coefficient : denominator.coefficient
   const scaledNumerator = numeratorMagnitude * 10n ** BigInt(denominator.scale + safePrecision)

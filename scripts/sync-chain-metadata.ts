@@ -1,0 +1,145 @@
+#!/usr/bin/env tsx
+/* Builds src/app-ui/chains.generated.ts from SQD's own chain metadata:
+   Portal's expanded dataset metadata (display name, logo, kind, chain id)
+   and the sqd.dev/chains page (public explorer per chain). Re-run when
+   networks are added: npm run sync:chains */
+
+import { writeFile } from 'node:fs/promises'
+import path from 'node:path'
+
+type PortalDataset = {
+  dataset: string
+  aliases?: string[]
+  metadata?: {
+    display_name?: string
+    logo_url?: string
+    type?: string
+    kind?: string
+    ecosystem?: string
+    evm?: { chain_id?: number }
+  }
+}
+
+/* logo is the file name under https://cdn.subsquid.io/img/networks/, or a full
+   URL when a logo lives elsewhere. */
+export type ChainInfo = { name: string; kind: string; logo?: string; explorer?: string }
+
+const LOGO_CDN = 'https://cdn.subsquid.io/img/networks/'
+/* The App resource CSP allows images from these origins only, so a logo
+   hosted anywhere else is dropped rather than shipped as a broken image. */
+const LOGO_ORIGINS = ['https://cdn.subsquid.io', 'https://sqd.dev']
+const TESTNET_ID = /testnet|sepolia|devnet|holesky|hoodi|amoy|alfajores|moonbase|cardona|paseo|westend|rococo/
+
+function decodeAstro(value: unknown): unknown {
+  if (Array.isArray(value) && value.length === 2 && typeof value[0] === 'number') {
+    const [tag, inner] = value
+    if (tag === 0) return decodeAstro(inner)
+    if (tag === 1) return (inner as unknown[]).map(decodeAstro)
+  }
+  if (Array.isArray(value)) return value.map(decodeAstro)
+  if (value && typeof value === 'object')
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).map(([key, inner]) => [key, decodeAstro(inner)]),
+    )
+  return value
+}
+
+function findChains(node: unknown): Record<string, unknown>[] | undefined {
+  if (
+    Array.isArray(node) &&
+    node.length &&
+    node.every((entry) => entry && typeof entry === 'object' && 'logoUrl' in entry)
+  )
+    return node as Record<string, unknown>[]
+  if (Array.isArray(node))
+    for (const entry of node) {
+      const found = findChains(entry)
+      if (found) return found
+    }
+  if (node && typeof node === 'object')
+    for (const entry of Object.values(node)) {
+      const found = findChains(entry)
+      if (found) return found
+    }
+  return undefined
+}
+
+async function main() {
+  const datasets = (await (
+    await fetch('https://portal.sqd.dev/datasets?expand%5B%5D=metadata')
+  ).json()) as PortalDataset[]
+  const page = await (await fetch('https://sqd.dev/chains')).text()
+  const blobs = [...page.matchAll(/props="([^"]+)"/g)]
+    .map((match) => match[1])
+    .filter((blob) => blob.includes('logoUrl'))
+  const largest = blobs.sort((left, right) => right.length - left.length)[0]
+  const unescaped = largest
+    ? largest
+        .replaceAll('&quot;', '"')
+        .replaceAll('&amp;', '&')
+        .replaceAll('&lt;', '<')
+        .replaceAll('&gt;', '>')
+        .replaceAll('&#39;', "'")
+    : '[]'
+  const chains = findChains(decodeAstro(JSON.parse(unescaped))) ?? []
+  const explorerByNetwork = new Map<string, string>()
+  const logoByNetwork = new Map<string, string>()
+  for (const chain of chains) {
+    const explorer = typeof chain.explorer === 'string' ? chain.explorer.replace(/\/+$/, '') : ''
+    const logo = typeof chain.logoUrl === 'string' ? chain.logoUrl : ''
+    for (const network of (chain.networks as Array<{ id?: string; type?: string }> | undefined) ?? []) {
+      if (!network.id) continue
+      /* The chain-level explorer is the mainnet explorer; a testnet record
+         cannot be found there, so testnets get no link. The id check covers
+         networks the site lists without an environment. */
+      if (explorer && network.type === 'mainnet' && !TESTNET_ID.test(network.id))
+        explorerByNetwork.set(network.id, explorer)
+      if (logo) logoByNetwork.set(network.id, logo)
+    }
+  }
+
+  const map: Record<string, ChainInfo> = {}
+  for (const entry of datasets) {
+    const meta = entry.metadata ?? {}
+    const rawLogo = meta.logo_url ?? logoByNetwork.get(entry.dataset)
+    const absoluteLogo = rawLogo?.startsWith('/') ? `https://sqd.dev${rawLogo}` : rawLogo
+    const logoUrl =
+      absoluteLogo && LOGO_ORIGINS.some((origin) => absoluteLogo.startsWith(`${origin}/`)) ? absoluteLogo : undefined
+    const info: ChainInfo = {
+      name: meta.display_name ?? entry.dataset,
+      kind: meta.kind ?? 'unknown',
+      ...(logoUrl ? { logo: logoUrl.startsWith(LOGO_CDN) ? logoUrl.slice(LOGO_CDN.length) : logoUrl } : {}),
+      ...(explorerByNetwork.get(entry.dataset) ? { explorer: explorerByNetwork.get(entry.dataset) } : {}),
+    }
+    map[entry.dataset] = info
+    for (const alias of entry.aliases ?? []) map[alias] = info
+  }
+  const sorted = Object.fromEntries(Object.entries(map).sort(([left], [right]) => left.localeCompare(right)))
+  const output = path.resolve('src/app-ui/chains.generated.ts')
+  const source = [
+    '// Generated by scripts/sync-chain-metadata.ts from Portal expanded dataset',
+    `// metadata and sqd.dev/chains on ${new Date().toISOString().slice(0, 10)}. Do not edit by hand.`,
+    '',
+    '/* logo is a file name under LOGO_CDN, or a full URL when it lives elsewhere. */',
+    'export type ChainInfo = { name: string; kind: string; logo?: string; explorer?: string }',
+    '',
+    `export const LOGO_CDN = ${JSON.stringify(LOGO_CDN)}`,
+    '',
+    '/* Every logo URL lives under one of these origins; the App resource CSP allows exactly them. */',
+    `export const LOGO_ORIGINS = ${JSON.stringify(LOGO_ORIGINS)}`,
+    '',
+    `export const CHAINS: Record<string, ChainInfo> = ${JSON.stringify(sorted)}`,
+    '',
+  ].join('\n')
+  await writeFile(output, source)
+  const withLogo = Object.values(sorted).filter((chain) => chain.logo).length
+  const withExplorer = Object.values(sorted).filter((chain) => chain.explorer).length
+  console.log(
+    `Wrote ${Object.keys(sorted).length} datasets: ${withLogo} with logos, ${withExplorer} with explorers, ${Buffer.byteLength(source)} bytes`,
+  )
+}
+
+main().catch((error) => {
+  console.error(error)
+  process.exit(1)
+})

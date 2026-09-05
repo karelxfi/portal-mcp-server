@@ -1,20 +1,18 @@
 import { formatTimestamp } from './format.js'
 import type { BlockAtTimestampResult, EstimatedTimeframeResolution, ResolvedBlockWindow } from './timeframe.js'
 
-type TimestampBoundarySummary = Pick<
-  BlockAtTimestampResult,
-  | 'timestamp'
-  | 'resolution'
-  | 'block_number'
-> & Partial<Pick<
-  BlockAtTimestampResult,
-  | 'timestamp_human'
-  | 'normalized_input'
-  | 'block_timestamp'
-  | 'block_timestamp_human'
-  | 'timestamp_delta_seconds'
-  | 'boundary'
->>
+type TimestampBoundarySummary = Pick<BlockAtTimestampResult, 'timestamp' | 'resolution' | 'block_number'> &
+  Partial<
+    Pick<
+      BlockAtTimestampResult,
+      | 'timestamp_human'
+      | 'normalized_input'
+      | 'block_timestamp'
+      | 'block_timestamp_human'
+      | 'timestamp_delta_seconds'
+      | 'boundary'
+    >
+  >
 
 export interface QueryFreshness {
   kind: 'query_window'
@@ -76,6 +74,15 @@ export interface BucketCoverage {
   final_bucket_complete?: boolean
 }
 
+export interface AnalysisSectionCoverage {
+  analyzed_from_block: number
+  analyzed_to_block: number
+  analyzed_blocks: number
+  window_blocks: number
+  sampled: boolean
+  excluded_blocks?: number[]
+}
+
 export interface AnalysisCoverage {
   kind: 'analysis_window'
   window_complete: boolean
@@ -88,6 +95,10 @@ export interface AnalysisCoverage {
   requested_blocks: number
   analyzed_blocks: number
   sampled: boolean
+  /* Sections that scanned fewer blocks than the analyzed window. When any
+     section is sampled the whole result is marked sampled, so a section
+     total is never read as a window total. */
+  sections?: Record<string, AnalysisSectionCoverage>
 }
 
 export interface SectionCoverage {
@@ -98,6 +109,8 @@ export interface SectionCoverage {
   window_from_block: number
   window_to_block: number
   sections: Record<string, { returned: number; has_more: boolean }>
+  /** Present only when a section was asked for and never came back. */
+  failed_sections?: string[]
 }
 
 export interface BucketGapDiagnosticItem {
@@ -204,6 +217,12 @@ export function buildQueryCoverage<T>(params: {
   getBlockNumber: (item: T) => number | undefined
   hasMore: boolean
   windowComplete?: boolean
+  /**
+   * Override when more rows exist but this tool cannot hand out a cursor for
+   * them. Defaults to 'cursor', which is only true if the caller actually
+   * emitted one; claiming a cursor that does not exist makes a client stop.
+   */
+  continuation?: 'cursor' | 'none'
 }): QueryCoverage {
   const blockNumbers = params.items
     .map((item) => params.getBlockNumber(item))
@@ -211,12 +230,16 @@ export function buildQueryCoverage<T>(params: {
 
   const returnedFromBlock = blockNumbers.length > 0 ? Math.min(...blockNumbers) : undefined
   const returnedToBlock = blockNumbers.length > 0 ? Math.max(...blockNumbers) : undefined
+  const windowComplete = params.windowComplete ?? true
 
   return {
     kind: 'block_window',
-    window_complete: params.windowComplete ?? true,
-    result_complete: !params.hasMore,
-    continuation: params.hasMore ? 'cursor' : 'none',
+    window_complete: windowComplete,
+    /* A page that left part of its window unread is not the complete result
+       for that window, whatever its row count. buildSectionCoverage already
+       says so; this builder claimed completeness from pagination alone. */
+    result_complete: !params.hasMore && windowComplete,
+    continuation: params.hasMore ? (params.continuation ?? 'cursor') : 'none',
     window_from_block: params.windowFromBlock,
     window_to_block: params.windowToBlock,
     page_to_block: params.pageToBlock,
@@ -272,18 +295,34 @@ export function buildBucketCoverage(params: {
     filled_buckets: params.filledBuckets,
     empty_buckets: Math.max(0, params.returnedBuckets - params.filledBuckets),
     anchor: params.anchor,
-    ...(params.requestedFromTimestamp !== undefined
-      ? { requested_from_timestamp: params.requestedFromTimestamp }
-      : {}),
+    ...(params.requestedFromTimestamp !== undefined ? { requested_from_timestamp: params.requestedFromTimestamp } : {}),
     ...(params.requestedToTimestamp !== undefined ? { requested_to_timestamp: params.requestedToTimestamp } : {}),
-    ...(params.analyzedFromTimestamp !== undefined
-      ? { analyzed_from_timestamp: params.analyzedFromTimestamp }
-      : {}),
+    ...(params.analyzedFromTimestamp !== undefined ? { analyzed_from_timestamp: params.analyzedFromTimestamp } : {}),
     ...(params.analyzedToTimestamp !== undefined ? { analyzed_to_timestamp: params.analyzedToTimestamp } : {}),
     ...(params.indexedEvidenceEndTimestamp !== undefined
       ? { indexed_evidence_end_timestamp: params.indexedEvidenceEndTimestamp }
       : {}),
     ...(params.finalBucketComplete !== undefined ? { final_bucket_complete: params.finalBucketComplete } : {}),
+  }
+}
+
+export function buildAnalysisSectionCoverage(params: {
+  windowFromBlock: number
+  windowToBlock: number
+  analyzedFromBlock: number
+  analyzedToBlock: number
+  excludedBlocks?: number[]
+}): AnalysisSectionCoverage {
+  const excluded = params.excludedBlocks ?? []
+  const analyzedBlocks = Math.max(0, params.analyzedToBlock - params.analyzedFromBlock + 1 - excluded.length)
+  const windowBlocks = Math.max(0, params.windowToBlock - params.windowFromBlock + 1)
+  return {
+    analyzed_from_block: params.analyzedFromBlock,
+    analyzed_to_block: params.analyzedToBlock,
+    analyzed_blocks: analyzedBlocks,
+    window_blocks: windowBlocks,
+    sampled: analyzedBlocks < windowBlocks,
+    ...(excluded.length > 0 ? { excluded_blocks: excluded } : {}),
   }
 }
 
@@ -293,11 +332,16 @@ export function buildAnalysisCoverage(params: {
   analyzedFromBlock: number
   analyzedToBlock: number
   hasMore?: boolean
+  sections?: Record<string, AnalysisSectionCoverage>
 }): AnalysisCoverage {
+  const sections = params.sections ?? {}
+  const sectionSampled = Object.values(sections).some((section) => section.sampled)
+  const windowComplete =
+    params.analyzedFromBlock <= params.windowFromBlock && params.analyzedToBlock >= params.windowToBlock
   return {
     kind: 'analysis_window',
-    window_complete: params.analyzedFromBlock <= params.windowFromBlock && params.analyzedToBlock >= params.windowToBlock,
-    result_complete: !(params.hasMore ?? false),
+    window_complete: windowComplete,
+    result_complete: !(params.hasMore ?? false) && windowComplete,
     continuation: params.hasMore ? 'cursor' : 'none',
     window_from_block: params.windowFromBlock,
     window_to_block: params.windowToBlock,
@@ -305,7 +349,11 @@ export function buildAnalysisCoverage(params: {
     analyzed_to_block: params.analyzedToBlock,
     requested_blocks: Math.max(0, params.windowToBlock - params.windowFromBlock + 1),
     analyzed_blocks: Math.max(0, params.analyzedToBlock - params.analyzedFromBlock + 1),
-    sampled: params.analyzedFromBlock > params.windowFromBlock || params.analyzedToBlock < params.windowToBlock,
+    sampled:
+      params.analyzedFromBlock > params.windowFromBlock ||
+      params.analyzedToBlock < params.windowToBlock ||
+      sectionSampled,
+    ...(Object.keys(sections).length > 0 ? { sections } : {}),
   }
 }
 
@@ -315,15 +363,29 @@ export function buildSectionCoverage(params: {
   hasMore: boolean
   sections: Record<string, { returned: number; has_more: boolean }>
   windowComplete?: boolean
+  /** Sections that were asked for and never came back. */
+  failedSections?: string[]
 }): SectionCoverage {
+  /* result_complete used to be `!hasMore` alone. A wallet summary whose
+     transactions section failed upstream still had nothing more to page, so it
+     reported result_complete: true beside its own completeness object saying
+     result_complete: false with failed_sections: ["transactions"]. The server's
+     instructions tell clients to check _coverage before claiming completeness,
+     so the field they were told to trust was the one that was wrong: a caller
+     obeying it concluded it had a complete view of a wallet whose transactions
+     were never fetched. A section that never arrived is missing data, whatever
+     the pager says. */
+  const failedSections = Array.from(new Set(params.failedSections ?? []))
+  const windowComplete = params.windowComplete ?? true
   return {
     kind: 'section_window',
-    window_complete: params.windowComplete ?? true,
-    result_complete: !params.hasMore,
+    window_complete: windowComplete,
+    result_complete: !params.hasMore && windowComplete && failedSections.length === 0,
     continuation: params.hasMore ? 'cursor' : 'none',
     window_from_block: params.windowFromBlock,
     window_to_block: params.windowToBlock,
     sections: params.sections,
+    ...(failedSections.length > 0 ? { failed_sections: failedSections } : {}),
   }
 }
 
@@ -360,7 +422,9 @@ export function buildRankedOrdering(params: {
   }
 }
 
-export function buildBucketGapDiagnostics<T extends { bucket_index: number; timestamp: number; timestamp_human?: string }>(params: {
+export function buildBucketGapDiagnostics<
+  T extends { bucket_index: number; timestamp: number; timestamp_human?: string },
+>(params: {
   buckets: T[]
   intervalSeconds: number
   isFilled: (bucket: T) => boolean
@@ -379,8 +443,7 @@ export function buildBucketGapDiagnostics<T extends { bucket_index: number; time
 
   const classifyGapKind = (bucket: T) => {
     const bucketEnd = bucket.timestamp + params.intervalSeconds
-    const beforeObservedData =
-      params.firstObservedTimestamp !== undefined && bucketEnd <= params.firstObservedTimestamp
+    const beforeObservedData = params.firstObservedTimestamp !== undefined && bucketEnd <= params.firstObservedTimestamp
     const afterObservedData =
       params.lastObservedTimestamp !== undefined && bucket.timestamp > params.lastObservedTimestamp
     return !windowComplete && (beforeObservedData || afterObservedData) ? 'coverage_gap_likely' : 'no_activity'

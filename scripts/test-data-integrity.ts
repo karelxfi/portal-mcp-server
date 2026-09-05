@@ -1,16 +1,6 @@
 #!/usr/bin/env tsx
 
 import {
-  buildBitcoinBlockFields,
-  buildBitcoinTransactionFields,
-  buildEvmBlockFields,
-  buildEvmLogFields,
-  buildEvmTransactionFields,
-  buildSolanaTransactionFields,
-  buildSubstrateBlockFields,
-  buildSubstrateEventFields,
-} from '../src/helpers/fields.ts'
-import {
   EXACT_DECIMAL_ZERO,
   addExactDecimals,
   compareExactDecimals,
@@ -19,13 +9,21 @@ import {
   multiplyExactDecimals,
   parseExactDecimal,
 } from '../src/helpers/exact-decimal.ts'
+import { getTraceFields } from '../src/helpers/field-presets.js'
 import {
-  assert,
-  assertChatSurface,
-  callToolWithRetry,
-  closeTestClient,
-  connectTestClient,
-} from './test-helpers.ts'
+  buildBitcoinBlockFields,
+  buildBitcoinTransactionFields,
+  buildEvmBlockFields,
+  buildEvmLogFields,
+  buildEvmTransactionFields,
+  buildSolanaTransactionFields,
+  buildSubstrateBlockFields,
+  buildSubstrateEventFields,
+  buildTronBlockFields,
+  buildTronLogFields,
+  buildTronTransactionFields,
+} from '../src/helpers/fields.ts'
+import { assert, assertChatSurface, callToolWithRetry, closeTestClient, connectTestClient } from './test-helpers.ts'
 
 const PORTAL = 'https://portal.sqd.dev'
 const BASE_USDC = '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913'
@@ -33,8 +31,14 @@ const ERC20_TRANSFER = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a
 const BASE_FIXTURE_BLOCK = 50_343_299
 const ETH_TYPE_ONE_BLOCK = 12_244_145
 const ETH_TYPE_ONE_HASH = '0x851bad0415758075a1eb86776749c829b866d43179c57c3e4a4b9359a0358231'
+const ETH_TYPE_ONE_TX_INDEX = 14
 const POLKADOT_FROM = 30_736_840
 const POLKADOT_TO = 30_736_842
+const TRON_BLOCK = 84_000_000
+const TRON_USDT_HEX41 = '41a614f803b6fd780986a42c78ec9c7f77e6ded13c'
+const TRON_USDT_BASE58 = 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t'
+const TRON_TRX_SENDER_HEX41 = '41a1a0e4644b0bcb247cd36619e1c526c59eff7cc8'
+const TRON_TRX_SENDER_BASE58 = 'TQhpXvhSbXWgdYg8qmK7kQeL3rsfxxojNc'
 
 type JsonRecord = Record<string, any>
 
@@ -60,9 +64,8 @@ async function fetchNdjson(dataset: string, body: JsonRecord): Promise<JsonRecor
 
         lastError = error
         const retryAfterSeconds = Number(response.headers.get('retry-after') ?? '')
-        const retryDelayMs = Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0
-          ? retryAfterSeconds * 1_000
-          : attempt * 1_500
+        const retryDelayMs =
+          Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0 ? retryAfterSeconds * 1_000 : attempt * 1_500
         await new Promise((resolve) => setTimeout(resolve, retryDelayMs))
         continue
       }
@@ -297,8 +300,14 @@ async function main() {
       pagedFailedTransactions.every((item) => Number(item.status) === 0),
       'Every paged Base transaction should retain failed status',
     )
-    assert(finalTransactionPage?._coverage?.window_complete === true, 'Final Base transaction page should cover the window')
-    assert(finalTransactionPage?._coverage?.result_complete === true, 'Final Base transaction page should exhaust matches')
+    assert(
+      finalTransactionPage?._coverage?.window_complete === true,
+      'Final Base transaction page should cover the window',
+    )
+    assert(
+      finalTransactionPage?._coverage?.result_complete === true,
+      'Final Base transaction page should exhaust matches',
+    )
     console.log('PASS  Base EVM scan pagination: all 8 failed transactions match Portal without gaps or duplicates')
 
     const directBitcoin = flatten(
@@ -330,6 +339,177 @@ async function main() {
     }
     assertComplete(bitcoinData, 'Bitcoin block 170 transactions', directBitcoin.length)
     console.log(`PASS  Bitcoin block 170: all ${directBitcoin.length} transactions and hashes match Portal`)
+
+    const directTronTransfers = flatten(
+      await fetchNdjson('tron-mainnet', {
+        type: 'tron',
+        fromBlock: TRON_BLOCK,
+        toBlock: TRON_BLOCK,
+        fields: { block: buildTronBlockFields(), transaction: buildTronTransactionFields() },
+        transferTransactions: [{ owner: [TRON_TRX_SENDER_HEX41] }],
+      }),
+      'transactions',
+    )
+    assert(directTronTransfers.length > 0, 'Portal should return native TRX transfers for the sample sender')
+    const tronTransfers = await call('portal_tron_query_transactions', {
+      network: 'tron-mainnet',
+      from_block: TRON_BLOCK,
+      to_block: TRON_BLOCK,
+      kind: 'transfer',
+      from_addresses: [TRON_TRX_SENDER_BASE58],
+      response_format: 'full',
+      limit: 25,
+    })
+    assertEqualSet(
+      tronTransfers.items.map((item: JsonRecord) => item.hash),
+      directTronTransfers.map((item) => item.hash),
+      'Tron native TRX transfers from one sender',
+    )
+    for (const item of tronTransfers.items as JsonRecord[]) {
+      const source = directTronTransfers.find((row) => row.hash === item.hash)
+      const amount = String(source?.parameter?.value?.amount)
+      assert(item.amount_sun === amount, 'Tron amount_sun should match Portal parameter.value.amount')
+      const expectedTrx = `${BigInt(amount) / 1_000_000n}${BigInt(amount) % 1_000_000n === 0n ? '' : `.${(BigInt(amount) % 1_000_000n).toString().padStart(6, '0').replace(/0+$/, '')}`}`
+      assert(item.amount_trx === expectedTrx, `Tron amount_trx should be exact (${item.amount_trx} vs ${expectedTrx})`)
+      assert(item.sender === source?.parameter?.value?.owner_address, 'Tron sender should match owner_address')
+      assert(item.recipient === source?.parameter?.value?.to_address, 'Tron recipient should match to_address')
+      assert(item.sender_base58 === TRON_TRX_SENDER_BASE58, 'Tron sender should round-trip to Base58')
+      assert(item.timestamp * 1000 === directTronTransfers[0].timestamp, 'Tron timestamp alias should be block seconds')
+    }
+    assertComplete(tronTransfers, 'Tron native TRX transfers', directTronTransfers.length)
+    console.log(
+      `PASS  Tron block ${TRON_BLOCK}: all ${directTronTransfers.length} TRX transfers, amounts, and addresses match Portal`,
+    )
+
+    const directTronLogs = flatten(
+      await fetchNdjson('tron-mainnet', {
+        type: 'tron',
+        fromBlock: TRON_BLOCK,
+        toBlock: TRON_BLOCK,
+        fields: {
+          block: buildTronBlockFields(),
+          log: buildTronLogFields(),
+          transaction: { transactionIndex: true, hash: true },
+        },
+        logs: [
+          {
+            address: [TRON_USDT_HEX41.slice(2)],
+            topic0: [ERC20_TRANSFER.slice(2)],
+            topic2: [`000000000000000000000000${'5bdb8b4c4a3d0a93df56b88f8e2158cbe788fb39'}`],
+            transaction: true,
+          },
+        ],
+      }),
+      'logs',
+    )
+    assert(directTronLogs.length > 0, 'Portal should return USDT transfer logs for the sample recipient')
+    const tronLogs = await call('portal_tron_query_logs', {
+      network: 'tron-mainnet',
+      from_block: TRON_BLOCK,
+      to_block: TRON_BLOCK,
+      addresses: [TRON_USDT_BASE58],
+      event: 'transfer',
+      topic2: ['TJLuVi6UhS3UTx5EUXNCoz9VNqP2gnPmyf'],
+      response_format: 'full',
+      decode: true,
+      limit: 25,
+    })
+    assertEqualSet(
+      tronLogs.items.map((item: JsonRecord) => `${item.transactionIndex}:${item.logIndex}`),
+      directTronLogs.map((item) => `${item.transactionIndex}:${item.logIndex}`),
+      'Tron USDT transfer logs to one recipient',
+    )
+    for (const item of tronLogs.items as JsonRecord[]) {
+      const source = directTronLogs.find(
+        (row) => row.transactionIndex === item.transactionIndex && row.logIndex === item.logIndex,
+      )
+      assert(source?.data === item.data, 'Tron log data should match Portal byte for byte')
+      assert(JSON.stringify(source?.topics) === JSON.stringify(item.topics), 'Tron log topics should match Portal')
+      assert(/^[0-9a-f]{64}$/.test(item.tx_hash), 'Tron log should carry the joined transaction hash')
+      assert(
+        item.decoded_log?.decoded?.to === 'TJLuVi6UhS3UTx5EUXNCoz9VNqP2gnPmyf',
+        'decoded recipient should be Base58',
+      )
+    }
+    assertComplete(tronLogs, 'Tron USDT transfer logs', directTronLogs.length)
+    console.log(
+      `PASS  Tron block ${TRON_BLOCK}: all ${directTronLogs.length} USDT transfer logs match Portal with joined hashes`,
+    )
+
+    const directTraces = flatten(
+      await fetchNdjson('ethereum-mainnet', {
+        type: 'evm',
+        fromBlock: ETH_TYPE_ONE_BLOCK,
+        toBlock: ETH_TYPE_ONE_BLOCK,
+        fields: {
+          block: buildEvmBlockFields(),
+          trace: { ...getTraceFields('standard').trace, transactionIndex: true },
+          transaction: { transactionIndex: true, hash: true },
+        },
+        traces: [{ transaction: true }],
+      }),
+      'traces',
+    ).filter((trace) => trace.transactionIndex === ETH_TYPE_ONE_TX_INDEX)
+    assert(directTraces.length > 1, 'Portal should return the internal calls of the pinned transaction')
+    const traceRows: JsonRecord[] = []
+    let traceCursor: string | undefined
+    let tracePage = 0
+    let finalTracePage: JsonRecord | undefined
+    do {
+      const page = await call(
+        'portal_evm_query_traces',
+        traceCursor
+          ? { cursor: traceCursor }
+          : {
+              network: 'ethereum-mainnet',
+              from_block: ETH_TYPE_ONE_BLOCK,
+              to_block: ETH_TYPE_ONE_BLOCK,
+              transaction_hash: ETH_TYPE_ONE_HASH,
+              response_format: 'full',
+              limit: 10,
+            },
+      )
+      assertChatSurface(page, `EVM traces page ${tracePage + 1}`)
+      traceRows.push(...page.items)
+      finalTracePage = page
+      traceCursor = page._pagination?.has_more ? page._pagination.next_cursor : undefined
+      tracePage += 1
+      assert(tracePage <= 25, 'EVM trace pagination should terminate')
+    } while (traceCursor)
+    assertEqualSet(
+      traceRows.map((item) => String(item.trace_address)),
+      directTraces.map((item) => (item.traceAddress as number[]).join('.') || 'root'),
+      'EVM traces of one transaction',
+    )
+    for (const item of traceRows) {
+      const source = directTraces.find(
+        (row) => ((row.traceAddress as number[]).join('.') || 'root') === String(item.trace_address),
+      )
+      assert(source !== undefined, 'Every returned trace should exist in the direct Portal rows')
+      assert(item.tx_hash === ETH_TYPE_ONE_HASH, 'Every trace row should carry the parent transaction hash')
+      assert(item.type === source?.type, 'Trace type should match Portal')
+      assert(item.subtraces === source?.subtraces, 'Subtrace count should match Portal')
+      assert(item.action === undefined && item.result === undefined, 'Trace rows should not repeat the nested objects')
+      if (source?.action?.from !== undefined) {
+        assert(item.call_from === source.action.from, 'call_from should flatten action.from')
+        assert(item.call_to === (source.action.to ?? undefined), 'call_to should flatten action.to')
+        assert(
+          item.call_sighash === (source.action.sighash ?? undefined),
+          'call_sighash should flatten action.sighash, and an absent selector should be omitted',
+        )
+      }
+      if (source?.result?.gasUsed !== undefined) {
+        assert(item.gas_used === source.result.gasUsed, 'gas_used should flatten result.gasUsed')
+      }
+      assert(
+        item.primary_id === `${ETH_TYPE_ONE_HASH}:${item.trace_address}`,
+        'Trace primary_id should be the hash plus the trace address',
+      )
+    }
+    assert(finalTracePage?._pagination?.has_more === false, 'The last trace page should not hide another page')
+    console.log(
+      `PASS  Ethereum block ${ETH_TYPE_ONE_BLOCK}: all ${directTraces.length} traces of the pinned transaction match Portal with flattened action and result fields`,
+    )
 
     const directEvents = flatten(
       await fetchNdjson('polkadot', {
@@ -374,7 +554,10 @@ async function main() {
       const source = directEvents.find((row) => `${row.block_number}:${row.index}` === item.primary_id)
       assert(source?.name === item.event_name, 'Polkadot event name should match Portal')
     }
-    assert(finalSubstratePage?._coverage?.window_complete === true, 'Final Polkadot page should cover the source window')
+    assert(
+      finalSubstratePage?._coverage?.window_complete === true,
+      'Final Polkadot page should cover the source window',
+    )
     assert(finalSubstratePage?._coverage?.result_complete === true, 'Final Polkadot page should exhaust results')
     const eventCounts = new Map<string, number>()
     for (const event of directEvents) eventCounts.set(event.name, (eventCounts.get(event.name) ?? 0) + 1)
@@ -400,7 +583,9 @@ async function main() {
       assert(stable(source?.args) === stable(item.args), 'Polkadot sampled event arguments should match Portal')
     }
     assertComplete(substrateSample, 'Polkadot event payload sample', directEventSample.length)
-    console.log(`PASS  Polkadot events: all ${directEvents.length} identities and names, plus exact sampled arguments, match Portal`)
+    console.log(
+      `PASS  Polkadot events: all ${directEvents.length} identities and names, plus exact sampled arguments, match Portal`,
+    )
 
     const solanaHeadData = await call('portal_get_head', { network: 'solana-mainnet' })
     const solanaHead = Number(solanaHeadData.number)
@@ -439,7 +624,10 @@ async function main() {
       }),
       'transactions',
     )
-    assert(directSolana.length > 0 && directSolana.length <= 200, 'Chosen Solana payer should have a bounded result set')
+    assert(
+      directSolana.length > 0 && directSolana.length <= 200,
+      'Chosen Solana payer should have a bounded result set',
+    )
     const solanaData = await call('portal_solana_query_transactions', {
       network: 'solana-mainnet',
       from_block: solanaFrom,
@@ -449,11 +637,7 @@ async function main() {
       limit: 25,
     })
     const signature = (item: JsonRecord) => item.signatures?.[0]
-    assertEqualSet(
-      solanaData.items.map(signature),
-      directSolana.map(signature),
-      'Solana fee-payer transactions',
-    )
+    assertEqualSet(solanaData.items.map(signature), directSolana.map(signature), 'Solana fee-payer transactions')
     for (const item of solanaData.items as JsonRecord[]) {
       const source = directSolana.find((row) => signature(row) === signature(item))
       assert(source?.feePayer === item.feePayer, 'Solana fee payer should match Portal')
@@ -505,8 +689,8 @@ async function main() {
         return price && size ? addExactDecimals(sum, multiplyExactDecimals(price, size)) : sum
       }, EXACT_DECIMAL_ZERO)
       const baseVolume = sizes.reduce((sum, size) => addExactDecimals(sum, size), EXACT_DECIMAL_ZERO)
-      const high = prices.reduce((best, price) => compareExactDecimals(price, best) > 0 ? price : best, prices[0])
-      const low = prices.reduce((best, price) => compareExactDecimals(price, best) < 0 ? price : best, prices[0])
+      const high = prices.reduce((best, price) => (compareExactDecimals(price, best) > 0 ? price : best), prices[0])
+      const low = prices.reduce((best, price) => (compareExactDecimals(price, best) < 0 ? price : best), prices[0])
       const vwap = divideExactDecimals(notional, baseVolume, 18)
       return {
         timestamp: candle.timestamp,
@@ -523,7 +707,10 @@ async function main() {
     for (const expected of expectedCandles) {
       const actual = ohlcData.ohlc.find((candle: JsonRecord) => candle.timestamp === expected.timestamp)
       for (const key of ['open', 'high', 'low', 'close', 'volume', 'base_volume', 'fill_count', 'vwap']) {
-        assert(actual?.[key] === expected[key], `Hyperliquid candle ${expected.timestamp} ${key} should match raw fills`)
+        assert(
+          actual?.[key] === expected[key],
+          `Hyperliquid candle ${expected.timestamp} ${key} should match raw fills`,
+        )
       }
     }
     assert(

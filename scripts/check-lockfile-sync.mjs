@@ -1,61 +1,69 @@
 #!/usr/bin/env node
 
-import { readFile } from 'node:fs/promises'
+// One lockfile, installed by everything that builds this repository.
+//
+// This repository used to carry both package-lock.json and pnpm-lock.yaml:
+// CI installed from the first, the Docker image installed from the second.
+// Nothing compared them, so the two trees drifted apart, and a difference only
+// ever surfaced as a broken image build after every gate had gone green. This
+// check keeps that from coming back: exactly one lockfile, and the Dockerfile
+// installs from it.
 
-const packageJson = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'))
-const pnpmLock = await readFile(new URL('../pnpm-lock.yaml', import.meta.url), 'utf8')
+import { readFile, stat } from 'node:fs/promises'
 
-const expected = new Map(
-  Object.entries({
-    ...(packageJson.dependencies ?? {}),
-    ...(packageJson.devDependencies ?? {}),
-    ...(packageJson.optionalDependencies ?? {}),
-  }),
-)
-const actual = new Map()
-let dependencySection = false
-let dependencyName
+const repoRoot = new URL('../', import.meta.url)
+const errors = []
 
-for (const line of pnpmLock.split('\n')) {
-  if (/^    (?:dependencies|devDependencies|optionalDependencies):$/.test(line)) {
-    dependencySection = true
-    dependencyName = undefined
-    continue
-  }
-
-  if (/^    \S/.test(line)) {
-    dependencySection = false
-    dependencyName = undefined
-    continue
-  }
-
-  if (!dependencySection) continue
-
-  const dependencyMatch = line.match(/^      (.+):$/)
-  if (dependencyMatch) {
-    dependencyName = dependencyMatch[1].replace(/^['"]|['"]$/g, '')
-    continue
-  }
-
-  const specifierMatch = line.match(/^        specifier: (.+)$/)
-  if (dependencyName && specifierMatch) {
-    actual.set(dependencyName, specifierMatch[1].replace(/^['"]|['"]$/g, ''))
+const foreignLockfiles = ['pnpm-lock.yaml', 'yarn.lock', 'bun.lockb', 'bun.lock']
+for (const name of foreignLockfiles) {
+  const exists = await stat(new URL(name, repoRoot)).then(
+    () => true,
+    () => false,
+  )
+  if (exists) {
+    errors.push(
+      `${name} is present. This repository installs from package-lock.json only; a second lockfile resolves its own versions and drifts out of sight of CI.`,
+    )
   }
 }
 
-const mismatches = []
-for (const [name, specifier] of expected) {
-  if (actual.get(name) !== specifier) {
-    mismatches.push(`${name}: package.json=${specifier}, pnpm-lock.yaml=${actual.get(name) ?? '(missing)'}`)
+const packageJson = JSON.parse(await readFile(new URL('package.json', repoRoot), 'utf8'))
+const packageLock = JSON.parse(await readFile(new URL('package-lock.json', repoRoot), 'utf8'))
+
+const declared = Object.entries({
+  ...(packageJson.dependencies ?? {}),
+  ...(packageJson.devDependencies ?? {}),
+  ...(packageJson.optionalDependencies ?? {}),
+})
+
+// npm ci fails outright when the lockfile does not cover package.json, but it
+// fails inside the image build rather than here, where the message is useful.
+const lockRoot = packageLock.packages?.['']
+for (const [name, specifier] of declared) {
+  const lockedSpecifier =
+    lockRoot?.dependencies?.[name] ?? lockRoot?.devDependencies?.[name] ?? lockRoot?.optionalDependencies?.[name]
+  if (lockedSpecifier === undefined) {
+    errors.push(`${name} is declared in package.json but missing from package-lock.json. Run \`npm install\`.`)
+    continue
+  }
+  if (lockedSpecifier !== specifier) {
+    errors.push(
+      `${name}: package.json=${specifier}, package-lock.json=${lockedSpecifier}. Run \`npm install\` to refresh the lockfile.`,
+    )
   }
 }
-for (const name of actual.keys()) {
-  if (!expected.has(name)) mismatches.push(`${name}: present only in pnpm-lock.yaml`)
+
+const dockerfile = await readFile(new URL('Dockerfile', repoRoot), 'utf8')
+if (!/^COPY .*\bpackage-lock\.json\b/m.test(dockerfile)) {
+  errors.push('Dockerfile does not copy package-lock.json, so the image would install an unlocked tree.')
+}
+if (!/^RUN npm ci\b/m.test(dockerfile)) {
+  errors.push('Dockerfile does not install with `npm ci`, so the image would not build the tree CI tested.')
 }
 
-if (mismatches.length > 0) {
-  console.error(`pnpm lockfile is out of sync:\n${mismatches.map((item) => `  - ${item}`).join('\n')}`)
+if (errors.length > 0) {
+  console.error(`Lockfile check failed:\n${errors.map((item) => `  - ${item}`).join('\n')}`)
   process.exit(1)
 }
 
-console.log(`Lockfile sync OK: ${actual.size} package specifiers match package.json`)
+console.log(`Lockfile OK: ${declared.length} declared packages locked in package-lock.json, and the image installs it`)

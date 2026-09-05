@@ -350,7 +350,7 @@ function buildToolProfiles(tools: ListedTool[]): ToolProfile[] {
   })
 }
 
-function buildIdfMap(values: Array<Set<string>>): Map<string, number> {
+function buildIdfMap(values: Set<string>[]): Map<string, number> {
   const documentFrequency = new Map<string, number>()
 
   for (const valueSet of values) {
@@ -437,14 +437,28 @@ function scoreTool(
     !chartPrompt &&
     !summaryPrompt
   const investigationPrompt = promptTokens.some((token) =>
-    ['crime', 'evidence', 'exploit', 'forensic', 'hack', 'incident', 'investigate', 'investigation', 'stolen', 'suspicious', 'trace'].includes(token),
+    [
+      'crime',
+      'evidence',
+      'exploit',
+      'forensic',
+      'hack',
+      'incident',
+      'investigate',
+      'investigation',
+      'stolen',
+      'suspicious',
+      'trace',
+    ].includes(token),
   )
   const walletInvestigationPrompt =
     investigationPrompt && promptTokens.some((token) => ['account', 'address', 'wallet'].includes(token))
   const tokenTraceInvestigationPrompt =
-    investigationPrompt && promptTokens.some((token) => ['asset', 'movement', 'token', 'transfer', 'transfers', 'usdc'].includes(token))
+    investigationPrompt &&
+    promptTokens.some((token) => ['asset', 'movement', 'token', 'transfer', 'transfers', 'usdc'].includes(token))
   const rawTransactionInvestigationPrompt =
-    investigationPrompt && promptTokens.some((token) => ['exact', 'raw', 'transaction', 'transactions', 'tx', 'txs'].includes(token))
+    investigationPrompt &&
+    promptTokens.some((token) => ['exact', 'raw', 'transaction', 'transactions', 'tx', 'txs'].includes(token))
   const gasRankedTransactionPrompt =
     promptTokens.includes('gas') &&
     promptTokens.some((token) => ['biggest', 'largest', 'rank', 'ranked', 'top', 'used'].includes(token)) &&
@@ -476,8 +490,26 @@ function scoreTool(
       /\busdc transfers?\b/.test(promptLower) ||
       /\bnot all logs?\b/.test(promptLower))
   const entityResolvePrompt =
-    promptTokens.some((token) => ['address', 'coin', 'contract', 'identifier', 'mean', 'protocol', 'resolve', 'slug', 'symbol', 'ticker', 'token'].includes(token)) &&
-    promptTokens.some((token) => ['apes', 'bayc', 'bitcoin', 'bored', 'btc', 'dai', 'hyperliquid', 'pool', 'uniswap', 'usdc', 'weth'].includes(token)) &&
+    promptTokens.some((token) =>
+      [
+        'address',
+        'coin',
+        'contract',
+        'identifier',
+        'mean',
+        'protocol',
+        'resolve',
+        'slug',
+        'symbol',
+        'ticker',
+        'token',
+      ].includes(token),
+    ) &&
+    promptTokens.some((token) =>
+      ['apes', 'bayc', 'bitcoin', 'bored', 'btc', 'dai', 'hyperliquid', 'pool', 'uniswap', 'usdc', 'weth'].includes(
+        token,
+      ),
+    ) &&
     !promptTokens.some((token) =>
       [
         'event',
@@ -654,7 +686,7 @@ function rankTools(
 }
 
 async function main() {
-  console.log(`Routing-eval: ranking ${ROUTING_EVAL_CASES.length} naive prompts against the live 28-tool catalog...\n`)
+  console.log(`Routing-eval: ranking ${ROUTING_EVAL_CASES.length} naive prompts against the live 31-tool catalog...\n`)
 
   const transport = new StdioClientTransport({ command: 'node', args: ['dist/index.js'] })
   const client = new Client({ name: 'routing-eval', version: '1.0.0' })
@@ -663,7 +695,7 @@ async function main() {
   const { tools } = await client.listTools()
   const actualNames = new Set(tools.map((tool) => tool.name))
   const legacyStillExposed = LEGACY_TOOL_NAMES.filter((name) => actualNames.has(name))
-  assert(tools.length === 28, `Expected exactly 28 tools, got ${tools.length}`)
+  assert(tools.length === 31, `Expected exactly 31 tools, got ${tools.length}`)
   assert(legacyStillExposed.length === 0, `Legacy tool names are still exposed: ${legacyStillExposed.join(', ')}`)
 
   const listedTools = tools.map((tool) => ({ name: tool.name, description: tool.description ?? '' }))

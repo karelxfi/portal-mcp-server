@@ -1,19 +1,26 @@
 import type { McpServer } from '@modelcontextprotocol/server'
-
-import { registerPortalTool } from '../../helpers/mcp-registration.js'
 import { z } from 'zod'
 
 import { resolveDataset, validateBlockRange } from '../../cache/datasets.js'
 import { PORTAL_URL } from '../../constants/index.js'
 import { detectChainType, isL2Chain } from '../../helpers/chain.js'
-import { getBlockFields } from '../../helpers/field-presets.js'
 import { portalFetchStreamRange } from '../../helpers/fetch.js'
+import { getBlockFields } from '../../helpers/field-presets.js'
 import { buildBitcoinBlockFields, buildEvmBlockFields } from '../../helpers/fields.js'
-import { formatResult } from '../../helpers/format.js'
-import { hexToNumber, weiToGwei } from '../../helpers/format.js'
-import { buildPaginationInfo, decodeRecentPageCursor, encodeRecentPageCursor, paginateAscendingItems } from '../../helpers/pagination.js'
-import { buildChronologicalPageOrdering, buildQueryCoverage, buildQueryFreshness } from '../../helpers/result-metadata.js'
-import { getTimestampWindowNotices, type TimestampInput, resolveTimeframeOrBlocks } from '../../helpers/timeframe.js'
+import { formatResult, hexToNumber, weiToGwei } from '../../helpers/format.js'
+import { registerPortalTool } from '../../helpers/mcp-registration.js'
+import {
+  buildPaginationInfo,
+  decodeRecentPageCursor,
+  encodeRecentPageCursor,
+  paginateAscendingItems,
+} from '../../helpers/pagination.js'
+import {
+  buildChronologicalPageOrdering,
+  buildQueryCoverage,
+  buildQueryFreshness,
+} from '../../helpers/result-metadata.js'
+import { type TimestampInput, getTimestampWindowNotices, resolveTimeframeOrBlocks } from '../../helpers/timeframe.js'
 import { buildExecutionMetadata, buildToolDescription } from '../../helpers/tool-ux.js'
 
 // ============================================================================
@@ -48,25 +55,27 @@ function sortBlocks(items: BlockItem[]) {
 }
 
 export function registerQueryBlocksTool(server: McpServer) {
-  registerPortalTool(server,
+  registerPortalTool(
+    server,
     'portal_debug_query_blocks',
     buildToolDescription('portal_debug_query_blocks'),
     {
       network: z.string().optional().describe('Network name or alias. Optional when continuing with cursor.'),
-      timeframe: z
-        .string()
-        .optional()
-        .describe("Time range (e.g., '1h', '24h'). Alternative to from_block/to_block."),
+      timeframe: z.string().optional().describe("Time range (e.g., '1h', '24h'). Alternative to from_block/to_block."),
       from_block: z.number().optional().describe('Starting block number (use this OR timeframe)'),
       to_block: z.number().optional().describe('Ending block number'),
       from_timestamp: z
         .union([z.number(), z.string()])
         .optional()
-        .describe('Starting timestamp. Accepts Unix seconds, Unix milliseconds, ISO datetime, or relative input like "1h ago".'),
+        .describe(
+          'Starting timestamp. Accepts Unix seconds, Unix milliseconds, ISO datetime, or relative input like "1h ago".',
+        ),
       to_timestamp: z
         .union([z.number(), z.string()])
         .optional()
-        .describe('Ending timestamp. Accepts Unix seconds, Unix milliseconds, ISO datetime, or relative input like "now".'),
+        .describe(
+          'Ending timestamp. Accepts Unix seconds, Unix milliseconds, ISO datetime, or relative input like "now".',
+        ),
       finalized_only: z.boolean().optional().default(false).describe('Only query finalized blocks'),
       limit: z
         .number()
@@ -87,7 +96,19 @@ export function registerQueryBlocksTool(server: McpServer) {
         ),
       cursor: z.string().optional().describe('Continuation cursor from a previous response'),
     },
-    async ({ network, timeframe, from_block, to_block, from_timestamp, to_timestamp, limit, include_l2_fields, finalized_only, field_preset, cursor }) => {
+    async ({
+      network,
+      timeframe,
+      from_block,
+      to_block,
+      from_timestamp,
+      to_timestamp,
+      limit,
+      include_l2_fields,
+      finalized_only,
+      field_preset,
+      cursor,
+    }) => {
       const queryStartTime = Date.now()
       const paginationCursor = cursor
         ? decodeRecentPageCursor<QueryBlocksRequest>(cursor, 'portal_debug_query_blocks')
@@ -99,7 +120,9 @@ export function registerQueryBlocksTool(server: McpServer) {
       const chainType = detectChainType(dataset)
 
       if (chainType === 'hyperliquidFills' || chainType === 'hyperliquidReplicaCmds') {
-        throw new Error('portal_debug_query_blocks supports EVM, Solana, and Bitcoin networks. Hyperliquid datasets do not expose block metadata through this tool.')
+        throw new Error(
+          'portal_debug_query_blocks supports EVM, Solana, and Bitcoin networks. Hyperliquid datasets do not expose block metadata through this tool.',
+        )
       }
 
       if (paginationCursor) {
@@ -119,7 +142,8 @@ export function registerQueryBlocksTool(server: McpServer) {
             from_block: paginationCursor.window_from_block,
             to_block: paginationCursor.window_to_block,
             range_kind:
-              paginationCursor.request.from_timestamp !== undefined || paginationCursor.request.to_timestamp !== undefined
+              paginationCursor.request.from_timestamp !== undefined ||
+              paginationCursor.request.to_timestamp !== undefined
                 ? 'timestamp_range'
                 : paginationCursor.request.timeframe
                   ? 'timeframe'
@@ -221,25 +245,26 @@ export function registerQueryBlocksTool(server: McpServer) {
             }
           : undefined,
       )
-      const nextCursor = page.hasMore && page.nextBoundary
-        ? encodeRecentPageCursor<QueryBlocksRequest>({
-          tool: 'portal_debug_query_blocks',
-            dataset,
-            request: {
-              ...(timeframe ? { timeframe } : {}),
-              ...(from_timestamp !== undefined ? { from_timestamp } : {}),
-              ...(to_timestamp !== undefined ? { to_timestamp } : {}),
-              limit: limit!,
-              finalized_only,
-              include_l2_fields,
-              field_preset,
-            },
-            window_from_block: resolvedFromBlock,
-            window_to_block: endBlock,
-            page_to_block: page.nextBoundary.page_to_block,
-            skip_inclusive_block: page.nextBoundary.skip_inclusive_block,
-          })
-        : undefined
+      const nextCursor =
+        page.hasMore && page.nextBoundary
+          ? encodeRecentPageCursor<QueryBlocksRequest>({
+              tool: 'portal_debug_query_blocks',
+              dataset,
+              request: {
+                ...(timeframe ? { timeframe } : {}),
+                ...(from_timestamp !== undefined ? { from_timestamp } : {}),
+                ...(to_timestamp !== undefined ? { to_timestamp } : {}),
+                limit: limit!,
+                finalized_only,
+                include_l2_fields,
+                field_preset,
+              },
+              window_from_block: resolvedFromBlock,
+              window_to_block: endBlock,
+              page_to_block: page.nextBoundary.page_to_block,
+              skip_inclusive_block: page.nextBoundary.skip_inclusive_block,
+            })
+          : undefined
 
       const notices = getTimestampWindowNotices(resolvedBlocks)
       if (nextCursor) notices.push('Older results are available via _pagination.next_cursor.')
@@ -258,36 +283,40 @@ export function registerQueryBlocksTool(server: McpServer) {
         hasMore: page.hasMore,
       })
 
-      return formatResult(page.pageItems, `Retrieved ${page.pageItems.length} blocks${page.hasMore ? ` from the most recent matching range (preview page limited to ${limit})` : ''}`, {
-        toolName: 'portal_debug_query_blocks',
-        notices,
-        pagination: buildPaginationInfo(limit!, page.pageItems.length, nextCursor),
-        ordering: buildChronologicalPageOrdering({
-          sortedBy: chainType === 'solana' ? 'slot_number' : 'block_number',
-        }),
-        freshness,
-        coverage,
-        execution: buildExecutionMetadata({
-          finalized_only,
-          limit,
-          from_block: startBlock,
-          to_block: endBlock,
-          page_to_block: pageToBlock,
-          range_kind: resolvedBlocks.range_kind,
-          notes: [
-            chainType === 'evm'
-              ? `Field preset: ${field_preset}${includeL2 ? ' with L2 fields' : ''}.`
-              : `Field preset follows the native ${chainType} block shape.`,
-          ],
-        }),
-        metadata: {
-          network: dataset,
-          dataset,
-          from_block: startBlock,
-          to_block: pageToBlock,
-          query_start_time: queryStartTime,
+      return formatResult(
+        page.pageItems,
+        `Retrieved ${page.pageItems.length} blocks${page.hasMore ? ` from the most recent matching range (preview page limited to ${limit})` : ''}`,
+        {
+          toolName: 'portal_debug_query_blocks',
+          notices,
+          pagination: buildPaginationInfo(limit!, page.pageItems.length, nextCursor),
+          ordering: buildChronologicalPageOrdering({
+            sortedBy: chainType === 'solana' ? 'slot_number' : 'block_number',
+          }),
+          freshness,
+          coverage,
+          execution: buildExecutionMetadata({
+            finalized_only,
+            limit,
+            from_block: startBlock,
+            to_block: endBlock,
+            page_to_block: pageToBlock,
+            range_kind: resolvedBlocks.range_kind,
+            notes: [
+              chainType === 'evm'
+                ? `Field preset: ${field_preset}${includeL2 ? ' with L2 fields' : ''}.`
+                : `Field preset follows the native ${chainType} block shape.`,
+            ],
+          }),
+          metadata: {
+            network: dataset,
+            dataset,
+            from_block: startBlock,
+            to_block: pageToBlock,
+            query_start_time: queryStartTime,
+          },
         },
-      })
+      )
     },
   )
 }

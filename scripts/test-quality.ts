@@ -1,9 +1,9 @@
 #!/usr/bin/env tsx
 
-import { readFileSync } from 'node:fs'
+import { readFileSync, writeFileSync } from 'node:fs'
+
 import type { Client } from '@modelcontextprotocol/client'
 
-import { TOOL_SPECS, loadToolTestContext } from './tool-manifest.ts'
 import {
   assert,
   assertChatSurface,
@@ -16,6 +16,7 @@ import {
   printSection,
   truncateText,
 } from './test-helpers.ts'
+import { TOOL_SPECS, loadToolTestContext } from './tool-manifest.ts'
 
 type QualityWarning = {
   tool: string
@@ -31,19 +32,24 @@ type ResponseSizeSample = {
 type QualityBaseline = {
   version: string
   captured_at: string
+  note?: string
   passes: Array<'cold' | 'warm'>
+  sample_count?: number
   aggregate?: {
     median_chars: number
     p90_chars: number
     max_median_chars: number
     max_p90_chars: number
   }
-  tools: Record<string, {
-    median_chars: number
-    p95_chars: number
-    max_median_chars: number
-    max_p95_chars: number
-  }>
+  tools: Record<
+    string,
+    {
+      median_chars: number
+      p95_chars: number
+      max_median_chars: number
+      max_p95_chars: number
+    }
+  >
 }
 
 const HARD_LATENCY_BUDGET_MS: Record<string, number> = {
@@ -72,7 +78,17 @@ const TOOL_LATENCY_BUDGET_MS: Record<string, { soft: number; hard: number }> = {
   portal_evm_get_analytics: { soft: 3_000, hard: 8_000 },
 }
 
-const QUALITY_BASELINE_PATH = new URL('./quality-baseline-v0.7.9.json', import.meta.url)
+const QUALITY_BASELINE_PATH = new URL('./quality-baseline.json', import.meta.url)
+/** Headroom over the measured size before a tool counts as regressed. */
+const SIZE_BUDGET_HEADROOM = 1.1
+const packageVersion = String(JSON.parse(readFileSync('package.json', 'utf8')).version)
+
+const cliArgs = process.argv.slice(2)
+const writeBaseline = cliArgs.includes('--write')
+const baselineNote = (() => {
+  const index = cliArgs.indexOf('--note')
+  return index === -1 ? '' : (cliArgs[index + 1] ?? '').trim()
+})()
 
 function getIntent(data: any): string {
   return typeof data?._tool_contract?.intent === 'string' ? data._tool_contract.intent : 'query'
@@ -108,6 +124,41 @@ function percentile(values: number[], p: number) {
   const sorted = [...values].sort((a, b) => a - b)
   const index = Math.min(sorted.length - 1, Math.max(0, Math.ceil((p / 100) * sorted.length) - 1))
   return sorted[index]
+}
+
+function writeQualityBaseline(responseSizes: ResponseSizeSample[], note: string) {
+  const observed = summarizeResponseSizes(responseSizes)
+  const sizes = responseSizes.map((sample) => sample.chars)
+  const aggregateMedian = percentile(sizes, 50)
+  const aggregateP90 = percentile(sizes, 90)
+  const withHeadroom = (value: number) => Math.round(value * SIZE_BUDGET_HEADROOM)
+  const next: QualityBaseline = {
+    version: packageVersion,
+    captured_at: new Date().toISOString(),
+    note,
+    passes: ['cold', 'warm'],
+    sample_count: responseSizes.length,
+    aggregate: {
+      median_chars: aggregateMedian,
+      p90_chars: aggregateP90,
+      max_median_chars: withHeadroom(aggregateMedian),
+      max_p90_chars: withHeadroom(aggregateP90),
+    },
+    tools: Object.fromEntries(
+      observed.map((entry) => [
+        entry.tool,
+        {
+          median_chars: entry.median,
+          p95_chars: entry.p95,
+          max_median_chars: withHeadroom(entry.median),
+          max_p95_chars: withHeadroom(entry.p95),
+        },
+      ]),
+    ),
+  }
+  writeFileSync(QUALITY_BASELINE_PATH, `${JSON.stringify(next, null, 2)}\n`)
+  console.log(`\nQuality baseline written to ${QUALITY_BASELINE_PATH.pathname} for v${packageVersion}`)
+  console.log(`Note: ${note}`)
 }
 
 function loadQualityBaseline(): QualityBaseline {
@@ -209,7 +260,10 @@ function validateCatalogSemantics(tools: any[], failures: QualityWarning[]) {
     failures.push({ tool: 'catalog', message: `manifest tools missing from catalog: ${missingFromCatalog.join(', ')}` })
   }
   if (missingFromManifest.length > 0) {
-    failures.push({ tool: 'catalog', message: `catalog tools missing from manifest: ${missingFromManifest.join(', ')}` })
+    failures.push({
+      tool: 'catalog',
+      message: `catalog tools missing from manifest: ${missingFromManifest.join(', ')}`,
+    })
   }
 
   for (const tool of tools) {
@@ -282,9 +336,18 @@ async function validateContractActivityFastModeCoverage(params: {
 
     assert(!result.isError, 'portal_evm_get_contract_activity fast-mode coverage probe should succeed')
     const data = result.data
-    assert(data?._coverage?.window_complete === false, 'fast-mode contract activity should mark trimmed window coverage incomplete')
-    assert(data?._coverage?.result_complete === true, 'fast-mode contract activity should keep result_complete about pagination/caps')
-    assert(data?._coverage?.continuation === 'none', 'fast-mode contract activity should not invent a continuation cursor')
+    assert(
+      data?._coverage?.window_complete === false,
+      'fast-mode contract activity should mark trimmed window coverage incomplete',
+    )
+    assert(
+      data?._coverage?.result_complete === true,
+      'fast-mode contract activity should keep result_complete about pagination/caps',
+    )
+    assert(
+      data?._coverage?.continuation === 'none',
+      'fast-mode contract activity should not invent a continuation cursor',
+    )
     assert(
       typeof data?._coverage?.analyzed_from_block === 'number' &&
         data._coverage.analyzed_from_block > data._coverage.window_from_block,
@@ -294,7 +357,10 @@ async function validateContractActivityFastModeCoverage(params: {
       data?._coverage?.analyzed_to_block === data?._coverage?.window_to_block,
       'fast-mode contract activity should expose analyzed_to_block at the requested window end',
     )
-    assert(data?._execution?.result_scope === 'partial_window', 'fast-mode contract activity should expose partial_window execution scope')
+    assert(
+      data?._execution?.result_scope === 'partial_window',
+      'fast-mode contract activity should expose partial_window execution scope',
+    )
     assert(
       data?._execution?.scan_estimate?.requested_blocks > data?._execution?.scan_estimate?.analyzed_blocks,
       'fast-mode contract activity should report requested versus analyzed block counts',
@@ -305,10 +371,15 @@ async function validateContractActivityFastModeCoverage(params: {
       'fast-mode contract activity should disclose partial window coverage in answer or notices',
     )
 
-    console.log(`PASS  portal_evm_get_contract_activity fast coverage [${result.elapsedMs}ms ${classifySpeed(result.elapsedMs)}]`)
+    console.log(
+      `PASS  portal_evm_get_contract_activity fast coverage [${result.elapsedMs}ms ${classifySpeed(result.elapsedMs)}]`,
+    )
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
-    failures.push({ tool: 'portal_evm_get_contract_activity', message: `fast-mode coverage probe: ${message.slice(0, 320)}` })
+    failures.push({
+      tool: 'portal_evm_get_contract_activity',
+      message: `fast-mode coverage probe: ${message.slice(0, 320)}`,
+    })
     console.log('FAIL  portal_evm_get_contract_activity fast coverage')
     console.log(`      ${truncateText(message, 8)}`)
   }
@@ -330,10 +401,7 @@ async function runQualityPass(params: {
     try {
       const args = spec.args(context)
       let result = await callToolWithRetry(client, spec.name, args)
-      assert(
-        !result.isError,
-        `${spec.name} should succeed in the quality audit: ${truncateText(result.text, 4)}`,
-      )
+      assert(!result.isError, `${spec.name} should succeed in the quality audit: ${truncateText(result.text, 4)}`)
 
       const intent = getIntent(result.data)
       const hardLatencyBudget = getHardLatencyBudget(intent, spec.name)
@@ -354,7 +422,8 @@ async function runQualityPass(params: {
       assert(result.dataSource === 'structuredContent', `${spec.name} ${pass} should prefer structuredContent`)
       assert(result.structuredContent !== undefined, `${spec.name} ${pass} should emit structuredContent`)
       assert(
-        JSON.stringify(result.structuredContent) === JSON.stringify(parseToolResultData({ content: result.result.content }).data),
+        JSON.stringify(result.structuredContent) ===
+          JSON.stringify(parseToolResultData({ content: result.result.content }).data),
         `${spec.name} ${pass} structuredContent should match JSON text fallback envelope`,
       )
       responseSizes.push({ tool: spec.name, pass, chars: result.text.length })
@@ -364,13 +433,22 @@ async function runQualityPass(params: {
 
       const responseSizeBudget = getResponseSizeBudget(data)
       if (result.text.length > responseSizeBudget) {
-        failures.push({ tool: spec.name, message: `${pass} response exceeded size budget (${result.text.length} chars > ${responseSizeBudget})` })
+        failures.push({
+          tool: spec.name,
+          message: `${pass} response exceeded size budget (${result.text.length} chars > ${responseSizeBudget})`,
+        })
       } else if (result.text.length > Math.floor(responseSizeBudget * 0.8)) {
-        warnings.push({ tool: spec.name, message: `${pass} response is approaching size budget (${result.text.length}/${responseSizeBudget} chars)` })
+        warnings.push({
+          tool: spec.name,
+          message: `${pass} response is approaching size budget (${result.text.length}/${responseSizeBudget} chars)`,
+        })
       }
 
       if (String(data.answer || '').length > 220) {
-        warnings.push({ tool: spec.name, message: `${pass} answer is quite long (${String(data.answer).length} chars)` })
+        warnings.push({
+          tool: spec.name,
+          message: `${pass} answer is quite long (${String(data.answer).length} chars)`,
+        })
       }
 
       if (data._notice && /truncated/i.test(String(data._notice))) {
@@ -381,7 +459,10 @@ async function runQualityPass(params: {
       }
 
       if (data?._coverage?.window_complete === false && !answerDisclosesPartialWindow(data.answer)) {
-        failures.push({ tool: spec.name, message: `${pass} partial analysis/window coverage was not disclosed in answer` })
+        failures.push({
+          tool: spec.name,
+          message: `${pass} partial analysis/window coverage was not disclosed in answer`,
+        })
       }
       if (data?._coverage?.result_complete === false && !answerDisclosesPreview(data.answer)) {
         failures.push({ tool: spec.name, message: `${pass} preview/paginated result was not disclosed in answer` })
@@ -392,7 +473,10 @@ async function runQualityPass(params: {
       }
 
       if (typeof data.display?.network === 'string' && data.display.network.includes('-mainnet')) {
-        failures.push({ tool: spec.name, message: `${pass} display.network is not humanized (${data.display.network})` })
+        failures.push({
+          tool: spec.name,
+          message: `${pass} display.network is not humanized (${data.display.network})`,
+        })
       }
 
       if (recoveredFromLatencySpike && originalSlowElapsedMs !== undefined) {
@@ -401,21 +485,32 @@ async function runQualityPass(params: {
           message: `${pass} transient latency spike recovered on retry (${originalSlowElapsedMs}ms -> ${result.elapsedMs}ms)`,
         })
       } else if (result.elapsedMs > hardLatencyBudget) {
-        failures.push({ tool: spec.name, message: `${pass} latency exceeded budget (${result.elapsedMs}ms > ${hardLatencyBudget}ms)` })
+        failures.push({
+          tool: spec.name,
+          message: `${pass} latency exceeded budget (${result.elapsedMs}ms > ${hardLatencyBudget}ms)`,
+        })
       } else if (result.elapsedMs > softLatencyBudget) {
-        warnings.push({ tool: spec.name, message: `${pass} slow live response (${result.elapsedMs}ms ${classifySpeed(result.elapsedMs)}; budget ${hardLatencyBudget}ms)` })
+        warnings.push({
+          tool: spec.name,
+          message: `${pass} slow live response (${result.elapsedMs}ms ${classifySpeed(result.elapsedMs)}; budget ${hardLatencyBudget}ms)`,
+        })
       }
 
       if (
-        intent === 'query'
-        && !hasExplicitResponseFormat(args)
-        && typeof data?._execution?.response_format === 'string'
-        && data._execution.response_format === 'full'
+        intent === 'query' &&
+        !hasExplicitResponseFormat(args) &&
+        typeof data?._execution?.response_format === 'string' &&
+        data._execution.response_format === 'full'
       ) {
-        failures.push({ tool: spec.name, message: `${pass} default query response_format regressed to full instead of compact` })
+        failures.push({
+          tool: spec.name,
+          message: `${pass} default query response_format regressed to full instead of compact`,
+        })
       }
 
-      console.log(`PASS  ${spec.name} [${pass}; ${result.elapsedMs}ms ${classifySpeed(result.elapsedMs)}; ${result.text.length} chars]`)
+      console.log(
+        `PASS  ${spec.name} [${pass}; ${result.elapsedMs}ms ${classifySpeed(result.elapsedMs)}; ${result.text.length} chars]`,
+      )
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       failures.push({ tool: spec.name, message: `${pass}: ${message.slice(0, 320)}` })
@@ -426,6 +521,9 @@ async function runQualityPass(params: {
 }
 
 async function main() {
+  if (writeBaseline && !baselineNote) {
+    throw new Error('Refreshing the baseline needs --note "<why the measured sizes changed>" and a CHANGELOG entry')
+  }
   const baseline = loadQualityBaseline()
   const connected = await connectTestClient('quality-test')
   const { client } = connected
@@ -445,14 +543,20 @@ async function main() {
     await runQualityPass({ client, context, pass: 'warm', warnings, failures, responseSizes })
     await validateContractActivityFastModeCoverage({ client, context, failures })
 
-    validateResponseSizeBaseline(responseSizes, baseline, failures)
+    if (writeBaseline) {
+      writeQualityBaseline(responseSizes, baselineNote)
+    } else {
+      validateResponseSizeBaseline(responseSizes, baseline, failures)
+    }
 
     printSection('Quality audit summary')
     const sizes = responseSizes.map((sample) => sample.chars)
     const medianSize = percentile(sizes, 50)
     const p90Size = percentile(sizes, 90)
     const largest = [...responseSizes].sort((a, b) => b.chars - a.chars).slice(0, 5)
-    console.log(`Response sizes: median ${medianSize} chars, p90 ${p90Size} chars, baseline v${baseline.version} captured ${baseline.captured_at}`)
+    console.log(
+      `Response sizes: median ${medianSize} chars, p90 ${p90Size} chars, baseline v${baseline.version} captured ${baseline.captured_at}`,
+    )
     largest.forEach((sample) => console.log(`  - ${sample.tool} (${sample.pass}): ${sample.chars} chars`))
 
     console.log('Per-tool size summary:')
@@ -460,7 +564,9 @@ async function main() {
       .slice()
       .sort((a, b) => b.p95 - a.p95)
       .slice(0, 10)
-      .forEach((entry) => console.log(`  - ${entry.tool}: median ${entry.median}, p95 ${entry.p95}, samples ${entry.samples}`))
+      .forEach((entry) =>
+        console.log(`  - ${entry.tool}: median ${entry.median}, p95 ${entry.p95}, samples ${entry.samples}`),
+      )
 
     console.log(`Warnings: ${warnings.length}`)
     warnings.slice(0, 20).forEach((warning) => console.log(`  - ${warning.tool}: ${warning.message}`))

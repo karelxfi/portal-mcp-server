@@ -2,6 +2,8 @@ import { type McpServer, ResourceTemplate, completable } from '@modelcontextprot
 import { z } from 'zod'
 
 import { detectChainType } from './helpers/chain.js'
+import { PORTAL_TOOL_NAMES } from './helpers/mcp-registration.js'
+import { type Toolset, captureToolActivePredicate, toolsetOf } from './toolsets.js'
 import { npmVersion } from './version.js'
 
 const WALLET_NETWORKS = [
@@ -20,41 +22,67 @@ const MARKET_NETWORKS = [...CONTRACT_NETWORKS, 'hyperliquid-fills']
 
 const TIMEFRAMES = ['1h', '6h', '24h', '7d', '30d']
 
-function networkArgument(
-  networks: string[],
-  supported: Array<ReturnType<typeof detectChainType>>,
-  description: string,
-) {
-  return completable(
-    z
-      .string()
-      .min(1)
-      .refine((network) => supported.includes(detectChainType(network)), description)
-      .describe(description),
-    (value) => networks.filter((network) => network.includes(String(value ?? '').toLowerCase())).slice(0, 10),
-  )
+/* The toolset that carries a chain family's query tools. */
+const CHAIN_TOOLSET: Partial<Record<ReturnType<typeof detectChainType>, Toolset>> = {
+  evm: 'evm',
+  solana: 'solana',
+  bitcoin: 'bitcoin',
+  substrate: 'substrate',
+  hyperliquidFills: 'hyperliquid',
 }
 
-const walletNetworkArgument = networkArgument(
-  WALLET_NETWORKS,
-  ['evm', 'solana', 'bitcoin', 'hyperliquidFills'],
-  'Network supported by the wallet investigation: EVM, Solana, Bitcoin, or Hyperliquid fills',
-)
-const contractNetworkArgument = networkArgument(
-  CONTRACT_NETWORKS,
-  ['evm'],
-  'EVM network supported by the smart-contract investigation',
-)
-const marketNetworkArgument = networkArgument(
-  MARKET_NETWORKS,
-  ['evm', 'hyperliquidFills'],
-  'EVM or Hyperliquid fills network supported by the market investigation',
-)
+function chainFamilyActive(kind: ReturnType<typeof detectChainType>, isActive: (toolName: string) => boolean): boolean {
+  const toolset = CHAIN_TOOLSET[kind]
+  return toolset === undefined ? false : PORTAL_TOOL_NAMES.some((tool) => toolsetOf(tool) === toolset && isActive(tool))
+}
+
+/*
+ * The network argument is built per connection, not once per process. The
+ * static lists offered every network the investigation supports in principle,
+ * so a Hyperliquid-only deployment still suggested `ethereum-mainnet` for the
+ * market investigation, accepted it, and rendered a Hyperliquid-only workflow
+ * beside it; the first tool call then failed against a dataset with no fills
+ * table. A network is offered, and accepted, only when a tool that can query
+ * its chain is registered.
+ */
+function networkArgument(
+  networks: string[],
+  supported: ReturnType<typeof detectChainType>[],
+  description: string,
+  isActive: (toolName: string) => boolean,
+) {
+  const available = supported.filter((kind) => chainFamilyActive(kind, isActive))
+  const offered = networks.filter((network) => available.includes(detectChainType(network)))
+  return {
+    available,
+    argument: completable(
+      z
+        .string()
+        .min(1)
+        .refine((network) => available.includes(detectChainType(network)), description)
+        .describe(description),
+      (value) => offered.filter((network) => network.includes(String(value ?? '').toLowerCase())).slice(0, 10),
+    ),
+  }
+}
 
 const timeframeArgument = completable(
   z.string().min(1).default('24h').describe('Recent time window such as 1h, 24h, 7d, or 30d'),
   (value) => TIMEFRAMES.filter((timeframe) => timeframe.startsWith(String(value ?? '').toLowerCase())),
 )
+
+/* A workflow step names either tools or a prose instruction, never both.
+   `tools` is the source of truth: the step's text is rendered from the tools
+   that are actually registered, so a step can never name a tool this
+   deployment does not serve. Any one of the listed tools carries the step;
+   `optional` marks a pivot the investigation can be run without. */
+type InvestigationStep = {
+  step: number
+  use?: string
+  tools?: string[]
+  optional?: boolean
+  purpose: string
+}
 
 type InvestigationDefinition = {
   name: string
@@ -62,7 +90,7 @@ type InvestigationDefinition = {
   description: string
   outcome: string
   required_evidence: string[]
-  workflow: Array<{ step: number; use: string; purpose: string }>
+  workflow: InvestigationStep[]
   completion_contract: string[]
 }
 
@@ -80,13 +108,25 @@ export const INVESTIGATIONS: InvestigationDefinition[] = [
       'Coverage, freshness, pagination, ordering, and the evidence receipt',
     ],
     workflow: [
-      { step: 1, use: 'portal_list_networks', purpose: 'Resolve a fuzzy network name if needed.' },
-      { step: 2, use: 'portal_get_network_info', purpose: 'Check indexed coverage and freshness.' },
-      { step: 3, use: 'portal_get_wallet_summary', purpose: 'Build the wallet overview and identify pivots.' },
+      { step: 1, tools: ['portal_list_networks'], optional: true, purpose: 'Resolve a fuzzy network name if needed.' },
+      {
+        step: 2,
+        tools: ['portal_get_network_info'],
+        optional: true,
+        purpose: 'Check indexed coverage and freshness.',
+      },
+      { step: 3, tools: ['portal_get_wallet_summary'], purpose: 'Build the wallet overview and identify pivots.' },
       {
         step: 4,
         use: 'chain-specific transaction, transfer, instruction, or fill tools',
         purpose: 'Verify material findings with exact records.',
+      },
+      {
+        step: 5,
+        tools: ['portal_evm_query_traces'],
+        optional: true,
+        purpose:
+          'Pivot from a suspicious transaction hash to its internal calls, created contracts, and value moved below the top-level transaction.',
       },
     ],
     completion_contract: [
@@ -110,14 +150,26 @@ export const INVESTIGATIONS: InvestigationDefinition[] = [
       'Coverage, freshness, pagination, ordering, and the evidence receipt',
     ],
     workflow: [
-      { step: 1, use: 'portal_resolve_entity', purpose: 'Resolve the protocol, token, or contract name.' },
-      { step: 2, use: 'portal_evm_get_contract_deployment', purpose: 'Find deployment evidence.' },
-      { step: 3, use: 'portal_evm_get_contract_activity', purpose: 'Measure calls, events, actors, and flows.' },
-      { step: 4, use: 'portal_get_time_series', purpose: 'Compare the current and previous periods.' },
+      { step: 1, tools: ['portal_resolve_entity'], purpose: 'Resolve the protocol, token, or contract name.' },
+      { step: 2, tools: ['portal_evm_get_contract_deployment'], purpose: 'Find deployment evidence.' },
+      { step: 3, tools: ['portal_evm_get_contract_activity'], purpose: 'Measure calls, events, actors, and flows.' },
+      {
+        step: 4,
+        tools: ['portal_get_time_series'],
+        optional: true,
+        purpose: 'Compare the current and previous periods.',
+      },
       {
         step: 5,
-        use: 'portal_evm_query_logs, portal_evm_query_transactions, or portal_evm_query_token_transfers',
+        tools: ['portal_evm_query_logs', 'portal_evm_query_transactions', 'portal_evm_query_token_transfers'],
         purpose: 'Verify the explanation with exact records.',
+      },
+      {
+        step: 6,
+        tools: ['portal_evm_query_traces'],
+        optional: true,
+        purpose:
+          'Follow one transaction into its internal calls and contract creations when logs alone do not explain it.',
       },
     ],
     completion_contract: [
@@ -141,20 +193,21 @@ export const INVESTIGATIONS: InvestigationDefinition[] = [
       'Coverage, freshness, pagination, ordering, and the evidence receipt',
     ],
     workflow: [
-      { step: 1, use: 'portal_resolve_entity', purpose: 'Resolve a coin, token, pool, or contract name.' },
+      { step: 1, tools: ['portal_resolve_entity'], purpose: 'Resolve a coin, token, pool, or contract name.' },
       {
         step: 2,
-        use: 'portal_hyperliquid_get_ohlc or portal_evm_get_ohlc',
+        tools: ['portal_hyperliquid_get_ohlc', 'portal_evm_get_ohlc'],
         purpose: 'Build complete price and volume buckets.',
       },
       {
         step: 3,
-        use: 'portal_hyperliquid_get_analytics or portal_get_time_series',
+        tools: ['portal_hyperliquid_get_analytics', 'portal_get_time_series'],
+        optional: true,
         purpose: 'Measure volume, fills, participants, and period change.',
       },
       {
         step: 4,
-        use: 'portal_hyperliquid_query_fills or exact EVM query tools',
+        tools: ['portal_hyperliquid_query_fills'],
         purpose: 'Verify peaks and outliers with exact market records.',
       },
     ],
@@ -171,14 +224,61 @@ function findInvestigation(name: string): InvestigationDefinition | undefined {
   return INVESTIGATIONS.find((investigation) => investigation.name === name)
 }
 
+function joinToolNames(tools: string[]): string {
+  if (tools.length <= 1) return tools[0] ?? ''
+  if (tools.length === 2) return `${tools[0]} or ${tools[1]}`
+  return `${tools.slice(0, -1).join(', ')}, or ${tools[tools.length - 1]}`
+}
+
+/* The workflow as this deployment can actually run it: a step is kept when at
+   least one of the tools it names is registered, its text lists only those
+   tools, and the surviving steps are renumbered so the sequence has no holes.
+   A step with no tools is prose and always survives. */
+function activeWorkflow(
+  investigation: InvestigationDefinition,
+  isActive: (toolName: string) => boolean,
+): Array<{ step: number; use: string; purpose: string }> {
+  const steps: Array<{ step: number; use: string; purpose: string }> = []
+  for (const step of investigation.workflow) {
+    if (!step.tools) {
+      if (step.use) steps.push({ step: steps.length + 1, use: step.use, purpose: step.purpose })
+      continue
+    }
+    const active = step.tools.filter((tool) => isActive(tool))
+    if (active.length === 0) continue
+    steps.push({ step: steps.length + 1, use: joinToolNames(active), purpose: step.purpose })
+  }
+  return steps
+}
+
+/* An investigation is offered only when every step it cannot be run without
+   has a registered tool. `optional` marks the steps that enrich it — a
+   name lookup, a period comparison, a pivot into traces — so losing one of
+   those narrows the workflow instead of withdrawing the investigation. A
+   prompt that survives this still names no missing tool, because its text is
+   rendered from the active workflow. */
+function investigationAvailable(
+  investigation: InvestigationDefinition,
+  isActive: (toolName: string) => boolean,
+): boolean {
+  return investigation.workflow.every(
+    (step) => step.optional || !step.tools || step.tools.some((tool) => isActive(tool)),
+  )
+}
+
+function asServedInvestigation(investigation: InvestigationDefinition, isActive: (toolName: string) => boolean) {
+  return { ...investigation, workflow: activeWorkflow(investigation, isActive) }
+}
+
 function promptText(params: {
   investigation: InvestigationDefinition
   network: string
   subject: string
   timeframe: string
   question?: string
+  isActive: (toolName: string) => boolean
 }): string {
-  const { investigation, network, subject, timeframe, question } = params
+  const { investigation, network, subject, timeframe, question, isActive } = params
   return [
     `Run the SQD ${investigation.title.toLowerCase()} workflow.`,
     '',
@@ -190,7 +290,7 @@ function promptText(params: {
     `Outcome: ${investigation.outcome}`,
     '',
     'Work through these steps:',
-    ...investigation.workflow.map((step) => `${step.step}. Use ${step.use}. ${step.purpose}`),
+    ...activeWorkflow(investigation, isActive).map((step) => `${step.step}. Use ${step.use}. ${step.purpose}`),
     '',
     'Factual contract:',
     ...investigation.completion_contract.map((rule) => `- ${rule}`),
@@ -201,16 +301,49 @@ function promptText(params: {
 }
 
 export function registerInvestigationPromptsAndResources(server: McpServer) {
+  const isActive = captureToolActivePredicate()
+
+  const walletNetwork = networkArgument(
+    WALLET_NETWORKS,
+    ['evm', 'solana', 'bitcoin', 'hyperliquidFills'],
+    'Network supported by the wallet investigation: EVM, Solana, Bitcoin, or Hyperliquid fills',
+    isActive,
+  )
+  const contractNetwork = networkArgument(
+    CONTRACT_NETWORKS,
+    ['evm'],
+    'EVM network supported by the smart-contract investigation',
+    isActive,
+  )
+  const marketNetwork = networkArgument(
+    MARKET_NETWORKS,
+    ['evm', 'hyperliquidFills'],
+    'EVM or Hyperliquid fills network supported by the market investigation',
+    isActive,
+  )
+
   server.registerResource(
     'investigation-guide',
     'sqd://investigations',
-    { mimeType: 'application/json', cacheHint: { ttlMs: 300_000, cacheScope: 'public' } },
+    { mimeType: 'application/json', cacheHint: { ttlMs: 300_000, cacheScope: 'private' } },
     async (uri) => ({
       contents: [
         {
           uri: uri.href,
           mimeType: 'application/json',
-          text: JSON.stringify({ version: npmVersion, investigations: INVESTIGATIONS }, null, 2),
+          text: JSON.stringify(
+            {
+              version: npmVersion,
+              // An investigation this connection cannot run is not published.
+              // Serving its remaining steps described a workflow the server
+              // will not offer as a prompt and cannot carry out.
+              investigations: INVESTIGATIONS.filter((item) => investigationAvailable(item, isActive)).map((item) =>
+                asServedInvestigation(item, isActive),
+              ),
+            },
+            null,
+            2,
+          ),
         },
       ],
     }),
@@ -219,112 +352,127 @@ export function registerInvestigationPromptsAndResources(server: McpServer) {
   server.registerResource(
     'investigation-guide-entry',
     new ResourceTemplate('sqd://investigations/{name}', { list: undefined }),
-    { mimeType: 'application/json', cacheHint: { ttlMs: 300_000, cacheScope: 'public' } },
+    { mimeType: 'application/json', cacheHint: { ttlMs: 300_000, cacheScope: 'private' } },
     async (uri, { name }) => {
       const investigationName = Array.isArray(name) ? name[0] : name
       const investigation = findInvestigation(investigationName)
-      if (!investigation) throw new Error(`Unknown SQD investigation "${investigationName}".`)
+      if (!investigation || !investigationAvailable(investigation, isActive)) {
+        throw new Error(`Unknown SQD investigation "${investigationName}".`)
+      }
       return {
         contents: [
-          { uri: uri.href, mimeType: 'application/json', text: JSON.stringify(investigation, null, 2) },
+          {
+            uri: uri.href,
+            mimeType: 'application/json',
+            text: JSON.stringify(asServedInvestigation(investigation, isActive), null, 2),
+          },
         ],
       }
     },
   )
 
-  server.registerPrompt(
-    'investigate-wallet',
-    {
-      title: 'Investigate a wallet incident',
-      description: 'Trace wallet activity, token flows, counterparties, and exact blockchain evidence.',
-      argsSchema: z.object({
-        network: walletNetworkArgument,
-        address: z.string().min(1).describe('Wallet address to investigate'),
-        timeframe: timeframeArgument,
-        question: z.string().optional().describe('Optional incident question or concern'),
-      }),
-    },
-    ({ network, address, timeframe, question }) => ({
-      description: `Investigate ${address} on ${network}`,
-      messages: [
-        {
-          role: 'user' as const,
-          content: {
-            type: 'text' as const,
-            text: promptText({
-              investigation: INVESTIGATIONS[0],
-              network,
-              subject: address,
-              timeframe,
-              question,
-            }),
+  if (investigationAvailable(INVESTIGATIONS[0], isActive) && walletNetwork.available.length > 0) {
+    server.registerPrompt(
+      'investigate-wallet',
+      {
+        title: 'Investigate a wallet incident',
+        description: 'Trace wallet activity, token flows, counterparties, and exact blockchain evidence.',
+        argsSchema: z.object({
+          network: walletNetwork.argument,
+          address: z.string().min(1).describe('Wallet address to investigate'),
+          timeframe: timeframeArgument,
+          question: z.string().optional().describe('Optional incident question or concern'),
+        }),
+      },
+      ({ network, address, timeframe, question }) => ({
+        description: `Investigate ${address} on ${network}`,
+        messages: [
+          {
+            role: 'user' as const,
+            content: {
+              type: 'text' as const,
+              text: promptText({
+                investigation: INVESTIGATIONS[0],
+                isActive,
+                network,
+                subject: address,
+                timeframe,
+                question,
+              }),
+            },
           },
-        },
-      ],
-    }),
-  )
+        ],
+      }),
+    )
+  }
 
-  server.registerPrompt(
-    'investigate-contract',
-    {
-      title: 'Investigate a smart contract',
-      description: 'Explain deployment, calls, events, token flows, actors, and changes over time.',
-      argsSchema: z.object({
-        network: contractNetworkArgument,
-        contract: z.string().min(1).describe('Contract address, token, or protocol name'),
-        timeframe: timeframeArgument,
-        question: z.string().optional().describe('Optional behavior or event to explain'),
-      }),
-    },
-    ({ network, contract, timeframe, question }) => ({
-      description: `Investigate ${contract} on ${network}`,
-      messages: [
-        {
-          role: 'user' as const,
-          content: {
-            type: 'text' as const,
-            text: promptText({
-              investigation: INVESTIGATIONS[1],
-              network,
-              subject: contract,
-              timeframe,
-              question,
-            }),
+  if (investigationAvailable(INVESTIGATIONS[1], isActive) && contractNetwork.available.length > 0) {
+    server.registerPrompt(
+      'investigate-contract',
+      {
+        title: 'Investigate a smart contract',
+        description: 'Explain deployment, calls, events, token flows, actors, and changes over time.',
+        argsSchema: z.object({
+          network: contractNetwork.argument,
+          contract: z.string().min(1).describe('Contract address, token, or protocol name'),
+          timeframe: timeframeArgument,
+          question: z.string().optional().describe('Optional behavior or event to explain'),
+        }),
+      },
+      ({ network, contract, timeframe, question }) => ({
+        description: `Investigate ${contract} on ${network}`,
+        messages: [
+          {
+            role: 'user' as const,
+            content: {
+              type: 'text' as const,
+              text: promptText({
+                investigation: INVESTIGATIONS[1],
+                isActive,
+                network,
+                subject: contract,
+                timeframe,
+                question,
+              }),
+            },
           },
-        },
-      ],
-    }),
-  )
+        ],
+      }),
+    )
+  }
 
-  server.registerPrompt(
-    'investigate-market',
-    {
-      title: 'Investigate blockchain market activity',
-      description: 'Analyze Hyperliquid or onchain price, volume, fills, swaps, and exact market evidence.',
-      argsSchema: z.object({
-        network: marketNetworkArgument,
-        market: z.string().min(1).describe('Coin, token, pool, or market to investigate'),
-        timeframe: timeframeArgument,
-        question: z.string().optional().describe('Optional price or trading question'),
-      }),
-    },
-    ({ network, market, timeframe, question }) => ({
-      description: `Investigate ${market} on ${network}`,
-      messages: [
-        {
-          role: 'user' as const,
-          content: {
-            type: 'text' as const,
-            text: promptText({
-              investigation: INVESTIGATIONS[2],
-              network,
-              subject: market,
-              timeframe,
-              question,
-            }),
+  if (investigationAvailable(INVESTIGATIONS[2], isActive) && marketNetwork.available.length > 0) {
+    server.registerPrompt(
+      'investigate-market',
+      {
+        title: 'Investigate blockchain market activity',
+        description: 'Analyze Hyperliquid or onchain price, volume, fills, swaps, and exact market evidence.',
+        argsSchema: z.object({
+          network: marketNetwork.argument,
+          market: z.string().min(1).describe('Coin, token, pool, or market to investigate'),
+          timeframe: timeframeArgument,
+          question: z.string().optional().describe('Optional price or trading question'),
+        }),
+      },
+      ({ network, market, timeframe, question }) => ({
+        description: `Investigate ${market} on ${network}`,
+        messages: [
+          {
+            role: 'user' as const,
+            content: {
+              type: 'text' as const,
+              text: promptText({
+                investigation: INVESTIGATIONS[2],
+                isActive,
+                network,
+                subject: market,
+                timeframe,
+                question,
+              }),
+            },
           },
-        },
-      ],
-    }),
-  )
+        ],
+      }),
+    )
+  }
 }

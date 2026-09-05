@@ -2,7 +2,70 @@
 
 These scripts all use the shared manifest in `scripts/tool-manifest.ts`, which keeps the live test surface aligned with the currently registered MCP tools.
 
+## Two gates
+
+- `npm run test:offline` is the required pull-request check. It builds, runs `npm run lint` (Biome) and `npm run typecheck`, the `node --test` unit tests in `src/**/*.test.ts`, and every suite that needs no Portal access (lockfiles, workflow pins, lean surface, distribution manifests, fetch reliability, stdio backpressure, performance harness, tool admission, app contract, catalog tokens, app UI, evidence receipts, investigation prompts, package contents). It passes with the network disabled.
+- `npm run test:live` runs everything that talks to Portal or an installed client. CI runs it on every pull request as a reporting job that does not block, and in full on a `v*` tag.
+- `npm run test:all` (also `test:ci` and `test:release`) runs both.
+
+## Unit tests
+
+Unit tests sit next to the code as `src/**/*.test.ts` and run with the built-in `node --test` runner through `tsx` (`npm run test:unit`, a few seconds, no network). They are excluded from `tsc` output and never ship in the package. Prefer them for pure helpers: parsing, exact arithmetic, cursors, validation, coverage rules, and characterisation of large modules on recorded responses (`src/app-ui/fixtures.recorded.ts`).
+
+## Catalog token gate
+
+`npm run test:catalog-tokens` (part of the offline gate) starts the server in-process for both surfaces (App disabled and App enabled), lists tools, prompts, and resources, counts tokens per tool component with the `o200k_base` tokenizer, and compares the result with `scripts/catalog-token-baseline.json`. It fails when the catalog total or any single tool grows more than 5% and prints the top ten tools to the job summary. Refresh the baseline deliberately with `npm run baseline:catalog-tokens -- --note "<why the cost changed>"` and record the new totals in `CHANGELOG.md`. With `ANTHROPIC_API_KEY` set, the Anthropic token-count API is queried for the same surfaces and printed beside the local count; the gate always uses the local count.
+
+## Model-in-the-loop eval
+
+`npm run eval:model-loop` lets a model answer the pinned questions in `evals/portal-mcp.json` through the real server over stdio with the full tool catalog, and grades the final `ANSWER:` line (exact number, address, or text; the negative cases expect a plain statement that the question cannot be answered). Every positive case names a fixed block, slot, or timestamp window, and its answer was checked against the Portal rows returned by the recorded `reference_calls`. The run prints one line per case, writes `artifacts/model-eval/<model>-<time>.json` plus `latest.md`, appends the table to the GitHub job summary, and fails when the pass rate is under 90% or the median tool-call count rises more than 20% over the previous runs in `EVAL_HISTORY_DIR`. `EVAL_MODEL` (default `claude-sonnet-5`), `EVAL_ENDPOINT`, `EVAL_MAX_TOOL_CALLS` (default 8), `EVAL_MIN_PASS_RATE`, and `EVAL_MAX_TOOL_CALL_GROWTH` override the defaults; `--only <id,id>` runs a subset. `--model mock` replays the reference calls without an API key and checks that every recorded answer still matches live Portal data, which is how the question set itself is verified. `.github/workflows/model-eval.yml` runs the real model nightly with the `ANTHROPIC_API_KEY` secret and keeps 90 days of artifacts; it is a reporting signal, not a merge gate.
+
+## Generated Explorer bundle
+
+`src/generated/activity-explorer.generated.ts` and `activity-explorer.version.ts` are build outputs and are not tracked in git. `npm run build` always regenerates them. Every entry point that imports the bundle from source runs `scripts/ensure-app-bundle.mjs` first (`predev`, `predev:http`, `pretypecheck`, `pretest:unit`, `pretest:app-contract`, `pretest:app-ui`, `pretest:catalog-tokens`, `preapp:host`), which rebuilds only when the outputs are missing or older than `src/app-ui/**`, the build scripts, or `package.json`. A fresh clone followed by `npm ci && npm run dev` therefore works with no manual step, and `git status` stays clean after a build.
+
+## Every suite and its gate
+
+| Script | Gate | What it checks |
+|---|---|---|
+| `test:unit` | offline | `node --test` unit tests in `src/**/*.test.ts` |
+| `test:lockfiles` | offline | `package-lock.json` is the only lockfile, matches `package.json`, and is what the image installs |
+| `test:workflow-pins` | offline | every GitHub Action pinned by SHA, no checkout credentials, empty default permissions |
+| `test:lean` | offline | one registry, instrumented registrations, no legacy surfaces, bounded source |
+| `test:distribution` | offline | distribution and submission manifests share the release version |
+| `test:fetch-reliability` | offline | Portal fetch timeouts, malformed bodies, cancellation, retry budget |
+| `test:stdio-backpressure` | offline | large results over stdio without stalls |
+| `test:performance-harness` | offline | repeated EVM candle requests reuse one snapshot |
+| `test:tool-admission` | offline | weighted work classes, fair promotion, overload, capacity release |
+| `test:catalog-tokens` | offline | `tools/list` token cost against the committed baseline |
+| `test:app-contract` | offline | MCP App resource, CSP, metadata, opt-in gate, formatter contracts |
+| `test:app-ui` | offline | Explorer rendering, interactions, accessibility, hostile text, screenshots |
+| `test:mcpb` | offline | Claude Desktop bundle packages, unpacks, and starts with 31 tools |
+| `test:evidence-receipts` | offline | canonical arguments, digest, replay mode |
+| `test:investigation-prompts` | offline | prompts and guide resources are discoverable |
+| `test:package` | offline | published tarball contains only allowlisted files; no audit findings |
+| `npm test` | live | stdio smoke test over the discovery tools |
+| `test:protocol` | live | MCP `2026-07-28` negotiation, cache hints, catalog, toolsets |
+| `test:tools` | live | one representative successful call per tool |
+| `test:routing` | live | prompt-to-tool routing cases |
+| `test:substrate`, `test:timestamps` | live | Substrate paths; timestamp units and window boundaries |
+| `test:http-runtime` | live | HTTP surface, allowlist, limits, readiness, metrics, toolsets (Portal is a local fixture; the token-list check reaches the network) |
+| `test:pagination` | live | exact continuation inside dense blocks |
+| `test:reliability-live`, `test:evm-investigator` | live | live regression paths per family |
+| `test:v084-factuality`, `test:v084-acceptance-regressions`, `test:data-integrity` | live | factual completeness against direct Portal evidence |
+| `test:bitcoin-fees` | live | exact satoshi fee accounting parity |
+| `test:app-host` | live | every Explorer action through the official AppBridge |
+| `test:investigation-journeys`, `test:client-journeys`, `test:conversations`, `test:realistic-prompts` | live | guided investigations and declared-client journeys |
+| `test:plugin`, `test:claude-plugin`, `test:grok-plugin`, `test:gemini-extension`, `test:cursor-plugin` | live | distribution packages |
+| `test:negative` | live | invalid and unsupported requests, injection prompts |
+| `test:quality` | live | per-tool response contract, size, and latency budgets against `scripts/quality-baseline.json`; refresh with `npm run baseline:quality -- --note "<why>"` |
+| `test:live-cooldown` | live | a pause between heavy live suites |
+| `eval:model-loop` | nightly | a model answers pinned questions through the server; pass rate and tool-call drift (`--model mock` verifies the question set offline from an API key) |
+
 ## Available scripts
+
+### `npm run package:mcpb` and `npm run test:mcpb`
+`package:mcpb` stages the production build, the exact production dependency closure from the local `node_modules` (no network, source maps and type declarations left out), a manifest built from the registered tools and prompts, and the icon; validates the manifest with the official `mcpb` CLI; and zips `dist/mcpb/sqd.mcpb`, failing above 15 MB. `test:mcpb` (offline gate) packages, unpacks into a temporary directory, starts `dist/index.js` from there over stdio, and checks version, 31 tools, 3 prompts, and that the beta app stays off. The release workflow uploads the bundle on every `v*` tag.
 
 ### `npm test`
 Builds the server, starts it over stdio, verifies developer guide resources, and runs a fast smoke test over the core discovery tools.
@@ -30,7 +93,7 @@ Runs multi-step user journeys that behave more like an AI chat session than isol
 - catches places where a tool works technically but still feels awkward in chat
 
 ### `npm run test:realistic-prompts`
-Runs skeptical, user-style prompts for the v0.7.9 investigation features. It:
+Runs skeptical, user-style prompts for the investigation features. It:
 
 - maps messy incident-response prompts to the intended existing tool
 - calls the live MCP server and validates the returned artifact, not only routing rank
@@ -51,6 +114,7 @@ Runs an automated response-quality audit over the full manifest. It:
 - verifies every successful tool result emits `structuredContent` matching the compact JSON text fallback
 - checks executable versus descriptive follow-up actions and safe pagination continuation metadata
 - runs cold and warm passes, then enforces hard latency budgets and per-tool median/p95 response-size baselines so regressions fail CI
+- reads `scripts/quality-baseline.json`, which records the package version, the capture time, and why it was taken; refresh it deliberately with `npm run baseline:quality -- --note "<why the measured sizes changed>"` and a CHANGELOG entry, never by hand
 - flags truncation, legacy wording, default raw-query bloat, and non-humanized labels
 - warns when a tool is drifting toward the hard budgets before it actually fails
 
@@ -193,7 +257,7 @@ When tool names or recommended arguments change:
 4. Re-run `npm run test:conversations`
 5. Re-run `npm run test:realistic-prompts`
 6. Re-run `npm run test:negative`
-7. Re-run `npm run test:quality`
+7. Re-run `npm run test:quality`, and refresh its baseline with `npm run baseline:quality -- --note "<why>"` when a new tool or a real data change moves the measured sizes
 8. Re-run `npm run test:plugin`
 9. Re-run `npm run test:package`
 10. Re-run `npx tsx scripts/data-quality-test.ts` for a quick qualitative review

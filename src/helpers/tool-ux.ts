@@ -1,7 +1,16 @@
 type ToolAudience = 'public' | 'advanced'
-type ToolCategory = 'discovery' | 'convenience' | 'evm' | 'solana' | 'bitcoin' | 'substrate' | 'hyperliquid' | 'debug'
+type ToolCategory =
+  | 'discovery'
+  | 'convenience'
+  | 'evm'
+  | 'solana'
+  | 'bitcoin'
+  | 'substrate'
+  | 'hyperliquid'
+  | 'tron'
+  | 'debug'
 type ToolIntent = 'discover' | 'lookup' | 'query' | 'summary' | 'analytics' | 'chart' | 'debug'
-type ToolVm = 'cross-chain' | 'evm' | 'solana' | 'bitcoin' | 'substrate' | 'hyperliquid'
+type ToolVm = 'cross-chain' | 'evm' | 'solana' | 'bitcoin' | 'substrate' | 'hyperliquid' | 'tron'
 type ToolResultKind = 'list' | 'summary' | 'chart' | 'lookup'
 type TimeInput = 'blocks' | 'timeframe' | 'timestamps'
 
@@ -149,15 +158,16 @@ const TOOL_DEFINITIONS: Record<string, ToolDefinition> = {
       'checking which token-list addresses a symbol maps to before querying logs or transfers',
       'turning a user-friendly token name into deterministic EVM filters',
     ],
-    summary:
-      'Resolve user-facing blockchain entities into query-ready identifiers, with ambiguity kept explicit.',
+    summary: 'Resolve user-facing blockchain entities into query-ready identifiers, with ambiguity kept explicit.',
     when_to_use: [
       'The user names a token symbol such as USDC, WETH, DAI, or PEPE and you need contract addresses before querying raw data.',
       'The user names a well-known EVM contract, protocol, pool identifier, or Hyperliquid ticker and you need a deterministic follow-up filter.',
       'You need to disambiguate bridged token variants on an EVM network.',
       'You want a source-backed token address rather than relying on memory or hardcoded constants.',
     ],
-    avoid_when: ['You already have the exact address, pool id, protocol slug, or coin filter and can pass it directly.'],
+    avoid_when: [
+      'You already have the exact address, pool id, protocol slug, or coin filter and can pass it directly.',
+    ],
     examples: [
       { label: 'Resolve USDC on Base', input: { network: 'base-mainnet', kind: 'token', query: 'USDC', limit: 10 } },
       {
@@ -226,7 +236,10 @@ const TOOL_DEFINITIONS: Record<string, ToolDefinition> = {
     ],
     avoid_when: ['You need every raw record with full chain-specific fields and no summarization.'],
     examples: [
-      { label: 'EVM wallet fund-flow triage', input: { network: 'base-mainnet', address: '0xabc...', timeframe: '24h' } },
+      {
+        label: 'EVM wallet fund-flow triage',
+        input: { network: 'base-mainnet', address: '0xabc...', timeframe: '24h' },
+      },
       {
         label: 'Solana wallet activity and fee flow',
         input: { network: 'solana-mainnet', address: 'Vote111...', timeframe: '6h' },
@@ -527,6 +540,69 @@ const TOOL_DEFINITIONS: Record<string, ToolDefinition> = {
       response_formats: ['full', 'compact', 'summary'],
       time_inputs: ['blocks', 'timeframe', 'timestamps'],
       decode: true,
+    },
+  },
+  portal_evm_query_traces: {
+    name: 'portal_evm_query_traces',
+    audience: 'public',
+    category: 'evm',
+    intent: 'query',
+    vm: ['evm'],
+    result_kind: 'list',
+    normalized_output: true,
+    first_choice_for: [
+      'what a transaction called internally, including value moved by internal calls',
+      'contracts deployed by an address, or the internal call tree behind an incident',
+    ],
+    summary:
+      'Query raw EVM traces: internal calls, contract creations, self-destructs, and block rewards, filtered by caller, callee, method, deployer, or one transaction, with the parent transaction hash on every row.',
+    when_to_use: [
+      'You need the internal calls of a transaction: which contracts it called, with what selector and value, and which calls failed.',
+      'You want contracts created by a deployer or the creation trace of a contract.',
+      'You are tracing an exploit or incident below the top-level transaction and log surface.',
+      'You want internal ETH transfers between contracts that emit no event.',
+    ],
+    avoid_when: [
+      'You only need top-level transactions or event logs; those tools are cheaper.',
+      'You need storage changes; state diffs are not exposed by this tool.',
+    ],
+    examples: [
+      {
+        label: 'Internal calls of one transaction',
+        input: {
+          network: 'ethereum-mainnet',
+          from_block: 12244145,
+          to_block: 12244145,
+          transaction_hash: '0x851bad0415758075a1eb86776749c829b866d43179c57c3e4a4b9359a0358231',
+          limit: 25,
+        },
+      },
+      {
+        label: 'Recent internal calls into a contract',
+        input: {
+          network: 'base-mainnet',
+          timeframe: '10m',
+          type: ['call'],
+          call_to: ['0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913'],
+          method: 'transfer',
+          limit: 20,
+        },
+      },
+      {
+        label: 'Contracts deployed by an address',
+        input: {
+          network: 'base-mainnet',
+          timeframe: '24h',
+          type: ['create'],
+          create_from: ['0x4200000000000000000000000000000000000006'],
+          limit: 10,
+        },
+      },
+    ],
+    supports: {
+      pagination: true,
+      response_formats: ['full', 'compact', 'summary'],
+      time_inputs: ['blocks', 'timeframe', 'timestamps'],
     },
   },
   portal_evm_query_token_transfers: {
@@ -961,6 +1037,119 @@ const TOOL_DEFINITIONS: Record<string, ToolDefinition> = {
     supports: {
       pagination: true,
       time_inputs: ['timeframe'],
+    },
+  },
+  portal_tron_query_transactions: {
+    name: 'portal_tron_query_transactions',
+    audience: 'public',
+    category: 'tron',
+    intent: 'query',
+    vm: ['tron'],
+    result_kind: 'list',
+    normalized_output: true,
+    first_choice_for: [
+      'native TRX transfers, TRC-10 transfers, and smart-contract calls on Tron',
+      'who sent TRX to an address on Tron, or which wallets called a Tron contract',
+    ],
+    summary:
+      'Query raw Tron transactions: native TRX transfers, TRC-10 asset transfers, TriggerSmartContract calls by contract and method, or any contract type, with optional inline logs and internal transactions.',
+    when_to_use: [
+      'You need raw Tron transaction records with sender, recipient, amount in TRX, fee, energy, and success.',
+      'You want native TRX transfers to or from a wallet in a bounded window.',
+      'You want calls to a Tron contract such as USDT filtered by method (transfer, approve) or caller.',
+      'You want TRC-10 asset transfers by asset id.',
+    ],
+    avoid_when: [
+      'You need TRC-20 token events; those are logs, so use portal_tron_query_logs.',
+      'You need an Ethereum-compatible network; use portal_evm_query_transactions.',
+    ],
+    examples: [
+      {
+        label: 'Recent native TRX transfers',
+        input: { network: 'tron-mainnet', timeframe: '5m', kind: 'transfer', limit: 20 },
+      },
+      {
+        label: 'USDT transfer calls in a block window',
+        input: {
+          network: 'tron-mainnet',
+          from_block: 84000000,
+          to_block: 84000010,
+          contract_addresses: ['TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t'],
+          method: 'transfer',
+          limit: 20,
+        },
+      },
+      {
+        label: 'TRX sent from one wallet',
+        input: {
+          network: 'tron-mainnet',
+          timeframe: '1h',
+          kind: 'transfer',
+          from_addresses: ['TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t'],
+          limit: 20,
+        },
+      },
+    ],
+    supports: {
+      pagination: true,
+      response_formats: ['full', 'compact', 'summary'],
+      time_inputs: ['blocks', 'timeframe', 'timestamps'],
+    },
+  },
+  portal_tron_query_logs: {
+    name: 'portal_tron_query_logs',
+    audience: 'public',
+    category: 'tron',
+    intent: 'query',
+    vm: ['tron'],
+    result_kind: 'list',
+    normalized_output: true,
+    first_choice_for: [
+      'TRC-20 token transfer events on Tron such as USDT',
+      'contract event evidence on Tron with the parent transaction hash',
+    ],
+    summary:
+      'Query raw Tron (TVM) event logs by contract address and topics with common event aliases, the parent transaction hash on every row, and optional inline decoding.',
+    when_to_use: [
+      'You need TRC-20 Transfer or Approval events for a token such as USDT on Tron.',
+      'You need event logs from a Tron contract filtered by topic signature or indexed address.',
+      'You want the exact transaction hash behind each Tron event.',
+    ],
+    avoid_when: [
+      'You want native TRX transfers or contract calls; use portal_tron_query_transactions.',
+      'You need an Ethereum-compatible network; use portal_evm_query_logs.',
+    ],
+    examples: [
+      {
+        label: 'Recent USDT transfers on Tron',
+        input: {
+          network: 'tron-mainnet',
+          timeframe: '5m',
+          addresses: ['TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t'],
+          event: 'transfer',
+          decode: true,
+          limit: 20,
+        },
+      },
+      {
+        label: 'USDT transfers received by one wallet',
+        input: {
+          network: 'tron-mainnet',
+          from_block: 84000000,
+          to_block: 84000100,
+          addresses: ['TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t'],
+          event: 'transfer',
+          topic2: ['TJLuVi6UhS3UTx5EUXNCoz9VNqP2gnPmyf'],
+          decode: true,
+          limit: 20,
+        },
+      },
+    ],
+    supports: {
+      pagination: true,
+      response_formats: ['full', 'compact', 'summary'],
+      time_inputs: ['blocks', 'timeframe', 'timestamps'],
+      decode: true,
     },
   },
   portal_debug_query_blocks: {

@@ -1,0 +1,591 @@
+{
+  "version": 1,
+  "description": "Pinned questions for the model-in-the-loop eval. Every positive case names a fixed block, slot, or timestamp window so the answer never moves, and every answer was verified against the Portal rows returned by the reference calls. Negative cases expect the model to say the question cannot be answered.",
+  "defaults": {
+    "max_tool_calls": 8,
+    "min_pass_rate": 0.9,
+    "max_tool_call_growth": 0.2,
+    "refusal_phrases": [
+      "not supported",
+      "unsupported",
+      "unknown network",
+      "not a supported",
+      "does not support",
+      "not available",
+      "isn't available",
+      "is not available",
+      "invalid",
+      "malformed",
+      "not a valid",
+      "not valid",
+      "cannot",
+      "can't",
+      "unable",
+      "future",
+      "not indexed",
+      "not yet indexed",
+      "after the latest",
+      "no data",
+      "hasn't happened",
+      "has not happened"
+    ]
+  },
+  "cases": [
+    {
+      "id": "base-usdc-deployment-block",
+      "family": "evm",
+      "question": "In which block was the native USDC token contract deployed on Base? Search blocks 2,600,000 to 3,000,000.",
+      "expected": {
+        "type": "number",
+        "value": "2797221"
+      },
+      "min_tool_calls": 2,
+      "reference_calls": [
+        {
+          "tool": "portal_resolve_entity",
+          "arguments": {
+            "network": "base-mainnet",
+            "kind": "token",
+            "query": "USDC",
+            "limit": 3
+          }
+        },
+        {
+          "tool": "portal_evm_get_contract_deployment",
+          "arguments": {
+            "network": "base-mainnet",
+            "contract_address": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+            "from_block": 2600000,
+            "to_block": 3000000,
+            "scan_order": "earliest"
+          }
+        }
+      ],
+      "answer_path": "items[0].block_number",
+      "verified": "2026-09-02, deployment trace in block 2797221 (2023-08-18 18:36:29 UTC)"
+    },
+    {
+      "id": "base-usdc-deployer",
+      "family": "evm",
+      "question": "Which address deployed the native USDC token contract on Base? Search blocks 2,600,000 to 3,000,000 and reply with the deployer address.",
+      "expected": {
+        "type": "address",
+        "value": "0x6aaff8af0ae8017725312c388ba3745dfe91185b"
+      },
+      "min_tool_calls": 2,
+      "reference_calls": [
+        {
+          "tool": "portal_resolve_entity",
+          "arguments": {
+            "network": "base-mainnet",
+            "kind": "token",
+            "query": "USDC",
+            "limit": 3
+          }
+        },
+        {
+          "tool": "portal_evm_get_contract_deployment",
+          "arguments": {
+            "network": "base-mainnet",
+            "contract_address": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+            "from_block": 2600000,
+            "to_block": 3000000,
+            "scan_order": "earliest"
+          }
+        }
+      ],
+      "answer_path": "items[0].deployer",
+      "verified": "2026-09-02, transaction_from of the create trace"
+    },
+    {
+      "id": "base-usdc-transfers-two-blocks",
+      "family": "evm",
+      "question": "How many native USDC transfers were recorded on Base in blocks 20000000 to 20000001 inclusive?",
+      "expected": {
+        "type": "number",
+        "value": "7"
+      },
+      "min_tool_calls": 2,
+      "reference_calls": [
+        {
+          "tool": "portal_resolve_entity",
+          "arguments": {
+            "network": "base-mainnet",
+            "kind": "token",
+            "query": "USDC",
+            "limit": 3
+          }
+        },
+        {
+          "tool": "portal_evm_query_token_transfers",
+          "arguments": {
+            "network": "base-mainnet",
+            "token_addresses": ["0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"],
+            "from_block": 20000000,
+            "to_block": 20000001,
+            "limit": 200
+          }
+        }
+      ],
+      "answer_path": "page_summary.visible_transfers",
+      "verified": "2026-09-02, 7 rows with result_complete true"
+    },
+    {
+      "id": "base-usdc-transfers-new-year-block",
+      "family": "evm",
+      "question": "Find the Base block nearest to 2025-01-01 00:00:00 UTC, then tell me how many native USDC transfers happened in that single block.",
+      "expected": {
+        "type": "number",
+        "value": "3"
+      },
+      "min_tool_calls": 2,
+      "reference_calls": [
+        {
+          "tool": "portal_debug_resolve_time_to_block",
+          "arguments": {
+            "network": "base-mainnet",
+            "timestamp": "2025-01-01T00:00:00Z"
+          }
+        },
+        {
+          "tool": "portal_evm_query_token_transfers",
+          "arguments": {
+            "network": "base-mainnet",
+            "token_addresses": ["0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"],
+            "from_block": 24450126,
+            "to_block": 24450126,
+            "limit": 200
+          }
+        }
+      ],
+      "answer_path": "page_summary.visible_transfers",
+      "verified": "2026-09-02, block 24450126 (2024-12-31 23:59:59 UTC), 3 rows with result_complete true"
+    },
+    {
+      "id": "ethereum-usdc-transfer-logs-block",
+      "family": "evm",
+      "question": "How many USDC Transfer events were emitted on Ethereum mainnet in block 20000000?",
+      "expected": {
+        "type": "number",
+        "value": "3"
+      },
+      "min_tool_calls": 2,
+      "reference_calls": [
+        {
+          "tool": "portal_resolve_entity",
+          "arguments": {
+            "network": "ethereum-mainnet",
+            "kind": "token",
+            "query": "USDC",
+            "limit": 3
+          }
+        },
+        {
+          "tool": "portal_evm_query_logs",
+          "arguments": {
+            "network": "ethereum-mainnet",
+            "addresses": ["0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"],
+            "event": "transfer",
+            "from_block": 20000000,
+            "to_block": 20000000,
+            "response_format": "summary"
+          }
+        }
+      ],
+      "answer_path": "total_logs",
+      "verified": "2026-09-02, 3 Transfer logs, result_complete true"
+    },
+    {
+      "id": "base-top-sender-window",
+      "family": "evm",
+      "question": "Which address sent the most transactions on Base between blocks 20000000 and 20000010 inclusive? Reply with the address.",
+      "expected": {
+        "type": "address",
+        "value": "0x961a61b740ce5893371a49f3ec4ca6e16fe57e7f"
+      },
+      "min_tool_calls": 1,
+      "reference_calls": [
+        {
+          "tool": "portal_evm_query_transactions",
+          "arguments": {
+            "network": "base-mainnet",
+            "from_block": 20000000,
+            "to_block": 20000010,
+            "aggregate_by": "sender",
+            "aggregate_metric": "count",
+            "limit": 3
+          }
+        }
+      ],
+      "answer_path": "top_senders[0].address",
+      "verified": "2026-09-02, 40 of 1355 transactions, window_complete true"
+    },
+    {
+      "id": "bayc-deployment-block",
+      "family": "evm",
+      "question": "In which Ethereum block was the Bored Ape Yacht Club contract deployed? Search blocks 12,280,000 to 12,300,000.",
+      "expected": {
+        "type": "number",
+        "value": "12287507"
+      },
+      "min_tool_calls": 2,
+      "reference_calls": [
+        {
+          "tool": "portal_resolve_entity",
+          "arguments": {
+            "network": "ethereum-mainnet",
+            "kind": "contract",
+            "query": "bored apes"
+          }
+        },
+        {
+          "tool": "portal_evm_get_contract_deployment",
+          "arguments": {
+            "network": "ethereum-mainnet",
+            "contract": "bored apes",
+            "from_block": 12280000,
+            "to_block": 12300000,
+            "scan_order": "earliest"
+          }
+        }
+      ],
+      "answer_path": "items[0].block_number",
+      "verified": "2026-09-02, deployment trace in block 12287507 (2021-04-22 03:03:16 UTC)"
+    },
+    {
+      "id": "solana-fee-payer-count-slot",
+      "family": "solana",
+      "question": "How many transactions did fee payer 2BFqCRVvJ7YeiSbEzLwy5WqFcDgQ73GYmH2xyiMjfTb5 pay for in Solana slot 300000000?",
+      "expected": {
+        "type": "number",
+        "value": "5"
+      },
+      "min_tool_calls": 1,
+      "reference_calls": [
+        {
+          "tool": "portal_solana_query_transactions",
+          "arguments": {
+            "network": "solana-mainnet",
+            "from_block": 300000000,
+            "to_block": 300000000,
+            "fee_payer": ["2BFqCRVvJ7YeiSbEzLwy5WqFcDgQ73GYmH2xyiMjfTb5"],
+            "limit": 25
+          }
+        }
+      ],
+      "answer_path": "_coverage.returned_items",
+      "verified": "2026-09-02, 5 rows with result_complete true"
+    },
+    {
+      "id": "solana-one-minute-transactions",
+      "family": "solana",
+      "question": "How many Solana transactions were processed between 2024-11-07T12:16:00Z and 2024-11-07T12:17:00Z?",
+      "expected": {
+        "type": "number",
+        "value": "51995"
+      },
+      "min_tool_calls": 1,
+      "reference_calls": [
+        {
+          "tool": "portal_debug_resolve_time_to_block",
+          "arguments": {
+            "network": "solana-mainnet",
+            "timestamp": "2024-11-07T12:16:00Z"
+          }
+        },
+        {
+          "tool": "portal_solana_get_analytics",
+          "arguments": {
+            "network": "solana-mainnet",
+            "from_timestamp": "2024-11-07T12:16:00Z",
+            "to_timestamp": "2024-11-07T12:17:00Z",
+            "response_format": "summary"
+          }
+        }
+      ],
+      "answer_path": "presentation_summary.total_transactions",
+      "verified": "2026-09-02, slots 299999925-300000051, 127 slots analyzed, sampled false"
+    },
+    {
+      "id": "bitcoin-block-850000-transactions",
+      "family": "bitcoin",
+      "question": "How many transactions were in Bitcoin block 850000?",
+      "expected": {
+        "type": "number",
+        "value": "3163"
+      },
+      "min_tool_calls": 1,
+      "reference_calls": [
+        {
+          "tool": "portal_bitcoin_get_analytics",
+          "arguments": {
+            "network": "bitcoin-mainnet",
+            "from_block": 850000,
+            "to_block": 850000,
+            "response_format": "summary",
+            "include_address_activity": false
+          }
+        }
+      ],
+      "answer_path": "presentation_summary.total_transactions",
+      "verified": "2026-09-02, analyzed_blocks 1, sampled false"
+    },
+    {
+      "id": "bitcoin-six-block-transactions",
+      "family": "bitcoin",
+      "question": "How many transactions in total were in Bitcoin blocks 850000 through 850005?",
+      "expected": {
+        "type": "number",
+        "value": "8158"
+      },
+      "min_tool_calls": 1,
+      "reference_calls": [
+        {
+          "tool": "portal_bitcoin_get_analytics",
+          "arguments": {
+            "network": "bitcoin-mainnet",
+            "from_block": 850000,
+            "to_block": 850005,
+            "response_format": "summary",
+            "include_address_activity": false
+          }
+        }
+      ],
+      "answer_path": "presentation_summary.total_transactions",
+      "verified": "2026-09-02, analyzed_blocks 6, sampled false"
+    },
+    {
+      "id": "polkadot-block-calls",
+      "family": "substrate",
+      "question": "How many calls were included in Polkadot block 30736840?",
+      "expected": {
+        "type": "number",
+        "value": "2"
+      },
+      "min_tool_calls": 1,
+      "reference_calls": [
+        {
+          "tool": "portal_substrate_query_calls",
+          "arguments": {
+            "network": "polkadot",
+            "from_block": 30736840,
+            "to_block": 30736840,
+            "response_format": "summary"
+          }
+        }
+      ],
+      "answer_path": "total_calls",
+      "verified": "2026-09-02, Timestamp.set and ParaInherent.enter, result_complete true"
+    },
+    {
+      "id": "polkadot-extrinsic-success-events",
+      "family": "substrate",
+      "question": "How many System.ExtrinsicSuccess events were emitted in Polkadot block 30736840?",
+      "expected": {
+        "type": "number",
+        "value": "2"
+      },
+      "min_tool_calls": 1,
+      "reference_calls": [
+        {
+          "tool": "portal_substrate_query_events",
+          "arguments": {
+            "network": "polkadot",
+            "from_block": 30736840,
+            "to_block": 30736840,
+            "event_names": ["System.ExtrinsicSuccess"],
+            "response_format": "summary"
+          }
+        }
+      ],
+      "answer_path": "total_events",
+      "verified": "2026-09-02, 2 rows, result_complete true"
+    },
+    {
+      "id": "polkadot-ten-block-events",
+      "family": "substrate",
+      "question": "How many events in total were emitted on Polkadot in blocks 30736840 through 30736849?",
+      "expected": {
+        "type": "number",
+        "value": "596"
+      },
+      "min_tool_calls": 1,
+      "reference_calls": [
+        {
+          "tool": "portal_substrate_get_analytics",
+          "arguments": {
+            "network": "polkadot",
+            "from_block": 30736840,
+            "to_block": 30736849,
+            "response_format": "summary"
+          }
+        }
+      ],
+      "answer_path": "presentation_summary.total_events",
+      "verified": "2026-09-02, blocks_analyzed 10, sampled false"
+    },
+    {
+      "id": "hyperliquid-trader-fills-block",
+      "family": "hyperliquid",
+      "question": "How many BTC fills did trader 0xecb63caa47c7c4e77f60f1ce858cf28dc2b82b00 have in Hyperliquid block 750000007?",
+      "expected": {
+        "type": "number",
+        "value": "5"
+      },
+      "min_tool_calls": 1,
+      "reference_calls": [
+        {
+          "tool": "portal_hyperliquid_query_fills",
+          "arguments": {
+            "network": "hyperliquid-fills",
+            "from_block": 750000007,
+            "to_block": 750000007,
+            "coin": ["BTC"],
+            "user": ["0xecb63caa47c7c4e77f60f1ce858cf28dc2b82b00"],
+            "limit": 25
+          }
+        }
+      ],
+      "answer_path": "_coverage.returned_items",
+      "verified": "2026-09-02, 5 Close Long fills, result_complete true"
+    },
+    {
+      "id": "hyperliquid-close-long-fills-block",
+      "family": "hyperliquid",
+      "question": "How many BTC fills with direction Close Long were recorded in Hyperliquid block 750000007?",
+      "expected": {
+        "type": "number",
+        "value": "5"
+      },
+      "min_tool_calls": 1,
+      "reference_calls": [
+        {
+          "tool": "portal_hyperliquid_query_fills",
+          "arguments": {
+            "network": "hyperliquid-fills",
+            "from_block": 750000007,
+            "to_block": 750000007,
+            "coin": ["BTC"],
+            "dir": ["Close Long"],
+            "limit": 25
+          }
+        }
+      ],
+      "answer_path": "_coverage.returned_items",
+      "verified": "2026-09-02, 5 rows, result_complete true"
+    },
+    {
+      "id": "tron-trx-sent-by-wallet-block",
+      "family": "tron",
+      "question": "How much TRX did the wallet TQhpXvhSbXWgdYg8qmK7kQeL3rsfxxojNc send in native transfers in Tron block 84000000? Reply with the TRX amount.",
+      "expected": {
+        "type": "number",
+        "value": "378"
+      },
+      "min_tool_calls": 1,
+      "reference_calls": [
+        {
+          "tool": "portal_tron_query_transactions",
+          "arguments": {
+            "network": "tron-mainnet",
+            "from_block": 84000000,
+            "to_block": 84000000,
+            "kind": "transfer",
+            "from_addresses": ["TQhpXvhSbXWgdYg8qmK7kQeL3rsfxxojNc"],
+            "limit": 25
+          }
+        }
+      ],
+      "answer_path": "items[0].amount_trx",
+      "verified": "2026-09-02, one TransferContract of 378000000 SUN, result_complete true"
+    },
+    {
+      "id": "negative-unsupported-network",
+      "family": "negative",
+      "question": "How many USDC transfers happened on Cardano in the last hour?",
+      "expected": {
+        "type": "refusal"
+      },
+      "min_tool_calls": 1,
+      "reference_calls": [
+        {
+          "tool": "portal_evm_query_token_transfers",
+          "arguments": {
+            "network": "cardano",
+            "token_symbols": ["USDC"],
+            "timeframe": "1h",
+            "limit": 5
+          }
+        }
+      ],
+      "verified": "2026-09-02, error unknown_network"
+    },
+    {
+      "id": "negative-malformed-address",
+      "family": "negative",
+      "question": "Summarize what the wallet 0x12345 has been doing on Base over the last hour.",
+      "expected": {
+        "type": "refusal"
+      },
+      "min_tool_calls": 1,
+      "reference_calls": [
+        {
+          "tool": "portal_get_wallet_summary",
+          "arguments": {
+            "network": "base-mainnet",
+            "address": "0x12345",
+            "timeframe": "1h"
+          }
+        }
+      ],
+      "verified": "2026-09-02, error invalid_request (invalid evm wallet address)"
+    },
+    {
+      "id": "negative-future-window",
+      "family": "negative",
+      "question": "How many native USDC transfers happened on Base between 2030-01-01 and 2030-01-02?",
+      "expected": {
+        "type": "refusal"
+      },
+      "min_tool_calls": 1,
+      "reference_calls": [
+        {
+          "tool": "portal_evm_query_token_transfers",
+          "arguments": {
+            "network": "base-mainnet",
+            "token_symbols": ["USDC"],
+            "from_timestamp": "2030-01-01T00:00:00Z",
+            "to_timestamp": "2030-01-02T00:00:00Z",
+            "limit": 5
+          }
+        }
+      ],
+      "verified": "2026-09-02, error: requested timestamp is after the latest indexed block"
+    },
+    {
+      "id": "ethereum-transaction-trace-count",
+      "family": "evm",
+      "question": "How many execution traces, including the top-level call, does transaction 0x851bad0415758075a1eb86776749c829b866d43179c57c3e4a4b9359a0358231 have? It is in block 12244145 on Ethereum mainnet.",
+      "expected": {
+        "type": "number",
+        "value": "22"
+      },
+      "min_tool_calls": 1,
+      "reference_calls": [
+        {
+          "tool": "portal_evm_query_traces",
+          "arguments": {
+            "network": "ethereum-mainnet",
+            "from_block": 12244145,
+            "to_block": 12244145,
+            "transaction_hash": "0x851bad0415758075a1eb86776749c829b866d43179c57c3e4a4b9359a0358231",
+            "response_format": "summary",
+            "limit": 25
+          }
+        }
+      ],
+      "answer_path": "total_traces",
+      "verified": "2026-09-02, 22 traces returned for the pinned transaction and checked against direct Portal rows by test:data-integrity"
+    }
+  ]
+}

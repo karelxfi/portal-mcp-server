@@ -1,33 +1,33 @@
 import type { McpServer } from '@modelcontextprotocol/server'
-
-import { registerPortalTool } from '../../helpers/mcp-registration.js'
 import { z } from 'zod'
 
 import { getBlockHead, resolveDataset, validateBlockRange } from '../../cache/datasets.js'
 import { createQueryCache, stableCacheKey } from '../../cache/query-cache.js'
 import { PORTAL_URL } from '../../constants/index.js'
+import { fetchBitcoinBlockFees, satsToBtcString } from '../../helpers/bitcoin-fees.js'
+import { detectChainType } from '../../helpers/chain.js'
 import {
+  type TableValueFormat,
   buildTableDescriptor,
   buildTimeSeriesChart,
   buildTimeSeriesTable,
-  type TableValueFormat,
 } from '../../helpers/chart-metadata.js'
-import { detectChainType } from '../../helpers/chain.js'
 import { ActionableError, createUnsupportedChainError, createUnsupportedMetricError } from '../../helpers/errors.js'
 import {
   EXACT_DECIMAL_ZERO,
+  type ExactDecimal,
   addExactDecimals,
   formatExactDecimal,
   multiplyExactDecimals,
   parseExactDecimal,
-  type ExactDecimal,
 } from '../../helpers/exact-decimal.js'
 import { portalFetchStream, portalFetchStreamRangeVisit } from '../../helpers/fetch.js'
-import { formatResult } from '../../helpers/format.js'
-import { formatBTC, formatDuration, formatTimestamp, formatUSD } from '../../helpers/format.js'
+import { formatBTC, formatDuration, formatResult, formatTimestamp, formatUSD } from '../../helpers/format.js'
+import { registerPortalTool } from '../../helpers/mcp-registration.js'
 import { buildTimeSeriesPipesRecipe } from '../../helpers/pipes-recipe.js'
 import { buildBucketCoverage, buildBucketGapDiagnostics, buildQueryFreshness } from '../../helpers/result-metadata.js'
 import {
+  type TimestampInput,
   describeTimeWindowInput,
   estimateBlockTime,
   getHeadTimestamp,
@@ -35,13 +35,12 @@ import {
   parseTimeframeToSeconds,
   parseTimestampInput,
   resolveTimeframeOrBlocks,
-  type TimestampInput,
 } from '../../helpers/timeframe.js'
 import { buildExecutionMetadata, buildToolDescription } from '../../helpers/tool-ux.js'
 import { buildChartPanel, buildMetricCard, buildPortalUi, buildTablePanel } from '../../helpers/ui-metadata.js'
+import { visitHyperliquidFillBlocks } from '../hyperliquid/fill-stream.js'
 import { computeSolanaTimeSeries } from '../solana/time-series-shared.js'
 import { computeWindowSeries } from './compare-periods.js'
-import { visitHyperliquidFillBlocks } from '../hyperliquid/fill-stream.js'
 
 // ============================================================================
 // Tool: Get Time Series Data
@@ -68,6 +67,34 @@ type TimeSeriesMetric =
   | 'volume'
   | 'fill_count'
   | 'unique_traders'
+
+/*
+ * What each chain family actually computes. Kept beside the metric enum
+ * because the enum is the union of every family's metrics, and a request is
+ * only meaningful against one family at a time.
+ */
+type SupportedFamily = 'evm' | 'solana' | 'bitcoin' | 'hyperliquid'
+
+const SUPPORTED_METRICS: Record<SupportedFamily, readonly TimeSeriesMetric[]> = {
+  evm: [
+    'transaction_count',
+    'transactions_per_block',
+    'avg_gas_price',
+    'gas_used',
+    'block_utilization',
+    'unique_addresses',
+  ],
+  solana: ['transaction_count', 'unique_addresses', 'tps', 'avg_fee', 'success_rate', 'slots_per_hour'],
+  bitcoin: ['transaction_count', 'unique_addresses', 'fees_btc', 'block_size_bytes'],
+  hyperliquid: ['volume', 'fill_count', 'unique_traders'],
+}
+
+/* The schema enum has to list every metric; which ones a chain family
+   computes is stated in the description so a client is not sent after
+   success_rate on an EVM network. */
+const METRIC_FAMILY_TEXT = (Object.entries(SUPPORTED_METRICS) as [string, readonly string[]][])
+  .map(([family, metrics]) => `${family}: ${metrics.join(', ')}`)
+  .join('; ')
 
 type TimeSeriesBlock = {
   number?: number
@@ -121,11 +148,121 @@ const MIN_EVM_GENERIC_CHUNK_SIZE = 50
 const MIN_SOLANA_GENERIC_CHUNK_SIZE = 250
 const SOLANA_GENERIC_MAX_BYTES = 150 * 1024 * 1024
 const FAST_EVM_TIME_SERIES_BLOCK_CAP = 1500
+/* Bitcoin inputs and outputs weigh about a megabyte per block; a fee series
+   scans at most this many of the newest requested blocks and says so. */
+/*
+ * How many blocks one series call may read before it refuses.
+ *
+ * The cost of this tool is linear in blocks, not in buckets: every block in the
+ * window is streamed and folded into its bucket, so a coarser interval reads
+ * exactly as much as a fine one. Measured on Base at two seconds a block:
+ * 10,800 blocks took 12.8s, 21,600 took 25.8s, and 43,200 took 112s and 428MB
+ * on the way. Seven days is 302,400 blocks; that call never answered inside
+ * four minutes and the process reached 1.9GB and was still climbing.
+ *
+ * A block ceiling is the right unit precisely because it is not a duration.
+ * Twenty-four hours is 144 blocks on Bitcoin, 7,200 on Ethereum and 43,200 on
+ * Base, so the same number lets the request through where it is cheap and
+ * stops it where it is not, without a per-chain table to maintain. Twenty
+ * thousand blocks is where the worst case lands near thirty seconds, inside
+ * the sixty seconds most MCP clients wait: 10,800 blocks measured at 26.6s, so
+ * the ceiling is set just above the largest window that finishes comfortably
+ * rather than at the largest that finishes at all.
+ *
+ * Refusing is the point. A tool that hangs past the client's timeout has not
+ * given a slow answer, it has given none, and it has spent a gigabyte doing it.
+ */
+export const MAX_SERIES_SCAN_BLOCKS = 12_000
+
+export function assertSeriesWindowScannable(params: {
+  dataset: string
+  chainType: string
+  fromBlock: number
+  toBlock: number
+  duration: string
+}) {
+  const blocks = Math.max(0, params.toBlock - params.fromBlock + 1)
+  if (blocks <= MAX_SERIES_SCAN_BLOCKS) return
+  throw seriesWindowTooLargeError({ ...params, blocks, estimated: false })
+}
+
+/*
+ * The exact check needs the window's block numbers, and those cost timestamp
+ * lookups against the Portal: on Ethereum that was ten seconds spent deciding
+ * to refuse. A duration that is far over the bound by the chain's own block
+ * time is refused before any lookup. A borderline one waits for the exact
+ * count, because a block-time estimate is not a block count.
+ */
+export function assertSeriesDurationScannable(params: { dataset: string; chainType: string; duration: string }) {
+  let seconds: number
+  try {
+    seconds = parseTimeframeToSeconds(params.duration)
+  } catch {
+    return
+  }
+  const secondsPerBlock = estimateBlockTime(params.dataset, params.chainType)
+  if (!(secondsPerBlock > 0)) return
+  const blocks = Math.ceil(seconds / secondsPerBlock)
+  if (blocks <= MAX_SERIES_SCAN_BLOCKS * 1.5) return
+  throw seriesWindowTooLargeError({ ...params, blocks, estimated: true })
+}
+
+function seriesWindowTooLargeError(params: {
+  dataset: string
+  chainType: string
+  duration: string
+  blocks: number
+  estimated: boolean
+}): ActionableError {
+  const { blocks } = params
+  const secondsPerBlock = estimateBlockTime(params.dataset, params.chainType)
+  const affordableSeconds = MAX_SERIES_SCAN_BLOCKS * secondsPerBlock
+  /* Suggest a real preset rather than a computed number nobody can type. */
+  const presets: [string, number][] = [
+    ['30d', 2_592_000],
+    ['14d', 1_209_600],
+    ['7d', 604_800],
+    ['3d', 259_200],
+    ['24h', 86_400],
+    ['12h', 43_200],
+    ['6h', 21_600],
+    ['1h', 3_600],
+    ['30m', 1_800],
+    ['15m', 900],
+  ]
+  const largest = presets.find(([, seconds]) => seconds <= affordableSeconds)
+
+  return new ActionableError(
+    `A ${params.duration} window is ${params.estimated ? 'about ' : ''}${blocks.toLocaleString()} blocks on ${params.dataset}${params.estimated ? ' by its typical block time' : ''}, and portal_get_time_series reads every block in the window. It stops at ${MAX_SERIES_SCAN_BLOCKS.toLocaleString()} blocks so a call cannot outlast the client waiting for it.`,
+    [
+      largest
+        ? `Ask for duration '${largest[0]}' or less on ${params.dataset}: about ${MAX_SERIES_SCAN_BLOCKS.toLocaleString()} blocks is roughly ${Math.floor(affordableSeconds / 3600)} hours here.`
+        : `Ask for a window under ${MAX_SERIES_SCAN_BLOCKS.toLocaleString()} blocks on ${params.dataset}.`,
+      'Use from_block and to_block for an exact window inside that bound.',
+      'The same duration costs less on a slower chain: the limit is blocks, not time.',
+      'Use the analytics tool for this chain if you want one aggregate over a wider window instead of a series.',
+    ],
+    {
+      requested_duration: params.duration,
+      requested_blocks: blocks,
+      ...(params.estimated ? { requested_blocks_estimated: true } : {}),
+      max_scan_blocks: MAX_SERIES_SCAN_BLOCKS,
+      seconds_per_block: secondsPerBlock,
+      ...(largest ? { largest_supported_duration: largest[0] } : {}),
+    },
+    /* The caller asked for more than the tool serves and can ask for less.
+       That is their input, not a server fault, and retrying it unchanged will
+       fail exactly the same way. */
+    { code: 'unsupported_operation', origin: 'client_input', retryable: false },
+  )
+}
+
+const BITCOIN_FEE_SERIES_MAX_BLOCKS = 144
 const TIME_SERIES_CACHE_TTL_MS = 30_000
 const TIME_SERIES_CACHE_MAX_ENTRIES = 16
 
 const timeSeriesCache = createQueryCache<{
-  timeSeries: Array<Record<string, unknown>>
+  timeSeries: Record<string, unknown>[]
   gapDiagnostics: ReturnType<typeof buildBucketGapDiagnostics>
   summary: Record<string, unknown>
   filledBuckets: number
@@ -137,6 +274,7 @@ const timeSeriesCache = createQueryCache<{
   endTimestamp: number
   adaptiveChunkReduced: boolean
   effectiveFromBlock: number
+  fastNarrowed: boolean
 }>({
   ttl: TIME_SERIES_CACHE_TTL_MS,
   maxEntries: TIME_SERIES_CACHE_MAX_ENTRIES,
@@ -146,7 +284,7 @@ function buildLongWindowNotice(duration: string): string | undefined {
   const durationSeconds = parseTimeframeToSeconds(duration)
   if (durationSeconds <= INTERACTIVE_TIME_SERIES_WINDOW_SECONDS) return undefined
 
-  return `Long-window note: ${describeTimeWindowInput(duration)} is supported, but complete scans can take longer than the default ${DEFAULT_TIME_SERIES_DURATION} interactive window.`
+  return `Long-window note: ${describeTimeWindowInput(duration)} reads more blocks than the default ${DEFAULT_TIME_SERIES_DURATION} window, so it takes longer. Windows over ${MAX_SERIES_SCAN_BLOCKS.toLocaleString()} blocks are refused rather than run.`
 }
 
 function withWindowNotice(message: string, notice?: string): string {
@@ -161,11 +299,18 @@ function getBlockTimestamp(block: TimeSeriesBlock): number | undefined {
   return block.timestamp ?? block.header?.timestamp
 }
 
-function getBlockBigIntString(block: TimeSeriesBlock, key: 'baseFeePerGas' | 'gasUsed' | 'gasLimit'): string | undefined {
+function getBlockBigIntString(
+  block: TimeSeriesBlock,
+  key: 'baseFeePerGas' | 'gasUsed' | 'gasLimit',
+): string | undefined {
   return block[key] ?? block.header?.[key]
 }
 
-function createBucketAccumulators(expectedBuckets: number, seriesStartTimestamp: number, intervalSeconds: number): BucketAccumulator[] {
+function createBucketAccumulators(
+  expectedBuckets: number,
+  seriesStartTimestamp: number,
+  intervalSeconds: number,
+): BucketAccumulator[] {
   return Array.from({ length: expectedBuckets }, (_, bucketIndex) => ({
     bucketIndex,
     bucketTimestamp: seriesStartTimestamp + bucketIndex * intervalSeconds,
@@ -289,7 +434,10 @@ function getNetworkLabel(dataset: string): string {
 }
 
 function trimFixed(value: number, digits: number): string {
-  return value.toFixed(digits).replace(/\.0+$/, '').replace(/(\.\d*?)0+$/, '$1')
+  return value
+    .toFixed(digits)
+    .replace(/\.0+$/, '')
+    .replace(/(\.\d*?)0+$/, '$1')
 }
 
 function formatCompactNumber(value: number): string {
@@ -312,7 +460,11 @@ function formatExactNumber(value: number): string {
   return trimFixed(value, Math.abs(value) >= 10 ? 1 : 2)
 }
 
-function formatMetricAmount(value: number, metric: TimeSeriesMetric, opts?: { compact?: boolean; unit?: string }): string {
+function formatMetricAmount(
+  value: number,
+  metric: TimeSeriesMetric,
+  opts?: { compact?: boolean; unit?: string },
+): string {
   if (metric === 'volume') return formatUSD(value)
   if (metric === 'fees_btc') return formatBTC(value)
   if (metric === 'block_utilization' || metric === 'success_rate') return `${trimFixed(value, 1)}%`
@@ -359,15 +511,19 @@ function buildTimeSeriesAnswer(params: {
   metric: TimeSeriesMetric
   interval: string
   duration: string
-  timeSeries: Array<Record<string, unknown>>
+  timeSeries: Record<string, unknown>[]
   fromBlock?: number
   toBlock?: number
   observedSpanSeconds?: number
   unit?: string
+  /* mode=fast read a slice of the window on purpose; the missing hours were
+     not unindexed, they were not asked for. */
+  windowNarrowedByFastMode?: boolean
 }): string {
   const values = params.timeSeries
     .map((row) => {
-      const value = typeof row.value === 'number' ? row.value : typeof row.value === 'string' ? Number(row.value) : Number.NaN
+      const value =
+        typeof row.value === 'number' ? row.value : typeof row.value === 'string' ? Number(row.value) : Number.NaN
       return Number.isFinite(value) ? value : undefined
     })
     .filter((value): value is number => value !== undefined)
@@ -392,13 +548,18 @@ function buildTimeSeriesAnswer(params: {
       ? params.observedSpanSeconds / parseTimeframeToSeconds(params.duration)
       : 1
   const durationLabel = describeTimeWindowInput(params.duration)
-  const coveragePrefix = coverage < 0.9
-    ? `Only ${formatDuration(params.observedSpanSeconds ?? 0)} of the requested window (${durationLabel}) had indexed block data. `
-    : ''
+  const spanLabel = params.windowNarrowedByFastMode
+    ? `the newest ${formatDuration(params.observedSpanSeconds ?? 0)}`
+    : durationLabel
+  const coveragePrefix = params.windowNarrowedByFastMode
+    ? `mode=fast read only ${spanLabel} of the requested ${durationLabel} window; mode=deep reads all of it. `
+    : coverage < 0.9
+      ? `Only ${formatDuration(params.observedSpanSeconds ?? 0)} of the requested window (${durationLabel}) had indexed block data. `
+      : ''
 
   const firstSentence = isAdditiveMetric(params.metric)
-    ? `${coveragePrefix}~${formatMetricAmount(total, params.metric, { compact: true, unit: params.unit })} ${metricNoun} on ${network} over ${durationLabel} (${bucketCount} x ${params.interval} buckets, avg ${formatMetricAmount(avg, params.metric, { unit: params.unit })}/bucket).`
-    : `${coveragePrefix}${network} ${metricNoun} averaged ${formatMetricAmount(avg, params.metric, { unit: params.unit })} over ${durationLabel} (${bucketCount} x ${params.interval} buckets).`
+    ? `${coveragePrefix}~${formatMetricAmount(total, params.metric, { compact: true, unit: params.unit })} ${metricNoun} on ${network} over ${spanLabel} (${bucketCount} x ${params.interval} buckets, avg ${formatMetricAmount(avg, params.metric, { unit: params.unit })}/bucket).`
+    : `${coveragePrefix}${network} ${metricNoun} averaged ${formatMetricAmount(avg, params.metric, { unit: params.unit })} over ${spanLabel} (${bucketCount} x ${params.interval} buckets).`
 
   if (!Number.isFinite(peak.value) || peak.value <= 0 || avg <= 0) {
     return `${firstSentence}${blocks}`.trim()
@@ -406,9 +567,10 @@ function buildTimeSeriesAnswer(params: {
 
   const peakTime = formatBucketTime(peak.row?.timestamp)
   const multiplier = peak.value / avg
-  const spikeSentence = multiplier >= 1.5
-    ? ` Notable spike${peakTime ? ` at ${peakTime}` : ''} with ${formatMetricAmount(peak.value, params.metric, { unit: params.unit })} ${metricNoun} in a single ${params.interval} window - roughly ${trimFixed(multiplier, 1)}x the average.`
-    : ` Peak bucket${peakTime ? ` at ${peakTime}` : ''}: ${formatMetricAmount(peak.value, params.metric, { unit: params.unit })} ${metricNoun}.`
+  const spikeSentence =
+    multiplier >= 1.5
+      ? ` Notable spike${peakTime ? ` at ${peakTime}` : ''} with ${formatMetricAmount(peak.value, params.metric, { unit: params.unit })} ${metricNoun} in a single ${params.interval} window - roughly ${trimFixed(multiplier, 1)}x the average.`
+      : ` Peak bucket${peakTime ? ` at ${peakTime}` : ''}: ${formatMetricAmount(peak.value, params.metric, { unit: params.unit })} ${metricNoun}.`
 
   return `${firstSentence}${spikeSentence}${blocks}`.trim()
 }
@@ -437,23 +599,27 @@ function buildSimpleSeriesUi(params: {
       format: 'integer',
     }),
     ...(params.primaryValuePath
-      ? [buildMetricCard({
-          id: 'primary-value',
-          label: params.primaryLabel ?? params.metricLabel,
-          value_path: params.primaryValuePath,
-          format: params.valueFormat,
-          ...(params.unit ? { unit: params.unit } : {}),
-          emphasis: 'primary',
-        })]
+      ? [
+          buildMetricCard({
+            id: 'primary-value',
+            label: params.primaryLabel ?? params.metricLabel,
+            value_path: params.primaryValuePath,
+            format: params.valueFormat,
+            ...(params.unit ? { unit: params.unit } : {}),
+            emphasis: 'primary',
+          }),
+        ]
       : []),
     ...(params.avgValuePath
-      ? [buildMetricCard({
-          id: 'average-value',
-          label: `Average ${params.metricLabel.toLowerCase()}`,
-          value_path: params.avgValuePath,
-          format: params.valueFormat,
-          ...(params.unit ? { unit: params.unit } : {}),
-        })]
+      ? [
+          buildMetricCard({
+            id: 'average-value',
+            label: `Average ${params.metricLabel.toLowerCase()}`,
+            value_path: params.avgValuePath,
+            format: params.valueFormat,
+            ...(params.unit ? { unit: params.unit } : {}),
+          }),
+        ]
       : []),
   ]
 
@@ -564,12 +730,30 @@ function buildGroupedContractUi(): ReturnType<typeof buildPortalUi> {
     design_intent: 'analytics_dashboard',
     headline: {
       title: 'Transactions by contract',
-      subtitle: 'Track the busiest contracts, compare their bucketed activity, and drill into the ranked contract table.',
+      subtitle:
+        'Track the busiest contracts, compare their bucketed activity, and drill into the ranked contract table.',
     },
     metric_cards: [
-      buildMetricCard({ id: 'tracked-contracts', label: 'Tracked contracts', value_path: 'summary.tracked_contracts', format: 'integer', emphasis: 'primary' }),
-      buildMetricCard({ id: 'total-transactions', label: 'Transactions', value_path: 'summary.total_transactions', format: 'integer' }),
-      buildMetricCard({ id: 'group-limit', label: 'Group limit', value_path: 'summary.group_limit', format: 'integer', subtitle: 'The grouped chart tracks only the top-ranked contracts.' }),
+      buildMetricCard({
+        id: 'tracked-contracts',
+        label: 'Tracked contracts',
+        value_path: 'summary.tracked_contracts',
+        format: 'integer',
+        emphasis: 'primary',
+      }),
+      buildMetricCard({
+        id: 'total-transactions',
+        label: 'Transactions',
+        value_path: 'summary.total_transactions',
+        format: 'integer',
+      }),
+      buildMetricCard({
+        id: 'group-limit',
+        label: 'Group limit',
+        value_path: 'summary.group_limit',
+        format: 'integer',
+        subtitle: 'The grouped chart tracks only the top-ranked contracts.',
+      }),
     ],
     panels: [
       buildChartPanel({
@@ -603,7 +787,8 @@ function buildGroupedContractUi(): ReturnType<typeof buildPortalUi> {
 }
 
 export function registerGetTimeSeriesDataTool(server: McpServer) {
-  registerPortalTool(server,
+  registerPortalTool(
+    server,
     'portal_get_time_series',
     buildToolDescription('portal_get_time_series'),
     {
@@ -626,13 +811,15 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
           'fill_count',
           'unique_traders',
         ])
-        .describe('Metric to aggregate over time'),
+        .describe(`Metric to aggregate over time. Per chain family: ${METRIC_FAMILY_TEXT}. Others are refused.`),
       interval: z.enum(['5m', '15m', '1h', '6h', '1d']).describe('Time bucket interval (5m, 15m, 1h, 6h, 1d)'),
       duration: z
         .string()
         .optional()
         .default(DEFAULT_TIME_SERIES_DURATION)
-        .describe('Total time period to analyze. Defaults to "6h" for interactive use. Explicit longer windows like "24h" or "7d" are supported but can take longer. Accepts compact durations like "30m" or natural phrases like "past 30 minutes".'),
+        .describe(
+          'Total time period to analyze. Defaults to "6h" for interactive use. The bound is in blocks, not time: this tool reads every block in the window and stops at 12,000, so "24h" is fine on Bitcoin or Ethereum and refused on a 2-second chain like Base (43,200 blocks). A window over the bound is refused at once and the error names a duration that fits. Accepts compact durations like "30m" or natural phrases like "past 30 minutes".',
+        ),
       address: z
         .string()
         .optional()
@@ -640,21 +827,51 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
       from_timestamp: z
         .union([z.number(), z.string()])
         .optional()
-        .describe('Starting timestamp. Accepts Unix seconds, Unix milliseconds, ISO datetime, or relative input like "24h ago".'),
+        .describe(
+          'Starting timestamp. Accepts Unix seconds, Unix milliseconds, ISO datetime, or relative input like "24h ago".',
+        ),
       to_timestamp: z
         .union([z.number(), z.string()])
         .optional()
-        .describe('Ending timestamp. Accepts Unix seconds, Unix milliseconds, ISO datetime, or relative input like "now".'),
-      compare_previous: z.boolean().optional().default(false).describe('Compare the selected window against the immediately previous window'),
-      group_by: z.enum(['none', 'contract']).optional().default('none').describe('Optional grouping mode. contract is currently supported only for EVM transaction_count'),
-      group_limit: z.number().optional().default(5).describe('Maximum number of contract groups when group_by=contract'),
+        .describe(
+          'Ending timestamp. Accepts Unix seconds, Unix milliseconds, ISO datetime, or relative input like "now".',
+        ),
+      compare_previous: z
+        .boolean()
+        .optional()
+        .default(false)
+        .describe('Compare the selected window against the immediately previous window'),
+      group_by: z
+        .enum(['none', 'contract'])
+        .optional()
+        .default('none')
+        .describe('Optional grouping mode. contract is currently supported only for EVM transaction_count'),
+      group_limit: z
+        .number()
+        .optional()
+        .default(5)
+        .describe('Maximum number of contract groups when group_by=contract'),
       mode: z
         .enum(['fast', 'deep'])
         .optional()
         .default('deep')
-        .describe('Execution depth. Defaults to complete requested-window analysis; the optional fast value is only for explicitly bounded previews.'),
+        .describe(
+          'Execution depth. Defaults to complete requested-window analysis; the optional fast value is only for explicitly bounded previews.',
+        ),
     },
-    async ({ network, metric, interval, duration, address, from_timestamp, to_timestamp, compare_previous, group_by, group_limit, mode }) => {
+    async ({
+      network,
+      metric,
+      interval,
+      duration,
+      address,
+      from_timestamp,
+      to_timestamp,
+      compare_previous,
+      group_by,
+      group_limit,
+      mode,
+    }) => {
       const queryStartTime = Date.now()
       let dataset = await resolveDataset(network)
       const chainType = detectChainType(dataset)
@@ -670,9 +887,7 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
         group_by,
       })
       const longWindowNotice =
-        from_timestamp === undefined && to_timestamp === undefined
-          ? buildLongWindowNotice(duration)
-          : undefined
+        from_timestamp === undefined && to_timestamp === undefined ? buildLongWindowNotice(duration) : undefined
       if (longWindowNotice) {
         notices.push(longWindowNotice)
       }
@@ -686,7 +901,7 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
           suggestions: [
             'Use portal_get_network_info for Tron availability and freshness.',
             'Use portal_debug_resolve_time_to_block for Tron timestamp-to-block lookups.',
-            'Use the native Tron Stream API examples in the bundled SQD Portal skill for custom Tron time series.',
+            'Use portal_tron_query_transactions or portal_tron_query_logs with response_format=summary for bounded Tron counts, or the Stream API examples in the bundled SQD Portal skill for custom time series.',
           ],
         })
       }
@@ -720,6 +935,31 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
         })
       }
 
+      /* The reverse direction, which was missing. The shared bucket reducer is
+         an if-chain over six metrics starting from `let value = 0`, so a metric
+         belonging to another chain family fell through it and shipped the
+         initial accumulator as the answer: `tps`, `success_rate`, `avg_fee` and
+         `block_size_bytes` all returned an all-zero series on EVM, stamped
+         result_complete: true with empty_buckets: 0 and an evidence receipt
+         hashing the zeros. On Solana the same gap coerced an unrecognised
+         metric to transaction_count and answered a question nobody asked.
+         Neither is recoverable by the caller, because nothing in the response
+         says the number is not the metric they requested. */
+      const supported = SUPPORTED_METRICS[isHyperliquid ? 'hyperliquid' : (chainType as SupportedFamily)]
+      if (supported && !supported.includes(metric)) {
+        throw createUnsupportedMetricError({
+          toolName: 'portal_get_time_series',
+          metric,
+          dataset,
+          supportedMetrics: [...supported],
+          reason: `This metric is not computed for ${isHyperliquid ? 'Hyperliquid' : chainType} datasets.`,
+          suggestions: [
+            `Ask for one of: ${supported.join(', ')}.`,
+            'Use portal_get_network_info to see what this network exposes.',
+          ],
+        })
+      }
+
       if (group_by === 'contract' && (chainType !== 'evm' || metric !== 'transaction_count')) {
         throw createUnsupportedMetricError({
           toolName: 'portal_get_time_series',
@@ -731,21 +971,30 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
       }
 
       if (compare_previous) {
-        if (!['transaction_count', 'avg_gas_price', 'gas_used', 'block_utilization', 'unique_addresses'].includes(metric)) {
+        if (
+          !['transaction_count', 'avg_gas_price', 'gas_used', 'block_utilization', 'unique_addresses'].includes(metric)
+        ) {
           throw createUnsupportedMetricError({
             toolName: 'portal_get_time_series',
             metric,
             dataset,
-            supportedMetrics: ['transaction_count', 'avg_gas_price', 'gas_used', 'block_utilization', 'unique_addresses'],
+            supportedMetrics: [
+              'transaction_count',
+              'avg_gas_price',
+              'gas_used',
+              'block_utilization',
+              'unique_addresses',
+            ],
             reason: 'compare_previous currently supports the core scalar metrics only.',
           })
         }
 
         const durationSeconds = parseTimeframeToSeconds(duration)
         const head = await getBlockHead(dataset)
-        const anchorTimestamp = to_timestamp !== undefined
-          ? parseTimestampInput(to_timestamp).timestamp
-          : await getHeadTimestamp(dataset, head.number)
+        const anchorTimestamp =
+          to_timestamp !== undefined
+            ? parseTimestampInput(to_timestamp).timestamp
+            : await getHeadTimestamp(dataset, head.number)
         const currentEndInclusive = anchorTimestamp
         const currentEndExclusive = currentEndInclusive + 1
         const currentStartTimestamp = currentEndExclusive - durationSeconds
@@ -756,7 +1005,12 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
         const [currentSeries, previousSeries] = await Promise.all([
           computeWindowSeries({
             dataset,
-            metric: metric as 'transaction_count' | 'avg_gas_price' | 'gas_used' | 'block_utilization' | 'unique_addresses',
+            metric: metric as
+              | 'transaction_count'
+              | 'avg_gas_price'
+              | 'gas_used'
+              | 'block_utilization'
+              | 'unique_addresses',
             interval,
             duration,
             address,
@@ -765,7 +1019,12 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
           }),
           computeWindowSeries({
             dataset,
-            metric: metric as 'transaction_count' | 'avg_gas_price' | 'gas_used' | 'block_utilization' | 'unique_addresses',
+            metric: metric as
+              | 'transaction_count'
+              | 'avg_gas_price'
+              | 'gas_used'
+              | 'block_utilization'
+              | 'unique_addresses',
             interval,
             duration,
             address,
@@ -801,13 +1060,19 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
             current_value: point.value,
             previous_value: previousPoint.value,
             delta,
-            pct_change: previousPoint.value === 0 ? null : Number((((point.value - previousPoint.value) / previousPoint.value) * 100).toFixed(2)),
+            pct_change:
+              previousPoint.value === 0
+                ? null
+                : Number((((point.value - previousPoint.value) / previousPoint.value) * 100).toFixed(2)),
           }
         })
         const maxDeltaBuckets = mode === 'deep' ? Number.POSITIVE_INFINITY : 160
-        const trimmedBucketDeltas = bucketDeltas.length > maxDeltaBuckets ? bucketDeltas.slice(-maxDeltaBuckets) : bucketDeltas
+        const trimmedBucketDeltas =
+          bucketDeltas.length > maxDeltaBuckets ? bucketDeltas.slice(-maxDeltaBuckets) : bucketDeltas
         if (bucketDeltas.length > trimmedBucketDeltas.length) {
-          notices.push(`Bucket deltas trimmed to the most recent ${maxDeltaBuckets} buckets because the caller requested a bounded preview.`)
+          notices.push(
+            `Bucket deltas trimmed to the most recent ${maxDeltaBuckets} buckets because the caller requested a bounded preview.`,
+          )
         }
         const maxSeriesBuckets = mode === 'deep' ? Number.POSITIVE_INFINITY : 160
         const currentSeriesRows =
@@ -819,7 +1084,9 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
             ? previousSeries.timeSeries.slice(-maxSeriesBuckets)
             : previousSeries.timeSeries
         if (currentSeriesRows.length < currentSeries.timeSeries.length) {
-          notices.push(`Current and previous series trimmed to the most recent ${maxSeriesBuckets} buckets because the caller requested a bounded preview.`)
+          notices.push(
+            `Current and previous series trimmed to the most recent ${maxSeriesBuckets} buckets because the caller requested a bounded preview.`,
+          )
         }
         const summaryRows = [
           {
@@ -845,7 +1112,10 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
         ].map((row) => ({
           ...row,
           delta: Number((row.current_value - row.previous_value).toFixed(2)),
-          pct_change: row.previous_value === 0 ? null : Number((((row.current_value - row.previous_value) / row.previous_value) * 100).toFixed(2)),
+          pct_change:
+            row.previous_value === 0
+              ? null
+              : Number((((row.current_value - row.previous_value) / row.previous_value) * 100).toFixed(2)),
         }))
 
         const compareCoverage = buildBucketCoverage({
@@ -854,8 +1124,7 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
           filledBuckets: currentSeries.coverage.filled_buckets,
           anchor: 'timestamp_window',
           windowComplete:
-            currentSeries.coverage.window_complete === true &&
-            previousSeries.coverage.window_complete === true,
+            currentSeries.coverage.window_complete === true && previousSeries.coverage.window_complete === true,
         })
 
         const resultMessage = withWindowNotice(
@@ -863,109 +1132,174 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
           longWindowNotice,
         )
 
-        return formatResult({
-          summary: {
-            metric,
-            interval,
-            duration,
-            compare_previous: true,
-          },
-          chart: buildTimeSeriesChart({
-            interval,
-            totalPoints: comparisonSeries.length,
-            dataKey: 'comparison_series',
-            groupedValueField: 'period',
-            xField: 'bucket_index',
-            recommendedVisual: 'line',
-            title: `${getMetricLabel(metric)}: current vs previous`,
-            subtitle: 'Aligned bucket comparison for the selected window and the immediately previous one',
-            xAxisLabel: 'Bucket',
-            yAxisLabel: getMetricLabel(metric),
-            valueFormat: getMetricValueFormat(metric),
-            unit: getMetricUnit(metric),
-          }),
-          tables: [
-            buildTableDescriptor({
-              id: 'summary_rows',
-              dataKey: 'summary_rows',
-              rowCount: summaryRows.length,
-              title: 'Comparison summary',
-              defaultSort: { key: 'label', direction: 'asc' },
-              dense: true,
-              columns: [
-                { key: 'label', label: 'Metric', kind: 'dimension' },
-                { key: 'current_value', label: 'Current', kind: 'metric', format: getMetricValueFormat(metric), align: 'right', ...(getMetricUnit(metric) ? { unit: getMetricUnit(metric) } : {}) },
-                { key: 'previous_value', label: 'Previous', kind: 'metric', format: getMetricValueFormat(metric), align: 'right', ...(getMetricUnit(metric) ? { unit: getMetricUnit(metric) } : {}) },
-                { key: 'delta', label: 'Delta', kind: 'metric', format: getMetricValueFormat(metric), align: 'right', ...(getMetricUnit(metric) ? { unit: getMetricUnit(metric) } : {}) },
-                { key: 'pct_change', label: 'Pct change', kind: 'metric', format: 'percent', unit: '%', align: 'right' },
-              ],
-            }),
-            buildTimeSeriesTable({
-              id: 'comparison_series',
+        return formatResult(
+          {
+            summary: {
+              metric,
+              interval,
+              duration,
+              compare_previous: true,
+              window_anchor: 'latest_block',
+              bucket_alignment: 'anchored_to_latest_block',
+            },
+            chart: buildTimeSeriesChart({
+              interval,
+              totalPoints: comparisonSeries.length,
               dataKey: 'comparison_series',
-              rowCount: comparisonSeries.length,
-              title: 'Aligned comparison buckets',
               groupedValueField: 'period',
-              groupedValueLabel: 'Period',
-              valueLabel: getMetricLabel(metric),
+              xField: 'bucket_index',
+              recommendedVisual: 'line',
+              title: `${getMetricLabel(metric)}: current vs previous`,
+              subtitle: 'Aligned bucket comparison for the selected window and the immediately previous one',
+              xAxisLabel: 'Bucket',
+              yAxisLabel: getMetricLabel(metric),
               valueFormat: getMetricValueFormat(metric),
               unit: getMetricUnit(metric),
-              timestampField: 'timestamp',
-              defaultSort: { key: 'bucket_index', direction: 'asc' },
             }),
-            ...(trimmedBucketDeltas.length
-              ? [
-                  buildTableDescriptor({
-                    id: 'bucket_deltas',
-                    dataKey: 'bucket_deltas',
-                    rowCount: trimmedBucketDeltas.length,
-                    title: 'Bucket deltas',
-                    defaultSort: { key: 'bucket_index', direction: 'asc' },
-                    dense: true,
-                    columns: [
-                      { key: 'bucket_index', label: 'Bucket', kind: 'dimension', format: 'integer', align: 'right' },
-                      { key: 'current_value', label: 'Current', kind: 'metric', format: getMetricValueFormat(metric), align: 'right', ...(getMetricUnit(metric) ? { unit: getMetricUnit(metric) } : {}) },
-                      { key: 'previous_value', label: 'Previous', kind: 'metric', format: getMetricValueFormat(metric), align: 'right', ...(getMetricUnit(metric) ? { unit: getMetricUnit(metric) } : {}) },
-                      { key: 'delta', label: 'Delta', kind: 'metric', format: getMetricValueFormat(metric), align: 'right', ...(getMetricUnit(metric) ? { unit: getMetricUnit(metric) } : {}) },
-                      { key: 'pct_change', label: 'Pct change', kind: 'metric', format: 'percent', unit: '%', align: 'right' },
-                    ],
-                  }),
-                ]
-              : []),
-          ],
-          summary_rows: summaryRows,
-          comparison_series: comparisonSeries,
-          current_series: currentSeriesRows,
-          previous_series: previousSeriesRows,
-          bucket_deltas: trimmedBucketDeltas,
-          gap_diagnostics: currentSeries.gapDiagnostics,
-        }, resultMessage, {
-          toolName: 'portal_get_time_series',
-          notices: [...notices, ...currentSeries.notices, ...previousSeries.notices],
-          freshness: currentSeries.freshness,
-          coverage: compareCoverage,
-          execution: buildExecutionMetadata({
-            mode,
-            metric,
-            interval,
-            duration,
-            compare_previous: true,
-            range_kind: 'timeframe',
-            ...(longWindowNotice ? { notes: [longWindowNotice] } : {}),
-          }),
-          pipes: pipesRecipe,
-          ui: buildComparePreviousUi(metric),
-          metadata: {
-            network: dataset,
-            dataset,
-            from_block: currentSeries.metadata.from_block,
-            to_block: currentSeries.metadata.to_block,
-            query_start_time: queryStartTime,
+            tables: [
+              buildTableDescriptor({
+                id: 'summary_rows',
+                dataKey: 'summary_rows',
+                rowCount: summaryRows.length,
+                title: 'Comparison summary',
+                defaultSort: { key: 'label', direction: 'asc' },
+                dense: true,
+                columns: [
+                  { key: 'label', label: 'Metric', kind: 'dimension' },
+                  {
+                    key: 'current_value',
+                    label: 'Current',
+                    kind: 'metric',
+                    format: getMetricValueFormat(metric),
+                    align: 'right',
+                    ...(getMetricUnit(metric) ? { unit: getMetricUnit(metric) } : {}),
+                  },
+                  {
+                    key: 'previous_value',
+                    label: 'Previous',
+                    kind: 'metric',
+                    format: getMetricValueFormat(metric),
+                    align: 'right',
+                    ...(getMetricUnit(metric) ? { unit: getMetricUnit(metric) } : {}),
+                  },
+                  {
+                    key: 'delta',
+                    label: 'Delta',
+                    kind: 'metric',
+                    format: getMetricValueFormat(metric),
+                    align: 'right',
+                    ...(getMetricUnit(metric) ? { unit: getMetricUnit(metric) } : {}),
+                  },
+                  {
+                    key: 'pct_change',
+                    label: 'Pct change',
+                    kind: 'metric',
+                    format: 'percent',
+                    unit: '%',
+                    align: 'right',
+                  },
+                ],
+              }),
+              buildTimeSeriesTable({
+                id: 'comparison_series',
+                dataKey: 'comparison_series',
+                rowCount: comparisonSeries.length,
+                title: 'Aligned comparison buckets',
+                groupedValueField: 'period',
+                groupedValueLabel: 'Period',
+                valueLabel: getMetricLabel(metric),
+                valueFormat: getMetricValueFormat(metric),
+                unit: getMetricUnit(metric),
+                timestampField: 'timestamp',
+                defaultSort: { key: 'bucket_index', direction: 'asc' },
+              }),
+              ...(trimmedBucketDeltas.length
+                ? [
+                    buildTableDescriptor({
+                      id: 'bucket_deltas',
+                      dataKey: 'bucket_deltas',
+                      rowCount: trimmedBucketDeltas.length,
+                      title: 'Bucket deltas',
+                      defaultSort: { key: 'bucket_index', direction: 'asc' },
+                      dense: true,
+                      columns: [
+                        { key: 'bucket_index', label: 'Bucket', kind: 'dimension', format: 'integer', align: 'right' },
+                        {
+                          key: 'current_value',
+                          label: 'Current',
+                          kind: 'metric',
+                          format: getMetricValueFormat(metric),
+                          align: 'right',
+                          ...(getMetricUnit(metric) ? { unit: getMetricUnit(metric) } : {}),
+                        },
+                        {
+                          key: 'previous_value',
+                          label: 'Previous',
+                          kind: 'metric',
+                          format: getMetricValueFormat(metric),
+                          align: 'right',
+                          ...(getMetricUnit(metric) ? { unit: getMetricUnit(metric) } : {}),
+                        },
+                        {
+                          key: 'delta',
+                          label: 'Delta',
+                          kind: 'metric',
+                          format: getMetricValueFormat(metric),
+                          align: 'right',
+                          ...(getMetricUnit(metric) ? { unit: getMetricUnit(metric) } : {}),
+                        },
+                        {
+                          key: 'pct_change',
+                          label: 'Pct change',
+                          kind: 'metric',
+                          format: 'percent',
+                          unit: '%',
+                          align: 'right',
+                        },
+                      ],
+                    }),
+                  ]
+                : []),
+            ],
+            summary_rows: summaryRows,
+            comparison_series: comparisonSeries,
+            current_series: currentSeriesRows,
+            previous_series: previousSeriesRows,
+            bucket_deltas: trimmedBucketDeltas,
+            gap_diagnostics: currentSeries.gapDiagnostics,
           },
-        })
+          resultMessage,
+          {
+            toolName: 'portal_get_time_series',
+            notices: [...notices, ...currentSeries.notices, ...previousSeries.notices],
+            freshness: currentSeries.freshness,
+            coverage: compareCoverage,
+            execution: buildExecutionMetadata({
+              mode,
+              metric,
+              interval,
+              duration,
+              compare_previous: true,
+              range_kind: 'timeframe',
+              ...(longWindowNotice ? { notes: [longWindowNotice] } : {}),
+            }),
+            pipes: pipesRecipe,
+            ui: buildComparePreviousUi(metric),
+            metadata: {
+              network: dataset,
+              dataset,
+              from_block: currentSeries.metadata.from_block,
+              to_block: currentSeries.metadata.to_block,
+              query_start_time: queryStartTime,
+            },
+          },
+        )
       }
 
       if (group_by === 'contract') {
+        if (from_timestamp === undefined && to_timestamp === undefined) {
+          assertSeriesDurationScannable({ dataset, chainType, duration })
+        }
         const resolvedWindow = await resolveTimeframeOrBlocks({
           dataset,
           timeframe: from_timestamp === undefined && to_timestamp === undefined ? duration : undefined,
@@ -979,6 +1313,7 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
           resolvedWindow.to_block ?? Number.MAX_SAFE_INTEGER,
           false,
         )
+        assertSeriesWindowScannable({ dataset, chainType, fromBlock, toBlock, duration })
         const intervalSeconds = parseTimeframeToSeconds(interval)
         const durationSeconds = parseTimeframeToSeconds(duration)
         const expectedBuckets = Math.ceil(durationSeconds / intervalSeconds)
@@ -988,9 +1323,7 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
         let totalTransactions = 0
         let groupedChunkSizeReduced = false
 
-        const visitGroupedContractRange = async (
-          onRecord: (record: unknown) => void | Promise<void>,
-        ) => {
+        const visitGroupedContractRange = async (onRecord: (record: unknown) => void | Promise<void>) => {
           let currentFrom = fromBlock
           let chunkSize = EVM_GENERIC_TIME_SERIES_CHUNK_SIZE.transaction_count ?? 1500
 
@@ -1043,8 +1376,10 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
           }
           const timestamp = block.header?.timestamp ?? block.timestamp
           if (typeof timestamp !== 'number' || timestamp <= 0) return
-          if (firstObservedTimestamp === undefined || timestamp < firstObservedTimestamp) firstObservedTimestamp = timestamp
-          if (lastObservedTimestamp === undefined || timestamp > lastObservedTimestamp) lastObservedTimestamp = timestamp
+          if (firstObservedTimestamp === undefined || timestamp < firstObservedTimestamp)
+            firstObservedTimestamp = timestamp
+          if (lastObservedTimestamp === undefined || timestamp > lastObservedTimestamp)
+            lastObservedTimestamp = timestamp
         })
 
         if (lastObservedTimestamp === undefined) {
@@ -1066,14 +1401,20 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
           }
           const timestamp = block.header?.timestamp ?? block.timestamp
           if (typeof timestamp !== 'number' || timestamp <= 0) return
-          const bucketIndex = Math.floor((timestamp - seriesStartTimestamp) / intervalSeconds)
-          if (bucketIndex < 0 || bucketIndex >= expectedBuckets) return
+          const bucketIndex = Math.min(
+            Math.floor((timestamp - seriesStartTimestamp) / intervalSeconds),
+            expectedBuckets - 1,
+          )
+          if (bucketIndex < 0) return
           for (const tx of block.transactions || []) {
             if (!tx.to) continue
             const contract = tx.to.toLowerCase()
             buckets[bucketIndex].total_transactions += 1
             totalTransactions += 1
-            buckets[bucketIndex].contract_counts.set(contract, (buckets[bucketIndex].contract_counts.get(contract) || 0) + 1)
+            buckets[bucketIndex].contract_counts.set(
+              contract,
+              (buckets[bucketIndex].contract_counts.get(contract) || 0) + 1,
+            )
             contractTotals.set(contract, (contractTotals.get(contract) || 0) + 1)
           }
         })
@@ -1106,140 +1447,151 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
           intervalSeconds,
           isFilled: (bucket) => bucket.blocks_in_bucket > 0,
           anchor: 'latest_block',
-          windowComplete:
-            firstObservedTimestamp !== undefined ? firstObservedTimestamp <= seriesStartTimestamp : true,
+          windowComplete: firstObservedTimestamp !== undefined ? firstObservedTimestamp <= seriesStartTimestamp : true,
         })
         const resultMessage = withWindowNotice(
           `Tracked ${topContracts.length} top contracts over ${describeTimeWindowInput(duration)} in ${interval} buckets.`,
           longWindowNotice,
         )
 
-        return formatResult({
-          summary: {
-            metric,
-            interval,
-            duration,
-            group_by,
-            group_limit,
-            tracked_contracts: topContracts.length,
-            total_transactions: totalTransactions,
-            from_block: fromBlock,
-            to_block: toBlock,
-            ...(groupedChunkSizeReduced ? { chunk_size_reduced: true } : {}),
-          },
-          chart: buildTimeSeriesChart({
-            interval,
-            totalPoints: timeSeries.length,
-            groupedValueField: 'contract_address',
-            recommendedVisual: 'stacked_area',
-            dataKey: 'time_series',
-            title: `${getMetricLabel(metric)} by contract`,
-            subtitle: 'Top-ranked contracts split into bucketed activity over the requested window',
-            yAxisLabel: getMetricLabel(metric),
-            valueFormat: getMetricValueFormat(metric),
-            unit: getMetricUnit(metric),
-          }),
-          tables: [
-            buildTableDescriptor({
-              id: 'top_contracts',
-              dataKey: 'top_contracts',
-              rowCount: topContracts.length,
-              title: 'Tracked contracts',
-              keyField: 'address',
-              defaultSort: { key: 'rank', direction: 'asc' },
-              dense: true,
-              columns: [
-                { key: 'rank', label: 'Rank', kind: 'rank', format: 'integer', align: 'right' },
-                { key: 'address', label: 'Contract', kind: 'dimension', format: 'address' },
-                { key: 'transaction_count', label: 'Transactions', kind: 'metric', format: 'integer', align: 'right' },
-              ],
-            }),
-            buildTimeSeriesTable({
-              id: 'contract_series',
-              dataKey: 'time_series',
-              rowCount: timeSeries.length,
-              title: 'Bucketed contract activity',
+        return formatResult(
+          {
+            summary: {
+              metric,
+              interval,
+              duration,
+              group_by,
+              group_limit,
+              window_anchor: 'latest_block',
+              bucket_alignment: 'anchored_to_latest_block',
+              tracked_contracts: topContracts.length,
+              total_transactions: totalTransactions,
+              from_block: fromBlock,
+              to_block: toBlock,
+              ...(groupedChunkSizeReduced ? { chunk_size_reduced: true } : {}),
+            },
+            chart: buildTimeSeriesChart({
+              interval,
+              totalPoints: timeSeries.length,
               groupedValueField: 'contract_address',
-              groupedValueLabel: 'Contract',
-              valueLabel: getMetricLabel(metric),
+              recommendedVisual: 'stacked_area',
+              dataKey: 'time_series',
+              title: `${getMetricLabel(metric)} by contract`,
+              subtitle: 'Top-ranked contracts split into bucketed activity over the requested window',
+              yAxisLabel: getMetricLabel(metric),
               valueFormat: getMetricValueFormat(metric),
               unit: getMetricUnit(metric),
-              timestampField: 'timestamp',
-              blocksInBucketField: 'blocks_in_bucket',
-              extraColumns: [
-                { key: 'rank', label: 'Rank', kind: 'rank', format: 'integer', align: 'right' },
-              ],
-              keyField: 'contract_address',
-              defaultSort: { key: 'timestamp', direction: 'asc' },
             }),
-          ],
-          top_contracts: topContracts,
-          gap_diagnostics: gapDiagnostics,
-          time_series: timeSeries,
-        }, resultMessage, {
-          toolName: 'portal_get_time_series',
-          ...(notices.length > 0 ? { notices } : {}),
-          freshness: buildQueryFreshness({
-            finality: 'latest',
-            headBlockNumber: head.number,
-            windowToBlock: toBlock,
-            resolvedWindow,
-          }),
-          coverage: buildBucketCoverage({
-            expectedBuckets,
-            returnedBuckets: expectedBuckets,
-            filledBuckets,
-            anchor: 'latest_block',
-          }),
-          execution: buildExecutionMetadata({
-            mode,
-            metric,
-            interval,
-            duration,
-            group_by,
-            range_kind: resolvedWindow.range_kind,
-            from_block: fromBlock,
-            to_block: toBlock,
-            ...(longWindowNotice ? { notes: [longWindowNotice] } : {}),
-          }),
-          pipes: pipesRecipe,
-          ui: buildGroupedContractUi(),
-          metadata: {
-            network: dataset,
-            dataset,
-            from_block: fromBlock,
-            to_block: toBlock,
-            query_start_time: queryStartTime,
+            tables: [
+              buildTableDescriptor({
+                id: 'top_contracts',
+                dataKey: 'top_contracts',
+                rowCount: topContracts.length,
+                title: 'Tracked contracts',
+                keyField: 'address',
+                defaultSort: { key: 'rank', direction: 'asc' },
+                dense: true,
+                columns: [
+                  { key: 'rank', label: 'Rank', kind: 'rank', format: 'integer', align: 'right' },
+                  { key: 'address', label: 'Contract', kind: 'dimension', format: 'address' },
+                  {
+                    key: 'transaction_count',
+                    label: 'Transactions',
+                    kind: 'metric',
+                    format: 'integer',
+                    align: 'right',
+                  },
+                ],
+              }),
+              buildTimeSeriesTable({
+                id: 'contract_series',
+                dataKey: 'time_series',
+                rowCount: timeSeries.length,
+                title: 'Bucketed contract activity',
+                groupedValueField: 'contract_address',
+                groupedValueLabel: 'Contract',
+                valueLabel: getMetricLabel(metric),
+                valueFormat: getMetricValueFormat(metric),
+                unit: getMetricUnit(metric),
+                timestampField: 'timestamp',
+                blocksInBucketField: 'blocks_in_bucket',
+                extraColumns: [{ key: 'rank', label: 'Rank', kind: 'rank', format: 'integer', align: 'right' }],
+                keyField: 'contract_address',
+                defaultSort: { key: 'timestamp', direction: 'asc' },
+              }),
+            ],
+            top_contracts: topContracts,
+            gap_diagnostics: gapDiagnostics,
+            time_series: timeSeries,
           },
-        })
+          resultMessage,
+          {
+            toolName: 'portal_get_time_series',
+            ...(notices.length > 0 ? { notices } : {}),
+            freshness: buildQueryFreshness({
+              finality: 'latest',
+              headBlockNumber: head.number,
+              windowToBlock: toBlock,
+              resolvedWindow,
+            }),
+            coverage: buildBucketCoverage({
+              expectedBuckets,
+              returnedBuckets: expectedBuckets,
+              filledBuckets,
+              anchor: 'latest_block',
+            }),
+            execution: buildExecutionMetadata({
+              mode,
+              metric,
+              interval,
+              duration,
+              group_by,
+              range_kind: resolvedWindow.range_kind,
+              from_block: fromBlock,
+              to_block: toBlock,
+              ...(longWindowNotice ? { notes: [longWindowNotice] } : {}),
+            }),
+            pipes: pipesRecipe,
+            ui: buildGroupedContractUi(),
+            metadata: {
+              network: dataset,
+              dataset,
+              from_block: fromBlock,
+              to_block: toBlock,
+              query_start_time: queryStartTime,
+            },
+          },
+        )
       }
 
-      if (chainType === 'solana' && ['transaction_count', 'unique_addresses', 'tps', 'avg_fee', 'success_rate', 'slots_per_hour'].includes(metric)) {
+      if (
+        chainType === 'solana' &&
+        ['transaction_count', 'unique_addresses', 'tps', 'avg_fee', 'success_rate', 'slots_per_hour'].includes(metric)
+      ) {
         const head = await getBlockHead(dataset)
         const durationSeconds = parseTimeframeToSeconds(duration)
-        const loadSolanaSeries = () => computeSolanaTimeSeries({
-          dataset,
-          metric:
-            metric === 'unique_addresses'
-              ? 'unique_wallets'
-              : metric === 'tps' || metric === 'avg_fee' || metric === 'success_rate' || metric === 'slots_per_hour'
-                ? metric
-                : 'transaction_count',
-          interval,
-          duration,
-          trimIncompleteLastBucket: false,
-          ...(from_timestamp !== undefined || to_timestamp !== undefined
-            ? {
-                from_timestamp,
-                to_timestamp,
-              }
-            : {}),
-        })
+        const loadSolanaSeries = () =>
+          computeSolanaTimeSeries({
+            dataset,
+            metric:
+              metric === 'unique_addresses'
+                ? 'unique_wallets'
+                : metric === 'tps' || metric === 'avg_fee' || metric === 'success_rate' || metric === 'slots_per_hour'
+                  ? metric
+                  : 'transaction_count',
+            interval,
+            duration,
+            trimIncompleteLastBucket: false,
+            ...(from_timestamp !== undefined || to_timestamp !== undefined
+              ? {
+                  from_timestamp,
+                  to_timestamp,
+                }
+              : {}),
+          })
         const getSolanaCoverage = (result: Awaited<ReturnType<typeof loadSolanaSeries>>) => {
           const filledBuckets = result.time_series.filter((point) => point.slots_in_bucket > 0).length
-          const observedCoveragePct = durationSeconds > 0
-            ? result.observed_span_seconds / durationSeconds
-            : 1
+          const observedCoveragePct = durationSeconds > 0 ? result.observed_span_seconds / durationSeconds : 1
           return {
             filledBuckets,
             observedCoveragePct,
@@ -1260,21 +1612,27 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
 
         const { filledBuckets, observedCoveragePct, hasCoverageGap } = solanaCoverage
         if (hasCoverageGap) {
-          throw new ActionableError('Solana bucket coverage was incomplete, so no time-series chart was returned.', [
-            'Use a shorter duration, such as "past 1h" or "past 6h".',
-            'Use a larger interval, such as "1h", to reduce bucket pressure.',
-            'Retry in a moment if the indexed range is moving or Portal returned sparse slot coverage.',
-          ], {
-            requested_window: describeTimeWindowInput(duration),
-            observed_coverage_pct: Math.round(observedCoveragePct * 100),
-            expected_buckets: solanaResult.expected_buckets,
-            filled_buckets: filledBuckets,
-            from_block: solanaResult.from_block,
-            to_block: solanaResult.to_block,
-          })
+          throw new ActionableError(
+            'Solana bucket coverage was incomplete, so no time-series chart was returned.',
+            [
+              'Use a shorter duration, such as "past 1h" or "past 6h".',
+              'Use a larger interval, such as "1h", to reduce bucket pressure.',
+              'Retry in a moment if the indexed range is moving or Portal returned sparse slot coverage.',
+            ],
+            {
+              requested_window: describeTimeWindowInput(duration),
+              observed_coverage_pct: Math.round(observedCoveragePct * 100),
+              expected_buckets: solanaResult.expected_buckets,
+              filled_buckets: filledBuckets,
+              from_block: solanaResult.from_block,
+              to_block: solanaResult.to_block,
+            },
+          )
         }
         const solanaNotices = [...notices]
         const summary: any = {
+          window_anchor: 'latest_block',
+          bucket_alignment: 'anchored_to_latest_block',
           metric,
           interval,
           duration,
@@ -1425,11 +1783,14 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
         const intervalSeconds = parseTimeframeToSeconds(interval)
         const exactTimestampWindowRequested = from_timestamp !== undefined || to_timestamp !== undefined
         if (exactTimestampWindowRequested && (from_timestamp === undefined || to_timestamp === undefined)) {
-          throw new ActionableError('Provide both from_timestamp and to_timestamp for an exact Hyperliquid time-series window.', [
-            'Set from_timestamp to the inclusive window start.',
-            'Set to_timestamp to the inclusive window end.',
-            'Or omit both and use duration for a recent indexed-head window.',
-          ])
+          throw new ActionableError(
+            'Provide both from_timestamp and to_timestamp for an exact Hyperliquid time-series window.',
+            [
+              'Set from_timestamp to the inclusive window start.',
+              'Set to_timestamp to the inclusive window end.',
+              'Or omit both and use duration for a recent indexed-head window.',
+            ],
+          )
         }
         const resolvedWindow = await resolveTimeframeOrBlocks({
           dataset,
@@ -1447,10 +1808,11 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
         const indexedHeadTimestamp =
           resolvedWindow.from_lookup?.head_timestamp ??
           resolvedWindow.to_lookup?.head_timestamp ??
-          await getHeadTimestamp(dataset, head.number, 2)
+          (await getHeadTimestamp(dataset, head.number, 2))
         const requestedWindowStartTimestamp = exactTimestampWindowRequested
           ? resolvedWindow.from_lookup!.timestamp
-          : resolvedWindow.from_lookup?.timestamp ?? Math.max(0, indexedHeadTimestamp + 1 - parseTimeframeToSeconds(duration))
+          : (resolvedWindow.from_lookup?.timestamp ??
+            Math.max(0, indexedHeadTimestamp + 1 - parseTimeframeToSeconds(duration)))
         const requestedWindowEndExclusive = exactTimestampWindowRequested
           ? resolvedWindow.to_lookup!.timestamp + 1
           : indexedHeadTimestamp + 1
@@ -1490,7 +1852,10 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
           concurrency: 6,
           onBlock: (block) => {
             for (const fill of block.fills || []) {
-              const ts = Number(fill.time || 0) > 1e12 ? Math.floor(Number(fill.time) / 1000) : Math.floor(Number(fill.time || 0))
+              const ts =
+                Number(fill.time || 0) > 1e12
+                  ? Math.floor(Number(fill.time) / 1000)
+                  : Math.floor(Number(fill.time || 0))
               if (!ts || ts < requestedWindowStartTimestamp || ts >= requestedWindowEndExclusive) continue
               const bucketTimestamp = Math.floor(ts / intervalSeconds) * intervalSeconds
               const bucket = getBucket(bucketTimestamp)
@@ -1521,8 +1886,8 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
             metric === 'volume'
               ? formatExactDecimal(bucket?.volume ?? EXACT_DECIMAL_ZERO)
               : metric === 'unique_traders'
-                ? bucket?.traders.size ?? 0
-                : bucket?.fills ?? 0
+                ? (bucket?.traders.size ?? 0)
+                : (bucket?.fills ?? 0)
           return {
             bucket_index: bucketIndex,
             timestamp: bucketTimestamp,
@@ -1567,110 +1932,115 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
           }),
           longWindowNotice,
         )
-        return formatResult({
-          summary: {
-            metric,
+        return formatResult(
+          {
+            summary: {
+              metric,
+              metric_definition: metricDefinition,
+              interval,
+              duration,
+              bucket_alignment: 'interval_boundary',
+              total_buckets: timeSeries.length,
+              filled_buckets: filledBuckets,
+              empty_buckets: timeSeries.length - filledBuckets,
+              from_block: fromBlock,
+              to_block: toBlock,
+              requested_window_start_timestamp: requestedWindowStartTimestamp,
+              requested_window_start_timestamp_human: formatTimestamp(requestedWindowStartTimestamp),
+              requested_window_end_exclusive: requestedWindowEndExclusive,
+              requested_window_end_exclusive_human: formatTimestamp(requestedWindowEndExclusive - 1),
+              indexed_evidence_end_exclusive: indexedEvidenceEndExclusive,
+              indexed_evidence_end_exclusive_human: formatTimestamp(indexedEvidenceEndExclusive - 1),
+              final_bucket_complete: finalBucketComplete,
+              all_buckets_complete: allBucketsComplete,
+              result_complete: resultComplete,
+            },
             metric_definition: metricDefinition,
-            interval,
-            duration,
-            total_buckets: timeSeries.length,
-            filled_buckets: filledBuckets,
-            empty_buckets: timeSeries.length - filledBuckets,
-            from_block: fromBlock,
-            to_block: toBlock,
-            requested_window_start_timestamp: requestedWindowStartTimestamp,
-            requested_window_start_timestamp_human: formatTimestamp(requestedWindowStartTimestamp),
-            requested_window_end_exclusive: requestedWindowEndExclusive,
-            requested_window_end_exclusive_human: formatTimestamp(requestedWindowEndExclusive - 1),
-            indexed_evidence_end_exclusive: indexedEvidenceEndExclusive,
-            indexed_evidence_end_exclusive_human: formatTimestamp(indexedEvidenceEndExclusive - 1),
-            final_bucket_complete: finalBucketComplete,
-            all_buckets_complete: allBucketsComplete,
-            result_complete: resultComplete,
-          },
-          metric_definition: metricDefinition,
-          chart: buildTimeSeriesChart({
-            interval,
-            totalPoints: timeSeries.length,
-            recommendedVisual: getMetricRecommendedVisual(metric),
-            title: `Hyperliquid ${getMetricLabel(metric)}`,
-            subtitle: `Bucketed ${getMetricLabel(metric).toLowerCase()} across the selected Hyperliquid window`,
-            yAxisLabel: getMetricLabel(metric),
-            valueFormat: getMetricValueFormat(metric),
-            unit: getMetricUnit(metric),
-          }),
-          tables: [
-            buildTimeSeriesTable({
-              rowCount: timeSeries.length,
-              title: 'Time series buckets',
-              valueLabel: getMetricLabel(metric),
+            chart: buildTimeSeriesChart({
+              interval,
+              totalPoints: timeSeries.length,
+              recommendedVisual: getMetricRecommendedVisual(metric),
+              title: `Hyperliquid ${getMetricLabel(metric)}`,
+              subtitle: `Bucketed ${getMetricLabel(metric).toLowerCase()} across the selected Hyperliquid window`,
+              yAxisLabel: getMetricLabel(metric),
               valueFormat: getMetricValueFormat(metric),
               unit: getMetricUnit(metric),
-              timestampField: 'timestamp',
-              defaultSort: { key: 'bucket_index', direction: 'asc' },
             }),
-          ],
-          gap_diagnostics: buildBucketGapDiagnostics({
-            buckets: timeSeries,
-            intervalSeconds,
-            isFilled: (bucket) => bucket.has_fills,
-            anchor: exactTimestampWindowRequested ? 'requested_timestamp_window' : 'indexed_head',
-            windowComplete: sourceWindowComplete,
-          }),
-          time_series: timeSeries,
-        }, resultMessage, {
-          toolName: 'portal_get_time_series',
-          ...(notices.length + getTimestampWindowNotices(resolvedWindow).length > 0
-            ? { notices: [...notices, ...getTimestampWindowNotices(resolvedWindow)] }
-            : {}),
-          freshness: buildQueryFreshness({
-            finality: 'latest',
-            headBlockNumber: head.number,
-            windowToBlock: toBlock,
-            resolvedWindow,
-          }),
-          coverage: buildBucketCoverage({
-            expectedBuckets,
-            returnedBuckets: timeSeries.length,
-            filledBuckets,
-            anchor: exactTimestampWindowRequested ? 'requested_timestamp_window' : 'indexed_head',
-            windowComplete: sourceWindowComplete,
-            resultComplete,
-            requestedFromTimestamp: requestedWindowStartTimestamp,
-            requestedToTimestamp: requestedWindowEndExclusive - 1,
-            analyzedFromTimestamp: requestedWindowStartTimestamp,
-            analyzedToTimestamp: indexedEvidenceEndExclusive - 1,
-            indexedEvidenceEndTimestamp: indexedEvidenceEndExclusive - 1,
-            finalBucketComplete,
-          }),
-          execution: buildExecutionMetadata({
-            mode,
-            metric,
-            interval,
-            duration,
-            from_block: fromBlock,
-            to_block: toBlock,
-            range_kind: resolvedWindow.range_kind,
-            ...(longWindowNotice ? { notes: [longWindowNotice] } : {}),
-          }),
-          pipes: pipesRecipe,
-          ui: buildSimpleSeriesUi({
-            title: `Hyperliquid ${getMetricLabel(metric)}`,
-            subtitle: resultMessage,
-            metricLabel: getMetricLabel(metric),
-            valueFormat: getMetricValueFormat(metric),
-            unit: getMetricUnit(metric),
-            primaryValuePath: 'summary.total_buckets',
-            primaryLabel: 'Buckets',
-          }),
-          metadata: {
-            network: dataset,
-            dataset,
-            from_block: fromBlock,
-            to_block: toBlock,
-            query_start_time: queryStartTime,
+            tables: [
+              buildTimeSeriesTable({
+                rowCount: timeSeries.length,
+                title: 'Time series buckets',
+                valueLabel: getMetricLabel(metric),
+                valueFormat: getMetricValueFormat(metric),
+                unit: getMetricUnit(metric),
+                timestampField: 'timestamp',
+                defaultSort: { key: 'bucket_index', direction: 'asc' },
+              }),
+            ],
+            gap_diagnostics: buildBucketGapDiagnostics({
+              buckets: timeSeries,
+              intervalSeconds,
+              isFilled: (bucket) => bucket.has_fills,
+              anchor: exactTimestampWindowRequested ? 'requested_timestamp_window' : 'indexed_head',
+              windowComplete: sourceWindowComplete,
+            }),
+            time_series: timeSeries,
           },
-        })
+          resultMessage,
+          {
+            toolName: 'portal_get_time_series',
+            ...(notices.length + getTimestampWindowNotices(resolvedWindow).length > 0
+              ? { notices: [...notices, ...getTimestampWindowNotices(resolvedWindow)] }
+              : {}),
+            freshness: buildQueryFreshness({
+              finality: 'latest',
+              headBlockNumber: head.number,
+              windowToBlock: toBlock,
+              resolvedWindow,
+            }),
+            coverage: buildBucketCoverage({
+              expectedBuckets,
+              returnedBuckets: timeSeries.length,
+              filledBuckets,
+              anchor: exactTimestampWindowRequested ? 'requested_timestamp_window' : 'indexed_head',
+              windowComplete: sourceWindowComplete,
+              resultComplete,
+              requestedFromTimestamp: requestedWindowStartTimestamp,
+              requestedToTimestamp: requestedWindowEndExclusive - 1,
+              analyzedFromTimestamp: requestedWindowStartTimestamp,
+              analyzedToTimestamp: indexedEvidenceEndExclusive - 1,
+              indexedEvidenceEndTimestamp: indexedEvidenceEndExclusive - 1,
+              finalBucketComplete,
+            }),
+            execution: buildExecutionMetadata({
+              mode,
+              metric,
+              interval,
+              duration,
+              from_block: fromBlock,
+              to_block: toBlock,
+              range_kind: resolvedWindow.range_kind,
+              ...(longWindowNotice ? { notes: [longWindowNotice] } : {}),
+            }),
+            pipes: pipesRecipe,
+            ui: buildSimpleSeriesUi({
+              title: `Hyperliquid ${getMetricLabel(metric)}`,
+              subtitle: resultMessage,
+              metricLabel: getMetricLabel(metric),
+              valueFormat: getMetricValueFormat(metric),
+              unit: getMetricUnit(metric),
+              primaryValuePath: 'summary.total_buckets',
+              primaryLabel: 'Buckets',
+            }),
+            metadata: {
+              network: dataset,
+              dataset,
+              from_block: fromBlock,
+              to_block: toBlock,
+              query_start_time: queryStartTime,
+            },
+          },
+        )
       }
 
       if (isHyperliquid) {
@@ -1700,7 +2070,193 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
         const intervalSeconds = parseTimeframeToSeconds(interval)
         const durationSeconds = parseTimeframeToSeconds(duration)
         const expectedBuckets = Math.ceil(durationSeconds / intervalSeconds)
-        const blockResults = await portalFetchStream(
+        if (metric === 'fees_btc') {
+          const requestedBlocks = toBlock - fromBlock + 1
+          const scanFrom =
+            requestedBlocks > BITCOIN_FEE_SERIES_MAX_BLOCKS ? toBlock - BITCOIN_FEE_SERIES_MAX_BLOCKS + 1 : fromBlock
+          const fees = await fetchBitcoinBlockFees({ dataset, fromBlock: scanFrom, toBlock })
+          if (fees.blocks.length === 0) throw new Error('No data available for this time period')
+          const firstTimestamp = fees.blocks[0].timestamp
+          const lastTimestamp = fees.blocks[fees.blocks.length - 1].timestamp
+          // The series used to span `duration` even when the window came from
+          // from_timestamp/to_timestamp, so every scanned block older than
+          // lastTimestamp - duration fell outside every bucket and left the fee
+          // total, while summary.transactions still counted it. The span now
+          // always covers the blocks actually scanned.
+          const scannedSpanSeconds = Math.max(0, lastTimestamp - firstTimestamp)
+          const usedTimestampWindow = from_timestamp !== undefined || to_timestamp !== undefined
+          const feeSpanSeconds = Math.max(
+            intervalSeconds,
+            usedTimestampWindow ? scannedSpanSeconds : Math.max(durationSeconds, scannedSpanSeconds),
+          )
+          const feeBucketCount = Math.max(1, Math.ceil(feeSpanSeconds / intervalSeconds))
+          const seriesStartTimestamp = lastTimestamp - feeSpanSeconds
+          const feeBuckets = Array.from({ length: feeBucketCount }, (_, bucketIndex) => ({
+            bucketIndex,
+            bucketTimestamp: seriesStartTimestamp + bucketIndex * intervalSeconds,
+            blocksInBucket: 0,
+            transactions: 0,
+            feeSats: 0n,
+            firstBlockNumber: undefined as number | undefined,
+            lastBlockNumber: undefined as number | undefined,
+          }))
+          for (const block of fees.blocks) {
+            const bucketIndex = Math.floor((block.timestamp - seriesStartTimestamp) / intervalSeconds)
+            /* Every scanned block lands in a bucket: the newest sits exactly at
+               the series end and belongs to the last one, and nothing is
+               dropped, so the window total and the bucket sum agree. */
+            const bucket = feeBuckets[Math.min(Math.max(bucketIndex, 0), feeBucketCount - 1)]
+            bucket.blocksInBucket += 1
+            bucket.transactions += block.transaction_count
+            bucket.feeSats += block.fee_sats
+            bucket.firstBlockNumber = bucket.firstBlockNumber ?? block.block_number
+            bucket.lastBlockNumber = block.block_number
+          }
+          const totalFeeSats = feeBuckets.reduce((sum, bucket) => sum + bucket.feeSats, 0n)
+          const timeSeries = feeBuckets.map((bucket) => ({
+            bucket_index: bucket.bucketIndex,
+            timestamp: bucket.bucketTimestamp,
+            timestamp_human: formatTimestamp(bucket.bucketTimestamp),
+            blocks_in_bucket: bucket.blocksInBucket,
+            transactions: bucket.transactions,
+            /* value is the BTC amount for charts; value_sats and value_btc are exact. */
+            value: Number(satsToBtcString(bucket.feeSats)),
+            value_btc: satsToBtcString(bucket.feeSats),
+            value_sats: bucket.feeSats.toString(),
+            ...(bucket.firstBlockNumber !== undefined ? { from_block: bucket.firstBlockNumber } : {}),
+            ...(bucket.lastBlockNumber !== undefined ? { to_block: bucket.lastBlockNumber } : {}),
+          }))
+          const filledBuckets = feeBuckets.filter((bucket) => bucket.blocksInBucket > 0).length
+          const scanCapped = scanFrom > fromBlock
+          /* A verified from-boundary proves there is no earlier block inside
+             the window, so a bucket before the first block is a real gap in
+             block production, not missing coverage. */
+          const windowComplete =
+            !scanCapped &&
+            fees.excluded_blocks.length === 0 &&
+            (resolvedWindow.from_lookup?.resolution === 'verified_boundary' || firstTimestamp <= seriesStartTimestamp)
+          if (scanCapped) {
+            notices.push(
+              `Partial fee coverage: fees were scanned for the latest ${toBlock - scanFrom + 1} of ${requestedBlocks} requested blocks (${scanFrom}-${toBlock}). Earlier buckets are empty because they were not scanned, not because fees were zero.`,
+            )
+          }
+          if (fees.excluded_blocks.length > 0) {
+            notices.push(
+              `Partial fee coverage: ${fees.excluded_blocks.length} block(s) were excluded because their inputs or outputs were incomplete (${fees.excluded_blocks.slice(0, 10).join(', ')}${fees.excluded_blocks.length > 10 ? ', ...' : ''}).`,
+            )
+          }
+          const resultMessage = withWindowNotice(
+            buildTimeSeriesAnswer({ dataset, metric, interval, duration, timeSeries, fromBlock: scanFrom, toBlock }),
+            longWindowNotice,
+          )
+          return formatResult(
+            {
+              summary: {
+                metric,
+                metric_definition:
+                  'Sum of non-coinbase input value minus non-coinbase output value per block, in satoshis, converted to BTC for display.',
+                interval,
+                duration,
+                from_block: scanFrom,
+                to_block: toBlock,
+                requested_from_block: fromBlock,
+                requested_blocks: requestedBlocks,
+                scanned_blocks: fees.blocks.length,
+                transactions: fees.blocks.reduce((sum, block) => sum + block.transaction_count, 0),
+                total_fees_sats: totalFeeSats.toString(),
+                total_fees_btc: satsToBtcString(totalFeeSats),
+                total_buckets: timeSeries.length,
+                filled_buckets: filledBuckets,
+                window_anchor: 'latest_block',
+                bucket_alignment: 'anchored_to_latest_block',
+                ...(fees.excluded_blocks.length > 0 ? { excluded_blocks: fees.excluded_blocks } : {}),
+              },
+              chart: buildTimeSeriesChart({
+                interval,
+                totalPoints: timeSeries.length,
+                recommendedVisual: getMetricRecommendedVisual(metric),
+                title: `Bitcoin ${getMetricLabel(metric)}`,
+                yAxisLabel: getMetricLabel(metric),
+                valueFormat: getMetricValueFormat(metric),
+                unit: getMetricUnit(metric),
+              }),
+              tables: [
+                buildTimeSeriesTable({
+                  rowCount: timeSeries.length,
+                  title: 'Time series buckets',
+                  valueLabel: getMetricLabel(metric),
+                  valueFormat: getMetricValueFormat(metric),
+                  unit: getMetricUnit(metric),
+                  timestampField: 'timestamp',
+                  blocksInBucketField: 'blocks_in_bucket',
+                  defaultSort: { key: 'bucket_index', direction: 'asc' },
+                }),
+              ],
+              gap_diagnostics: buildBucketGapDiagnostics({
+                buckets: timeSeries,
+                intervalSeconds,
+                isFilled: (bucket) => bucket.blocks_in_bucket > 0,
+                anchor: 'latest_block',
+                windowComplete,
+                firstObservedTimestamp: firstTimestamp,
+                lastObservedTimestamp: lastTimestamp,
+              }),
+              time_series: timeSeries,
+            },
+            resultMessage,
+            {
+              toolName: 'portal_get_time_series',
+              ...(notices.length > 0 ? { notices } : {}),
+              freshness: buildQueryFreshness({
+                finality: 'latest',
+                headBlockNumber: head.number,
+                windowToBlock: toBlock,
+                resolvedWindow,
+              }),
+              coverage: buildBucketCoverage({
+                /* The fee series spans the blocks that were scanned, not
+                   exactly `duration`, because dropping a scanned block would
+                   take its fees out of the buckets while leaving them in the
+                   window total. Bitcoin block times are irregular, so a 2h
+                   request routinely resolves to a block range spanning longer
+                   than 2h and the series is a bucket or two longer. Reporting
+                   the duration-derived count here made the response contradict
+                   itself: expected_buckets 8 beside returned_buckets 10. */
+                expectedBuckets: feeBucketCount,
+                returnedBuckets: timeSeries.length,
+                filledBuckets,
+                anchor: 'latest_block',
+                windowComplete,
+              }),
+              execution: buildExecutionMetadata({
+                mode,
+                metric,
+                interval,
+                duration,
+                from_block: scanFrom,
+                to_block: toBlock,
+                range_kind: resolvedWindow.range_kind,
+                notes: [
+                  `Fees were computed from Bitcoin inputs and outputs for blocks ${scanFrom}-${toBlock} in exact satoshis.`,
+                  ...(scanCapped
+                    ? [
+                        `The requested window had ${requestedBlocks} blocks; the fee series is capped at ${BITCOIN_FEE_SERIES_MAX_BLOCKS}.`,
+                      ]
+                    : []),
+                  ...(longWindowNotice ? [longWindowNotice] : []),
+                ],
+              }),
+              metadata: {
+                network: dataset,
+                dataset,
+                from_block: scanFrom,
+                to_block: toBlock,
+                query_start_time: queryStartTime,
+              },
+            },
+          )
+        }
+        const blockResults = (await portalFetchStream(
           `${PORTAL_URL}/datasets/${dataset}/stream`,
           {
             type: 'bitcoin',
@@ -1714,7 +2270,7 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
             transactions: [{}],
           },
           { maxBytes: 100 * 1024 * 1024 },
-        ) as TimeSeriesBlock[]
+        )) as TimeSeriesBlock[]
         if (blockResults.length === 0) throw new Error('No data available for this time period')
 
         const firstTimestamp = getBlockTimestamp(blockResults[0])!
@@ -1725,8 +2281,13 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
           const timestamp = getBlockTimestamp(block)
           const blockNumber = getBlockNumber(block)
           if (timestamp === undefined || blockNumber === undefined) return
-          const bucketIndex = Math.floor((timestamp - seriesStartTimestamp) / intervalSeconds)
-          if (bucketIndex < 0 || bucketIndex >= expectedBuckets) return
+          /* The newest block sits exactly at the series end and belongs to the
+             last bucket. */
+          const bucketIndex = Math.min(
+            Math.floor((timestamp - seriesStartTimestamp) / intervalSeconds),
+            expectedBuckets - 1,
+          )
+          if (bucketIndex < 0) return
           const bucket = buckets[bucketIndex]
           bucket.blocksInBucket += 1
           bucket.firstBlockNumber = bucket.firstBlockNumber ?? blockNumber
@@ -1739,7 +2300,7 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
           timestamp: bucket.bucketTimestamp,
           timestamp_human: formatTimestamp(bucket.bucketTimestamp),
           blocks_in_bucket: bucket.blocksInBucket,
-          value: metric === 'block_size_bytes' ? bucket.gasUsedSum : 0,
+          value: bucket.gasUsedSum,
         }))
         const filledBuckets = buckets.filter((bucket) => bucket.blocksInBucket > 0).length
         const resultMessage = withWindowNotice(
@@ -1754,73 +2315,90 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
           }),
           longWindowNotice,
         )
-        return formatResult({
-          summary: { metric, interval, duration, from_block: fromBlock, to_block: toBlock, total_buckets: timeSeries.length, filled_buckets: filledBuckets },
-          chart: buildTimeSeriesChart({
-            interval,
-            totalPoints: timeSeries.length,
-            recommendedVisual: getMetricRecommendedVisual(metric),
-            title: `Bitcoin ${getMetricLabel(metric)}`,
-            yAxisLabel: getMetricLabel(metric),
-            valueFormat: getMetricValueFormat(metric),
-            unit: getMetricUnit(metric),
-          }),
-          tables: [
-            buildTimeSeriesTable({
-              rowCount: timeSeries.length,
-              title: 'Time series buckets',
-              valueLabel: getMetricLabel(metric),
+        return formatResult(
+          {
+            summary: {
+              metric,
+              interval,
+              duration,
+              from_block: fromBlock,
+              to_block: toBlock,
+              total_buckets: timeSeries.length,
+              filled_buckets: filledBuckets,
+              window_anchor: 'latest_block',
+              bucket_alignment: 'anchored_to_latest_block',
+            },
+            chart: buildTimeSeriesChart({
+              interval,
+              totalPoints: timeSeries.length,
+              recommendedVisual: getMetricRecommendedVisual(metric),
+              title: `Bitcoin ${getMetricLabel(metric)}`,
+              yAxisLabel: getMetricLabel(metric),
               valueFormat: getMetricValueFormat(metric),
               unit: getMetricUnit(metric),
-              timestampField: 'timestamp',
-              blocksInBucketField: 'blocks_in_bucket',
-              defaultSort: { key: 'bucket_index', direction: 'asc' },
             }),
-          ],
-          gap_diagnostics: buildBucketGapDiagnostics({
-            buckets: timeSeries,
-            intervalSeconds,
-            isFilled: (bucket) => bucket.blocks_in_bucket > 0,
-            anchor: 'latest_block',
-            windowComplete: firstTimestamp <= seriesStartTimestamp,
-          }),
-          time_series: timeSeries,
-        }, resultMessage, {
-          toolName: 'portal_get_time_series',
-          ...(notices.length > 0 ? { notices } : {}),
-          freshness: buildQueryFreshness({
-            finality: 'latest',
-            headBlockNumber: head.number,
-            windowToBlock: toBlock,
-            resolvedWindow,
-          }),
-          coverage: buildBucketCoverage({
-            expectedBuckets,
-            returnedBuckets: timeSeries.length,
-            filledBuckets,
-            anchor: 'latest_block',
-          }),
-          execution: buildExecutionMetadata({
-            mode,
-            metric,
-            interval,
-            duration,
-            from_block: fromBlock,
-            to_block: toBlock,
-            range_kind: resolvedWindow.range_kind,
-            ...(longWindowNotice ? { notes: [longWindowNotice] } : {}),
-          }),
-          pipes: pipesRecipe,
-          metadata: {
-            network: dataset,
-            dataset,
-            from_block: fromBlock,
-            to_block: toBlock,
-            query_start_time: queryStartTime,
+            tables: [
+              buildTimeSeriesTable({
+                rowCount: timeSeries.length,
+                title: 'Time series buckets',
+                valueLabel: getMetricLabel(metric),
+                valueFormat: getMetricValueFormat(metric),
+                unit: getMetricUnit(metric),
+                timestampField: 'timestamp',
+                blocksInBucketField: 'blocks_in_bucket',
+                defaultSort: { key: 'bucket_index', direction: 'asc' },
+              }),
+            ],
+            gap_diagnostics: buildBucketGapDiagnostics({
+              buckets: timeSeries,
+              intervalSeconds,
+              isFilled: (bucket) => bucket.blocks_in_bucket > 0,
+              anchor: 'latest_block',
+              windowComplete: firstTimestamp <= seriesStartTimestamp,
+            }),
+            time_series: timeSeries,
           },
-        })
+          resultMessage,
+          {
+            toolName: 'portal_get_time_series',
+            ...(notices.length > 0 ? { notices } : {}),
+            freshness: buildQueryFreshness({
+              finality: 'latest',
+              headBlockNumber: head.number,
+              windowToBlock: toBlock,
+              resolvedWindow,
+            }),
+            coverage: buildBucketCoverage({
+              expectedBuckets,
+              returnedBuckets: timeSeries.length,
+              filledBuckets,
+              anchor: 'latest_block',
+            }),
+            execution: buildExecutionMetadata({
+              mode,
+              metric,
+              interval,
+              duration,
+              from_block: fromBlock,
+              to_block: toBlock,
+              range_kind: resolvedWindow.range_kind,
+              ...(longWindowNotice ? { notes: [longWindowNotice] } : {}),
+            }),
+            pipes: pipesRecipe,
+            metadata: {
+              network: dataset,
+              dataset,
+              from_block: fromBlock,
+              to_block: toBlock,
+              query_start_time: queryStartTime,
+            },
+          },
+        )
       }
 
+      if (from_timestamp === undefined && to_timestamp === undefined) {
+        assertSeriesDurationScannable({ dataset, chainType, duration })
+      }
       // Get block range using Portal's /timestamps/ API
       const resolvedWindow = await resolveTimeframeOrBlocks({
         dataset,
@@ -1835,6 +2413,7 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
         resolvedWindow.to_block ?? Number.MAX_SAFE_INTEGER,
         false,
       )
+      assertSeriesWindowScannable({ dataset, chainType, fromBlock, toBlock, duration })
 
       // Calculate bucket size based on interval duration
       const intervalSeconds = parseTimeframeToSeconds(interval)
@@ -1851,9 +2430,8 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
       const queryExtras: any = {}
 
       if (metric === 'transaction_count' || metric === 'transactions_per_block' || metric === 'unique_addresses') {
-        baseFields.transaction = chainType === 'solana' && metric === 'unique_addresses'
-          ? { feePayer: true }
-          : { transactionIndex: true }
+        baseFields.transaction =
+          chainType === 'solana' && metric === 'unique_addresses' ? { feePayer: true } : { transactionIndex: true }
         if (metric === 'unique_addresses') {
           if (chainType === 'solana') {
             baseFields.transaction.feePayer = true
@@ -1875,15 +2453,18 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
       }
 
       // Chunk large ranges to avoid Portal API size limits
-      const hasTxData = metric === 'transaction_count' || metric === 'transactions_per_block' || metric === 'unique_addresses'
+      const hasTxData =
+        metric === 'transaction_count' || metric === 'transactions_per_block' || metric === 'unique_addresses'
       const initialChunkSize =
         chainType === 'solana' && hasTxData
           ? (SOLANA_GENERIC_TIME_SERIES_CHUNK_SIZE[metric] ?? 1000)
           : chainType === 'evm' && hasTxData
-            ? (address ? 750 : (EVM_GENERIC_TIME_SERIES_CHUNK_SIZE[metric] ?? 250))
-          : hasTxData
-            ? 5000
-            : 10000
+            ? address
+              ? 750
+              : (EVM_GENERIC_TIME_SERIES_CHUNK_SIZE[metric] ?? 250)
+            : hasTxData
+              ? 5000
+              : 10000
       let adaptiveChunkReduced = false
       const sortResults = (items: TimeSeriesBlock[]) =>
         items.sort((left, right) => (getBlockNumber(left) || 0) - (getBlockNumber(right) || 0))
@@ -1911,39 +2492,25 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
 
           let chunk: TimeSeriesBlock[]
           try {
-            chunk = await portalFetchStream(
-              `${PORTAL_URL}/datasets/${dataset}/stream`,
-              query,
-              {
-                maxBytes: chainType === 'solana' && hasTxData ? SOLANA_GENERIC_MAX_BYTES : 100 * 1024 * 1024,
-              },
-            ) as TimeSeriesBlock[]
+            chunk = (await portalFetchStream(`${PORTAL_URL}/datasets/${dataset}/stream`, query, {
+              maxBytes: chainType === 'solana' && hasTxData ? SOLANA_GENERIC_MAX_BYTES : 100 * 1024 * 1024,
+            })) as TimeSeriesBlock[]
           } catch (err) {
             const message = err instanceof Error ? err.message : String(err)
             const shouldReduceChunkSize =
-              hasTxData
-              && (
-                message.includes('Response too large')
-                || message.toLowerCase().includes('timed out')
-                || message.toLowerCase().includes('timeout')
-              )
+              hasTxData &&
+              (message.includes('Response too large') ||
+                message.toLowerCase().includes('timed out') ||
+                message.toLowerCase().includes('timeout'))
 
-            if (
-              chainType === 'solana' &&
-              shouldReduceChunkSize &&
-              chunkSize > MIN_SOLANA_GENERIC_CHUNK_SIZE
-            ) {
+            if (chainType === 'solana' && shouldReduceChunkSize && chunkSize > MIN_SOLANA_GENERIC_CHUNK_SIZE) {
               chunkSize = Math.max(MIN_SOLANA_GENERIC_CHUNK_SIZE, Math.floor(chunkSize / 2))
               chunkSizeReduced = true
               adaptiveChunkReduced = true
               continue
             }
 
-            if (
-              chainType === 'evm' &&
-              shouldReduceChunkSize &&
-              chunkSize > MIN_EVM_GENERIC_CHUNK_SIZE
-            ) {
+            if (chainType === 'evm' && shouldReduceChunkSize && chunkSize > MIN_EVM_GENERIC_CHUNK_SIZE) {
               chunkSize = Math.max(MIN_EVM_GENERIC_CHUNK_SIZE, Math.floor(chunkSize / 2))
               chunkSizeReduced = true
               adaptiveChunkReduced = true
@@ -2023,7 +2590,11 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
             break
           }
 
-          if (firstResultBlockNumber <= 0 || lastResultBlockNumber <= firstResultBlockNumber || observedSpanSeconds <= 0) {
+          if (
+            firstResultBlockNumber <= 0 ||
+            lastResultBlockNumber <= firstResultBlockNumber ||
+            observedSpanSeconds <= 0
+          ) {
             break
           }
 
@@ -2062,8 +2633,20 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
           throw new Error('Could not extract timestamps from block data')
         }
 
-        const seriesStartTimestamp = endTimestamp - durationSeconds
-        const buckets = createBucketAccumulators(expectedBuckets, seriesStartTimestamp, intervalSeconds)
+        /* mode=fast reads the newest FAST_EVM_TIME_SERIES_BLOCK_CAP blocks of a
+           longer window on purpose. Bucketing that slice against the requested
+           duration produced empty buckets for hours the tool never read, and
+           the coverage check then failed the whole call. The slice is bucketed
+           over the span it covers and reported as an incomplete window. */
+        const fastNarrowed = effectiveFromBlock > requestedFromBlock
+        const seriesDurationSeconds = fastNarrowed
+          ? Math.max(intervalSeconds, endTimestamp - firstResultTimestamp)
+          : durationSeconds
+        const seriesBuckets = fastNarrowed
+          ? Math.max(1, Math.ceil(seriesDurationSeconds / intervalSeconds))
+          : expectedBuckets
+        const seriesStartTimestamp = endTimestamp - seriesDurationSeconds
+        const buckets = createBucketAccumulators(seriesBuckets, seriesStartTimestamp, intervalSeconds)
 
         results.forEach((block) => {
           const typedBlock = block as TimeSeriesBlock
@@ -2074,8 +2657,13 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
             return
           }
 
-          const bucketIndex = Math.floor((timestamp - seriesStartTimestamp) / intervalSeconds)
-          if (bucketIndex < 0 || bucketIndex >= expectedBuckets) {
+          /* The newest block sits exactly at the series end and belongs to the
+             last bucket. */
+          const bucketIndex = Math.min(
+            Math.floor((timestamp - seriesStartTimestamp) / intervalSeconds),
+            seriesBuckets - 1,
+          )
+          if (bucketIndex < 0) {
             return
           }
 
@@ -2160,18 +2748,21 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
         const max = Math.max(...values)
         const filledBuckets = buckets.filter((bucket) => bucket.blocksInBucket > 0).length
         const observedSpanSeconds = Math.max(0, endTimestamp - firstResultTimestamp)
-        const observedCoveragePct = durationSeconds > 0 ? (observedSpanSeconds / durationSeconds) * 100 : 100
-        const hasCoverageGap = !address && observedCoveragePct < 80
+        const observedCoveragePct =
+          seriesDurationSeconds > 0 ? (observedSpanSeconds / seriesDurationSeconds) * 100 : 100
+        const hasCoverageGap = !address && !fastNarrowed && observedCoveragePct < 80
 
         const summary: Record<string, unknown> = {
+          window_anchor: 'latest_block',
+          bucket_alignment: 'anchored_to_latest_block',
           metric,
           interval,
           duration,
           mode,
           total_buckets: timeSeries.length,
-          expected_buckets: expectedBuckets,
+          expected_buckets: seriesBuckets,
           filled_buckets: filledBuckets,
-          empty_buckets: expectedBuckets - filledBuckets,
+          empty_buckets: seriesBuckets - filledBuckets,
           total_blocks: results.length,
           from_block: effectiveFromBlock,
           to_block: toBlock,
@@ -2195,20 +2786,26 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
         return {
           timeSeries,
           gapDiagnostics: buildBucketGapDiagnostics({
-            buckets: timeSeries as Array<{ bucket_index: number; timestamp: number; timestamp_human?: string; blocks_in_bucket: number }>,
+            buckets: timeSeries as Array<{
+              bucket_index: number
+              timestamp: number
+              timestamp_human?: string
+              blocks_in_bucket: number
+            }>,
             intervalSeconds,
             isFilled: (bucket) => bucket.blocks_in_bucket > 0,
             anchor: 'latest_block',
-            windowComplete: !hasCoverageGap,
+            windowComplete: !hasCoverageGap && !fastNarrowed,
             ...(firstResultTimestamp > 0 ? { firstObservedTimestamp: firstResultTimestamp } : {}),
             ...(endTimestamp > 0 ? { lastObservedTimestamp: endTimestamp } : {}),
           }),
           summary,
           filledBuckets,
-          expectedBuckets,
+          expectedBuckets: seriesBuckets,
           observedSpanSeconds,
           observedCoveragePct,
           hasCoverageGap,
+          fastNarrowed,
           firstResultTimestamp,
           endTimestamp,
           adaptiveChunkReduced,
@@ -2219,23 +2816,32 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
       // Detect chain head staleness (most relevant for Bitcoin/slow chains)
       const summary = cachedSeries.summary as any
       if (cachedSeries.hasCoverageGap) {
-        throw new ActionableError('Bucket coverage was incomplete, so no time-series chart was returned.', [
-          'Use a shorter duration or a larger interval.',
-          'Retry with filters if you only need one address or contract.',
-        ], {
-          requested_window: describeTimeWindowInput(duration),
-          observed_span_seconds: cachedSeries.observedSpanSeconds,
-          observed_span_formatted: formatDuration(cachedSeries.observedSpanSeconds),
-          expected_buckets: cachedSeries.expectedBuckets,
-          filled_buckets: cachedSeries.filledBuckets,
-          from_block: cachedSeries.effectiveFromBlock,
-          to_block: toBlock,
-        })
+        throw new ActionableError(
+          'Bucket coverage was incomplete, so no time-series chart was returned.',
+          [
+            'Use a shorter duration or a larger interval.',
+            'Retry with filters if you only need one address or contract.',
+          ],
+          {
+            requested_window: describeTimeWindowInput(duration),
+            observed_span_seconds: cachedSeries.observedSpanSeconds,
+            observed_span_formatted: formatDuration(cachedSeries.observedSpanSeconds),
+            expected_buckets: cachedSeries.expectedBuckets,
+            filled_buckets: cachedSeries.filledBuckets,
+            from_block: cachedSeries.effectiveFromBlock,
+            to_block: toBlock,
+          },
+        )
       }
       const genericNotices = [
         ...notices,
         ...(cachedSeries.adaptiveChunkReduced
           ? ['Chunk size was reduced automatically to keep Portal responses within MCP limits.']
+          : []),
+        ...(cachedSeries.fastNarrowed
+          ? [
+              `mode=fast read only the newest ${FAST_EVM_TIME_SERIES_BLOCK_CAP.toLocaleString()} blocks (${formatDuration(cachedSeries.observedSpanSeconds)}) of the requested ${describeTimeWindowInput(duration)} window, so the window is incomplete; use mode=deep to read all of it.`,
+            ]
           : []),
       ]
       const resultMessage = withWindowNotice(
@@ -2249,6 +2855,7 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
           toBlock,
           observedSpanSeconds: cachedSeries.observedSpanSeconds,
           unit: getMetricUnit(metric),
+          windowNarrowedByFastMode: cachedSeries.fastNarrowed,
         }),
         longWindowNotice,
       )
@@ -2296,7 +2903,8 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
             returnedBuckets: cachedSeries.timeSeries.length,
             filledBuckets: cachedSeries.filledBuckets,
             anchor: 'latest_block',
-            windowComplete: !cachedSeries.hasCoverageGap,
+            windowComplete: !cachedSeries.hasCoverageGap && !cachedSeries.fastNarrowed,
+            resultComplete: !cachedSeries.fastNarrowed,
           }),
           execution: buildExecutionMetadata({
             mode,

@@ -129,8 +129,7 @@ const CASES: RealisticPromptCase[] = [
     },
   },
   {
-    prompt:
-      'Now show raw Base transactions in the same window so I can correlate hashes and callers myself.',
+    prompt: 'Now show raw Base transactions in the same window so I can correlate hashes and callers myself.',
     expectedTool: 'portal_evm_query_transactions',
     why: 'Raw evidence prompts should route to EVM transactions and keep bounded-window metadata.',
     args: (context) => ({
@@ -148,8 +147,7 @@ const CASES: RealisticPromptCase[] = [
     },
   },
   {
-    prompt:
-      'Before I search logs, resolve what USDC means on Base so I can avoid hallucinating the token contract.',
+    prompt: 'Before I search logs, resolve what USDC means on Base so I can avoid hallucinating the token contract.',
     expectedTool: 'portal_resolve_entity',
     why: 'Named-entity prompts should resolve symbols into deterministic query filters before raw queries.',
     args: () => ({
@@ -162,8 +160,7 @@ const CASES: RealisticPromptCase[] = [
       assert(data.kind === 'token', 'entity resolver should preserve token kind')
       assert(data.match_count > 0, 'entity resolver should find at least one USDC match')
       assert(
-        Array.isArray(data.suggested_arguments?.token_addresses) &&
-          data.suggested_arguments.token_addresses.length > 0,
+        Array.isArray(data.suggested_arguments?.token_addresses) && data.suggested_arguments.token_addresses.length > 0,
         'entity resolver should suggest token_addresses for deterministic follow-up queries',
       )
       assert(
@@ -173,8 +170,7 @@ const CASES: RealisticPromptCase[] = [
     },
   },
   {
-    prompt:
-      'This incident report has a timestamp. Which Base block should I anchor my evidence window around?',
+    prompt: 'This incident report has a timestamp. Which Base block should I anchor my evidence window around?',
     expectedTool: 'portal_debug_resolve_time_to_block',
     why: 'Timestamp-to-block prompts should use the existing timestamp resolver and return lookup evidence.',
     args: (context) => ({

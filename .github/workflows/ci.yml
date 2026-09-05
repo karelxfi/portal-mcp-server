@@ -1,35 +1,98 @@
 name: CI
 
+# The offline gate is the required check: it needs no Portal access and
+# decides a pull request in a few minutes. The live gate exercises the same
+# tree against Portal and reports without blocking, because a transient
+# upstream latency spike is not a code defect. Both run in full on a v* tag
+# (see docker-build.yml).
+#
+# Every pull request runs it, with no path filter. A filtered trigger left a
+# documentation-only change with no checks at all, and the gate reads Markdown
+# anyway: the tool counts, the CHANGELOG entry, and the packaged file list are
+# all asserted against the docs.
 on:
   pull_request:
 
-permissions:
-  contents: read
+permissions: {}
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  test:
+  offline:
+    name: Offline gate (required)
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # The layout baseline records the box of 26 selectors to the pixel, and
+    # text boxes are a function of the fonts installed. Recording in the pinned
+    # Playwright image (npm run baseline:app-ui:ci) and measuring on a bare
+    # runner made the gate impossible to pass: the same markup came out ~10%
+    # wider here than in the image. The job runs in that image so the recorded
+    # numbers and the measured ones come from one environment. The tag is held
+    # against the locked playwright version by npm run test:workflow-pins.
+    container: mcr.microsoft.com/playwright:v1.62.1-noble
+    timeout-minutes: 15
+    permissions:
+      contents: read
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
 
       - name: Set up Node.js
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
-          node-version: 22
+          node-version-file: .nvmrc
           cache: npm
 
       - name: Install dependencies
         run: npm ci
 
+      # The image ships the matching Chromium already, so there is nothing to
+      # install or cache here.
+      - name: Run offline gate
+        run: npm run test:offline
+
+  live:
+    name: Live Portal gate (reports, does not block)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    continue-on-error: true
+    permissions:
+      contents: read
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Resolve Playwright version
+        id: playwright
+        run: echo "version=$(node -p 'require("playwright/package.json").version')" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}
+
       - name: Install Playwright browser
         run: npx playwright install --with-deps chromium
 
-      - name: Run full test gate
-        run: npm run test:ci
+      - name: Build
+        run: npm run build
+
+      - name: Run live gate
+        run: npm run test:live

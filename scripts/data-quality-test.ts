@@ -1,7 +1,7 @@
 #!/usr/bin/env tsx
 
-import { TOOL_SPECS, loadToolTestContext } from './tool-manifest.ts'
 import { callToolWithRetry, closeTestClient, connectTestClient, printSection, truncateText } from './test-helpers.ts'
+import { TOOL_SPECS, loadToolTestContext } from './tool-manifest.ts'
 
 async function main() {
   const connected = await connectTestClient('data-quality')
@@ -26,7 +26,6 @@ async function main() {
     }
 
     printSection('DATA QUALITY REVIEW COMPLETE')
-
   } finally {
     await closeTestClient(connected)
   }

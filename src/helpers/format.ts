@@ -3,19 +3,21 @@
 // ============================================================================
 
 import { Buffer } from 'node:buffer'
-import type { LlmOverrides } from './llm-hints.js'
-import { buildLlmHints } from './llm-hints.js'
-import type { PipesRecipe } from './pipes-recipe.js'
-import { getToolContract } from './tool-ux.js'
-import type { UiFollowUpAction } from './ui-metadata.js'
-import { ActionableError } from './errors.js'
+
 import {
   ACTIVITY_EXPLORER_RESOURCE_URI,
   ACTIVITY_EXPLORER_TOOLS,
   isActivityExplorerEnabled,
 } from '../apps/activity-explorer.js'
-import { npmVersion } from '../version.js'
+import { gitCommit, npmVersion } from '../version.js'
+import { ActionableError } from './errors.js'
 import { formatIntegerUnitsExact } from './exact-decimal.js'
+import type { LlmOverrides } from './llm-hints.js'
+import { buildLlmHints } from './llm-hints.js'
+import type { PipesRecipe } from './pipes-recipe.js'
+import { getToolContract } from './tool-ux.js'
+import type { UiFollowUpAction } from './ui-metadata.js'
+import { UNTRUSTED_FIELDS, cleanProseFields, untrustedLabel } from './untrusted-text.js'
 
 const MAX_RESPONSE_BYTES = 50_000
 
@@ -87,6 +89,7 @@ const DISPLAY_NAME_OVERRIDES: Record<string, string> = {
   portal_get_time_series: 'Time Series',
   portal_evm_query_transactions: 'EVM Transactions',
   portal_evm_query_logs: 'EVM Logs',
+  portal_evm_query_traces: 'EVM Traces',
   portal_evm_query_token_transfers: 'Token Transfers',
   portal_evm_get_contract_deployment: 'Contract Deployment',
   portal_evm_get_contract_activity: 'Contract Activity',
@@ -148,14 +151,20 @@ export function assertUniqueNormalizedIds(value: unknown, path = '$', visited = 
       for (const [index, row] of normalizedRows.entries()) {
         const id = typeof row.primary_id === 'string' ? row.primary_id.trim() : ''
         if (!id) {
-          throw new ActionableError(`Normalized evidence at ${path}[${index}] has no stable primary_id.`, [
-            'Retry after the server identity contract is repaired.',
-          ], { path, index }, { code: 'incomplete_result', origin: 'server', retryable: false })
+          throw new ActionableError(
+            `Normalized evidence at ${path}[${index}] has no stable primary_id.`,
+            ['Retry after the server identity contract is repaired.'],
+            { path, index },
+            { code: 'incomplete_result', origin: 'server', retryable: false },
+          )
         }
         if (ids.has(id)) {
-          throw new ActionableError(`Normalized evidence at ${path} contains duplicate primary_id ${id}.`, [
-            'Retry after the server identity contract is repaired.',
-          ], { path, primary_id: id }, { code: 'incomplete_result', origin: 'server', retryable: false })
+          throw new ActionableError(
+            `Normalized evidence at ${path} contains duplicate primary_id ${id}.`,
+            ['Retry after the server identity contract is repaired.'],
+            { path, primary_id: id },
+            { code: 'incomplete_result', origin: 'server', retryable: false },
+          )
         }
         ids.add(id)
       }
@@ -243,7 +252,10 @@ function decodeCursorTool(cursor: string): string | undefined {
   }
 }
 
-function buildExecutableContinuationAction(pagination: RecordLike | undefined, toolName: string | undefined): FollowUpActionEnvelope | undefined {
+function buildExecutableContinuationAction(
+  pagination: RecordLike | undefined,
+  toolName: string | undefined,
+): FollowUpActionEnvelope | undefined {
   const nextCursor = typeof pagination?.next_cursor === 'string' ? pagination.next_cursor : undefined
   if (!nextCursor || !toolName) return undefined
 
@@ -262,8 +274,10 @@ function buildExecutableContinuationAction(pagination: RecordLike | undefined, t
 }
 
 function isPaginationContinueAction(action: FollowUpActionEnvelope): boolean {
-  return action.intent === 'continue'
-    && (action.target === '_pagination.next_cursor' || action.cursor_path === '_pagination.next_cursor')
+  return (
+    action.intent === 'continue' &&
+    (action.target === '_pagination.next_cursor' || action.cursor_path === '_pagination.next_cursor')
+  )
 }
 
 function normalizeFollowUpAction(action: RecordLike): FollowUpActionEnvelope {
@@ -294,14 +308,18 @@ function withContinuationExecutableMetadata(
     cursor_path: action.cursor_path ?? '_pagination.next_cursor',
     executable: executableAction?.executable === true,
     ...(executableAction?.executable === true && executableAction.tool ? { tool: executableAction.tool } : {}),
-    ...(executableAction?.executable === true && executableAction.arguments ? { arguments: executableAction.arguments } : {}),
+    ...(executableAction?.executable === true && executableAction.arguments
+      ? { arguments: executableAction.arguments }
+      : {}),
   }
 }
 
 function capitalizeWord(word: string): string {
   const lower = word.toLowerCase()
   if (DISPLAY_NAME_OVERRIDES[lower]) return DISPLAY_NAME_OVERRIDES[lower]
-  if (['api', 'btc', 'dex', 'eth', 'evm', 'ohlc', 'rpc', 'sol', 'sql', 'ui', 'usd', 'usdc', 'usdt', 'vm'].includes(lower)) {
+  if (
+    ['api', 'btc', 'dex', 'eth', 'evm', 'ohlc', 'rpc', 'sol', 'sql', 'ui', 'usd', 'usdc', 'usdt', 'vm'].includes(lower)
+  ) {
     return lower.toUpperCase()
   }
   if (/^[0-9]+[mhdw]$/.test(lower)) return lower
@@ -321,18 +339,36 @@ function makeCompletenessAwareAnswer(answer: string, payload: RecordLike): strin
     return answer
   }
 
-  const notice = collectPayloadNotices(payload)
-    .find((item) => /\b(partial|incomplete|coverage|analyzed\b.*\brequested|sample|truncated|shortened)\b/i.test(item))
+  const continuable = coverage?.continuation === 'cursor'
+  const notice = collectPayloadNotices(payload).find((item) =>
+    /\b(partial|incomplete|coverage|analyzed\b.*\brequested|sample|truncated|shortened|searched only)\b/i.test(item),
+  )
   const suffixes: string[] = []
-  if (coverage?.window_complete === false) {
-    if (!/\b(partial|incomplete|coverage|analyzed\b.*\brequested|only\b.*\brequested)\b/i.test(answer)) {
+  /* A page with a cursor is partial by design and the cursor is the remedy.
+     Naming the unread blocks as well told the caller the same thing twice
+     with two different instructions. The window suffix is for a result that
+     stopped short with nothing to continue from. */
+  if (coverage?.window_complete === false && !continuable) {
+    if (!/\b(partial|incomplete|coverage|analyzed\b.*\brequested|only\b.*\brequested|searched only)\b/i.test(answer)) {
       suffixes.push(`Partial window: ${notice ?? 'coverage metadata marks this window as partially analyzed.'}`)
     }
   }
 
   if (coverage?.result_complete === false) {
-    if (!/\b(preview|cursor|continue|more matching|older results|limited to)\b/i.test(answer)) {
-      suffixes.push('Preview page: continue with the cursor for remaining rows.')
+    if (
+      !/\b(preview|cursor|continue|more matching|older results|newer results|limited to|showing the best|bounded search)\b/i.test(
+        answer,
+      )
+    ) {
+      if (continuable) {
+        suffixes.push('Preview page: continue with the cursor for remaining rows.')
+      } else if (coverage?.window_complete !== false) {
+        // A result can be incomplete with nothing to continue from: a ranked
+        // list cut to `limit` has no cursor, and telling the caller to use one
+        // sends them after a field that is not in the response. A window that
+        // stopped short is covered above; a bigger limit would not read it.
+        suffixes.push('Preview page: raise the limit or narrow the query for the remaining rows.')
+      }
     }
   }
 
@@ -360,6 +396,46 @@ function reconcileCoverageWithFreshness(coverage: unknown, freshness: unknown): 
   }
 }
 
+/*
+ * _pagination is the only party that knows whether a cursor exists, and
+ * _coverage.continuation is a claim about that cursor. Each tool used to make
+ * the claim on its own, and three of them said 'cursor' on pages that carried
+ * none, so a client following the contract stopped at a field that was not
+ * there. The claim is derived here from the cursor itself: a remaining-rows
+ * cursor makes the result incomplete and continuable, no cursor makes the
+ * continuation 'none'. A cursor into an adjacent window is not a continuation
+ * of this one and leaves the window's own completeness alone.
+ */
+function reconcileCoverageWithPagination(coverage: unknown, pagination: unknown): unknown {
+  if (!isRecord(coverage)) return coverage
+  if (typeof coverage.continuation !== 'string' && typeof coverage.result_complete !== 'boolean') return coverage
+  const paginationRecord = isRecord(pagination) ? pagination : undefined
+  const hasCursor = typeof paginationRecord?.next_cursor === 'string' && paginationRecord.next_cursor.length > 0
+  const remainingCursor = hasCursor && paginationRecord?.continuation_scope !== 'adjacent_window'
+  const resultComplete = remainingCursor ? false : coverage.result_complete !== false
+  return {
+    ...coverage,
+    result_complete: resultComplete,
+    continuation: !resultComplete && remainingCursor ? 'cursor' : 'none',
+  }
+}
+
+/*
+ * The gap diagnostics answer "did observed data cover these buckets", and
+ * _coverage answers "can we prove this is the window that was asked for". Both
+ * called the answer `window_complete`, and only _coverage was reconciled
+ * against an estimated boundary, so one Bitcoin fee series carried
+ * `_coverage.window_complete: false` beside `gap_diagnostics.window_complete:
+ * true`. A reader cannot be expected to know which one is answering which
+ * question, so a downgrade on one applies to the other.
+ */
+function reconcileGapDiagnosticsWithFreshness(diagnostics: unknown, freshness: unknown): unknown {
+  if (!isRecord(diagnostics) || diagnostics.window_complete !== true || freshnessProvesExactWindow(freshness)) {
+    return diagnostics
+  }
+  return { ...diagnostics, window_complete: false }
+}
+
 export function humanizeLabel(value: unknown): string | undefined {
   if (typeof value !== 'string') return undefined
   const trimmed = value.trim()
@@ -375,7 +451,10 @@ export function humanizeLabel(value: unknown): string | undefined {
     .trim()
 
   if (!normalized) return trimmed
-  return normalized.split(' ').map((word) => capitalizeWord(word)).join(' ')
+  return normalized
+    .split(' ')
+    .map((word) => capitalizeWord(word))
+    .join(' ')
 }
 
 /**
@@ -414,12 +493,7 @@ export function hexToDecimal(hex: string): string {
  * Convert wei (hex or bigint) to ETH with specified decimals.
  */
 export function weiToEth(wei: string | bigint, decimals: number = 18): string {
-  const weiValue =
-    typeof wei === 'bigint'
-      ? wei
-      : /^-?\d+$/.test(wei.trim())
-        ? BigInt(wei.trim())
-        : hexToBigInt(wei)
+  const weiValue = typeof wei === 'bigint' ? wei : /^-?\d+$/.test(wei.trim()) ? BigInt(wei.trim()) : hexToBigInt(wei)
   return formatIntegerUnitsExact(weiValue, decimals)
 }
 
@@ -427,18 +501,14 @@ export function weiToEth(wei: string | bigint, decimals: number = 18): string {
  * Convert wei to Gwei for gas prices.
  */
 export function weiToGwei(wei: string | bigint): string {
-  const weiValue =
-    typeof wei === 'bigint'
-      ? wei
-      : /^-?\d+$/.test(wei.trim())
-        ? BigInt(wei.trim())
-        : hexToBigInt(wei)
+  const weiValue = typeof wei === 'bigint' ? wei : /^-?\d+$/.test(wei.trim()) ? BigInt(wei.trim()) : hexToBigInt(wei)
   return formatIntegerUnitsExact(weiValue, 9)
 }
 
 export function formatTokenAmount(value: string, decimals: number = 18, symbol?: string): string {
   const formatted = weiToEth(value, decimals)
-  return symbol ? `${formatted} ${symbol}` : formatted
+  const label = untrustedLabel(symbol)
+  return label ? `${formatted} ${label}` : formatted
 }
 
 export function formatTokenValue(
@@ -454,7 +524,8 @@ export function formatTokenValue(
   const bigIntValue = BigInt(decimal)
   let formatted = formatIntegerUnitsExact(bigIntValue, decimals)
 
-  if (symbol) formatted += ` ${symbol}`
+  const label = untrustedLabel(symbol)
+  if (label) formatted += ` ${label}`
 
   return {
     raw: hexValue,
@@ -469,12 +540,7 @@ export function formatTimestamp(timestamp: number): string {
 }
 
 export function normalizeUnixTimestamp(value: unknown): number | undefined {
-  const numeric =
-    typeof value === 'number'
-      ? value
-      : typeof value === 'string'
-        ? Number(value)
-        : undefined
+  const numeric = typeof value === 'number' ? value : typeof value === 'string' ? Number(value) : undefined
 
   if (numeric === undefined || !Number.isFinite(numeric) || numeric <= 0) {
     return undefined
@@ -721,18 +787,17 @@ function buildChatAnswer(payload: RecordLike): string | undefined {
   }
 
   if (Array.isArray(payload.items)) {
-    return makeCompletenessAwareAnswer(`Returned ${payload.items.length.toLocaleString('en-US')} result${payload.items.length === 1 ? '' : 's'}.`, payload)
+    return makeCompletenessAwareAnswer(
+      `Returned ${payload.items.length.toLocaleString('en-US')} result${payload.items.length === 1 ? '' : 's'}.`,
+      payload,
+    )
   }
 
   const meta = isRecord(payload._meta) ? payload._meta : undefined
   const summary = isRecord(payload.summary) ? payload.summary : undefined
   const toolContract = isRecord(payload._tool_contract) ? payload._tool_contract : undefined
   const network = humanizeLabel(
-    meta?.network
-    ?? meta?.dataset
-    ?? summary?.network
-    ?? payload.network
-    ?? payload.display_name,
+    meta?.network ?? meta?.dataset ?? summary?.network ?? payload.network ?? payload.display_name,
   )
   const toolName = typeof toolContract?.name === 'string' ? toolContract.name : undefined
   const toolLabel = humanizeLabel(toolName?.replace(/^portal_/, ''))
@@ -753,26 +818,28 @@ function buildDisplay(payload: RecordLike): RecordLike | undefined {
   const toolContract = isRecord(payload._tool_contract) ? payload._tool_contract : undefined
 
   const title =
-    (typeof headline?.title === 'string' && headline.title)
-    || humanizeLabel(summary?.pair_label)
-    || humanizeLabel(summary?.venue_label)
-    || humanizeLabel(summary?.metric)
-    || humanizeLabel(toolContract?.name)
+    (typeof headline?.title === 'string' && headline.title) ||
+    humanizeLabel(summary?.pair_label) ||
+    humanizeLabel(summary?.venue_label) ||
+    humanizeLabel(summary?.metric) ||
+    humanizeLabel(toolContract?.name)
   const resolvedNetwork =
-    humanizeLabel(meta?.network)
-    || humanizeLabel(meta?.dataset)
-    || humanizeLabel(summary?.network)
-    || humanizeLabel(payload.network)
-    || humanizeLabel(payload.display_name)
+    humanizeLabel(meta?.network) ||
+    humanizeLabel(meta?.dataset) ||
+    humanizeLabel(summary?.network) ||
+    humanizeLabel(payload.network) ||
+    humanizeLabel(payload.display_name)
 
   const subtitle =
-    (typeof headline?.subtitle === 'string' && headline.subtitle)
-    || [
+    (typeof headline?.subtitle === 'string' && headline.subtitle) ||
+    [
       resolvedNetwork,
       humanizeLabel(summary?.venue_label),
       typeof summary?.interval === 'string' ? summary.interval : undefined,
       typeof summary?.duration === 'string' ? summary.duration : undefined,
-    ].filter((value): value is string => Boolean(value)).join(' • ')
+    ]
+      .filter((value): value is string => Boolean(value))
+      .join(' • ')
 
   const display: RecordLike = {}
   if (title) display.title = title
@@ -787,15 +854,13 @@ function buildDisplay(payload: RecordLike): RecordLike | undefined {
   }
 
   const focus =
-    humanizeLabel(summary?.pair_label)
-    || humanizeLabel(summary?.metric)
-    || humanizeLabel(summary?.base_token)
-    || (typeof payload.address === 'string' ? payload.address : undefined)
+    humanizeLabel(summary?.pair_label) ||
+    humanizeLabel(summary?.metric) ||
+    humanizeLabel(summary?.base_token) ||
+    (typeof payload.address === 'string' ? payload.address : undefined)
   if (focus) display.focus = focus
 
-  const source =
-    humanizeLabel(summary?.venue_label)
-    || humanizeLabel(summary?.source)
+  const source = humanizeLabel(summary?.venue_label) || humanizeLabel(summary?.source)
   if (source) display.source = source
 
   return Object.keys(display).length > 0 ? display : undefined
@@ -811,8 +876,9 @@ function buildNextSteps(payload: RecordLike): RecordLike | undefined {
   const adjacentWindow = pagination?.continuation_scope === 'adjacent_window'
   const continuationLabel = adjacentWindow ? 'Load previous window' : 'Load more results'
   const executableContinuation = buildExecutableContinuationAction(pagination, toolName)
-  const actions = asArray<RecordLike>(ui?.follow_up_actions)
-    .map((action) => withContinuationExecutableMetadata(normalizeFollowUpAction(action), executableContinuation))
+  const actions = asArray<RecordLike>(ui?.follow_up_actions).map((action) =>
+    withContinuationExecutableMetadata(normalizeFollowUpAction(action), executableContinuation),
+  )
   const hasExplicitContinueAction = actions.some((action) => action.intent === 'continue')
 
   if (hasContinuation && !hasExplicitContinueAction) {
@@ -976,7 +1042,8 @@ function inferPrimaryEvidenceKind(payload: RecordLike, primaryPath?: string): st
   if (primaryPath.includes('transfer')) return 'token_transfers'
   if (primaryPath.includes('top_')) return 'ranked_summary'
   if (primaryPath.includes('overview') || primaryPath.includes('summary')) return 'summary'
-  if (primaryPath === 'number' || primaryPath.includes('block_number') || primaryPath.includes('timestamp')) return 'lookup'
+  if (primaryPath === 'number' || primaryPath.includes('block_number') || primaryPath.includes('timestamp'))
+    return 'lookup'
   return 'records'
 }
 
@@ -1097,18 +1164,20 @@ function buildInvestigationGuide(payload: RecordLike): RecordLike | undefined {
     ...asArray<string>(payload._notices),
     ...(typeof payload._notice === 'string' ? [payload._notice] : []),
   ].slice(0, 4)
-  const primaryPath = inferPrimaryEvidencePath(payload) ?? (typeof payload.answer === 'string' ? 'answer' : undefined) ?? '_summary'
+  const primaryPath =
+    inferPrimaryEvidencePath(payload) ?? (typeof payload.answer === 'string' ? 'answer' : undefined) ?? '_summary'
   const primaryKind = inferPrimaryEvidenceKind(payload, primaryPath)
   const returned = inferReturnedCount(payload, primaryPath)
   const pivots = collectInvestigationPivots(payload)
   const limitations: string[] = []
-  const continuationScope = typeof pagination?.continuation_scope === 'string'
-    ? pagination.continuation_scope
-    : 'remaining_results'
+  const continuationScope =
+    typeof pagination?.continuation_scope === 'string' ? pagination.continuation_scope : 'remaining_results'
   const resultIncomplete =
     coverage?.result_complete === false ||
     coverage?.window_complete === false ||
-    (coverage?.result_complete !== true && continuationScope !== 'adjacent_window' && typeof pagination?.next_cursor === 'string')
+    (coverage?.result_complete !== true &&
+      continuationScope !== 'adjacent_window' &&
+      typeof pagination?.next_cursor === 'string')
 
   if (typeof meta?.queried_blocks === 'string') {
     limitations.push(`Evidence is limited to queried blocks ${meta.queried_blocks}.`)
@@ -1159,12 +1228,7 @@ function buildInvestigationGuide(payload: RecordLike): RecordLike | undefined {
 
   return {
     version: 'portal_investigation_v1',
-    status:
-      resultIncomplete
-        ? 'partial_page'
-        : intent === 'discover'
-          ? 'reference_result'
-          : 'bounded_result',
+    status: resultIncomplete ? 'partial_page' : intent === 'discover' ? 'reference_result' : 'bounded_result',
     evidence: {
       ...(typeof toolContract?.name === 'string' ? { tool: toolContract.name } : {}),
       ...(primaryPath ? { primary_path: primaryPath } : {}),
@@ -1210,12 +1274,12 @@ function mergeExecutionMetadata(
   } as Record<string, unknown>
 
   if (
-    inferredExecution?.['scan_window']
-    && explicitExecution?.['scan_window']
-    && typeof inferredExecution['scan_window'] === 'object'
-    && inferredExecution['scan_window'] !== null
-    && typeof explicitExecution['scan_window'] === 'object'
-    && explicitExecution['scan_window'] !== null
+    inferredExecution?.['scan_window'] &&
+    explicitExecution?.['scan_window'] &&
+    typeof inferredExecution['scan_window'] === 'object' &&
+    inferredExecution['scan_window'] !== null &&
+    typeof explicitExecution['scan_window'] === 'object' &&
+    explicitExecution['scan_window'] !== null
   ) {
     merged.scan_window = {
       ...(inferredExecution['scan_window'] as Record<string, unknown>),
@@ -1226,16 +1290,13 @@ function mergeExecutionMetadata(
   return merged
 }
 
-function normalizeExecutionMetadata(
-  execution: Record<string, unknown>,
-  toolName?: string,
-): Record<string, unknown> {
+function normalizeExecutionMetadata(execution: Record<string, unknown>, toolName?: string): Record<string, unknown> {
   const hasWindowOrResolution =
-    execution.kind !== undefined
-    || execution.range_kind !== undefined
-    || execution.scan_window !== undefined
-    || execution.timestamp !== undefined
-    || execution.resolution !== undefined
+    execution.kind !== undefined ||
+    execution.range_kind !== undefined ||
+    execution.scan_window !== undefined ||
+    execution.timestamp !== undefined ||
+    execution.resolution !== undefined
 
   if (hasWindowOrResolution) {
     return {
@@ -1251,10 +1312,7 @@ function normalizeExecutionMetadata(
   }
 }
 
-function responseTooLargeError(
-  formattedBytes: number,
-  options?: FormatOptions,
-): ActionableError {
+function responseTooLargeError(formattedBytes: number, options?: FormatOptions): ActionableError {
   const pagination = isRecord(options?.pagination) ? options?.pagination : undefined
   const pageSize = typeof pagination?.page_size === 'number' ? pagination.page_size : options?.maxItems
   const recommendedLimit =
@@ -1286,11 +1344,7 @@ function responseTooLargeError(
  * Format results as MCP text content with optional metadata. Oversized
  * responses fail explicitly instead of silently dropping blockchain rows.
  */
-export function formatResult(
-  data: unknown,
-  message?: string,
-  options?: FormatOptions,
-): FormattedToolResult {
+export function formatResult(data: unknown, message?: string, options?: FormatOptions): FormattedToolResult {
   let dataToFormat = data
   const notices = [...(options?.notices || [])]
 
@@ -1342,8 +1396,8 @@ export function formatResult(
     const payloadRecord = responsePayload as Record<string, unknown>
     const toolContract = options?.toolName ? getToolContract(options.toolName) : undefined
     const execution = normalizeExecutionMetadata(
-      mergeExecutionMetadata(buildInferredExecutionMetadata(metadata), options?.execution)
-        ?? buildDefaultExecution(options?.toolName),
+      mergeExecutionMetadata(buildInferredExecutionMetadata(metadata), options?.execution) ??
+        buildDefaultExecution(options?.toolName),
       options?.toolName,
     )
 
@@ -1351,30 +1405,34 @@ export function formatResult(
       payloadRecord._summary = message.trim()
     }
     if (toolContract) {
-      payloadRecord._tool_contract = toolContract
+      payloadRecord._tool_contract = { ...toolContract, untrusted_fields: UNTRUSTED_FIELDS }
     }
     payloadRecord._server = {
       name: 'SQD',
       version: npmVersion,
+      commit: gitCommit,
     }
     payloadRecord._pagination = options?.pagination ?? buildDefaultPagination()
     payloadRecord._ordering = options?.ordering ?? buildDefaultOrdering()
     payloadRecord._freshness = options?.freshness ?? buildDefaultFreshness()
-    payloadRecord._coverage = reconcileCoverageWithFreshness(
-      options?.coverage ?? buildDefaultCoverage(),
-      payloadRecord._freshness,
+    payloadRecord._coverage = reconcileCoverageWithPagination(
+      reconcileCoverageWithFreshness(options?.coverage ?? buildDefaultCoverage(), payloadRecord._freshness),
+      payloadRecord._pagination,
     )
+    if (payloadRecord.gap_diagnostics !== undefined) {
+      payloadRecord.gap_diagnostics = reconcileGapDiagnosticsWithFreshness(
+        payloadRecord.gap_diagnostics,
+        payloadRecord._freshness,
+      )
+    }
     payloadRecord._execution = execution
     if (options?.ui !== undefined) {
       payloadRecord._ui = options.ui
     }
-    if (
-      options?.toolName &&
-      ACTIVITY_EXPLORER_TOOLS.has(options.toolName) &&
-      isActivityExplorerEnabled()
-    ) {
+    if (options?.toolName && ACTIVITY_EXPLORER_TOOLS.has(options.toolName) && isActivityExplorerEnabled()) {
       payloadRecord._app = {
         name: 'SQD Explorer',
+        stage: 'beta',
         version: npmVersion,
         resource_uri: ACTIVITY_EXPLORER_RESOURCE_URI,
         server_delivery_state: 'ready',
@@ -1392,12 +1450,16 @@ export function formatResult(
       payloadRecord._notices = notices
     }
 
+    // Third-party names may already sit in the summary, notices, and headline.
+    // Clean the prose copies before they feed the answer; structured data stays exact.
+    cleanProseFields(payloadRecord)
     const answer = buildChatAnswer(payloadRecord)
     const display = buildDisplay(payloadRecord)
     const nextSteps = buildNextSteps(payloadRecord) ?? { actions: [] }
     if (answer) payloadRecord.answer = answer
     if (display) payloadRecord.display = display
     payloadRecord.next_steps = nextSteps
+    cleanProseFields(payloadRecord)
 
     payloadRecord.investigation = buildInvestigationGuide(payloadRecord)
     payloadRecord._llm = buildLlmHints(payloadRecord, options?.llm)
@@ -1465,10 +1527,6 @@ export function formatResult(
 /**
  * Format a result with the shared lossless size guard.
  */
-export function formatResultWithLimit(
-  data: unknown,
-  message: string,
-  limit: number,
-): FormattedToolResult {
+export function formatResultWithLimit(data: unknown, message: string, limit: number): FormattedToolResult {
   return formatResult(data, message, { maxItems: limit, warnOnTruncation: true })
 }

@@ -142,8 +142,8 @@ async function main() {
 
     assert(missingFromServer.length === 0, `Manifest tools missing from server: ${missingFromServer.join(', ')}`)
     assert(missingFromManifest.length === 0, `Server tools missing from manifest: ${missingFromManifest.join(', ')}`)
-    assert(tools.length === 28, `Expected exactly 28 registered tools, got ${tools.length}`)
-    assert(publicTools.length === 25, `Expected exactly 25 public tools, got ${publicTools.length}`)
+    assert(tools.length === 31, `Expected exactly 31 registered tools, got ${tools.length}`)
+    assert(publicTools.length === 28, `Expected exactly 28 public tools, got ${publicTools.length}`)
     assert(advancedTools.length === 3, `Expected exactly 3 advanced tools, got ${advancedTools.length}`)
     assert(legacyStillExposed.length === 0, `Legacy tool names are still exposed: ${legacyStillExposed.join(', ')}`)
     assertCatalogUx(tools)

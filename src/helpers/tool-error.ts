@@ -1,8 +1,9 @@
 import type { CallToolResult } from '@modelcontextprotocol/server'
 
+import { gitCommit, npmVersion } from '../version.js'
 import { describeToolError } from './errors.js'
 import { getToolContract } from './tool-ux.js'
-import { npmVersion } from '../version.js'
+import { UNTRUSTED_FIELDS } from './untrusted-text.js'
 
 /**
  * Convert expected handler failures into a stable MCP tool result. Protocol
@@ -28,7 +29,7 @@ export function formatToolError(error: unknown, toolName: string): CallToolResul
     _freshness: { kind: 'not_applicable' },
     _coverage: { kind: 'not_applicable', result_complete: false },
     _execution: { kind: 'failed', source: 'portal_mcp', tool: toolName },
-    _server: { name: 'SQD', version: npmVersion },
+    _server: { name: 'SQD', version: npmVersion, commit: gitCommit },
     _llm: {
       primary_path: 'error',
       safe_to_retry: descriptor.retryable,
@@ -36,7 +37,7 @@ export function formatToolError(error: unknown, toolName: string): CallToolResul
   }
 
   const toolContract = getToolContract(toolName)
-  if (toolContract) payload._tool_contract = toolContract
+  if (toolContract) payload._tool_contract = { ...toolContract, untrusted_fields: UNTRUSTED_FIELDS }
 
   return {
     isError: true,

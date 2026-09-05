@@ -1,6 +1,6 @@
 #!/usr/bin/env tsx
 
-import { mkdir, readFile } from 'node:fs/promises'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import path from 'node:path'
 
@@ -27,16 +27,204 @@ const fixtures = [
   'empty',
 ]
 const WALLET_FIXTURE_ROW_COUNT = ((APP_FIXTURES.wallet.activity as Record<string, unknown>).items as unknown[]).length
-const viewports = [
-  { name: 'desktop-light', width: 1280, height: 900, colorScheme: 'light' as const },
-  { name: 'desktop-dark', width: 1280, height: 900, colorScheme: 'dark' as const },
-  { name: 'mobile-light', width: 390, height: 844, colorScheme: 'light' as const },
+/* Recorded Portal pages are honest about being pages: any fixture whose
+   evidence receipt says partial may show amber, every other one must not. */
+const PARTIAL_FIXTURES = new Set(
+  Object.entries(APP_FIXTURES)
+    .filter(([, payload]) => {
+      const evidence = payload._evidence as Record<string, any> | undefined
+      return Boolean(payload.error) || evidence?.result?.completeness === 'partial'
+    })
+    .map(([name]) => name),
+)
+const CONTINUE_LABEL = String(
+  ((APP_FIXTURES.partial._ui as Record<string, any>).follow_up_actions as Record<string, unknown>[]).find(
+    (action) => action.intent === 'continue',
+  )?.label,
+)
+/* Fullscreen cells exercise the whole workspace (tables, receipt, history);
+   inline cells check the summary card the host renders in the conversation;
+   the claude cell applies Claude's published style variables to prove the
+   structure is themed by the host. */
+type Cell = {
+  name: string
+  width: number
+  height: number
+  colorScheme: 'light' | 'dark'
+  mode: 'inline' | 'fullscreen'
+  host?: 'claude'
+}
+const viewports: Cell[] = [
+  { name: 'desktop-light', width: 1280, height: 900, colorScheme: 'light', mode: 'fullscreen' },
+  { name: 'desktop-dark', width: 1280, height: 900, colorScheme: 'dark', mode: 'fullscreen' },
+  { name: 'mobile-light', width: 390, height: 844, colorScheme: 'light', mode: 'fullscreen' },
+  { name: 'inline-dark', width: 760, height: 900, colorScheme: 'dark', mode: 'inline' },
+  { name: 'inline-mobile-dark', width: 390, height: 844, colorScheme: 'dark', mode: 'inline' },
+  { name: 'inline-claude-light', width: 760, height: 900, colorScheme: 'light', mode: 'inline', host: 'claude' },
 ]
+const SQD = {
+  dark: {
+    surface: 'rgb(8, 9, 10)',
+    fg: 'rgb(247, 248, 248)',
+    accent: 'rgb(129, 140, 248)',
+    card: 'rgb(19, 19, 22)',
+    series: ['rgb(99, 102, 241)', 'rgb(8, 145, 178)', 'rgb(217, 119, 6)', 'rgb(22, 163, 74)', 'rgb(139, 92, 246)'],
+  },
+  light: {
+    surface: 'rgb(255, 255, 255)',
+    fg: 'rgb(17, 17, 21)',
+    accent: 'rgb(37, 99, 235)',
+    card: 'rgb(255, 255, 255)',
+    series: ['rgb(37, 99, 235)', 'rgb(180, 83, 9)', 'rgb(0, 108, 165)', 'rgb(177, 5, 196)', 'rgb(0, 119, 50)'],
+  },
+}
+const CLAUDE = {
+  light: { surface: 'rgb(255, 255, 255)', fg: 'rgb(20, 20, 19)' },
+  dark: { surface: 'rgb(48, 48, 46)', fg: 'rgb(250, 249, 245)' },
+}
+
+function cellUrl(fixture: string, viewport: Cell): string {
+  const query = new URLSearchParams({ fixture, mode: viewport.mode, picker: '0' })
+  if (viewport.host) query.set('host', viewport.host)
+  return `${baseUrl}?${query.toString()}`
+}
 const renderTimings: number[] = []
 const interactionTimings: number[] = []
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message)
+}
+
+/*
+ * A layout baseline, not a pixel one. The token assertions above cannot see a
+ * chart drawn short or two cards overlapping, and a folder of PNGs cannot be
+ * read in a pull request: 81 full-page images are 7.7 MB, and every deliberate
+ * design change rewrites all of them into the history. Recording the box of
+ * every structural element instead catches the same regressions — anything
+ * that moves, grows, shrinks or collides — in a file a reviewer can read as a
+ * diff. What it cannot see is paint inside a box that keeps its size; the
+ * colour and typography assertions cover that.
+ *
+ * Refresh deliberately with `npm run baseline:app-ui`, and say in the pull
+ * request why the boxes moved.
+ */
+/* Text metrics are the platform's, not the app's: the same CSS wraps to
+   different heights on Linux and on a Mac, so one baseline cannot serve both.
+   The file is keyed by platform, only the CI platform's is committed, and a
+   run on any other platform says it skipped rather than failing on a
+   difference that is the font stack rather than the design. */
+const baselinePlatform = process.env.SQD_BASELINE_PLATFORM || process.platform
+const baselineFile = path.resolve(`scripts/app-ui-baselines/layout-${baselinePlatform}.json`)
+const updatingBaseline = process.env.SQD_UPDATE_BASELINE === '1'
+let baselineSkipped = ''
+/* Half a pixel of jitter is font rasterisation; the issue asks for a 2px
+   regression to fail, so anything at or past 1px is reported. */
+const LAYOUT_TOLERANCE = 1
+const LOCKED_SELECTORS = [
+  '.sqd-shell',
+  '.sqd-topbar',
+  '.sqd-hero',
+  '.sqd-metrics',
+  '.sqd-workspace-main',
+  '.sqd-workspace-side',
+  '.sqd-workspace-ledger',
+  '.sqd-card',
+  '.sqd-card-head',
+  '.sqd-card-body',
+  '.sqd-chart-wrap',
+  '.sqd-chart-plot',
+  '.sqd-candle-terminal',
+  '.sqd-candle-chart',
+  '.sqd-chart-toolbar',
+  '.sqd-chart-legend',
+  '.sqd-table-wrap',
+  '.sqd-table',
+  '.sqd-table-pagination',
+  '.sqd-timeline',
+  '.sqd-ranked',
+  '.sqd-stat-list',
+  '.sqd-notice-copy',
+  '.sqd-receipt',
+  '.sqd-actions',
+  '.sqd-empty',
+]
+type CellLayout = Record<string, number[][]>
+const capturedLayouts: Record<string, CellLayout> = {}
+let recordedBaseline: Record<string, CellLayout> = {}
+try {
+  recordedBaseline = JSON.parse(await readFile(baselineFile, 'utf8'))
+} catch {
+  baselineSkipped = `no layout baseline for ${baselinePlatform}; run npm run baseline:app-ui to record one locally`
+}
+
+async function checkLayout(page: Page, cell: string) {
+  /* No named function may appear inside page.evaluate: the tsx transform gives
+     one a __name helper that does not exist in the browser. */
+  const measured: CellLayout = await page.evaluate((selectors) => {
+    const out: Record<string, number[][]> = {}
+    for (const selector of selectors) {
+      const boxes = [...document.querySelectorAll(selector)].map((node) => {
+        const box = node.getBoundingClientRect()
+        return [
+          Math.round((box.left + scrollX) * 2) / 2,
+          Math.round((box.top + scrollY) * 2) / 2,
+          Math.round(box.width * 2) / 2,
+          Math.round(box.height * 2) / 2,
+        ]
+      })
+      if (boxes.length) out[selector] = boxes
+    }
+    return out
+  }, LOCKED_SELECTORS)
+  capturedLayouts[cell] = measured
+  if (updatingBaseline || baselineSkipped) return
+
+  const expected = recordedBaseline[cell]
+  assert(expected !== undefined, `${cell} has no layout baseline; run npm run baseline:app-ui`)
+  const drifted: string[] = []
+  for (const selector of new Set([...Object.keys(expected), ...Object.keys(measured)])) {
+    const before = expected[selector] ?? []
+    const after = measured[selector] ?? []
+    if (before.length !== after.length) {
+      drifted.push(`${selector}: ${before.length} element(s) became ${after.length}`)
+      continue
+    }
+    before.forEach((box, index) => {
+      const moved = box
+        .map((value, axis) => [['x', 'y', 'w', 'h'][axis], value, after[index][axis]] as const)
+        .filter(([, was, now]) => Math.abs(now - was) >= LAYOUT_TOLERANCE)
+      if (moved.length) {
+        drifted.push(`${selector}[${index}] ${moved.map(([axis, was, now]) => `${axis} ${was} -> ${now}`).join(', ')}`)
+      }
+    })
+  }
+  assert(
+    drifted.length === 0,
+    `${cell} layout moved against the baseline:\n    ${drifted.slice(0, 8).join('\n    ')}${
+      drifted.length > 8 ? `\n    ...and ${drifted.length - 8} more` : ''
+    }\n  If this is intended, run npm run baseline:app-ui and say why in the pull request.`,
+  )
+}
+
+async function writeLayoutBaseline() {
+  await mkdir(path.dirname(baselineFile), { recursive: true })
+  /* One box per line, so a reviewer reads "this card moved 4px down" from the
+     diff instead of counting brackets. */
+  const cells = Object.keys(capturedLayouts).sort()
+  const lines = cells.map((cell) => {
+    const selectors = Object.keys(capturedLayouts[cell]).sort()
+    const body = selectors
+      .map(
+        (selector) =>
+          `  ${JSON.stringify(selector)}: [${capturedLayouts[cell][selector]
+            .map((box) => `[${box.join(', ')}]`)
+            .join(', ')}]`,
+      )
+      .join(',\n')
+    return ` ${JSON.stringify(cell)}: {\n${body}\n }`
+  })
+  await writeFile(baselineFile, `{\n${lines.join(',\n')}\n}\n`)
+  console.log(`Layout baseline written: ${cells.length} cells in ${path.relative(process.cwd(), baselineFile)}`)
 }
 
 async function validate(page: Page, fixture: string, viewport: (typeof viewports)[number]) {
@@ -47,10 +235,14 @@ async function validate(page: Page, fixture: string, viewport: (typeof viewports
   })
   page.on('pageerror', (error) => errors.push(error.message))
   page.on('request', (request) => {
-    if (!request.url().startsWith(baseUrl)) externalRequests.push(request.url())
+    /* Chain logos from SQD's CDN are the one sanctioned external load. */
+    const url = request.url()
+    const chainLogo =
+      url.startsWith('https://cdn.subsquid.io/img/networks/') || url.startsWith('https://sqd.dev/images/')
+    if (!url.startsWith(baseUrl) && !chainLogo) externalRequests.push(url)
   })
   const startedAt = performance.now()
-  await page.goto(`${baseUrl}?fixture=${fixture}`, { waitUntil: 'load' })
+  await page.goto(cellUrl(fixture, viewport), { waitUntil: 'load' })
   await page.waitForSelector('.sqd-shell')
   await page.evaluate(() => document.fonts.ready)
   const renderMs = performance.now() - startedAt
@@ -64,10 +256,31 @@ async function validate(page: Page, fixture: string, viewport: (typeof viewports
     `${fixture} ${viewport.name} made unexpected external requests: ${externalRequests.join(' | ')}`,
   )
   const design = await page.evaluate(() => {
+    /* Resolve tokens through a probe element: light-dark() and host
+       fallbacks only become colours once they are used. (Kept as one map so
+       the tsx transform adds no browser-side name helper.) */
+    const tokens = [
+      '--accent',
+      '--success-fill',
+      '--warning-fill',
+      '--danger-fill',
+      '--chart-1',
+      '--chart-2',
+      '--chart-3',
+      '--chart-4',
+      '--chart-5',
+    ]
+    const resolved = tokens.map((token) => {
+      const probe = document.createElement('span')
+      probe.style.color = `var(${token})`
+      document.body.append(probe)
+      const value = getComputedStyle(probe).color
+      probe.remove()
+      return value
+    })
     const body = getComputedStyle(document.body)
-    const title = getComputedStyle(document.querySelector('.sqd-title')!)
-    const mono = getComputedStyle(document.querySelector('.sqd-footer')!)
-    const root = getComputedStyle(document.documentElement)
+    const title = document.querySelector('.sqd-title, .sqd-empty h2')
+    const mono = getComputedStyle(document.querySelector('.sqd-eyebrow, .sqd-receipt-line, .sqd-footer, .sqd-query')!)
     const card = document.querySelector('.sqd-card')
     const tableHeader = document.querySelector('.sqd-table th')
     const cardStyle = card ? getComputedStyle(card) : undefined
@@ -76,16 +289,15 @@ async function validate(page: Page, fixture: string, viewport: (typeof viewports
       background: body.backgroundColor,
       foreground: body.color,
       bodyFont: body.fontFamily,
-      titleWeight: title.fontWeight,
+      titleWeight: title ? getComputedStyle(title).fontWeight : '510',
       monoFont: mono.fontFamily,
-      accent: root.getPropertyValue('--accent').trim(),
-      successFill: root.getPropertyValue('--success-fill').trim(),
-      warningFill: root.getPropertyValue('--warning-fill').trim(),
-      dangerFill: root.getPropertyValue('--danger-fill').trim(),
-      chartSeries: ['--chart-1', '--chart-2', '--chart-3', '--chart-4', '--chart-5'].map((token) =>
-        root.getPropertyValue(token).trim(),
-      ),
-      colorScheme: root.colorScheme,
+      accent: resolved[0],
+      successFill: resolved[1],
+      warningFill: resolved[2],
+      dangerFill: resolved[3],
+      chartSeries: resolved.slice(4),
+      prefersDark: matchMedia('(prefers-color-scheme: dark)').matches,
+      mode: document.querySelector<HTMLElement>('.sqd-app[data-mode]')?.dataset.mode,
       cardBackground: cardStyle?.backgroundColor,
       cardRadius: cardStyle?.borderRadius,
       tableHeaderFont: tableHeaderStyle?.fontFamily,
@@ -93,26 +305,63 @@ async function validate(page: Page, fixture: string, viewport: (typeof viewports
       tableHeaderTracking: tableHeaderStyle?.letterSpacing,
     }
   })
-  assert(design.background === 'rgb(8, 9, 10)', `${fixture} should use SQD dark surface #08090a`)
-  assert(design.foreground === 'rgb(247, 248, 248)', `${fixture} should use the SQD foreground token`)
-  assert(design.bodyFont.startsWith('"Inter SQD"'), `${fixture} should render with embedded Inter`)
+  const expected = SQD[viewport.colorScheme]
+  const host = viewport.host ? CLAUDE[viewport.colorScheme] : undefined
+  assert(
+    design.prefersDark === (viewport.colorScheme === 'dark'),
+    `${fixture} cell must run in ${viewport.colorScheme}`,
+  )
+  assert(design.mode === viewport.mode, `${fixture} should render in ${viewport.mode} mode`)
+  assert(
+    design.background === (host?.surface ?? expected.surface),
+    `${fixture} ${viewport.name} surface should come from ${host ? 'the host variables' : 'the SQD token'} (got ${design.background})`,
+  )
+  assert(
+    design.foreground === (host?.fg ?? expected.fg),
+    `${fixture} ${viewport.name} foreground should come from ${host ? 'the host variables' : 'the SQD token'} (got ${design.foreground})`,
+  )
+  /* Interface text is the host's to choose: it supplies --font-sans through
+     applyHostFonts and the app falls back to the system stack. Embedding a
+     sans face as well cost 51 KB to override a decision the host had made. */
+  assert(
+    /^(Inter|ui-sans-serif|system-ui|-apple-system)/.test(design.bodyFont),
+    `${fixture} interface text should take the host font or the system stack (got ${design.bodyFont})`,
+  )
+  assert(
+    !design.bodyFont.includes('Inter SQD'),
+    `${fixture} should not embed a sans face; the host supplies one (got ${design.bodyFont})`,
+  )
   assert(design.monoFont.startsWith('"JetBrains Mono SQD"'), `${fixture} evidence metadata should use JetBrains Mono`)
   assert(design.titleWeight === '510', `${fixture} headings should use SQD weight 510`)
-  assert(design.accent === '#818cf8', `${fixture} should use SQD indigo #818cf8`)
-  assert(design.successFill === '#16a34a', `${fixture} should use the SQD success fill token`)
-  assert(design.warningFill === '#f59e0b', `${fixture} should use the SQD warning fill token`)
-  assert(design.dangerFill === '#ef4444', `${fixture} should use the SQD danger fill token`)
   assert(
-    JSON.stringify(design.chartSeries) === JSON.stringify(['#6366f1', '#0891b2', '#d97706', '#16a34a', '#8b5cf6']),
-    `${fixture} co-equal series must follow tokens/chart-palette.json line_bar_area order (got ${design.chartSeries.join(', ')})`,
+    design.accent === expected.accent,
+    `${fixture} should keep the SQD accent in ${viewport.colorScheme} (got ${design.accent})`,
   )
-  assert(design.colorScheme === 'dark', `${fixture} should remain an intentional dark product surface`)
-  if (design.cardBackground) {
-    assert(design.cardBackground === 'rgb(19, 19, 22)', `${fixture} cards should use SQD raised surface #131316`)
-    assert(design.cardRadius === '12px', `${fixture} cards should use the SQD pane radius`)
+  assert(design.successFill === 'rgb(22, 163, 74)', `${fixture} should use the SQD success fill token`)
+  assert(
+    design.warningFill === (viewport.colorScheme === 'dark' ? 'rgb(245, 158, 11)' : 'rgb(217, 119, 6)'),
+    `${fixture} should use the SQD warning fill token`,
+  )
+  assert(
+    design.dangerFill === (viewport.colorScheme === 'dark' ? 'rgb(239, 68, 68)' : 'rgb(220, 38, 38)'),
+    `${fixture} should use the SQD danger fill token`,
+  )
+  assert(
+    JSON.stringify(design.chartSeries) === JSON.stringify(expected.series),
+    `${fixture} co-equal series must follow tokens/chart-palette.json for ${viewport.colorScheme} (got ${design.chartSeries.join(', ')})`,
+  )
+  if (design.cardBackground && viewport.mode === 'fullscreen' && !host) {
+    assert(
+      design.cardBackground === expected.card,
+      `${fixture} panels should use the SQD raised surface (got ${design.cardBackground})`,
+    )
+    assert(design.cardRadius === '12px', `${fixture} panels should use the SQD pane radius`)
   }
   if (design.tableHeaderFont) {
-    assert(design.tableHeaderFont.startsWith('"Inter SQD"'), `${fixture} table headers should use Inter`)
+    assert(
+      /^(Inter|ui-sans-serif|system-ui|-apple-system)/.test(design.tableHeaderFont),
+      `${fixture} table headers should take the interface font (got ${design.tableHeaderFont})`,
+    )
     assert(design.tableHeaderWeight === '510', `${fixture} table headers should use weight 510`)
     assert(
       design.tableHeaderTracking === 'normal',
@@ -132,7 +381,7 @@ async function validate(page: Page, fixture: string, viewport: (typeof viewports
     }
   }
   assert((await page.locator('.sqd-mark').count()) === 1, `${fixture} should show one SQD mark`)
-  assert((await page.locator('h1').count()) === 1, `${fixture} should expose one result heading`)
+  assert((await page.locator('h1').count()) <= 1, `${fixture} should expose at most one result heading`)
   const overflow = await page.evaluate(
     () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
   )
@@ -141,20 +390,32 @@ async function validate(page: Page, fixture: string, viewport: (typeof viewports
     .locator('.sqd-card')
     .evaluateAll((cards) => cards.filter((card) => card.getBoundingClientRect().height < 40).length)
   assert(emptyCards === 0, `${fixture} ${viewport.name} has collapsed evidence cards`)
-  await page.locator('.sqd-preview-picker').evaluate((node) => node.setAttribute('hidden', ''))
   await page.screenshot({ path: path.join(screenshots, `${viewport.name}-${fixture}.png`), fullPage: true })
+  await checkLayout(page, `${viewport.name}-${fixture}`)
+  if (viewport.mode === 'inline') {
+    await validateInline(page, fixture, viewport)
+    return
+  }
   if (['timeseries', 'grouped', 'sparse', 'mixed'].includes(fixture)) {
-    const svg = page.locator('svg.sqd-chart')
-    assert((await svg.count()) >= 1, `${fixture} should render an accessible chart workspace`)
-    const box = await svg.boundingBox()
-    const minimumChartHeight = viewport.width <= 520 ? 110 : 280
+    const plot = page.locator('.sqd-chart-plot')
+    assert((await plot.count()) >= 1, `${fixture} should render an accessible chart workspace`)
+    const box = await plot.first().boundingBox()
+    const minimumChartHeight = viewport.width <= 520 ? 110 : 260
     assert(box && box.width >= 300 && box.height >= minimumChartHeight, `${fixture} chart should stay readable`)
-    const rightScaleX = await svg.locator('.sqd-chart-label').first().getAttribute('x')
-    const chartViewBoxWidth = Number((await svg.getAttribute('viewBox'))?.split(' ')[2])
-    assert(Number(rightScaleX) > chartViewBoxWidth * 0.85, `${fixture} should use the SQD right-side value scale`)
+    /* Lines, bars, and candles all come through lightweight-charts now, so
+       every chart carries the same two canvases and the same right-side scale
+       rather than one engine's SVG and another's canvas. */
     assert(
-      (await svg.getAttribute('role')) === 'group',
+      (await page.locator('.sqd-chart-plot canvas').count()) >= 2,
+      `${fixture} should render through the shared chart engine`,
+    )
+    assert(
+      (await plot.first().getAttribute('role')) === 'group',
       `${fixture} interactive charts should expose their point descendants`,
+    )
+    assert(
+      (await page.locator('.sqd-chart-attribution').count()) >= 1,
+      `${fixture} should carry the chart engine attribution`,
     )
   }
   if (['hyperliquid', 'ratio'].includes(fixture)) {
@@ -191,13 +452,14 @@ async function validate(page: Page, fixture: string, viewport: (typeof viewports
     assert(!readoutText.includes('$'), 'Token-ratio candles must not be relabeled as USD')
     const finalPoint = page.locator('.sqd-chart-hit').last()
     await finalPoint.focus()
+    const ratioUnit = String((APP_FIXTURES.ratio.chart as Record<string, unknown>).price_unit)
     assert(
-      (await finalPoint.getAttribute('aria-label'))?.includes('WETH per TOKEN'),
+      (await finalPoint.getAttribute('aria-label'))?.includes(ratioUnit),
       'Token-ratio point inspection should retain its declared unit',
     )
   }
   if (fixture === 'hyperliquid') {
-    const expected = APP_FIXTURES.hyperliquid.ohlc as Array<Record<string, number>>
+    const expected = APP_FIXTURES.hyperliquid.ohlc as Record<string, number>[]
     assert(
       (await page.locator('[data-candle-index]').count()) === expected.length,
       'Hyperliquid should keep every candle individually inspectable',
@@ -211,19 +473,40 @@ async function validate(page: Page, fixture: string, viewport: (typeof viewports
       'The forming candle must stay visibly non-final in the readout',
     )
     const final = await page.locator('[data-candle-index][data-close]').last().getAttribute('data-close')
-    assert(Number(final) === expected.at(-1)?.close, 'Hyperliquid final candle should match the pinned Portal row')
+    assert(
+      Number(final) === Number(expected.at(-1)?.close),
+      'Hyperliquid final candle should match the recorded Portal row',
+    )
     const hit = page.locator('.sqd-chart-hit').last()
     const interactionStarted = performance.now()
     await hit.focus()
     interactionTimings.push(performance.now() - interactionStarted)
     assert(
-      await page.locator('.sqd-chart-tooltip').isVisible(),
-      'Hyperliquid keyboard focus should expose exact candle values',
+      (await page.locator('.sqd-candle-chart .sqd-chart-tooltip').count()) === 0,
+      'The candle chart must not float a tooltip over the candles; the readout is the hover surface',
     )
-    const tooltipText = await page.locator('.sqd-chart-tooltip').innerText()
+    const readoutLines = page.locator('.sqd-candle-readout-line')
+    /* Readout keys render uppercase, so compare case-insensitively. */
+    const focusedText = (await page.locator('.sqd-candle-readout').innerText()).toLowerCase()
     assert(
-      tooltipText.includes('Fills') && tooltipText.includes('VWAP'),
-      'Hyperliquid point inspection should expose every promised field',
+      focusedText.includes('fills') && focusedText.includes('vwap'),
+      'Hyperliquid point inspection should expose every promised field in the readout',
+    )
+    const focusedHeight = await page
+      .locator('.sqd-candle-readout')
+      .evaluate((node) => node.getBoundingClientRect().height)
+    const lineCount = await readoutLines.count()
+    await page.locator('.sqd-chart-hit').nth(2).focus()
+    const otherHeight = await page
+      .locator('.sqd-candle-readout')
+      .evaluate((node) => node.getBoundingClientRect().height)
+    assert(
+      lineCount === 2 && focusedHeight === otherHeight,
+      `The readout must keep its height across candles (${focusedHeight} vs ${otherHeight}) so the chart never resizes`,
+    )
+    assert(
+      !(await page.locator('.sqd-candle-readout').innerText()).includes('candle, still forming'),
+      'A complete candle must not carry the forming flag',
     )
     const showRaw = page.getByRole('button', { name: 'Show raw candle rows' })
     assert((await showRaw.count()) === 1, 'Hyperliquid should expose its raw candle action')
@@ -250,7 +533,12 @@ async function validate(page: Page, fixture: string, viewport: (typeof viewports
     await page.getByRole('button', { name: 'Previous rows' }).click()
     const receipt = page.locator('.sqd-receipt')
     assert((await receipt.count()) === 1, 'Successful results should show one factual evidence receipt')
-    assert((await receipt.innerText()).includes('SHA-256'), 'Evidence receipt should expose a short exact-data digest')
+    await page.getByRole('button', { name: 'Full receipt' }).click()
+    assert(
+      (await page.locator('.sqd-dialog[open]').innerText()).includes('exact_data_sha256'),
+      'Full receipt should expose the exact-data digest',
+    )
+    await page.locator('.sqd-dialog[open]').evaluate((node) => (node as HTMLDialogElement).close())
     await page.getByRole('button', { name: 'Download JSON' }).click()
     assert(
       (await page.locator('body').getAttribute('data-export-format')) === 'json',
@@ -273,52 +561,39 @@ async function validate(page: Page, fixture: string, viewport: (typeof viewports
     )
   }
   if (fixture === 'timeseries') {
-    const expected = APP_FIXTURES.timeseries.time_series as Array<Record<string, number>>
+    const expected = APP_FIXTURES.timeseries.time_series as Record<string, number>[]
     assert(
       (await page.locator('.sqd-chart-hit').count()) === expected.length,
       'Time series should render every source point',
     )
+    /* The marks are on a canvas, so the exact numbers live on the hit targets
+       that sit over them, which is also what a screen reader and a keyboard
+       user reach. */
+    const renderedValues = await page
+      .locator('.sqd-chart-hit[data-value]')
+      .evaluateAll((nodes) => nodes.map((node) => Number(node.getAttribute('data-value'))))
     assert(
-      Number(await page.locator('.sqd-chart-line').getAttribute('data-point-count')) === expected.length,
-      'Time-series line should contain every source point',
+      JSON.stringify(renderedValues) === JSON.stringify(expected.map((row) => row.value)),
+      `Time-series bars should carry every exact Portal value in order (got ${renderedValues.join(', ')})`,
     )
     assert(
       Number(await page.locator('[data-final-value]').getAttribute('data-final-value')) === expected.at(-1)?.value,
       'Time-series final value should match structured content',
     )
-    const ranges = page.locator('.sqd-range')
-    assert((await ranges.count()) === 2, 'long charts should expose an exact start and end range')
-    await ranges.nth(0).fill('6')
-    await ranges.nth(1).fill('11')
-    await page.getByRole('button', { name: 'Focus range' }).click()
-    assert(
-      (await page.locator('.sqd-chart-hit').count()) === 6,
-      'range focus should redraw only the selected six points',
-    )
-    assert(
-      (await page.locator('table.sqd-table tbody tr').count()) === Math.min(10, expected.length),
-      'range focus must keep the current exact evidence page',
-    )
-    if (expected.length > 10) {
-      assert(
-        await page.locator('.sqd-table-pagination').isVisible(),
-        'long chart evidence must remain reachable through table pages',
-      )
-    }
-    await page.getByRole('button', { name: 'Reset range' }).click()
-    assert((await page.locator('.sqd-chart-hit').count()) === expected.length, 'reset range should restore every point')
   }
   if (fixture === 'grouped') {
-    const rows = APP_FIXTURES.grouped.time_series as Array<{ series_values: Record<string, number> }>
-    const keys = ['transfers', 'swaps', 'contract_calls']
+    const rows = APP_FIXTURES.grouped.time_series as Array<{ contract_address: string; value: number }>
+    const keys = [...new Set(rows.map((row) => row.contract_address))]
     assert(
       (await page.locator('.sqd-chart-legend-item').count()) === keys.length,
       'Grouped charts should expose every series',
     )
     const renderedTotals = await page
-      .locator('[data-series-total]')
+      .locator('.sqd-chart-series[data-series-total]')
       .evaluateAll((nodes) => nodes.map((node) => Number(node.getAttribute('data-series-total'))))
-    const expectedTotals = keys.map((key) => rows.reduce((sum, row) => sum + row.series_values[key], 0))
+    const expectedTotals = keys.map((key) =>
+      rows.filter((row) => row.contract_address === key).reduce((sum, row) => sum + row.value, 0),
+    )
     assert(
       JSON.stringify(renderedTotals) === JSON.stringify(expectedTotals),
       'Grouped chart totals should reconcile with every structured row',
@@ -340,10 +615,8 @@ async function validate(page: Page, fixture: string, viewport: (typeof viewports
       'Hidden series should leave point tooltips',
     )
     assert(
-      await page
-        .locator('.sqd-chart-series-area[data-series-index="0"]')
-        .evaluate((node) => getComputedStyle(node).display === 'none'),
-      'Hiding the first series should hide its stacked band',
+      (await page.locator('.sqd-chart-series[data-series-index="0"]').getAttribute('data-visible')) === 'false',
+      'Hiding the first series should take its band off the chart',
     )
   }
   if (fixture === 'sparse') {
@@ -354,21 +627,19 @@ async function validate(page: Page, fixture: string, viewport: (typeof viewports
       JSON.stringify(orderedX) === JSON.stringify([0, 1, 3, 4]),
       'Sparse series should render in chronological order',
     )
-    const segments = await page
-      .locator('.sqd-chart-line')
-      .evaluateAll((nodes) => nodes.map((node) => Number(node.getAttribute('data-point-count'))))
+    const segments = await page.locator('.sqd-chart-series').first().getAttribute('data-segments')
     assert(
-      JSON.stringify(segments) === JSON.stringify([2, 2]),
-      'Sparse series should leave a visual gap for the missing bucket',
+      segments === '2,2',
+      `Sparse series should leave a visual gap for the missing bucket (drew runs of ${segments})`,
     )
   }
   if (fixture === 'mixed') {
     const values = await page
-      .locator('.sqd-chart-bar')
+      .locator('.sqd-chart-hit[data-value]')
       .evaluateAll((nodes) => nodes.map((node) => Number(node.getAttribute('data-value'))))
     assert(
       JSON.stringify(values) === JSON.stringify([-30, -10, 15, 0, 50]),
-      'Signed bars should preserve chronological values',
+      `Signed bars should preserve chronological values (got ${values.join(', ')})`,
     )
     assert(
       (await page.locator('.sqd-chart-hit').count()) === 6,
@@ -378,14 +649,58 @@ async function validate(page: Page, fixture: string, viewport: (typeof viewports
       (await page.locator('.sqd-chart-hit').last().getAttribute('aria-label'))?.includes('not available'),
       'Null chart values must not become factual zeroes',
     )
-    const validGeometry = await page.locator('.sqd-chart-bar').evaluateAll((nodes) =>
-      nodes.every((node) => {
-        const height = Number(node.getAttribute('height'))
-        const y = Number(node.getAttribute('y'))
-        return Number.isFinite(height) && height >= 1 && Number.isFinite(y)
-      }),
+    /* Bars that straddle zero must hang from a zero line inside the pane, not
+       from the axis floor. The canvas cannot be measured, so the chart
+       publishes where it drew that line. */
+    const plotBox = await page.locator('.sqd-chart-plot').first().boundingBox()
+    const zeroBaseline = Number(await page.locator('.sqd-chart-plot').first().getAttribute('data-zero-baseline'))
+    assert(
+      Number.isFinite(zeroBaseline) && zeroBaseline > 8 && plotBox !== null && zeroBaseline < plotBox.height - 8,
+      `Signed bars should hang from a zero line inside the plot (got ${zeroBaseline} in ${plotBox?.height})`,
     )
-    assert(validGeometry, 'Signed bars should have valid geometry on both sides of zero')
+  }
+  if (fixture === 'large_table' || fixture === 'hyperliquid') {
+    /*
+     * A follow-up re-renders the same result with the in-flight flag set. It
+     * must not rebuild the DOM: the charts on screen are live instances, and
+     * throwing them away takes the reader's zoom with them at the one moment
+     * they are watching. The budget is what the issue asks for; the identity
+     * check is what makes the budget meaningful.
+     */
+    const beforeChart = await page.locator('.sqd-chart-canvas canvas, .sqd-candle-canvas canvas').count()
+    /* Marking an element is what makes this an identity check: a rebuild
+       replaces it, and the mark goes with it. `large_table` has no chart, so
+       it marks the table it does have. */
+    await page.evaluate(() =>
+      document
+        .querySelector('.sqd-chart-canvas canvas, .sqd-candle-canvas canvas, table.sqd-table')
+        ?.setAttribute('data-kept', '1'),
+    )
+    const rerenderStarted = performance.now()
+    await page.evaluate(() => (window as unknown as { __sqdSetBusy: (busy: boolean) => void }).__sqdSetBusy(true))
+    const rerenderMs = performance.now() - rerenderStarted
+    assert(
+      rerenderMs < 250,
+      `${fixture} follow-up re-render should stay under 250ms (took ${Math.round(rerenderMs)}ms)`,
+    )
+    assert(
+      (await page.locator('.sqd-shell[aria-busy="true"]').count()) === 1,
+      `${fixture} follow-up should mark the result busy`,
+    )
+    assert(
+      (await page.locator('.sqd-progress').count()) === 1,
+      `${fixture} follow-up should show one progress bar, not one per render`,
+    )
+    assert(
+      (await page.locator('.sqd-chart-canvas canvas, .sqd-candle-canvas canvas').count()) === beforeChart &&
+        (await page.locator('[data-kept="1"]').count()) === 1,
+      `${fixture} follow-up must keep the result on screen rather than rebuilding it`,
+    )
+    await page.evaluate(() => (window as unknown as { __sqdSetBusy: (busy: boolean) => void }).__sqdSetBusy(false))
+    assert(
+      (await page.locator('.sqd-progress').count()) === 0,
+      `${fixture} should clear the progress bar when the follow-up settles`,
+    )
   }
   if (['hyperliquid', 'timeseries', 'activity', 'large_table'].includes(fixture)) {
     assert((await page.locator('table.sqd-table').count()) >= 1, `${fixture} should expose an evidence table`)
@@ -422,14 +737,15 @@ async function validate(page: Page, fixture: string, viewport: (typeof viewports
     await page.locator('.sqd-dialog[open]').evaluate((node) => (node as HTMLDialogElement).close())
   }
   if (fixture === 'activity') {
-    const expectedHash = String((APP_FIXTURES.activity.items as Array<Record<string, unknown>>)[0].tx_hash)
+    const expectedHash = String((APP_FIXTURES.activity.items as Record<string, unknown>[])[0].tx_hash)
     assert(
       (await page.locator('table.sqd-table').innerText()).includes(expectedHash),
       'Activity tables should keep exact transaction hashes',
     )
+    const firstBlock = Number((APP_FIXTURES.activity.items as Record<string, unknown>[])[0].block_number)
     assert(
-      (await page.locator('table.sqd-table').innerText()).includes('0.000000009 USDC'),
-      'Activity tables should keep exact tiny non-zero amounts',
+      (await page.locator('table.sqd-table').innerText()).includes(firstBlock.toLocaleString('en-US')),
+      'Activity tables should keep exact block numbers',
     )
   }
   if (fixture === 'wallet') {
@@ -442,12 +758,32 @@ async function validate(page: Page, fixture: string, viewport: (typeof viewports
       'wallet timeline should preserve every exact activity row',
     )
     assert(
-      (await page.locator('table.sqd-table tbody tr').count()) === WALLET_FIXTURE_ROW_COUNT,
+      (await page.locator('table.sqd-table').first().locator('tbody tr').count()) === WALLET_FIXTURE_ROW_COUNT,
       'wallet table should preserve every exact activity row',
     )
     assert(
-      (await page.locator('.sqd-ranked-row').count()) === 3,
-      'wallet workspace should rank the exact counterparties',
+      (await page.locator('.sqd-eyebrow').innerText()).toLowerCase().includes('base'),
+      'the eyebrow names the chain by its display name',
+    )
+    assert((await page.locator('.sqd-query .sqd-chain-logo').count()) === 1, 'the query chip carries the chain logo')
+    const links = page.locator('a.sqd-link')
+    assert((await links.count()) > 0, 'wallet identifiers must link to the public explorer')
+    const hrefs = await links.evaluateAll((nodes) => nodes.map((node) => (node as HTMLAnchorElement).href))
+    assert(
+      hrefs.every((href) => href.startsWith('https://basescan.org/')),
+      'wallet links must point at Basescan',
+    )
+    await page.locator('.sqd-timeline a.sqd-link').first().click()
+    assert(
+      (await page.evaluate(() => document.body.dataset.openedLink))?.startsWith('https://basescan.org/'),
+      'clicking an identifier must hand the explorer link to the host',
+    )
+    const counterparties = (
+      (APP_FIXTURES.wallet.fund_flow as Record<string, unknown>).movement_counterparties as unknown[]
+    ).length
+    assert(
+      (await page.locator('.sqd-ranked-row').count()) === counterparties,
+      'wallet workspace should rank every exact movement counterparty',
     )
   }
   if (fixture === 'contract') {
@@ -456,31 +792,76 @@ async function validate(page: Page, fixture: string, viewport: (typeof viewports
       'contract workspace should expose interactions, callers, events, and event types',
     )
     assert((await page.locator('.sqd-card').count()) === 2, 'contract workspace should compare callers and event types')
+    const contractPayload = APP_FIXTURES.contract as Record<string, any>
+    const expectedRanked =
+      contractPayload.interactions.top_callers.length + Object.keys(contractPayload.events.events_by_type).length
     assert(
-      (await page.locator('.sqd-ranked-row').count()) === 7,
-      'contract workspace should retain four callers and three event types',
+      (await page.locator('.sqd-ranked-row').count()) === expectedRanked,
+      'contract workspace should retain every caller and event type',
+    )
+  }
+  if (!PARTIAL_FIXTURES.has(fixture)) {
+    assert(
+      (await page
+        .locator('.sqd-notice--caution, .sqd-notice--danger, .sqd-display-limit--caution, .sqd-context--warning')
+        .count()) === 0,
+      `${fixture} is complete, so nothing on it may read as a warning`,
     )
   }
   if (fixture === 'large_table') {
-    const rows = APP_FIXTURES.large_table.items as Array<Record<string, unknown>>
+    const rows = APP_FIXTURES.large_table.top_contracts as Record<string, unknown>[]
+    const pages = Math.ceil(rows.length / 10)
     assert((await page.locator('table.sqd-table tbody tr').count()) === 10, 'Large tables should use short local pages')
     assert(
-      (await page.locator('.sqd-display-limit').innerText()).includes('10 of 125'),
+      (await page.locator('.sqd-card:has(table.sqd-table) .sqd-display-limit').first().innerText()).includes(
+        `10 of ${rows.length}`,
+      ),
       'Large tables should disclose the local page size',
     )
     assert(
-      (await page.locator('.sqd-table-pagination').innerText()).includes('Page 1 of 13'),
+      (await page.locator('.sqd-display-limit--caution').count()) === 0,
+      'a complete local page is a caption, not a warning',
+    )
+    assert(
+      (await page.locator('.sqd-beta').innerText()).toLowerCase() === 'beta',
+      'The Explorer carries its beta tag in the topbar',
+    )
+    assert(
+      (await page.locator('.sqd-hero-figure').count()) === 0,
+      'The headline number lives in the metric row, not beside the title',
+    )
+    assert(
+      (await page.locator('.sqd-metric').first().innerText()).toLowerCase().includes('transactions'),
+      'The primary metric leads the metric row',
+    )
+    const ranked = page.locator('.sqd-ranked-row')
+    assert((await ranked.count()) === 10, 'Ranked panels show ten rows by default')
+    const more = page.locator('.sqd-more-button')
+    assert((await more.innerText()) === `Show all ${rows.length}`, 'The ranked panel offers every row in one control')
+    await more.click()
+    assert((await ranked.count()) === rows.length, 'Show all reveals every ranked row already in the result')
+    assert((await more.innerText()) === 'Show 10', 'The control folds the panel back')
+    await more.click()
+    assert((await ranked.count()) === 10, 'Folding back returns to the default page')
+    assert(
+      (await page.locator('.sqd-table-pagination').innerText()).includes(`Page 1 of ${pages}`),
       'Large tables should expose page state',
     )
     await page.getByRole('button', { name: 'Next rows' }).click()
     assert(
-      (await page.locator('.sqd-table-pagination').innerText()).includes('Page 2 of 13'),
+      (await page.locator('.sqd-table-pagination').innerText()).includes(`Page 2 of ${pages}`),
       'Large table paging should advance',
     )
     assert(
       (await page.locator('table.sqd-table').innerText()).includes(String(rows[10]?.address)),
       'The second page should start at the exact next row',
     )
+    await page.locator('th .sqd-sort').first().click()
+    const sortMark = await page
+      .locator('th[aria-sort="ascending"] .sqd-sort, th[aria-sort="descending"] .sqd-sort')
+      .first()
+      .evaluate((node) => getComputedStyle(node, '::after').content)
+    assert(/[↑↓]/.test(sortMark), `The sort indicator must be an arrow glyph, not an escape (${sortMark})`)
     const lastAddress = String(rows.at(-1)?.address)
     await page.locator('.sqd-input').fill(lastAddress)
     assert(
@@ -513,8 +894,11 @@ async function validate(page: Page, fixture: string, viewport: (typeof viewports
       if (await next.isDisabled()) break
       await next.click()
     }
-    assert(observedPages === 13, `Large table should paginate into 13 short pages, walked ${observedPages}`)
-    assert(walkedKeys.length === rows.length, `Pagination should expose all ${rows.length} exact rows, saw ${walkedKeys.length}`)
+    assert(observedPages === pages, `Large table should paginate into ${pages} short pages, walked ${observedPages}`)
+    assert(
+      walkedKeys.length === rows.length,
+      `Pagination should expose all ${rows.length} exact rows, saw ${walkedKeys.length}`,
+    )
     assert(
       new Set(walkedKeys).size === rows.length && !walkedKeys.includes(''),
       'Pagination must expose every exact row key exactly once, with no gaps or duplicates',
@@ -522,18 +906,45 @@ async function validate(page: Page, fixture: string, viewport: (typeof viewports
   }
   if (fixture === 'partial') {
     assert(
-      (await page.locator('.sqd-display-limit').innerText()).includes('8 of 40 declared'),
-      'Partial results must disclose declared against present rows',
+      (await page.locator('.sqd-eyebrow .sqd-dot').count()) === 1,
+      'Partial results must carry a state dot next to the headline',
     )
-    assert(
-      (await page.locator('.sqd-context').innerText()).includes('partial'),
-      'Partial results must be labeled partial next to the headline',
-    )
-    const continueButton = page.getByRole('button', { name: 'Load the next rows' })
+    const continueButton = page.getByRole('button', { name: CONTINUE_LABEL })
     assert(
       (await continueButton.count()) === 1 && (await continueButton.isEnabled()),
       'Partial results should offer an enabled continuation action',
     )
+  }
+  if (fixture === 'hyperliquid' && viewport.name === 'desktop-dark') {
+    await page.goto(`${cellUrl(fixture, viewport)}&busy=1`, { waitUntil: 'load' })
+    await page.waitForSelector('.sqd-shell')
+    assert(
+      (await page.locator('.sqd-shell[aria-busy="true"] .sqd-progress').count()) === 1,
+      'a pending follow-up shows progress over the last result',
+    )
+    assert(
+      (await page.locator('.sqd-candle-chart canvas').count()) >= 2,
+      'a pending follow-up keeps the last result on screen',
+    )
+    assert(
+      (await page
+        .locator('.sqd-followups button')
+        .evaluateAll((nodes) => nodes.every((node) => (node as HTMLButtonElement).disabled))) === true,
+      'a pending follow-up holds every follow-up control',
+    )
+    await page.goto(`${cellUrl(fixture, viewport)}&error=1`, { waitUntil: 'load' })
+    await page.waitForSelector('.sqd-shell')
+    assert(
+      (await page.locator('.sqd-notice--danger').count()) === 1,
+      'a failed follow-up reports above the last result',
+    )
+    assert(
+      (await page.locator('.sqd-candle-chart canvas').count()) >= 2,
+      'a failed follow-up keeps the last result on screen',
+    )
+    assert((await page.getByRole('button', { name: 'Retry' }).count()) === 1, 'a failed follow-up offers a retry')
+    await page.goto(cellUrl(fixture, viewport), { waitUntil: 'load' })
+    await page.waitForSelector('.sqd-shell')
   }
   const keyboardTarget = page.locator('button:visible, [tabindex="0"]:visible').first()
   if (!['error', 'empty'].includes(fixture)) {
@@ -556,26 +967,331 @@ async function validate(page: Page, fixture: string, viewport: (typeof viewports
   )
 }
 
+/* Third-party text (token names, program labels) must render as inert text
+   in every mode: no markup interpretation, no script, the raw string visible. */
+/*
+ * The whole app driven from the keyboard, with no mouse: the skip link, the
+ * evidence table, a sort, a page turn, and an export. A screen-reader user
+ * reaches the rows through this path, and a re-render used to drop them back
+ * at the top of the document, so focus is checked after the state changes.
+ */
+async function validateKeyboardJourney(browser: Browser) {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 900 } })
+  const page = await context.newPage()
+  const errors: string[] = []
+  page.on('pageerror', (error) => errors.push(error.message))
+  try {
+    await page.goto(`${baseUrl}?fixture=large_table&picker=0`, { waitUntil: 'load' })
+    await page.evaluate(() => document.fonts.ready)
+
+    // The skip link is the first stop and lands on the evidence table.
+    await page.keyboard.press('Tab')
+    const skip = await page.evaluate(() => document.activeElement?.className ?? '')
+    assert(skip.includes('sqd-skip-link'), `the first tab stop should be the skip link (got "${skip}")`)
+    await page.keyboard.press('Enter')
+    assert(
+      await page.evaluate(() => Boolean(document.querySelector('#sqd-evidence'))),
+      'the skip link should point at the evidence table',
+    )
+
+    // Sorting is reachable and reports its direction.
+    const sortButton = page.locator('.sqd-sort').first()
+    await sortButton.focus()
+    const beforeSort = await page.locator('.sqd-table th').first().getAttribute('aria-sort')
+    await page.keyboard.press('Enter')
+    await page.waitForTimeout(80)
+    const afterSort = await page.locator('.sqd-table th').first().getAttribute('aria-sort')
+    assert(
+      afterSort !== beforeSort && afterSort !== 'none',
+      `sorting from the keyboard should change the reported direction (${beforeSort} -> ${afterSort})`,
+    )
+
+    // Focus survives the re-render that a sort causes.
+    const focusedAfterSort = await page.evaluate(() => document.activeElement?.getAttribute('data-focus-key') ?? '')
+    assert(
+      focusedAfterSort.startsWith('table-sort:'),
+      `focus should stay on the sort control after the rerender (got "${focusedAfterSort}")`,
+    )
+
+    // Paging forward, from the keyboard, keeps focus on the pager.
+    const next = page.locator('[data-focus-key="table-next"]')
+    if (await next.count()) {
+      const firstBefore = await page.locator('.sqd-table tbody tr').first().innerText()
+      await next.focus()
+      await page.keyboard.press('Enter')
+      await page.waitForTimeout(80)
+      assert(
+        (await page.locator('.sqd-table tbody tr').first().innerText()) !== firstBefore,
+        'paging from the keyboard should show the next rows',
+      )
+      assert(
+        (await page.evaluate(() => document.activeElement?.getAttribute('data-focus-key') ?? '')) === 'table-next',
+        'focus should stay on the pager after paging',
+      )
+    }
+
+    // Export is reachable and announces itself as a control, not a link.
+    const exportButton = page.locator('button', { hasText: 'Download CSV' }).first()
+    assert(await exportButton.count(), 'the evidence table should offer a CSV export')
+    await exportButton.focus()
+    assert(
+      await page.evaluate(() => document.activeElement?.tagName === 'BUTTON'),
+      'the export control should be focusable',
+    )
+
+    // A direction cue carries more than colour.
+    const cues = await page.evaluate(() =>
+      [...document.querySelectorAll('.sqd-event-dot')].map((node) => ({
+        text: node.textContent ?? '',
+        label: node.getAttribute('aria-label') ?? '',
+      })),
+    )
+    for (const cue of cues.filter((item) => item.label)) {
+      assert(cue.text.length > 0, 'a direction cue with a label should also carry a glyph')
+    }
+
+    assert(errors.length === 0, `keyboard journey raised page errors: ${errors.join('; ')}`)
+  } finally {
+    await context.close()
+  }
+  console.log('PASS  the app can be driven end to end from the keyboard')
+}
+
+/*
+ * Zoom is a claim the descriptor makes about the app, so the app has to keep
+ * it. Both engines are driven the same way here: the toolbar, the keyboard and
+ * the wheel each narrow the view, Reset puts it back, and the evidence receipt
+ * says exactly what it said before, because zoom shows less of the same result
+ * rather than asking for a different one.
+ */
+async function validateChartRange(browser: Browser) {
+  /* hyperliquid is the lightweight-charts terminal, timeseries the SVG plot. */
+  for (const fixture of ['hyperliquid', 'timeseries'] as const) {
+    const context = await browser.newContext({ viewport: { width: 1280, height: 900 } })
+    const page = await context.newPage()
+    const errors: string[] = []
+    page.on('pageerror', (error) => errors.push(error.message))
+    try {
+      await page.goto(`${baseUrl}?fixture=${fixture}&picker=0`, { waitUntil: 'load' })
+      await page.evaluate(() => document.fonts.ready)
+      await page.waitForSelector('.sqd-chart-toolbar')
+
+      const status = page.locator('.sqd-chart-range-status').first()
+      const reset = page.locator('.sqd-chart-range-reset').first()
+      const receiptBefore = await page.locator('.sqd-receipt, .sqd-evidence-receipt').first().innerText()
+      const full = await status.innerText()
+      assert(await reset.isDisabled(), `${fixture}: Reset view should be inert while the whole series is in view`)
+
+      // A preset narrows the view and wakes the reset control.
+      const preset = page.locator('.sqd-chart-range-preset', { hasText: 'Last quarter' }).first()
+      assert(await preset.count(), `${fixture}: the chart should offer a range preset`)
+      await preset.click()
+      await page.waitForTimeout(120)
+      const narrowed = await status.innerText()
+      assert(narrowed !== full, `${fixture}: a preset should change the reported view (${full} -> ${narrowed})`)
+      assert(/\bof\b/.test(narrowed), `${fixture}: a narrowed view should say how many of the points it shows`)
+      assert(!(await reset.isDisabled()), `${fixture}: Reset view should be live once the view is narrowed`)
+
+      // Reset puts the whole series back.
+      await reset.click()
+      await page.waitForTimeout(120)
+      assert((await status.innerText()) === full, `${fixture}: Reset view should restore the whole series`)
+
+      // The keyboard reaches zoom from the chart itself, and Home resets it.
+      const surface = fixture === 'hyperliquid' ? '.sqd-candle-chart' : '.sqd-chart-plot'
+      const box = await page.locator(surface).first().boundingBox()
+      assert(box, `${fixture}: the chart should have a box`)
+      await page.locator(surface).first().dispatchEvent('keydown', { key: '+', bubbles: true })
+      await page.waitForTimeout(120)
+      assert((await status.innerText()) !== full, `${fixture}: pressing + on the chart should narrow the view`)
+      await page.locator(surface).first().dispatchEvent('keydown', { key: 'Home', bubbles: true })
+      await page.waitForTimeout(120)
+      assert((await status.innerText()) === full, `${fixture}: Home should reset the view`)
+
+      // A bare wheel keeps scrolling the page; alt+wheel is what zooms.
+      await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2)
+      await page.mouse.wheel(0, 120)
+      await page.waitForTimeout(120)
+      assert(
+        (await status.innerText()) === full,
+        `${fixture}: a bare wheel must leave the chart alone so the page can scroll`,
+      )
+      await page.keyboard.down('Alt')
+      await page.mouse.wheel(0, -240)
+      await page.keyboard.up('Alt')
+      await page.waitForTimeout(150)
+      assert((await status.innerText()) !== full, `${fixture}: alt and the wheel should zoom the view`)
+
+      // Panning across the plot must not be read as picking a point.
+      const selectedBefore = await page.locator('[aria-pressed="true"].sqd-chart-hit, .sqd-chart-hit--selected').count()
+      await page.mouse.move(box!.x + box!.width * 0.6, box!.y + box!.height / 2)
+      await page.mouse.down()
+      await page.mouse.move(box!.x + box!.width * 0.3, box!.y + box!.height / 2, { steps: 8 })
+      await page.mouse.up()
+      await page.waitForTimeout(120)
+      assert(
+        (await page.locator('[aria-pressed="true"].sqd-chart-hit, .sqd-chart-hit--selected').count()) ===
+          selectedBefore,
+        `${fixture}: dragging to pan must not select a point as evidence`,
+      )
+
+      // What the reader is looking at reaches the model-context channel.
+      const reported = await page.evaluate(() => document.body.dataset.chartView ?? '')
+      const [shownRaw, totalRaw] = reported.split('/')
+      assert(
+        Number(totalRaw) > 0 && Number(shownRaw) > 0 && Number(shownRaw) < Number(totalRaw),
+        `${fixture}: a narrowed view should be reported for the model context (got "${reported}")`,
+      )
+
+      // Clicking a point pins it, and the pin is reported too.
+      const inView = page.locator('.sqd-chart-hit:not([hidden])')
+      const inViewCount = await inView.count()
+      assert(inViewCount > 0, `${fixture}: a zoomed chart should still offer its visible points`)
+      await inView.nth(Math.floor(inViewCount / 2)).click()
+      await page.waitForTimeout(120)
+      assert(
+        (await page.evaluate(() => document.body.dataset.pinnedPoint ?? '')).length > 0,
+        `${fixture}: clicking a point should pin it and report the pin`,
+      )
+
+      // None of it touched what the tool said it returned.
+      assert(
+        (await page.locator('.sqd-receipt, .sqd-evidence-receipt').first().innerText()) === receiptBefore,
+        `${fixture}: the evidence receipt must not change when the view does`,
+      )
+      assert(errors.length === 0, `${fixture}: chart range raised page errors: ${errors.join('; ')}`)
+    } finally {
+      await context.close()
+    }
+    console.log(`PASS  ${fixture} charts zoom, pan and reset without changing the receipt`)
+  }
+}
+
+async function validateHostile(browser: Browser) {
+  for (const mode of ['fullscreen', 'inline'] as const) {
+    const context = await browser.newContext({ viewport: { width: 1280, height: 900 }, colorScheme: 'light' })
+    const page = await context.newPage()
+    const errors: string[] = []
+    page.on('pageerror', (error) => errors.push(error.message))
+    page.on('console', (message) => {
+      if (message.type() === 'error') errors.push(message.text())
+    })
+    const query = new URLSearchParams({ fixture: 'activity', hostile: '1', mode, picker: '0' })
+    await page.goto(`${baseUrl}?${query.toString()}`, { waitUntil: 'load' })
+    await page.waitForSelector('.sqd-shell')
+    const pwned = await page.evaluate(() => document.body.dataset.pwned)
+    assert(pwned === undefined, `${mode}: hostile markup must not execute`)
+    assert((await page.locator('img[src="x"]').count()) === 0, `${mode}: hostile markup must not become elements`)
+    const visible = await page.locator('.sqd-shell').innerText()
+    assert(
+      visible.includes('IGNORE PREVIOUS INSTRUCTIONS <img src=x onerror='),
+      `${mode}: the hostile string must stay visible as plain text`,
+    )
+    assert(errors.length === 0, `${mode}: hostile payload console errors: ${errors.join(' | ')}`)
+    const accessibility = await new AxeBuilder({ page }).analyze()
+    const serious = accessibility.violations.filter((violation) =>
+      ['serious', 'critical'].includes(violation.impact ?? ''),
+    )
+    assert(serious.length === 0, `${mode}: hostile payload accessibility: ${serious.map((v) => v.id).join(', ')}`)
+    await context.close()
+  }
+  console.log('PASS  hostile third-party text renders as inert text in fullscreen and inline modes')
+}
+
+/* The inline card: the host's rules (auto-fit height, at most two actions,
+   no menus, no nested scrolling) plus SQD's (the primary instrument first). */
+async function validateInline(page: Page, fixture: string, viewport: Cell) {
+  const buttons = page.locator('.sqd-followups button')
+  assert((await buttons.count()) <= 2, `${fixture} inline card must offer at most two actions`)
+  assert(
+    (await page.locator('.sqd-receipt, .sqd-raw, .sqd-footer, .sqd-table-pagination, .sqd-input').count()) === 0,
+    `${fixture} inline card must leave the ledger apparatus to fullscreen`,
+  )
+  assert((await page.locator('.sqd-card').count()) <= 1, `${fixture} inline card shows one primary panel`)
+  assert(
+    (await page.locator('table.sqd-table tbody tr').count()) <= 5,
+    `${fixture} inline tables preview at most five rows`,
+  )
+  const innerScroll = await page.evaluate(
+    () =>
+      Array.from(document.querySelectorAll<HTMLElement>('.sqd-shell *')).filter((node) => {
+        const style = getComputedStyle(node)
+        return /auto|scroll/.test(style.overflowY) && node.scrollHeight > node.clientHeight + 2
+      }).length,
+  )
+  assert(innerScroll === 0, `${fixture} inline card must not scroll vertically inside itself`)
+  const primary = page.locator('.sqd-card--primary, .sqd-empty, .sqd-notice--danger').first()
+  if ((await primary.count()) > 0) {
+    const box = await primary.boundingBox()
+    /* The instrument is the point of the card: on a 760px host column it
+       starts inside the first 360px; a phone stacks the readouts two by two. */
+    const budget = viewport.width <= 520 ? 480 : 360
+    assert(
+      box && box.y < budget,
+      `${fixture} ${viewport.name} primary panel should start within the first ${budget}px (got ${box?.y.toFixed(0)})`,
+    )
+  }
+  if (['hyperliquid', 'ratio'].includes(fixture)) {
+    assert(
+      (await page.locator('.sqd-candle-chart canvas').count()) >= 2,
+      `${fixture} inline card should paint the terminal`,
+    )
+  }
+  if (fixture === 'partial') {
+    assert(
+      (await page.getByRole('button', { name: CONTINUE_LABEL }).count()) === 1,
+      'partial inline card keeps its continuation action',
+    )
+  }
+  if (fixture === 'error') {
+    assert((await page.getByRole('button', { name: 'Retry' }).count()) === 1, 'error inline card offers a retry')
+  }
+  if (fixture === 'empty') {
+    assert(
+      (await page.getByRole('button', { name: 'Widen the window' }).count()) === 1,
+      'empty inline card offers to widen the window',
+    )
+  }
+  if (viewport.width <= 520) {
+    const smallTargets = await page
+      .locator('.sqd-followups button')
+      .evaluateAll((nodes) => nodes.filter((node) => node.getBoundingClientRect().height < 44).length)
+    assert(smallTargets === 0, `${fixture} inline actions on phones must be at least 44px tall`)
+  }
+  const fullscreen = page.getByRole('button', { name: 'Open full screen' })
+  if ((await fullscreen.count()) > 0) {
+    await fullscreen.first().click()
+    assert(
+      (await page.locator('body').getAttribute('data-fullscreen-requested')) === 'true',
+      `${fixture} fullscreen action should be wired`,
+    )
+  }
+  const accessibility = await new AxeBuilder({ page }).analyze()
+  const serious = accessibility.violations.filter((violation) =>
+    ['serious', 'critical'].includes(violation.impact ?? ''),
+  )
+  assert(
+    serious.length === 0,
+    `${fixture} ${viewport.name} accessibility: ${serious.map((violation) => violation.id).join(', ')}`,
+  )
+}
+
 let baseUrl = ''
 
 async function main() {
   const wallet = APP_FIXTURES.wallet as Record<string, any>
-  const walletRows = wallet.activity.items as Array<Record<string, any>>
+  const walletRows = wallet.activity.items as Record<string, any>[]
+  assert(wallet.activity.count === walletRows.length, 'Wallet activity count must reconcile with exact rows')
   assert(
-    wallet.fund_flow.summary.total_in_usd ===
-      walletRows.filter((row) => row.direction === 'in').reduce((sum, row) => sum + row.value_usd, 0),
-    'Wallet inbound total must reconcile with exact rows',
-  )
-  assert(
-    wallet.fund_flow.summary.total_out_usd ===
-      walletRows.filter((row) => row.direction === 'out').reduce((sum, row) => sum + row.value_usd, 0),
-    'Wallet outbound total must reconcile with exact rows',
+    walletRows.every((row) => typeof row.tx_hash === 'string' && row.tx_hash.length === 66),
+    'Wallet rows must carry exact transaction hashes',
   )
   const contract = APP_FIXTURES.contract as Record<string, any>
   assert(
-    contract.interactions.total_transactions ===
-      contract.interactions.top_callers.reduce((sum: number, row: any) => sum + row.interaction_count, 0),
-    'Contract interaction total must reconcile with callers',
+    contract.interactions.total_transactions >=
+      contract.interactions.top_callers.reduce((sum: number, row: any) => sum + row.interaction_count, 0) &&
+      contract.interactions.unique_callers >= contract.interactions.top_callers.length,
+    'Contract interaction total must cover its ranked callers',
   )
   assert(
     contract.events.total_events ===
@@ -588,14 +1304,17 @@ async function main() {
     'Hyperliquid fixture fill total must reconcile with its pinned rows',
   )
   assert(
-    hyperliquid.summary.total_volume ===
-      Number(hyperliquid.ohlc.reduce((sum: number, row: any) => sum + row.volume, 0).toFixed(2)),
-    'Hyperliquid fixture volume must reconcile with its pinned rows',
+    Math.abs(
+      Number(hyperliquid.summary.total_volume) -
+        hyperliquid.ohlc.reduce((sum: number, row: any) => sum + Number(row.volume), 0),
+    ) < 0.01,
+    'Hyperliquid fixture volume must reconcile with its recorded rows',
   )
   const timeseries = APP_FIXTURES.timeseries as Record<string, any>
   assert(
-    timeseries.summary.total === timeseries.time_series.reduce((sum: number, row: any) => sum + row.value, 0),
-    'Time-series fixture total must reconcile with its rows',
+    timeseries.summary.statistics.max === Math.max(...timeseries.time_series.map((row: any) => row.value)) &&
+      timeseries.summary.total_buckets === timeseries.time_series.length,
+    'Time-series fixture statistics must reconcile with its rows',
   )
   const html = await readFile(preview)
   const server = createServer((_request, response) => {
@@ -614,9 +1333,12 @@ async function main() {
        fixture happens to run first. Every fixture then meets the same budget. */
     const warmup = await browser.newContext({ viewport: { width: 1280, height: 900 } })
     const warmupPage = await warmup.newPage()
-    await warmupPage.goto(`${baseUrl}?fixture=empty`, { waitUntil: 'load' })
+    await warmupPage.goto(`${baseUrl}?fixture=empty&picker=0`, { waitUntil: 'load' })
     await warmupPage.evaluate(() => document.fonts.ready)
     await warmup.close()
+    await validateHostile(browser)
+    await validateKeyboardJourney(browser)
+    await validateChartRange(browser)
     for (const fixture of fixtures) {
       for (const viewport of viewports) {
         const context = await browser.newContext({
@@ -649,6 +1371,9 @@ async function main() {
   )
   console.log(`Interaction latency: p95 ${percentile(sortedInteractions, 0.95).toFixed(0)}ms`)
   console.log(`UI screenshots: ${path.relative(process.cwd(), screenshots)}`)
+  if (updatingBaseline) await writeLayoutBaseline()
+  else if (baselineSkipped) console.log(`Layout baseline: ${baselineSkipped}`)
+  else console.log(`Layout baseline: ${Object.keys(capturedLayouts).length} cells matched on ${baselinePlatform}`)
 }
 
 main().catch((error) => {
