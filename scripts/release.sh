@@ -115,6 +115,34 @@ for (const [path, update] of versionedJson) {
 }
 "
 
+# Biome owns the formatting of these manifests and JSON.stringify above does
+# not match its style: it expanded a one-line array in the Codex manifest, which
+# passed review as a harmless reformat and then failed `npm run lint` on the
+# release commit itself, so the tagged build published no image. Format what was
+# just rewritten, while the release can still be fixed cheaply.
+if [[ -x node_modules/.bin/biome ]]; then
+  BIOME_TARGETS=()
+  for candidate in \
+    package.json \
+    server.json \
+    plugins/portal/.codex-plugin/plugin.json \
+    plugins/portal/.claude-plugin/plugin.json \
+    plugins/portal/.cursor-plugin/plugin.json \
+    plugins/portal/gemini-extension.json \
+    .claude-plugin/marketplace.json \
+    .cursor-plugin/marketplace.json; do
+    if [[ -f "$candidate" ]]; then
+      BIOME_TARGETS+=("$candidate")
+    fi
+  done
+  if [[ ${#BIOME_TARGETS[@]} -gt 0 ]]; then
+    node_modules/.bin/biome check --write "${BIOME_TARGETS[@]}" >/dev/null
+  fi
+else
+  echo "Warning: node_modules/.bin/biome is missing, so the rewritten manifests were not formatted."
+  echo "         Run 'npm ci && npm run lint' before pushing, or the release commit will fail its own lint."
+fi
+
 if [[ "$CHANGELOG_MODE" == "date" ]]; then
   node -e "
 const fs = require('fs');
