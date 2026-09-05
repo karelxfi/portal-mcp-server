@@ -552,7 +552,7 @@ function buildTimeSeriesAnswer(params: {
     ? `the newest ${formatDuration(params.observedSpanSeconds ?? 0)}`
     : durationLabel
   const coveragePrefix = params.windowNarrowedByFastMode
-    ? `mode=fast read ${spanLabel} of the requested ${durationLabel} window. `
+    ? `mode=fast read only ${spanLabel} of the requested ${durationLabel} window; mode=deep reads all of it. `
     : coverage < 0.9
       ? `Only ${formatDuration(params.observedSpanSeconds ?? 0)} of the requested window (${durationLabel}) had indexed block data. `
       : ''
