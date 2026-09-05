@@ -166,6 +166,10 @@ function checkPlaywrightImagePins() {
   const expected = `mcr.microsoft.com/playwright:v${locked}-noble`
   const sources = {
     '.github/workflows/ci.yml': readFileSync(path.resolve('.github/workflows/ci.yml'), 'utf8'),
+    /* The release tag builds the image from this workflow and it runs the same
+       layout baseline, so it needs the same environment. It was left on a bare
+       runner and failed the v0.8.5 tag on font width. */
+    '.github/workflows/docker-build.yml': readFileSync(path.resolve('.github/workflows/docker-build.yml'), 'utf8'),
     'package.json': readFileSync(path.resolve('package.json'), 'utf8'),
   }
   for (const [file, text] of Object.entries(sources)) {

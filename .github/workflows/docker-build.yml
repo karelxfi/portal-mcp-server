@@ -14,6 +14,12 @@ permissions: {}
 jobs:
   test:
     runs-on: ubuntu-latest
+    # The Explorer layout baseline is recorded in this image and measures text
+    # boxes to the pixel. Measuring it on a bare runner made every text box
+    # about 10% wider and failed a release tag on fonts rather than on markup,
+    # which is why the CI offline job already runs here. The tag is held
+    # against the locked playwright version by npm run test:workflow-pins.
+    container: mcr.microsoft.com/playwright:v1.62.1-noble
     timeout-minutes: 30
     permissions:
       contents: read
@@ -33,18 +39,8 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Resolve Playwright version
-        id: playwright
-        run: echo "version=$(node -p 'require("playwright/package.json").version')" >> "$GITHUB_OUTPUT"
-
-      - name: Cache Playwright browsers
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
-        with:
-          path: ~/.cache/ms-playwright
-          key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}
-
-      - name: Install Playwright browser
-        run: npx playwright install --with-deps chromium
+      # The image ships the matching Chromium already, so there is nothing to
+      # install or cache here.
 
       # A main push publishes an edge image from a green offline gate; a
       # release tag must pass the full matrix including the live suites.
