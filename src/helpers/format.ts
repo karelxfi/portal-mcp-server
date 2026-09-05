@@ -339,30 +339,36 @@ function makeCompletenessAwareAnswer(answer: string, payload: RecordLike): strin
     return answer
   }
 
+  const continuable = coverage?.continuation === 'cursor'
   const notice = collectPayloadNotices(payload).find((item) =>
-    /\b(partial|incomplete|coverage|analyzed\b.*\brequested|sample|truncated|shortened)\b/i.test(item),
+    /\b(partial|incomplete|coverage|analyzed\b.*\brequested|sample|truncated|shortened|searched only)\b/i.test(item),
   )
   const suffixes: string[] = []
-  if (coverage?.window_complete === false) {
-    if (!/\b(partial|incomplete|coverage|analyzed\b.*\brequested|only\b.*\brequested)\b/i.test(answer)) {
+  /* A page with a cursor is partial by design and the cursor is the remedy.
+     Naming the unread blocks as well told the caller the same thing twice
+     with two different instructions. The window suffix is for a result that
+     stopped short with nothing to continue from. */
+  if (coverage?.window_complete === false && !continuable) {
+    if (!/\b(partial|incomplete|coverage|analyzed\b.*\brequested|only\b.*\brequested|searched only)\b/i.test(answer)) {
       suffixes.push(`Partial window: ${notice ?? 'coverage metadata marks this window as partially analyzed.'}`)
     }
   }
 
   if (coverage?.result_complete === false) {
     if (
-      !/\b(preview|cursor|continue|more matching|older results|limited to|showing the best|bounded search)\b/i.test(
+      !/\b(preview|cursor|continue|more matching|older results|newer results|limited to|showing the best|bounded search)\b/i.test(
         answer,
       )
     ) {
-      // A result can be incomplete with nothing to continue from: a ranked
-      // list cut to `limit` has no cursor, and telling the caller to use one
-      // sends them after a field that is not in the response.
-      suffixes.push(
-        coverage.continuation === 'none'
-          ? 'Preview page: raise the limit or narrow the query for the remaining rows.'
-          : 'Preview page: continue with the cursor for remaining rows.',
-      )
+      if (continuable) {
+        suffixes.push('Preview page: continue with the cursor for remaining rows.')
+      } else if (coverage?.window_complete !== false) {
+        // A result can be incomplete with nothing to continue from: a ranked
+        // list cut to `limit` has no cursor, and telling the caller to use one
+        // sends them after a field that is not in the response. A window that
+        // stopped short is covered above; a bigger limit would not read it.
+        suffixes.push('Preview page: raise the limit or narrow the query for the remaining rows.')
+      }
     }
   }
 
@@ -387,6 +393,30 @@ function reconcileCoverageWithFreshness(coverage: unknown, freshness: unknown): 
   return {
     ...coverage,
     window_complete: false,
+  }
+}
+
+/*
+ * _pagination is the only party that knows whether a cursor exists, and
+ * _coverage.continuation is a claim about that cursor. Each tool used to make
+ * the claim on its own, and three of them said 'cursor' on pages that carried
+ * none, so a client following the contract stopped at a field that was not
+ * there. The claim is derived here from the cursor itself: a remaining-rows
+ * cursor makes the result incomplete and continuable, no cursor makes the
+ * continuation 'none'. A cursor into an adjacent window is not a continuation
+ * of this one and leaves the window's own completeness alone.
+ */
+function reconcileCoverageWithPagination(coverage: unknown, pagination: unknown): unknown {
+  if (!isRecord(coverage)) return coverage
+  if (typeof coverage.continuation !== 'string' && typeof coverage.result_complete !== 'boolean') return coverage
+  const paginationRecord = isRecord(pagination) ? pagination : undefined
+  const hasCursor = typeof paginationRecord?.next_cursor === 'string' && paginationRecord.next_cursor.length > 0
+  const remainingCursor = hasCursor && paginationRecord?.continuation_scope !== 'adjacent_window'
+  const resultComplete = remainingCursor ? false : coverage.result_complete !== false
+  return {
+    ...coverage,
+    result_complete: resultComplete,
+    continuation: !resultComplete && remainingCursor ? 'cursor' : 'none',
   }
 }
 
@@ -1385,9 +1415,9 @@ export function formatResult(data: unknown, message?: string, options?: FormatOp
     payloadRecord._pagination = options?.pagination ?? buildDefaultPagination()
     payloadRecord._ordering = options?.ordering ?? buildDefaultOrdering()
     payloadRecord._freshness = options?.freshness ?? buildDefaultFreshness()
-    payloadRecord._coverage = reconcileCoverageWithFreshness(
-      options?.coverage ?? buildDefaultCoverage(),
-      payloadRecord._freshness,
+    payloadRecord._coverage = reconcileCoverageWithPagination(
+      reconcileCoverageWithFreshness(options?.coverage ?? buildDefaultCoverage(), payloadRecord._freshness),
+      payloadRecord._pagination,
     )
     if (payloadRecord.gap_diagnostics !== undefined) {
       payloadRecord.gap_diagnostics = reconcileGapDiagnosticsWithFreshness(

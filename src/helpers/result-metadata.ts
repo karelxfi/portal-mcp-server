@@ -230,11 +230,15 @@ export function buildQueryCoverage<T>(params: {
 
   const returnedFromBlock = blockNumbers.length > 0 ? Math.min(...blockNumbers) : undefined
   const returnedToBlock = blockNumbers.length > 0 ? Math.max(...blockNumbers) : undefined
+  const windowComplete = params.windowComplete ?? true
 
   return {
     kind: 'block_window',
-    window_complete: params.windowComplete ?? true,
-    result_complete: !params.hasMore,
+    window_complete: windowComplete,
+    /* A page that left part of its window unread is not the complete result
+       for that window, whatever its row count. buildSectionCoverage already
+       says so; this builder claimed completeness from pagination alone. */
+    result_complete: !params.hasMore && windowComplete,
     continuation: params.hasMore ? (params.continuation ?? 'cursor') : 'none',
     window_from_block: params.windowFromBlock,
     window_to_block: params.windowToBlock,
@@ -332,11 +336,12 @@ export function buildAnalysisCoverage(params: {
 }): AnalysisCoverage {
   const sections = params.sections ?? {}
   const sectionSampled = Object.values(sections).some((section) => section.sampled)
+  const windowComplete =
+    params.analyzedFromBlock <= params.windowFromBlock && params.analyzedToBlock >= params.windowToBlock
   return {
     kind: 'analysis_window',
-    window_complete:
-      params.analyzedFromBlock <= params.windowFromBlock && params.analyzedToBlock >= params.windowToBlock,
-    result_complete: !(params.hasMore ?? false),
+    window_complete: windowComplete,
+    result_complete: !(params.hasMore ?? false) && windowComplete,
     continuation: params.hasMore ? 'cursor' : 'none',
     window_from_block: params.windowFromBlock,
     window_to_block: params.windowToBlock,

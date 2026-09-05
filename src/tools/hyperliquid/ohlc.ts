@@ -34,6 +34,7 @@ import {
 import { buildExecutionMetadata, buildToolDescription } from '../../helpers/tool-ux.js'
 import { buildChartPanel, buildMetricCard, buildPortalUi, buildTablePanel } from '../../helpers/ui-metadata.js'
 import { quoteUntrusted, untrustedLabel } from '../../helpers/untrusted-text.js'
+import { assertHyperliquidDataset, normalizeHyperliquidAddress } from './dataset-guard.js'
 import { visitHyperliquidFillBlocks } from './fill-stream.js'
 
 type OhlcDuration = '1h' | '6h' | '12h' | '24h' | '7d' | '30d'
@@ -243,6 +244,8 @@ export function registerHyperliquidOhlcTool(server: McpServer) {
         throw new Error('network is required unless you are continuing with cursor')
       }
       let dataset = effectiveDataset
+      assertHyperliquidDataset('portal_hyperliquid_get_ohlc', dataset, 'hyperliquidFills')
+      if (user !== undefined) normalizeHyperliquidAddress(user)
       if (paginationCursor && requestedDataset && requestedDataset !== paginationCursor.dataset) {
         throw new Error(
           'This cursor belongs to a different network. Reuse the same network or omit cursor to start a fresh candle window.',

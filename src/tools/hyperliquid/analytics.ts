@@ -25,6 +25,7 @@ import {
 } from '../../helpers/timeframe.js'
 import { buildExecutionMetadata, buildToolDescription } from '../../helpers/tool-ux.js'
 import { buildMetricCard, buildPortalUi, buildRankedBarsPanel, buildTablePanel } from '../../helpers/ui-metadata.js'
+import { assertHyperliquidDataset } from './dataset-guard.js'
 import { visitHyperliquidFillBlocks } from './fill-stream.js'
 
 // ============================================================================
@@ -610,6 +611,7 @@ export function registerHyperliquidAnalyticsTool(server: McpServer) {
         : undefined
       const requestedDataset = network ? await resolveDataset(network) : undefined
       let dataset = paginationCursor?.dataset ?? requestedDataset ?? 'hyperliquid-fills'
+      assertHyperliquidDataset('portal_hyperliquid_get_analytics', dataset, 'hyperliquidFills')
       if (paginationCursor && requestedDataset && paginationCursor.dataset !== requestedDataset) {
         throw new ActionableError(
           'This cursor belongs to a different dataset.',

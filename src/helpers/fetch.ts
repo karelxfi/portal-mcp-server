@@ -897,6 +897,18 @@ export async function portalFetchStreamRangeVisit(
   return processedRecords
 }
 
+/* Where a backward scan stopped. `exhausted` means every block of the
+   requested window was read. A scan that filled its page early, or ran into
+   maxChunks, leaves the blocks below scannedFromBlock unread, and a response
+   that calls such a window complete is describing blocks it never opened. */
+export interface RecentScanSummary {
+  scannedFromBlock: number
+  scannedToBlock: number
+  exhausted: boolean
+  chunksVisited: number
+  matchedItems: number
+}
+
 /**
  * Fetch recent matching records from the end of a range, chunking backward so
  * limit-based "recent" queries return the latest matches rather than the oldest
@@ -907,8 +919,20 @@ export async function portalFetchRecentRecords(
   body: unknown,
   options: PortalFetchRecentRecordsOptions,
 ): Promise<unknown[]> {
+  const result = await portalFetchRecentRecordsWithScan(url, body, options)
+  return result.records
+}
+
+/* The same fetch, with the scan summary a caller needs to say how much of
+   the window it actually read. A body without a block range streams the
+   whole range and has no scan to summarise. */
+export async function portalFetchRecentRecordsWithScan(
+  url: string,
+  body: unknown,
+  options: PortalFetchRecentRecordsOptions,
+): Promise<{ records: unknown[]; scan: RecentScanSummary | undefined }> {
   if (!body || typeof body !== 'object') {
-    return portalFetchStreamRange(url, body, options)
+    return { records: await portalFetchStreamRange(url, body, options), scan: undefined }
   }
 
   const typedBody = body as Record<string, unknown>
@@ -916,7 +940,7 @@ export async function portalFetchRecentRecords(
   const requestedTo = parseBlockNumber(typedBody.toBlock)
 
   if (requestedFrom === undefined || requestedTo === undefined || requestedFrom > requestedTo) {
-    return portalFetchStreamRange(url, body, options)
+    return { records: await portalFetchStreamRange(url, body, options), scan: undefined }
   }
 
   const chunkSize = Math.max(1, options.chunkSize)
@@ -926,6 +950,7 @@ export async function portalFetchRecentRecords(
   let matchedItems = 0
   let currentTo = requestedTo
   let chunksVisited = 0
+  let scannedFromBlock = requestedTo + 1
 
   while (currentTo >= requestedFrom && matchedItems < options.limit) {
     if (options.maxChunks !== undefined && chunksVisited >= options.maxChunks) {
@@ -965,6 +990,7 @@ export async function portalFetchRecentRecords(
       const outcome = outcomes[index]
       if (outcome.status === 'rejected') throw outcome.reason
       chunksVisited += 1
+      scannedFromBlock = batch[index].fromBlock
 
       if (outcome.value.length > 0) {
         recentRecords.unshift(...outcome.value)
@@ -982,5 +1008,14 @@ export async function portalFetchRecentRecords(
     currentTo = batch[batch.length - 1].fromBlock - 1
   }
 
-  return recentRecords
+  return {
+    records: recentRecords,
+    scan: {
+      scannedFromBlock,
+      scannedToBlock: requestedTo,
+      exhausted: scannedFromBlock <= requestedFrom,
+      chunksVisited,
+      matchedItems,
+    },
+  }
 }

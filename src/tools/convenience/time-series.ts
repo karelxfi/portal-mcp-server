@@ -89,6 +89,13 @@ const SUPPORTED_METRICS: Record<SupportedFamily, readonly TimeSeriesMetric[]> = 
   hyperliquid: ['volume', 'fill_count', 'unique_traders'],
 }
 
+/* The schema enum has to list every metric; which ones a chain family
+   computes is stated in the description so a client is not sent after
+   success_rate on an EVM network. */
+const METRIC_FAMILY_TEXT = (Object.entries(SUPPORTED_METRICS) as [string, readonly string[]][])
+  .map(([family, metrics]) => `${family}: ${metrics.join(', ')}`)
+  .join('; ')
+
 type TimeSeriesBlock = {
   number?: number
   timestamp?: number
@@ -176,7 +183,38 @@ export function assertSeriesWindowScannable(params: {
 }) {
   const blocks = Math.max(0, params.toBlock - params.fromBlock + 1)
   if (blocks <= MAX_SERIES_SCAN_BLOCKS) return
+  throw seriesWindowTooLargeError({ ...params, blocks, estimated: false })
+}
 
+/*
+ * The exact check needs the window's block numbers, and those cost timestamp
+ * lookups against the Portal: on Ethereum that was ten seconds spent deciding
+ * to refuse. A duration that is far over the bound by the chain's own block
+ * time is refused before any lookup. A borderline one waits for the exact
+ * count, because a block-time estimate is not a block count.
+ */
+export function assertSeriesDurationScannable(params: { dataset: string; chainType: string; duration: string }) {
+  let seconds: number
+  try {
+    seconds = parseTimeframeToSeconds(params.duration)
+  } catch {
+    return
+  }
+  const secondsPerBlock = estimateBlockTime(params.dataset, params.chainType)
+  if (!(secondsPerBlock > 0)) return
+  const blocks = Math.ceil(seconds / secondsPerBlock)
+  if (blocks <= MAX_SERIES_SCAN_BLOCKS * 1.5) return
+  throw seriesWindowTooLargeError({ ...params, blocks, estimated: true })
+}
+
+function seriesWindowTooLargeError(params: {
+  dataset: string
+  chainType: string
+  duration: string
+  blocks: number
+  estimated: boolean
+}): ActionableError {
+  const { blocks } = params
   const secondsPerBlock = estimateBlockTime(params.dataset, params.chainType)
   const affordableSeconds = MAX_SERIES_SCAN_BLOCKS * secondsPerBlock
   /* Suggest a real preset rather than a computed number nobody can type. */
@@ -194,8 +232,8 @@ export function assertSeriesWindowScannable(params: {
   ]
   const largest = presets.find(([, seconds]) => seconds <= affordableSeconds)
 
-  throw new ActionableError(
-    `A ${params.duration} window is ${blocks.toLocaleString()} blocks on ${params.dataset}, and portal_get_time_series reads every block in the window. It stops at ${MAX_SERIES_SCAN_BLOCKS.toLocaleString()} blocks so a call cannot outlast the client waiting for it.`,
+  return new ActionableError(
+    `A ${params.duration} window is ${params.estimated ? 'about ' : ''}${blocks.toLocaleString()} blocks on ${params.dataset}${params.estimated ? ' by its typical block time' : ''}, and portal_get_time_series reads every block in the window. It stops at ${MAX_SERIES_SCAN_BLOCKS.toLocaleString()} blocks so a call cannot outlast the client waiting for it.`,
     [
       largest
         ? `Ask for duration '${largest[0]}' or less on ${params.dataset}: about ${MAX_SERIES_SCAN_BLOCKS.toLocaleString()} blocks is roughly ${Math.floor(affordableSeconds / 3600)} hours here.`
@@ -207,6 +245,7 @@ export function assertSeriesWindowScannable(params: {
     {
       requested_duration: params.duration,
       requested_blocks: blocks,
+      ...(params.estimated ? { requested_blocks_estimated: true } : {}),
       max_scan_blocks: MAX_SERIES_SCAN_BLOCKS,
       seconds_per_block: secondsPerBlock,
       ...(largest ? { largest_supported_duration: largest[0] } : {}),
@@ -235,6 +274,7 @@ const timeSeriesCache = createQueryCache<{
   endTimestamp: number
   adaptiveChunkReduced: boolean
   effectiveFromBlock: number
+  fastNarrowed: boolean
 }>({
   ttl: TIME_SERIES_CACHE_TTL_MS,
   maxEntries: TIME_SERIES_CACHE_MAX_ENTRIES,
@@ -476,6 +516,9 @@ function buildTimeSeriesAnswer(params: {
   toBlock?: number
   observedSpanSeconds?: number
   unit?: string
+  /* mode=fast read a slice of the window on purpose; the missing hours were
+     not unindexed, they were not asked for. */
+  windowNarrowedByFastMode?: boolean
 }): string {
   const values = params.timeSeries
     .map((row) => {
@@ -505,14 +548,18 @@ function buildTimeSeriesAnswer(params: {
       ? params.observedSpanSeconds / parseTimeframeToSeconds(params.duration)
       : 1
   const durationLabel = describeTimeWindowInput(params.duration)
-  const coveragePrefix =
-    coverage < 0.9
+  const spanLabel = params.windowNarrowedByFastMode
+    ? `the newest ${formatDuration(params.observedSpanSeconds ?? 0)}`
+    : durationLabel
+  const coveragePrefix = params.windowNarrowedByFastMode
+    ? `mode=fast read ${spanLabel} of the requested ${durationLabel} window. `
+    : coverage < 0.9
       ? `Only ${formatDuration(params.observedSpanSeconds ?? 0)} of the requested window (${durationLabel}) had indexed block data. `
       : ''
 
   const firstSentence = isAdditiveMetric(params.metric)
-    ? `${coveragePrefix}~${formatMetricAmount(total, params.metric, { compact: true, unit: params.unit })} ${metricNoun} on ${network} over ${durationLabel} (${bucketCount} x ${params.interval} buckets, avg ${formatMetricAmount(avg, params.metric, { unit: params.unit })}/bucket).`
-    : `${coveragePrefix}${network} ${metricNoun} averaged ${formatMetricAmount(avg, params.metric, { unit: params.unit })} over ${durationLabel} (${bucketCount} x ${params.interval} buckets).`
+    ? `${coveragePrefix}~${formatMetricAmount(total, params.metric, { compact: true, unit: params.unit })} ${metricNoun} on ${network} over ${spanLabel} (${bucketCount} x ${params.interval} buckets, avg ${formatMetricAmount(avg, params.metric, { unit: params.unit })}/bucket).`
+    : `${coveragePrefix}${network} ${metricNoun} averaged ${formatMetricAmount(avg, params.metric, { unit: params.unit })} over ${spanLabel} (${bucketCount} x ${params.interval} buckets).`
 
   if (!Number.isFinite(peak.value) || peak.value <= 0 || avg <= 0) {
     return `${firstSentence}${blocks}`.trim()
@@ -764,14 +811,14 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
           'fill_count',
           'unique_traders',
         ])
-        .describe('Metric to aggregate over time'),
+        .describe(`Metric to aggregate over time. Per chain family: ${METRIC_FAMILY_TEXT}. Others are refused.`),
       interval: z.enum(['5m', '15m', '1h', '6h', '1d']).describe('Time bucket interval (5m, 15m, 1h, 6h, 1d)'),
       duration: z
         .string()
         .optional()
         .default(DEFAULT_TIME_SERIES_DURATION)
         .describe(
-          'Total time period to analyze. Defaults to "6h" for interactive use. How far back you can ask depends on the chain, not on the duration: this tool reads every block in the window and stops at 12,000 of them, so "24h" is fine on Bitcoin or Ethereum and refused on a 2-second chain like Base, where it is 43,200 blocks. A window over the bound is refused immediately and the error names a duration that fits. Accepts compact durations like "30m" or natural phrases like "past 30 minutes".',
+          'Total time period to analyze. Defaults to "6h" for interactive use. The bound is in blocks, not time: this tool reads every block in the window and stops at 12,000, so "24h" is fine on Bitcoin or Ethereum and refused on a 2-second chain like Base (43,200 blocks). A window over the bound is refused at once and the error names a duration that fits. Accepts compact durations like "30m" or natural phrases like "past 30 minutes".',
         ),
       address: z
         .string()
@@ -1250,6 +1297,9 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
       }
 
       if (group_by === 'contract') {
+        if (from_timestamp === undefined && to_timestamp === undefined) {
+          assertSeriesDurationScannable({ dataset, chainType, duration })
+        }
         const resolvedWindow = await resolveTimeframeOrBlocks({
           dataset,
           timeframe: from_timestamp === undefined && to_timestamp === undefined ? duration : undefined,
@@ -2346,6 +2396,9 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
         )
       }
 
+      if (from_timestamp === undefined && to_timestamp === undefined) {
+        assertSeriesDurationScannable({ dataset, chainType, duration })
+      }
       // Get block range using Portal's /timestamps/ API
       const resolvedWindow = await resolveTimeframeOrBlocks({
         dataset,
@@ -2580,8 +2633,20 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
           throw new Error('Could not extract timestamps from block data')
         }
 
-        const seriesStartTimestamp = endTimestamp - durationSeconds
-        const buckets = createBucketAccumulators(expectedBuckets, seriesStartTimestamp, intervalSeconds)
+        /* mode=fast reads the newest FAST_EVM_TIME_SERIES_BLOCK_CAP blocks of a
+           longer window on purpose. Bucketing that slice against the requested
+           duration produced empty buckets for hours the tool never read, and
+           the coverage check then failed the whole call. The slice is bucketed
+           over the span it covers and reported as an incomplete window. */
+        const fastNarrowed = effectiveFromBlock > requestedFromBlock
+        const seriesDurationSeconds = fastNarrowed
+          ? Math.max(intervalSeconds, endTimestamp - firstResultTimestamp)
+          : durationSeconds
+        const seriesBuckets = fastNarrowed
+          ? Math.max(1, Math.ceil(seriesDurationSeconds / intervalSeconds))
+          : expectedBuckets
+        const seriesStartTimestamp = endTimestamp - seriesDurationSeconds
+        const buckets = createBucketAccumulators(seriesBuckets, seriesStartTimestamp, intervalSeconds)
 
         results.forEach((block) => {
           const typedBlock = block as TimeSeriesBlock
@@ -2596,7 +2661,7 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
              last bucket. */
           const bucketIndex = Math.min(
             Math.floor((timestamp - seriesStartTimestamp) / intervalSeconds),
-            expectedBuckets - 1,
+            seriesBuckets - 1,
           )
           if (bucketIndex < 0) {
             return
@@ -2683,8 +2748,9 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
         const max = Math.max(...values)
         const filledBuckets = buckets.filter((bucket) => bucket.blocksInBucket > 0).length
         const observedSpanSeconds = Math.max(0, endTimestamp - firstResultTimestamp)
-        const observedCoveragePct = durationSeconds > 0 ? (observedSpanSeconds / durationSeconds) * 100 : 100
-        const hasCoverageGap = !address && observedCoveragePct < 80
+        const observedCoveragePct =
+          seriesDurationSeconds > 0 ? (observedSpanSeconds / seriesDurationSeconds) * 100 : 100
+        const hasCoverageGap = !address && !fastNarrowed && observedCoveragePct < 80
 
         const summary: Record<string, unknown> = {
           window_anchor: 'latest_block',
@@ -2694,9 +2760,9 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
           duration,
           mode,
           total_buckets: timeSeries.length,
-          expected_buckets: expectedBuckets,
+          expected_buckets: seriesBuckets,
           filled_buckets: filledBuckets,
-          empty_buckets: expectedBuckets - filledBuckets,
+          empty_buckets: seriesBuckets - filledBuckets,
           total_blocks: results.length,
           from_block: effectiveFromBlock,
           to_block: toBlock,
@@ -2729,16 +2795,17 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
             intervalSeconds,
             isFilled: (bucket) => bucket.blocks_in_bucket > 0,
             anchor: 'latest_block',
-            windowComplete: !hasCoverageGap,
+            windowComplete: !hasCoverageGap && !fastNarrowed,
             ...(firstResultTimestamp > 0 ? { firstObservedTimestamp: firstResultTimestamp } : {}),
             ...(endTimestamp > 0 ? { lastObservedTimestamp: endTimestamp } : {}),
           }),
           summary,
           filledBuckets,
-          expectedBuckets,
+          expectedBuckets: seriesBuckets,
           observedSpanSeconds,
           observedCoveragePct,
           hasCoverageGap,
+          fastNarrowed,
           firstResultTimestamp,
           endTimestamp,
           adaptiveChunkReduced,
@@ -2771,6 +2838,11 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
         ...(cachedSeries.adaptiveChunkReduced
           ? ['Chunk size was reduced automatically to keep Portal responses within MCP limits.']
           : []),
+        ...(cachedSeries.fastNarrowed
+          ? [
+              `mode=fast read only the newest ${FAST_EVM_TIME_SERIES_BLOCK_CAP.toLocaleString()} blocks (${formatDuration(cachedSeries.observedSpanSeconds)}) of the requested ${describeTimeWindowInput(duration)} window, so the window is incomplete; use mode=deep to read all of it.`,
+            ]
+          : []),
       ]
       const resultMessage = withWindowNotice(
         buildTimeSeriesAnswer({
@@ -2783,6 +2855,7 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
           toBlock,
           observedSpanSeconds: cachedSeries.observedSpanSeconds,
           unit: getMetricUnit(metric),
+          windowNarrowedByFastMode: cachedSeries.fastNarrowed,
         }),
         longWindowNotice,
       )
@@ -2830,7 +2903,8 @@ export function registerGetTimeSeriesDataTool(server: McpServer) {
             returnedBuckets: cachedSeries.timeSeries.length,
             filledBuckets: cachedSeries.filledBuckets,
             anchor: 'latest_block',
-            windowComplete: !cachedSeries.hasCoverageGap,
+            windowComplete: !cachedSeries.hasCoverageGap && !cachedSeries.fastNarrowed,
+            resultComplete: !cachedSeries.fastNarrowed,
           }),
           execution: buildExecutionMetadata({
             mode,

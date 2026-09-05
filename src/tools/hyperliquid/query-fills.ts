@@ -27,6 +27,7 @@ import {
 } from '../../helpers/timeframe.js'
 import { buildExecutionMetadata, buildToolDescription } from '../../helpers/tool-ux.js'
 import { buildMetricCard, buildPortalUi, buildTablePanel, buildTimelinePanel } from '../../helpers/ui-metadata.js'
+import { assertHyperliquidDataset, normalizeHyperliquidAddresses } from './dataset-guard.js'
 import { fetchRecentHyperliquidFillBlocks } from './fill-stream.js'
 
 // ============================================================================
@@ -262,6 +263,9 @@ export function registerQueryHyperliquidFillsTool(server: McpServer) {
         ? decodeRecentPageCursor<HyperliquidFillsRequest>(cursor, 'portal_hyperliquid_query_fills')
         : undefined
       let dataset = paginationCursor?.dataset ?? (network ? await resolveDataset(network) : 'hyperliquid-fills')
+      assertHyperliquidDataset('portal_hyperliquid_query_fills', dataset, 'hyperliquidFills')
+      const userFilter = normalizeHyperliquidAddresses(user)
+      const builderFilter = normalizeHyperliquidAddresses(builder)
       if (paginationCursor) {
         dataset = paginationCursor.dataset
         timeframe = paginationCursor.request.timeframe
@@ -322,10 +326,10 @@ export function registerQueryHyperliquidFillsTool(server: McpServer) {
 
       // Build fill filter
       const fillFilter: Record<string, unknown> = {}
-      if (user) fillFilter.user = user.map((u) => u.toLowerCase())
+      if (userFilter) fillFilter.user = userFilter
       if (coin) fillFilter.coin = coin
       if (dir) fillFilter.dir = dir
-      if (builder) fillFilter.builder = builder.map((b) => b.toLowerCase())
+      if (builderFilter) fillFilter.builder = builderFilter
       if (fee_token) fillFilter.feeToken = fee_token
       if (cloid) fillFilter.cloid = cloid
 
@@ -460,6 +464,7 @@ export function registerQueryHyperliquidFillsTool(server: McpServer) {
         items: page.pageItems,
         getBlockNumber,
         hasMore: page.hasMore,
+        windowComplete: recentFetch.exhausted,
       })
 
       const showFillPresentation = Array.isArray(formattedData)

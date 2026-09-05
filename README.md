@@ -107,7 +107,7 @@ Most tools return the same envelope in MCP `structuredContent` and in a compact 
 
 `investigation` is a compact evidence guide for agents: it identifies the primary result path, bounded window, useful pivot fields such as addresses or transaction hashes, follow-up filters, and limitations before a result is treated as complete. Successful material results also carry an `_evidence` receipt with canonical arguments, a deterministic digest, row reconciliation, source windows, and either exact or semantic replay semantics. Exact receipts pin their evidence window. Semantic receipts disclose that rerunning a moving relative window can return a newer snapshot.
 
-When a response uses estimated, partial, sampled, capped, or paginated data, the top-level answer and metadata disclose it. Safe pagination follow-ups include executable tool-call metadata with explicit cursor arguments; suggestions that cannot be reconstructed safely are marked non-executable.
+When a response uses estimated, partial, sampled, capped, or paginated data, the top-level answer and metadata disclose it. `_pagination.has_more` is true exactly when `next_cursor` is present, and `_coverage` states whether the requested window was read through (`window_complete`) and whether the response holds every matching row (`result_complete`). Safe pagination follow-ups include executable tool-call metadata with explicit cursor arguments; suggestions that cannot be reconstructed safely are marked non-executable.
 
 Chart-oriented tools also return chart and table descriptors so MCP clients or LLMs can render them without reverse-engineering the payload.
 

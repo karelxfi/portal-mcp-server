@@ -201,3 +201,36 @@ describe('section coverage never claims complete over missing data', () => {
     assert.deepEqual(coverage.failed_sections, ['transactions', 'token_transfers'])
   })
 })
+
+/*
+ * A scan that stopped short of its window is not the complete result for
+ * that window, whatever its row count says. Both builders claimed
+ * completeness from pagination alone.
+ */
+describe('an unread window is not a complete result', () => {
+  it('buildQueryCoverage marks a short scan incomplete even with no more rows', () => {
+    const coverage = buildQueryCoverage({
+      windowFromBlock: 0,
+      windowToBlock: 1000,
+      pageToBlock: 1000,
+      items: [{ block: 990 }],
+      getBlockNumber: (item) => item.block,
+      hasMore: false,
+      windowComplete: false,
+    })
+    assert.equal(coverage.window_complete, false)
+    assert.equal(coverage.result_complete, false)
+    assert.equal(coverage.continuation, 'none')
+  })
+
+  it('buildAnalysisCoverage does the same for a trimmed analysis', () => {
+    const coverage = buildAnalysisCoverage({
+      windowFromBlock: 1,
+      windowToBlock: 300,
+      analyzedFromBlock: 101,
+      analyzedToBlock: 300,
+    })
+    assert.equal(coverage.window_complete, false)
+    assert.equal(coverage.result_complete, false)
+  })
+})

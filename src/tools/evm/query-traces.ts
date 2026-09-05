@@ -18,10 +18,12 @@ import { formatResult } from '../../helpers/format.js'
 import { registerPortalTool } from '../../helpers/mcp-registration.js'
 import { normalizeEvmTraceResult, normalizeEvmTransactionResult } from '../../helpers/normalized-results.js'
 import {
+  buildCursorDirectionNotice,
   buildPaginationInfo,
   decodeRecentPageCursor,
   encodeRecentPageCursor,
   paginateAscendingItems,
+  paginateForwardItems,
 } from '../../helpers/pagination.js'
 import { type ResponseFormat, applyResponseFormat, resolveDefaultResponseFormat } from '../../helpers/response-modes.js'
 import {
@@ -534,8 +536,25 @@ export function registerQueryTracesTool(server: McpServer) {
             })
           : undefined
       } else {
-        pageItems = collected.slice(0, request.limit)
-        hasMore = collected.length > request.limit || scan.hasUnscannedBlocks
+        /* A forward scan pages by offset: the cursor says how many rows of the
+           window were already shown, and the next call re-scans from the window
+           start past them. An unscanned remainder is not "more rows" here; it
+           is reported through window_complete and the bounded-search notice,
+           because a cursor could not reach past the same cap. */
+        const page = paginateForwardItems(collected, request.limit, cursorSkip, endBlock)
+        pageItems = page.pageItems
+        hasMore = page.hasMore
+        nextCursor = page.nextBoundary
+          ? encodeRecentPageCursor<QueryTracesRequest>({
+              tool: TOOL_NAME,
+              dataset,
+              request,
+              window_from_block: resolvedFromBlock,
+              window_to_block: endBlock,
+              page_to_block: page.nextBoundary.page_to_block,
+              skip_inclusive_block: page.nextBoundary.skip_inclusive_block,
+            })
+          : undefined
       }
 
       const formattedData = applyResponseFormat(pageItems, effectiveResponseFormat, 'traces')
@@ -547,12 +566,7 @@ export function registerQueryTracesTool(server: McpServer) {
       }
       const boundedNotice = buildBoundedSearchNotice(scan, 'Trace scan')
       if (boundedNotice) notices.push(boundedNotice)
-      if (nextCursor) notices.push('Older results are available via _pagination.next_cursor.')
-      if (request.scan_order === 'earliest' && hasMore) {
-        notices.push(
-          'More matching traces exist after this page; narrow the window or filters, or scan with scan_order=latest for a continuation cursor.',
-        )
-      }
+      if (nextCursor) notices.push(buildCursorDirectionNotice(request.scan_order))
 
       const freshness = buildQueryFreshness({
         finality: request.finalized_only ? 'finalized' : 'latest',
@@ -568,9 +582,6 @@ export function registerQueryTracesTool(server: McpServer) {
         getBlockNumber,
         hasMore,
         windowComplete: !scan.hasUnscannedBlocks,
-        // The earliest-order path builds no cursor, so saying 'cursor' here
-        // would point a client at a continuation that does not exist.
-        ...(request.scan_order === 'earliest' ? { continuation: 'none' as const } : {}),
       })
       const subject = request.transaction_hash
         ? `traces of transaction ${request.transaction_hash}`
@@ -585,9 +596,7 @@ export function registerQueryTracesTool(server: McpServer) {
       return formatResult(formattedData, message, {
         toolName: TOOL_NAME,
         notices,
-        pagination: buildPaginationInfo(request.limit, pageItems.length, nextCursor, {
-          ...(request.scan_order === 'earliest' && hasMore ? { hasMoreWithoutCursor: true } : {}),
-        }),
+        pagination: buildPaginationInfo(request.limit, pageItems.length, nextCursor),
         ordering: buildChronologicalPageOrdering({
           sortedBy: 'block_number',
           tieBreakers: ['transactionIndex', 'traceAddress'],

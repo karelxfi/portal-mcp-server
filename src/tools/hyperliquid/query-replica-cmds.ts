@@ -3,7 +3,7 @@ import { z } from 'zod'
 
 import { resolveDataset, validateBlockRange } from '../../cache/datasets.js'
 import { PORTAL_URL } from '../../constants/index.js'
-import { portalFetchRecentRecords } from '../../helpers/fetch.js'
+import { portalFetchRecentRecordsWithScan } from '../../helpers/fetch.js'
 import { formatResult } from '../../helpers/format.js'
 import { registerPortalTool } from '../../helpers/mcp-registration.js'
 import { normalizeHyperliquidReplicaCmdResult } from '../../helpers/normalized-results.js'
@@ -20,6 +20,7 @@ import {
 } from '../../helpers/result-metadata.js'
 import { type TimestampInput, getTimestampWindowNotices, resolveTimeframeOrBlocks } from '../../helpers/timeframe.js'
 import { buildExecutionMetadata, buildToolDescription } from '../../helpers/tool-ux.js'
+import { assertHyperliquidDataset, normalizeHyperliquidAddresses } from './dataset-guard.js'
 
 // ============================================================================
 // Tool: Query Hyperliquid Replica Commands
@@ -135,6 +136,9 @@ export function registerQueryHyperliquidReplicaCmdsTool(server: McpServer) {
         ? decodeRecentPageCursor<HyperliquidReplicaRequest>(cursor, 'portal_debug_hyperliquid_query_replica_commands')
         : undefined
       let dataset = paginationCursor?.dataset ?? (network ? await resolveDataset(network) : 'hyperliquid-replica-cmds')
+      assertHyperliquidDataset('portal_debug_hyperliquid_query_replica_commands', dataset, 'hyperliquidReplicaCmds')
+      const userFilter = normalizeHyperliquidAddresses(user)
+      const vaultFilter = normalizeHyperliquidAddresses(vault_address)
       if (paginationCursor) {
         dataset = paginationCursor.dataset
         timeframe = paginationCursor.request.timeframe
@@ -183,8 +187,8 @@ export function registerQueryHyperliquidReplicaCmdsTool(server: McpServer) {
       // Build action filter
       const actionFilter: Record<string, unknown> = {}
       if (action_type) actionFilter.actionType = action_type
-      if (user) actionFilter.user = user.map((u) => u.toLowerCase())
-      if (vault_address) actionFilter.vaultAddress = vault_address.map((v) => v.toLowerCase())
+      if (userFilter) actionFilter.user = userFilter
+      if (vaultFilter) actionFilter.vaultAddress = vaultFilter
       if (status) actionFilter.status = status
 
       const query = {
@@ -208,15 +212,19 @@ export function registerQueryHyperliquidReplicaCmdsTool(server: McpServer) {
 
       const cursorSkip = paginationCursor?.skip_inclusive_block ?? 0
       const fetchLimit = limit + cursorSkip + 1
-      const results = await portalFetchRecentRecords(`${PORTAL_URL}/datasets/${dataset}/stream`, query, {
-        itemKeys: ['actions'],
-        limit: fetchLimit,
-        // Replica blocks are extremely dense. A small scan chunk prevents one
-        // upstream response from materializing tens of megabytes before the
-        // one-record page limit can stop the search.
-        chunkSize: 1,
-        maxBytes: 25 * 1024 * 1024,
-      })
+      const { records: results, scan: recentScan } = await portalFetchRecentRecordsWithScan(
+        `${PORTAL_URL}/datasets/${dataset}/stream`,
+        query,
+        {
+          itemKeys: ['actions'],
+          limit: fetchLimit,
+          // Replica blocks are extremely dense. A small scan chunk prevents one
+          // upstream response from materializing tens of megabytes before the
+          // one-record page limit can stop the search.
+          chunkSize: 1,
+          maxBytes: 25 * 1024 * 1024,
+        },
+      )
 
       const allActions = sortActions(
         results.flatMap((block: unknown) => {
@@ -281,6 +289,7 @@ export function registerQueryHyperliquidReplicaCmdsTool(server: McpServer) {
         items: page.pageItems,
         getBlockNumber,
         hasMore: page.hasMore,
+        windowComplete: recentScan?.exhausted ?? true,
       })
 
       return formatResult(

@@ -54,12 +54,16 @@ export async function fetchRecentHyperliquidFillBlocks({
   returnedBlocks: number
   returnedFills: number
   chunkSizeExpanded: boolean
+  /* Whether every block down to fromBlock was read. A page that filled early
+     leaves the blocks below the last chunk unread. */
+  exhausted: boolean
 }> {
   const blocks: HyperliquidFillBlock[] = []
   let chunksFetched = 0
   let returnedBlocks = 0
   let returnedFills = 0
   let chunkSizeExpanded = false
+  let scannedFromBlock = toBlock + 1
   let currentTo = toBlock
   let chunkSize = Math.max(1, Math.min(initialChunkSize, Math.max(1, toBlock - fromBlock + 1)))
 
@@ -82,6 +86,7 @@ export async function fetchRecentHyperliquidFillBlocks({
       },
     )) as HyperliquidFillBlock[]
     chunksFetched += 1
+    scannedFromBlock = chunkFrom
 
     if (chunk.length > 0) {
       blocks.unshift(...chunk)
@@ -119,6 +124,7 @@ export async function fetchRecentHyperliquidFillBlocks({
     returnedBlocks,
     returnedFills,
     chunkSizeExpanded,
+    exhausted: scannedFromBlock <= fromBlock,
   }
 }
 

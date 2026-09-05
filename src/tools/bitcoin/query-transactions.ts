@@ -5,7 +5,7 @@ import { resolveDataset, validateBlockRange } from '../../cache/datasets.js'
 import { PORTAL_URL } from '../../constants/index.js'
 import { detectChainType } from '../../helpers/chain.js'
 import { createUnsupportedChainError } from '../../helpers/errors.js'
-import { portalFetchRecentRecords, portalFetchStreamRange } from '../../helpers/fetch.js'
+import { portalFetchRecentRecordsWithScan, portalFetchStreamRange } from '../../helpers/fetch.js'
 import { buildBitcoinBlockFields, buildBitcoinTransactionFields } from '../../helpers/fields.js'
 import { formatResult } from '../../helpers/format.js'
 import { registerPortalTool } from '../../helpers/mcp-registration.js'
@@ -138,7 +138,9 @@ export function registerQueryBitcoinTransactionsTool(server: McpServer) {
         .max(25)
         .optional()
         .default(20)
-        .describe('Max transactions to return (default: 20, max: 25)'),
+        .describe(
+          'Max transactions to return (default: 20, max: 25). With include_inputs or include_outputs and response_format "full", a page near the maximum can exceed the 50,000-byte response budget; the response_too_large error then names the limit to retry with.',
+        ),
       cursor: z.string().optional().describe('Continuation cursor from a previous response'),
     },
     async ({
@@ -231,11 +233,15 @@ export function registerQueryBitcoinTransactionsTool(server: McpServer) {
 
       const cursorSkip = paginationCursor?.skip_inclusive_block ?? 0
       const fetchLimit = limit + cursorSkip + 1
-      const results = await portalFetchRecentRecords(`${PORTAL_URL}/datasets/${dataset}/stream`, query, {
-        itemKeys: ['transactions'],
-        limit: fetchLimit,
-        chunkSize: 20,
-      })
+      const { records: results, scan: recentScan } = await portalFetchRecentRecordsWithScan(
+        `${PORTAL_URL}/datasets/${dataset}/stream`,
+        query,
+        {
+          itemKeys: ['transactions'],
+          limit: fetchLimit,
+          chunkSize: 20,
+        },
+      )
 
       const allTxs = sortTransactions(
         results.flatMap((block: unknown) => {
@@ -425,6 +431,7 @@ export function registerQueryBitcoinTransactionsTool(server: McpServer) {
         items: page.pageItems,
         getBlockNumber,
         hasMore: page.hasMore,
+        windowComplete: recentScan?.exhausted ?? true,
       })
 
       const message =

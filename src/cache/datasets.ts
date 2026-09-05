@@ -216,6 +216,11 @@ const CHAIN_ALIASES: Record<string, string[]> = {
   avail: ['data-avail'],
 }
 
+/** The nicknames this server accepts for a dataset, on top of the Portal's own aliases. */
+export function getChainAliases(dataset: string): readonly string[] {
+  return CHAIN_ALIASES[dataset] ?? []
+}
+
 /**
  * Resolve a dataset name or alias to the canonical dataset name.
  *

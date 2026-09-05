@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
 import { ActionableError } from '../../helpers/errors.js'
-import { MAX_SERIES_SCAN_BLOCKS, assertSeriesWindowScannable } from './time-series.js'
+import { MAX_SERIES_SCAN_BLOCKS, assertSeriesDurationScannable, assertSeriesWindowScannable } from './time-series.js'
 
 /*
  * A release audit measured `duration: "7d"` on Base going four minutes without
@@ -75,5 +75,42 @@ describe('a series window that cannot be read is refused, not attempted', () => 
   it('lets a 24h Ethereum window through and stops a 24h Base one', () => {
     window('ethereum-mainnet', 'evm', 7_200, '24h')
     assert.throws(() => window('base-mainnet', 'evm', 43_200, '24h'), ActionableError)
+  })
+})
+
+/*
+ * The exact check needs block numbers, and those cost two timestamp lookups
+ * against the Portal: an auditor measured ten to twelve seconds on Ethereum
+ * before a 7d window was refused. The estimate by block time refuses the
+ * hopeless case at once and leaves a borderline one to the exact count.
+ */
+describe('assertSeriesDurationScannable', () => {
+  it('refuses a window far over the bound before any lookup, and says the count is an estimate', () => {
+    assert.throws(
+      () => assertSeriesDurationScannable({ dataset: 'base-mainnet', chainType: 'evm', duration: '7d' }),
+      (error: any) =>
+        error instanceof ActionableError &&
+        /about 302,400 blocks on base-mainnet by its typical block time/.test(error.message) &&
+        error.context?.requested_blocks_estimated === true,
+    )
+  })
+
+  it('leaves a window under the bound, and a borderline one, to the exact check', () => {
+    assert.doesNotThrow(() =>
+      assertSeriesDurationScannable({ dataset: 'ethereum-mainnet', chainType: 'evm', duration: '24h' }),
+    )
+    assert.doesNotThrow(() =>
+      assertSeriesDurationScannable({ dataset: 'bitcoin-mainnet', chainType: 'bitcoin', duration: '30d' }),
+    )
+    // 16,200 blocks by estimate: over the bound, but under the margin the estimate is trusted for.
+    assert.doesNotThrow(() =>
+      assertSeriesDurationScannable({ dataset: 'ethereum-mainnet', chainType: 'evm', duration: '54h' }),
+    )
+  })
+
+  it('does not refuse what it cannot parse; the exact check will see it', () => {
+    assert.doesNotThrow(() =>
+      assertSeriesDurationScannable({ dataset: 'base-mainnet', chainType: 'evm', duration: 'whenever' }),
+    )
   })
 })

@@ -18,7 +18,7 @@ import {
 } from '../../helpers/entity-resolution.js'
 import { createUnsupportedChainError } from '../../helpers/errors.js'
 import { resolveMethodSighashes } from '../../helpers/evm-aliases.js'
-import { portalFetchRecentRecords, portalFetchStreamRange } from '../../helpers/fetch.js'
+import { portalFetchRecentRecordsWithScan, portalFetchStreamRange } from '../../helpers/fetch.js'
 import { getTransactionFields } from '../../helpers/field-presets.js'
 import {
   buildEvmLogFields,
@@ -30,6 +30,7 @@ import { formatResult, formatTimestamp, formatTransactionFields } from '../../he
 import { registerPortalTool } from '../../helpers/mcp-registration.js'
 import { normalizeEvmTransactionResult } from '../../helpers/normalized-results.js'
 import {
+  buildCursorDirectionNotice,
   buildPaginationInfo,
   decodeRecentPageCursor,
   encodeRecentPageCursor,
@@ -1041,13 +1042,15 @@ export function registerQueryTransactionsTool(server: McpServer) {
           )
       const portalUrl = `${PORTAL_URL}/datasets/${dataset}/stream`
       const scanPath = effectiveScanOrder === 'earliest' || hasClientFilters
-      const results = scanPath
-        ? []
-        : await portalFetchRecentRecords(portalUrl, query, {
+      const recentFetch = scanPath
+        ? undefined
+        : await portalFetchRecentRecordsWithScan(portalUrl, query, {
             itemKeys: ['transactions'],
             limit: fetchLimit,
             chunkSize: adaptiveChunkSize,
           })
+      const results = recentFetch?.records ?? []
+      const recentScan = recentFetch?.scan
 
       const scanResult = scanPath
         ? await fetchTransactionsByScanOrder({
@@ -1192,7 +1195,7 @@ export function registerQueryTransactionsTool(server: McpServer) {
             aggregate_metric: effectiveAggregateMetric,
             scanned_transactions: scanResult?.candidateCount ?? allTxs.length,
             scanned_blocks: scanResult?.scannedBlocks,
-            window_complete: scanResult ? !scanResult.hasUnscannedBlocks : true,
+            window_complete: scanResult ? !scanResult.hasUnscannedBlocks : (recentScan?.exhausted ?? true),
             candidate_limit_reached: scanResult?.candidateLimitReached ?? false,
           },
           tables: [
@@ -1262,7 +1265,7 @@ export function registerQueryTransactionsTool(server: McpServer) {
           items: scanResult?.candidates ?? allTxs,
           getBlockNumber,
           hasMore: false,
-          windowComplete: scanResult ? !scanResult.hasUnscannedBlocks : true,
+          windowComplete: scanResult ? !scanResult.hasUnscannedBlocks : (recentScan?.exhausted ?? true),
         })
 
         return formatResult(
@@ -1318,7 +1321,7 @@ export function registerQueryTransactionsTool(server: McpServer) {
       // Apply response format (summary/compact/full)
       const formattedData = applyResponseFormat(page.pageItems, effectiveResponseFormat, 'transactions')
       if (nextCursor) {
-        notices.push('Older results are available via _pagination.next_cursor.')
+        notices.push(buildCursorDirectionNotice(effectiveScanOrder))
       }
       if (scanResult && page.hasMore) {
         notices.push(
@@ -1340,12 +1343,12 @@ export function registerQueryTransactionsTool(server: McpServer) {
         items: page.pageItems,
         getBlockNumber,
         hasMore: page.hasMore,
-        windowComplete: scanResult ? !scanResult.hasUnscannedBlocks : true,
+        windowComplete: scanResult ? !scanResult.hasUnscannedBlocks : (recentScan?.exhausted ?? true),
       })
 
       const message =
         effectiveResponseFormat === 'summary'
-          ? `Transaction summary for ${page.pageItems.length} transactions${page.hasMore ? ' (latest preview page)' : ''}`
+          ? `Transaction summary for ${page.pageItems.length} transactions${page.hasMore ? ' (preview page)' : ''}`
           : scanResult
             ? `Retrieved ${page.pageItems.length} transactions by scanning ${effectiveScanOrder === 'earliest' ? 'forward' : 'backward'} from the ${effectiveScanOrder === 'earliest' ? 'start' : 'end'} of the window${effectiveOrderBy !== 'chronological' ? ` and ranking by ${effectiveOrderBy}` : ''}`
             : `Retrieved ${page.pageItems.length} transactions${page.hasMore ? ` from the most recent matching blocks (preview page limited to ${limit})` : ''}`
@@ -1357,6 +1360,9 @@ export function registerQueryTransactionsTool(server: McpServer) {
         ordering: buildChronologicalPageOrdering({
           sortedBy: 'block_number',
           tieBreakers: ['transactionIndex', 'hash'],
+          ...(effectiveScanOrder === 'earliest'
+            ? { windowFocus: 'oldest_matches' as const, continuation: 'newer' as const }
+            : {}),
         }),
         freshness,
         coverage,

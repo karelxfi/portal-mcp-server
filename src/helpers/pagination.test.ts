@@ -1,7 +1,14 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
-import { buildPaginationInfo, decodeCursor, encodeCursor, paginateAscendingItems } from './pagination.js'
+import {
+  buildCursorDirectionNotice,
+  buildPaginationInfo,
+  decodeCursor,
+  encodeCursor,
+  paginateAscendingItems,
+  paginateForwardItems,
+} from './pagination.js'
 
 const basePayload = {
   tool: 'portal_evm_query_logs',
@@ -68,5 +75,38 @@ describe('paginateAscendingItems', () => {
     const info = buildPaginationInfo(10, 10, 'cursor', { continuationScope: 'adjacent_window' })
     assert.equal(info.has_more, true)
     assert.equal(info.continuation_scope, 'adjacent_window')
+  })
+})
+
+describe('paginateForwardItems', () => {
+  const rows = [1, 2, 3, 4, 5, 6, 7]
+
+  it('pages an oldest-first scan by offset and points the cursor at the window end', () => {
+    const first = paginateForwardItems(rows, 3, 0, 900)
+    assert.deepEqual(first.pageItems, [1, 2, 3])
+    assert.equal(first.hasMore, true)
+    assert.deepEqual(first.nextBoundary, { page_to_block: 900, skip_inclusive_block: 3 })
+
+    const second = paginateForwardItems(rows, 3, 3, 900)
+    assert.deepEqual(second.pageItems, [4, 5, 6])
+    assert.deepEqual(second.nextBoundary, { page_to_block: 900, skip_inclusive_block: 6 })
+
+    const third = paginateForwardItems(rows, 3, 6, 900)
+    assert.deepEqual(third.pageItems, [7])
+    assert.equal(third.hasMore, false)
+    assert.equal(third.nextBoundary, undefined)
+  })
+
+  it('has no more rows when the collection ends exactly at the page', () => {
+    const page = paginateForwardItems(rows.slice(0, 3), 3, 0, 900)
+    assert.equal(page.hasMore, false)
+    assert.equal(page.nextBoundary, undefined)
+  })
+})
+
+describe('buildCursorDirectionNotice', () => {
+  it('says which way the cursor leads', () => {
+    assert.match(buildCursorDirectionNotice('earliest'), /^Newer results/)
+    assert.match(buildCursorDirectionNotice('latest'), /^Older results/)
   })
 })

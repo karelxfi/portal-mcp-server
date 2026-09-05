@@ -5,7 +5,7 @@ import { resolveDataset, validateBlockRange } from '../../cache/datasets.js'
 import { PORTAL_URL } from '../../constants/index.js'
 import { detectChainType } from '../../helpers/chain.js'
 import { ActionableError, createUnsupportedChainError } from '../../helpers/errors.js'
-import { portalFetchRecentRecords } from '../../helpers/fetch.js'
+import { portalFetchRecentRecordsWithScan } from '../../helpers/fetch.js'
 import {
   buildSolanaBalanceFields,
   buildSolanaInstructionFields,
@@ -348,11 +348,15 @@ export function registerQuerySolanaTransactionsTool(server: McpServer) {
 
       const cursorSkip = paginationCursor?.skip_inclusive_block ?? 0
       const fetchLimit = limit + cursorSkip + 1
-      const results = await portalFetchRecentRecords(`${PORTAL_URL}/datasets/${dataset}/stream`, query, {
-        itemKeys: ['transactions'],
-        limit: fetchLimit,
-        chunkSize: hasFilters ? 500 : Math.max(1, Math.min(10, limit)),
-      })
+      const { records: results, scan: recentScan } = await portalFetchRecentRecordsWithScan(
+        `${PORTAL_URL}/datasets/${dataset}/stream`,
+        query,
+        {
+          itemKeys: ['transactions'],
+          limit: fetchLimit,
+          chunkSize: hasFilters ? 500 : Math.max(1, Math.min(10, limit)),
+        },
+      )
 
       const allTxs = sortTransactions(
         results.flatMap((block: unknown) => {
@@ -451,6 +455,7 @@ export function registerQuerySolanaTransactionsTool(server: McpServer) {
         items: page.pageItems,
         getBlockNumber,
         hasMore: page.hasMore,
+        windowComplete: recentScan?.exhausted ?? true,
       })
 
       return formatResult(

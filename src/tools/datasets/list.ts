@@ -1,7 +1,7 @@
 import type { McpServer } from '@modelcontextprotocol/server'
 import { z } from 'zod'
 
-import { getDatasets } from '../../cache/datasets.js'
+import { getChainAliases, getDatasets } from '../../cache/datasets.js'
 import { detectChainType } from '../../helpers/chain.js'
 import { formatResult } from '../../helpers/format.js'
 import { registerPortalTool } from '../../helpers/mcp-registration.js'
@@ -116,6 +116,8 @@ export function registerListDatasetsTool(server: McpServer) {
         datasets = datasets.filter((d) => {
           if (d.dataset.toLowerCase().includes(lower)) return true
           if (d.aliases.some((a) => a.toLowerCase().includes(lower))) return true
+          // The resolver accepts these nicknames, so the catalog must find them too.
+          if (getChainAliases(d.dataset).some((a) => a === lower || a.includes(lower))) return true
           if (d.metadata?.display_name?.toLowerCase().includes(lower)) return true
           // Search by chain ID
           if (d.metadata?.evm?.chain_id?.toString() === lower) return true
@@ -151,9 +153,10 @@ export function registerListDatasetsTool(server: McpServer) {
           // This catches datasets like "arbitrum-one", "arbitrum-nova", etc.
           inferredType = 'mainnet'
         }
+        const aliases = [...new Set([...d.aliases, ...getChainAliases(d.dataset)])]
         return {
           network: d.dataset,
-          aliases: d.aliases.length > 0 ? d.aliases : undefined,
+          aliases: aliases.length > 0 ? aliases : undefined,
           vm: kind === 'hyperliquidFills' || kind === 'hyperliquidReplicaCmds' ? 'hyperliquid' : kind,
           type: inferredType,
           chain_id: d.metadata?.evm?.chain_id,

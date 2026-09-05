@@ -5,7 +5,7 @@ import { resolveDataset, validateBlockRange } from '../../cache/datasets.js'
 import { PORTAL_URL } from '../../constants/index.js'
 import { detectChainType } from '../../helpers/chain.js'
 import { createUnsupportedChainError } from '../../helpers/errors.js'
-import { portalFetchRecentRecords } from '../../helpers/fetch.js'
+import { portalFetchRecentRecordsWithScan } from '../../helpers/fetch.js'
 import {
   buildSubstrateBlockFields,
   buildSubstrateCallFields,
@@ -259,11 +259,15 @@ export function registerSubstrateQueryCallsTool(server: McpServer) {
 
       const cursorSkip = paginationCursor?.skip_inclusive_block ?? 0
       const fetchLimit = limit + cursorSkip + 1
-      const blocks = await portalFetchRecentRecords(`${PORTAL_URL}/datasets/${dataset}/stream`, query, {
-        itemKeys: ['calls'],
-        limit: fetchLimit,
-        chunkSize: 200,
-      })
+      const { records: blocks, scan: recentScan } = await portalFetchRecentRecordsWithScan(
+        `${PORTAL_URL}/datasets/${dataset}/stream`,
+        query,
+        {
+          itemKeys: ['calls'],
+          limit: fetchLimit,
+          chunkSize: 200,
+        },
+      )
 
       const allCalls = sortCalls(
         flattenSubstrateCalls(blocks, {
@@ -334,6 +338,7 @@ export function registerSubstrateQueryCallsTool(server: McpServer) {
         items: page.pageItems,
         getBlockNumber,
         hasMore: page.hasMore,
+        windowComplete: recentScan?.exhausted ?? true,
       })
 
       const windowLabel = buildSubstrateWindowLabel({

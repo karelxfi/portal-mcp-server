@@ -5,7 +5,7 @@ import { getBlockHead, resolveDataset } from '../../cache/datasets.js'
 import { PORTAL_URL } from '../../constants/index.js'
 import { detectChainType, isL2Chain } from '../../helpers/chain.js'
 import { ActionableError, createUnsupportedChainError } from '../../helpers/errors.js'
-import { portalFetchRecentRecords } from '../../helpers/fetch.js'
+import { portalFetchRecentRecordsWithScan } from '../../helpers/fetch.js'
 import { TRANSACTION_FIELD_PRESETS } from '../../helpers/field-presets.js'
 import { formatResult, formatTimestamp, formatTransactionFields } from '../../helpers/format.js'
 import { registerPortalTool } from '../../helpers/mcp-registration.js'
@@ -504,11 +504,15 @@ export function registerGetRecentTransactionsTool(server: McpServer) {
         transactions: txFilters.length > 0 ? txFilters : [{}],
       }
 
-      const results = await portalFetchRecentRecords(`${PORTAL_URL}/datasets/${dataset}/stream`, query, {
-        itemKeys: ['transactions'],
-        limit: fetchLimit,
-        chunkSize: hasFilters ? 500 : 100,
-      })
+      const { records: results, scan: recentScan } = await portalFetchRecentRecordsWithScan(
+        `${PORTAL_URL}/datasets/${dataset}/stream`,
+        query,
+        {
+          itemKeys: ['transactions'],
+          limit: fetchLimit,
+          chunkSize: hasFilters ? 500 : 100,
+        },
+      )
 
       const allTxs = sortRecentTransactions(
         flattenTransactionsWithBlockContext(results, (tx) =>
@@ -572,6 +576,7 @@ export function registerGetRecentTransactionsTool(server: McpServer) {
             items: page.pageItems,
             getBlockNumber,
             hasMore: page.hasMore,
+            windowComplete: recentScan?.exhausted ?? true,
           }),
           execution: buildExecutionMetadata({
             limit,
@@ -652,11 +657,15 @@ async function queryBitcoinRecent(params: {
     transactions: [{}],
   }
 
-  const results = await portalFetchRecentRecords(`${PORTAL_URL}/datasets/${dataset}/stream`, query, {
-    itemKeys: ['transactions'],
-    limit: fetchLimit,
-    chunkSize: 20,
-  })
+  const { records: results, scan: recentScan } = await portalFetchRecentRecordsWithScan(
+    `${PORTAL_URL}/datasets/${dataset}/stream`,
+    query,
+    {
+      itemKeys: ['transactions'],
+      limit: fetchLimit,
+      chunkSize: 20,
+    },
+  )
 
   const allTxs = sortRecentTransactions(
     flattenTransactionsWithBlockContext(results, (tx) =>
@@ -723,6 +732,7 @@ async function queryBitcoinRecent(params: {
         items: page.pageItems,
         getBlockNumber,
         hasMore: page.hasMore,
+        windowComplete: recentScan?.exhausted ?? true,
       }),
       execution: buildExecutionMetadata({
         limit,
@@ -807,11 +817,15 @@ async function querySolanaRecent(params: {
     transactions: hasFilters ? txFilters : [{}],
   }
 
-  const results = await portalFetchRecentRecords(`${PORTAL_URL}/datasets/${dataset}/stream`, query, {
-    itemKeys: ['transactions'],
-    limit: fetchLimit,
-    chunkSize: hasFilters ? 500 : 100,
-  })
+  const { records: results, scan: recentScan } = await portalFetchRecentRecordsWithScan(
+    `${PORTAL_URL}/datasets/${dataset}/stream`,
+    query,
+    {
+      itemKeys: ['transactions'],
+      limit: fetchLimit,
+      chunkSize: hasFilters ? 500 : 100,
+    },
+  )
 
   const allTxs = sortRecentTransactions(
     flattenTransactionsWithBlockContext(results, (tx) =>
@@ -878,6 +892,7 @@ async function querySolanaRecent(params: {
         items: page.pageItems,
         getBlockNumber,
         hasMore: page.hasMore,
+        windowComplete: recentScan?.exhausted ?? true,
       }),
       execution: buildExecutionMetadata({
         limit,
@@ -960,6 +975,7 @@ async function queryHyperliquidRecent(params: {
     maxBytes: 100 * 1024 * 1024,
   })
   const results = recentFetch.blocks
+  const recentScan = { exhausted: recentFetch.exhausted }
 
   const allFills = sortRecentTransactions(
     results.flatMap((block: unknown) => {
@@ -1035,6 +1051,7 @@ async function queryHyperliquidRecent(params: {
         items: page.pageItems,
         getBlockNumber,
         hasMore: page.hasMore,
+        windowComplete: recentScan?.exhausted ?? true,
       }),
       execution: buildExecutionMetadata({
         limit,

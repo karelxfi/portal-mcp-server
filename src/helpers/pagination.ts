@@ -259,25 +259,27 @@ export function paginateAscendingItems<T>(
   }
 }
 
+/**
+ * has_more answers one question: can the next page be requested with
+ * next_cursor. It is derived from the cursor by construction. A response that
+ * knows more rows exist but cannot hand out a cursor for them says so in
+ * _coverage (result_complete false, continuation 'none') and its answer names
+ * the remedy. Setting has_more without a cursor produced pages that told the
+ * caller to page forward beside a continuation of 'none'.
+ */
 export function buildPaginationInfo(
   pageSize: number,
   returned: number,
   nextCursor?: string,
   options?: {
     continuationScope?: 'remaining_results' | 'adjacent_window'
-    /**
-     * Set when more rows exist that this response cannot hand out a cursor for.
-     * Without it has_more is derived from the cursor, which reads as "you have
-     * everything" on a page that is knowingly incomplete.
-     */
-    hasMoreWithoutCursor?: boolean
   },
 ): PaginationInfo {
   return {
     type: 'cursor',
     page_size: pageSize,
     returned,
-    has_more: Boolean(nextCursor) || options?.hasMoreWithoutCursor === true,
+    has_more: Boolean(nextCursor),
     ...(nextCursor ? { next_cursor: nextCursor } : {}),
     ...(nextCursor ? { continuation_scope: options?.continuationScope ?? 'remaining_results' } : {}),
   }
@@ -296,6 +298,43 @@ export function encodeRecentPageCursor<TRequest extends Record<string, unknown>>
   params: RecentPageCursor<TRequest>,
 ): string {
   return encodeCursor(params)
+}
+
+/**
+ * Page a forward (oldest-first) scan by offset. Such a scan collects the
+ * oldest rows of the window from its start, so its continuation cannot be a
+ * block boundary the way a backward scan's is: the next page is "skip what was
+ * already shown", and the cursor carries that count with the window end as its
+ * page_to_block. The follow-up call re-scans from the window start past the
+ * offset, which is what makes the cursor exact rather than a guess.
+ */
+export function paginateForwardItems<T>(
+  items: T[],
+  limit: number,
+  offset: number,
+  windowToBlock: number,
+): {
+  pageItems: T[]
+  hasMore: boolean
+  nextBoundary?: BlockBoundaryCursor
+} {
+  const skip = Math.max(0, Math.floor(offset))
+  const pageItems = items.slice(skip, skip + limit)
+  const hasMore = items.length > skip + limit
+  return {
+    pageItems,
+    hasMore,
+    ...(hasMore
+      ? { nextBoundary: { page_to_block: windowToBlock, skip_inclusive_block: skip + pageItems.length } }
+      : {}),
+  }
+}
+
+/** A backward scan's cursor leads to older rows; a forward scan's leads to newer ones. */
+export function buildCursorDirectionNotice(scanOrder: 'earliest' | 'latest'): string {
+  return scanOrder === 'earliest'
+    ? 'Newer results are available via _pagination.next_cursor.'
+    : 'Older results are available via _pagination.next_cursor.'
 }
 
 export function paginateOffsetItems<T>(

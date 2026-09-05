@@ -17,16 +17,18 @@ import {
   resolveTokenSymbolsForQuery,
 } from '../../helpers/entity-resolution.js'
 import { ActionableError, RequestCancelledError, createUnsupportedChainError } from '../../helpers/errors.js'
-import { portalFetchRecentRecords, portalFetchStreamRange } from '../../helpers/fetch.js'
+import { portalFetchRecentRecordsWithScan, portalFetchStreamRange } from '../../helpers/fetch.js'
 import { buildEvmLogFields } from '../../helpers/fields.js'
 import { formatResult, formatTimestamp, formatTokenValue } from '../../helpers/format.js'
 import { registerPortalTool } from '../../helpers/mcp-registration.js'
 import { normalizeErc20TransferResult } from '../../helpers/normalized-results.js'
 import {
+  buildCursorDirectionNotice,
   buildPaginationInfo,
   decodeRecentPageCursor,
   encodeRecentPageCursor,
   paginateAscendingItems,
+  paginateForwardItems,
 } from '../../helpers/pagination.js'
 import {
   buildChronologicalPageOrdering,
@@ -200,7 +202,7 @@ export function registerGetErc20TransfersTool(server: McpServer) {
     })
     records.push(...scan.items)
 
-    return { ...scan, records, hasMore: matchedLogs > limit }
+    return { ...scan, records }
   }
 
   registerPortalTool(
@@ -419,26 +421,39 @@ export function registerGetErc20TransfersTool(server: McpServer) {
               scanOrder: scan_order,
             })
           : undefined
-      const results = scanResult
-        ? scanResult.records
-        : await portalFetchRecentRecords(portalUrl, query, {
+      const recentFetch = scanResult
+        ? undefined
+        : await portalFetchRecentRecordsWithScan(portalUrl, query, {
             itemKeys: ['logs'],
             limit: fetchLimit,
             chunkSize: hasAddressFilters ? 500 : 100,
           })
+      const results = scanResult ? scanResult.records : (recentFetch?.records ?? [])
+      const recentScan = recentFetch?.scan
 
+      /* Decimals decide what a raw amount means: without them a USDC transfer
+         of 4,238.51 read as 0.000000000004 under an 18-decimal assumption. The
+         token list is consulted whenever there is a row to format, not only
+         when the caller asked for token info, and a token the list does not
+         know is left as raw units rather than formatted wrongly. */
       let tokenMetadataByAddress = new Map<string, { symbol?: string; name?: string; decimals?: number }>()
       let tokenMetadataLookup: TokenListLookupMetadata | undefined
       let tokenMetadataFetchFailed = false
-      if (tokenFilterAddresses || include_token_info) {
+      let tokenListUnavailable = false
+      const unknownDecimalTokens = new Set<string>()
+      if (results.length > 0 || tokenFilterAddresses || include_token_info) {
         try {
           const tokenMetadataResult = await getTokenMetadataMapForDatasetWithStatus(dataset)
           tokenMetadataByAddress = tokenMetadataResult.metadata
           tokenMetadataLookup = tokenMetadataResult.lookup
         } catch (error) {
           if (error instanceof RequestCancelledError) throw error
-          tokenMetadataFetchFailed = true
-          console.error('Failed to fetch token-list metadata:', error)
+          if (error instanceof ActionableError && /token[- ]list/i.test(error.message)) {
+            tokenListUnavailable = true
+          } else {
+            tokenMetadataFetchFailed = true
+            console.error('Failed to fetch token-list metadata:', error)
+          }
         }
       }
 
@@ -457,8 +472,9 @@ export function registerGetErc20TransfersTool(server: McpServer) {
           return (b.logs || []).map((log) => {
             const tokenAddress = log.address
             const tokenInfo = tokenMetadataByAddress.get(tokenAddress.toLowerCase())
-            const decimals = tokenInfo?.decimals ?? 18
-            const valueFormatted = formatTokenValue(log.data, decimals, tokenInfo?.symbol)
+            const decimals = tokenInfo?.decimals
+            if (decimals === undefined) unknownDecimalTokens.add(tokenAddress.toLowerCase())
+            const valueFormatted = formatTokenValue(log.data, decimals ?? 0, tokenInfo?.symbol)
 
             return {
               block_number: b.header?.number,
@@ -471,7 +487,10 @@ export function registerGetErc20TransfersTool(server: McpServer) {
               to: '0x' + (log.topics?.[2]?.slice(-40) || ''),
               value: log.data,
               value_decimal: valueFormatted.decimal,
-              value_formatted: valueFormatted.formatted,
+              value_formatted:
+                decimals === undefined
+                  ? `${valueFormatted.decimal} (raw units, token decimals unknown)`
+                  : valueFormatted.formatted,
             }
           })
         }) as Erc20TransferItem[],
@@ -481,12 +500,11 @@ export function registerGetErc20TransfersTool(server: McpServer) {
       // oldest rows in the window, so keeping its tail answered "the first
       // transfers" with the newest rows of the scanned region: asking for fewer
       // rows returned later ones.
+      /* A forward scan pages by offset: the cursor records how many rows of
+         the window were already shown and the next call re-scans past them.
+         A backward scan pages by block boundary. */
       const page = scanResult
-        ? {
-            pageItems: allTransfers.slice(0, limit),
-            hasMore: allTransfers.length > limit,
-            nextBoundary: undefined,
-          }
+        ? paginateForwardItems(allTransfers, limit, cursorSkip, endBlock)
         : paginateAscendingItems(
             allTransfers,
             limit,
@@ -499,7 +517,7 @@ export function registerGetErc20TransfersTool(server: McpServer) {
               : undefined,
           )
       const nextCursor =
-        !scanResult && page.hasMore && page.nextBoundary
+        page.hasMore && page.nextBoundary
           ? encodeRecentPageCursor<Erc20Request>({
               tool: 'portal_evm_query_token_transfers',
               dataset,
@@ -545,12 +563,23 @@ export function registerGetErc20TransfersTool(server: McpServer) {
         ...buildTokenListLookupNotices(tokenMetadataLookup),
       ]
       if (tokenMetadataFetchFailed)
-        notices.push('Token-list metadata enrichment failed; raw values were formatted with 18 decimals as a fallback.')
-      if (nextCursor) notices.push('Older results are available via _pagination.next_cursor.')
-      if (scanResult && page.hasMore)
         notices.push(
-          `More matching transfers exist in the scanned ${scanResult.scannedFromBlock}-${scanResult.scannedToBlock} block slice; narrow filters or reduce limit pressure before expanding the window.`,
+          'Token-list metadata could not be fetched; amounts are shown as raw units and no symbol is attached.',
         )
+      if (tokenListUnavailable)
+        notices.push(`No open token list covers ${dataset}; amounts are shown as raw units and no symbol is attached.`)
+      /* Counted on the page that is returned, not across everything the scan
+         read on the way to it. */
+      const unknownDecimalTokensOnPage = new Set(
+        (page.pageItems as Array<{ token_address?: string }>)
+          .map((item) => String(item.token_address ?? '').toLowerCase())
+          .filter((address) => unknownDecimalTokens.has(address)),
+      )
+      if (unknownDecimalTokensOnPage.size > 0 && !tokenMetadataFetchFailed && !tokenListUnavailable)
+        notices.push(
+          `value_formatted shows raw units for ${unknownDecimalTokensOnPage.size} token${unknownDecimalTokensOnPage.size === 1 ? '' : 's'} on this page whose decimals are not in the token list; value_decimal is the exact raw amount.`,
+        )
+      if (nextCursor) notices.push(buildCursorDirectionNotice(scan_order))
       const boundedSearchNotice = scanResult ? buildBoundedSearchNotice(scanResult, 'ERC20 transfer scan') : undefined
       if (boundedSearchNotice) notices.push(boundedSearchNotice)
       const freshness = buildQueryFreshness({
@@ -566,13 +595,10 @@ export function registerGetErc20TransfersTool(server: McpServer) {
         items: enrichedTransfers,
         getBlockNumber,
         hasMore: page.hasMore,
-        // The forward scan emits no cursor, so claiming one would point a
-        // client at a continuation that does not exist.
-        ...(scanResult ? { continuation: 'none' as const } : {}),
-        /* It also stops as soon as the page is full, so it routinely leaves
-           the rest of the window unread. window_complete defaults to true,
-           which reported those unread blocks as analysed. */
-        ...(scanResult ? { windowComplete: !scanResult.hasUnscannedBlocks } : {}),
+        /* Either scan stops as soon as the page is full, so it routinely
+           leaves the rest of the window unread. window_complete defaults to
+           true, which reported those unread blocks as analysed. */
+        windowComplete: scanResult ? !scanResult.hasUnscannedBlocks : (recentScan?.exhausted ?? true),
       })
 
       const presentation = buildTransferPresentation(enrichedTransfers as Erc20TransferItem[], nextCursor)
@@ -585,9 +611,7 @@ export function registerGetErc20TransfersTool(server: McpServer) {
         {
           toolName: 'portal_evm_query_token_transfers',
           notices,
-          pagination: buildPaginationInfo(limit, page.pageItems.length, nextCursor, {
-            ...(scanResult && page.hasMore ? { hasMoreWithoutCursor: true } : {}),
-          }),
+          pagination: buildPaginationInfo(limit, page.pageItems.length, nextCursor),
           ordering: buildChronologicalPageOrdering({
             sortedBy: 'block_number',
             tieBreakers: ['log_index', 'transaction_index', 'tx_hash'],

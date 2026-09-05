@@ -231,9 +231,10 @@ export function registerResolveEntityTool(server: McpServer) {
             ...(searchComplete ? {} : { candidate_search: 'bounded' }),
           },
           // The shared shape, so a truncated ranked list reads like every
-          // other incomplete page: has_more with no cursor, which the
-          // coverage block already explains has none to give.
-          pagination: buildPaginationInfo(limit, matches.length, undefined, { hasMoreWithoutCursor: truncated }),
+          // other incomplete page: no cursor and has_more false, with the
+          // coverage block saying the result is incomplete and has no
+          // continuation to give.
+          pagination: buildPaginationInfo(limit, matches.length),
           execution: buildExecutionMetadata({
             limit,
             normalized_output: true,
