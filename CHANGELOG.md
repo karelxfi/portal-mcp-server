@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.8.5] - Unreleased
+## [0.8.5] - 2026-09-05
 
 Portal MCP v0.8.5 turns the SQD Explorer into a data-first beta app that fits its host and is clearly opt-in, corrects fifteen kinds of case where a tool answered with something it should not have, and gives operators cost guardrails and an end-to-end trace of a single tool call.
 
