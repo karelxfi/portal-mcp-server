@@ -64,10 +64,16 @@ function assertContractAgreement(label: string, payload: Payload) {
     `${label}: _coverage.continuation '${coverage.continuation}' disagrees with cursor presence ${cursor}`,
   )
   if (cursor) assert(coverage.result_complete === false, `${label}: a page with a cursor cannot be result_complete`)
-  if (coverage.window_complete === false) {
-    assert(coverage.result_complete === false, `${label}: an unread window cannot be a complete result`)
-  }
   const answer = String(payload.answer ?? '')
+  /* result_complete is about pagination and window_complete about coverage, so
+     an unread window has to be said out loud rather than folded into the other
+     field. */
+  if (coverage.window_complete === false) {
+    assert(
+      /\b(partial|incomplete|coverage|only\b.*\brequested|searched only)\b/i.test(answer),
+      `${label}: window_complete is false but the answer does not disclose it: ${answer}`,
+    )
+  }
   const notices = noticesOf(payload)
   if (!cursor) {
     assert(
@@ -209,7 +215,6 @@ async function checkCappedLookup(connected: ConnectedTestClient) {
   assertContractAgreement(label, page)
   assert(page._pagination?.has_more === false, `${label}: a capped lookup has no next page`)
   assert(page._coverage?.window_complete === false, `${label}: a capped lookup did not read its window`)
-  assert(page._coverage?.result_complete === false, `${label}: a capped miss is not a complete result`)
   assert(
     /Partial window/.test(String(page.answer ?? '')),
     `${label}: the answer must say the window was partial: ${page.answer}`,

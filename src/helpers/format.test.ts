@@ -187,7 +187,10 @@ describe('coverage continuation follows the cursor', () => {
     assert.equal(payload.answer, 'Found 3 matches')
   })
 
-  it('does not name the unread window when the cursor already continues it', () => {
+  it('names the unread window even when a cursor continues the rows', () => {
+    /* window_complete is the only field that says blocks went unread, so an
+       answer that mentions only the cursor hides it. Six tools shipped that
+       way and the live quality gate caught every one. */
     const payload = payloadOf(
       { kind: 'block_window', window_complete: false, result_complete: false, continuation: 'cursor' },
       'Found 3 matches',
@@ -198,7 +201,20 @@ describe('coverage continuation follows the cursor', () => {
         ],
       },
     )
-    assert.equal(payload.answer, 'Found 3 matches Preview page: continue with the cursor for remaining rows.')
+    assert.match(payload.answer, /Partial window: Trace scan searched only blocks 10-20/)
+    assert.match(payload.answer, /continue with the cursor/)
+  })
+
+  it('offers the scan bound rather than a bigger limit when the window went unread', () => {
+    const payload = payloadOf({
+      kind: 'block_window',
+      window_complete: false,
+      result_complete: false,
+      continuation: 'none',
+    })
+    assert.match(payload.answer, /Partial window:/)
+    assert.match(payload.answer, /raise max_scan_blocks/)
+    assert.equal(payload.answer.includes('raise the limit'), false)
   })
 
   it('names the unread window when nothing continues it', () => {

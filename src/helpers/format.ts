@@ -344,11 +344,10 @@ function makeCompletenessAwareAnswer(answer: string, payload: RecordLike): strin
     /\b(partial|incomplete|coverage|analyzed\b.*\brequested|sample|truncated|shortened|searched only)\b/i.test(item),
   )
   const suffixes: string[] = []
-  /* A page with a cursor is partial by design and the cursor is the remedy.
-     Naming the unread blocks as well told the caller the same thing twice
-     with two different instructions. The window suffix is for a result that
-     stopped short with nothing to continue from. */
-  if (coverage?.window_complete === false && !continuable) {
+  /* An unread window is disclosed whether or not a cursor exists. Suppressing
+     it on a page that had one left six tools reporting window_complete: false
+     with an answer that never said so, which is the whole point of the field. */
+  if (coverage?.window_complete === false) {
     if (!/\b(partial|incomplete|coverage|analyzed\b.*\brequested|only\b.*\brequested|searched only)\b/i.test(answer)) {
       suffixes.push(`Partial window: ${notice ?? 'coverage metadata marks this window as partially analyzed.'}`)
     }
@@ -360,15 +359,17 @@ function makeCompletenessAwareAnswer(answer: string, payload: RecordLike): strin
         answer,
       )
     ) {
-      if (continuable) {
-        suffixes.push('Preview page: continue with the cursor for remaining rows.')
-      } else if (coverage?.window_complete !== false) {
-        // A result can be incomplete with nothing to continue from: a ranked
-        // list cut to `limit` has no cursor, and telling the caller to use one
-        // sends them after a field that is not in the response. A window that
-        // stopped short is covered above; a bigger limit would not read it.
-        suffixes.push('Preview page: raise the limit or narrow the query for the remaining rows.')
-      }
+      /* A result can be incomplete with nothing to continue from: a ranked list
+         cut to `limit` has no cursor, and telling the caller to use one sends
+         them after a field that is not in the response. A window that stopped
+         short is a different problem, and a bigger limit would not read it. */
+      suffixes.push(
+        continuable
+          ? 'Preview page: continue with the cursor for remaining rows.'
+          : coverage?.window_complete === false
+            ? 'Preview page: narrow the query or raise max_scan_blocks for the remaining rows.'
+            : 'Preview page: raise the limit or narrow the query for the remaining rows.',
+      )
     }
   }
 
