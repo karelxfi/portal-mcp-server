@@ -1,6 +1,6 @@
 #!/usr/bin/env tsx
 
-/* Bitcoin fee truth gate (SDKTL-627). Offline: exact satoshi accounting on
+/* Bitcoin fee truth gate. Offline: exact satoshi accounting on
    generated stream records, section coverage above, at, and below the fee
    scan cap, mismatched input and output block sets, and bucket sums that
    reconcile to the window total. Live: one bounded parity check of

@@ -2,17 +2,15 @@
 
 The Explorer is the beta MCP App that renders a tool result inside the host that
 asked for it. This file records the decisions behind how it looks and behaves,
-why each one was taken, and where it is held. It is the written half of
-SDKTL-658 scope 3; the artboards and the design-system owner's sign-off are the
-other half and are tracked on that issue.
+why each one was taken, and where it is held.
 
 ## Sources of truth
 
 | What | Where | Used for |
 | --- | --- | --- |
-| Colour, type and spacing tokens | "SQD Design System" project in Claude Design | `styles.ts` token layer, both themes |
-| Chart palette and chart grammar | Same project: `tokens/chart-palette.json`, `guidelines/charts.html` | Series colours, up/down, axis ink |
-| Component vocabulary | "SQD Portal Console" project (`sqd-portal-ui`) | Panel, Table, InlineNotice, Empty, ChartContainer shapes |
+| Colour, type and spacing tokens | SQD design system tokens | `styles.ts` token layer, both themes |
+| Chart palette and chart grammar | SQD design system chart palette and chart guidelines | Series colours, up/down, axis ink |
+| Component vocabulary | SQD Portal Console components | Panel, Table, InlineNotice, Empty, ChartContainer shapes |
 | Inline and fullscreen frame rules | Claude's MCP Apps design guidelines | Card height, action count, gestures, tap targets |
 
 Nothing here changes a token. Where the Explorer deviates from a spec, the
@@ -79,11 +77,9 @@ select, table, sort, page, export) runs end to end.
 
 **Beta, and opt in.** The Explorer is labelled Beta in the widget, in the
 resource description and as `_app.stage`, and stays off unless a deployment sets
-`MCP_APP_ENABLED` or a connection asks with `?app=1`. SDKTL-652 walked the
-readiness gate line by line for v0.8.5 and recorded the decision to stay opt in:
-every line the implementation can close is closed and gated, and the three that
-are not need observed host renders and a design sign-off, which the server
-cannot produce for itself.
+`MCP_APP_ENABLED` or a connection asks with `?app=1`. Everything the
+implementation can hold is held by a test; the Beta label stays until the
+remaining items, observed host renders and a design review, are done.
 
 ## Turning it on, and turning it back off
 
@@ -126,10 +122,3 @@ Everything reviewed is a recorded SQD Portal response
 (`scripts/record-app-fixtures.ts`). Three synthetic fixtures remain for
 rendering contracts a real window rarely produces on demand: a missing bucket,
 signed values around an exact zero, and a server error envelope.
-
-## Open
-
-Artboards for the six modes plus the error and empty states, in the SQD Design
-System project, and sign-off from the design-system owner against them. Both
-need a person; the layout baseline above is what holds the implementation still
-until they exist.
