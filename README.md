@@ -2,15 +2,11 @@
 
 [![SQD Portal MCP server](https://glama.ai/mcp/servers/subsquid-labs/portal-mcp-server/badges/score.svg)](https://glama.ai/mcp/servers/subsquid-labs/portal-mcp-server)
 
-An MCP server that answers blockchain questions from [SQD Portal](https://portal.sqd.dev) data: transactions, logs, token transfers, wallets, analytics, time series, and candles across EVM, Solana, Bitcoin, Substrate, and Hyperliquid networks, with an optional in-host Explorer.
+An MCP server that answers blockchain questions from [SQD Portal](https://portal.sqd.dev) data: transactions, logs, traces, token transfers, wallets, analytics, time series, and candles across EVM, Solana, Bitcoin, Substrate, Hyperliquid, and Tron networks, with an optional in-host Explorer.
 
-The server does not index chains itself. It validates input, plans bounded Portal queries, and returns results with coverage, freshness, pagination, and evidence metadata so an assistant can say exactly what it saw. See `CONTRIBUTING.md` to work on it and `SECURITY.md` to report a vulnerability.
+The server does not index chains itself. It validates input, plans bounded Portal queries, and returns results with coverage, freshness, pagination, and evidence metadata so an assistant can say exactly what it saw. No SQD account, API key, or client credential is required.
 
-The current v0.8.5 release supports the stateless MCP `2026-07-28` protocol over HTTP and stdio, while retaining the SDK-managed legacy negotiation path for clients still rolling out the revision. No SQD account, API key, or client credential is required.
-
-Factual completeness is a release gate, carried forward from v0.8.4. It verifies requested and actual time bounds, stable row identities, exact page continuation, wallet membership, Bitcoin units, transaction and candle totals, input validation, and response budgets against direct Portal evidence across EVM, Solana, Bitcoin, Substrate, Hyperliquid, and applicable Tron metadata paths. Tool results expose the exact `_server.version`. The SQD Explorer uses the current SQD Design System, retains cached App URIs from supported releases, preserves exact hashes and tiny decimal amounts across every display and export surface, and adds honest App identity, explicit open-bucket state, safe failed-follow-up states, and client-side paging for large evidence tables.
-
-v0.8.5 ships the SQD Explorer as an opt-in beta that fits its host: the inline card reports its exact height, results lead with their subject and primary number, identifiers link to public explorers, network chips carry SQD chain logos, and every control is verified through the official MCP Apps bridge.
+It speaks the stateless MCP `2026-07-28` protocol over HTTP and stdio and keeps the SDK-managed legacy negotiation path for clients still rolling out that revision. Release notes are in [CHANGELOG.md](CHANGELOG.md). See `CONTRIBUTING.md` to work on the code and `SECURITY.md` to report a vulnerability.
 
 ## Current public surface
 
@@ -111,14 +107,16 @@ When a response uses estimated, partial, sampled, capped, or paginated data, the
 
 Chart-oriented tools also return chart and table descriptors so MCP clients or LLMs can render them without reverse-engineering the payload.
 
-SQD Explorer is in beta and is off by default. A default deployment answers with `structuredContent` and compact JSON text only, and no tool result asks a host to open a UI. There are two ways to opt in:
+## SQD Explorer (beta)
+
+SQD Explorer is an MCP App that renders tool results inside hosts that support MCP Apps. It is in beta and off by default. A default deployment answers with `structuredContent` and compact JSON text only, and no tool result asks a host to open a UI. There are two ways to opt in:
 
 - One connection: add `?app=1` to the endpoint, for example `https://portal.sqd.dev/mcp?app=1`. Use this to try the beta without changing anything for other users.
 - Whole deployment: set `MCP_APP_ENABLED=true`. A connection can still override it in either direction, so `?app=0` opts a single client back out.
 
 The app resource stays registered either way, so a host can read it directly without anyone opting in.
 
-v0.8.5 includes one portable SQD Explorer (beta) for 21 data tools. When it is enabled, compatible MCP App hosts receive an inline card sized to its content and a full-screen workspace: exact metrics led by the primary number, multi-series and signed-value charts, right-scaled price candles with linked volume and a fixed readout, ranked and timeline panels that show ten rows with a Show all control, evidence tables that page ten rows with search across every row, explorer links for addresses, hashes, and blocks, chain logos and names from SQD network metadata, continuation controls, current-session history, and JSON or CSV export through the host. Pointer and keyboard inspection expose exact plotted values. Missing buckets remain visible as gaps, identifiers stay unshortened, and any local row cap is separate from server completeness. Failed follow-ups keep the last good result under the error. The app is self-contained and does not use persistent browser storage; its only browser-side requests are chain logo images from `cdn.subsquid.io` and `sqd.dev`, the two origins declared in the resource CSP. Hosts without MCP App support receive the same `structuredContent` and compact JSON text fallback, so the underlying answer never depends on the UI.
+When it is enabled, compatible hosts receive an inline card sized to its content and a full-screen workspace for 21 data tools: metrics led by the primary number, multi-series and signed-value charts, price candles with linked volume and a fixed readout, ranked and timeline panels that show ten rows with a Show all control, evidence tables that page ten rows with search across every row, explorer links for addresses, hashes, and blocks, chain logos and names from SQD network metadata, continuation controls, current-session history, and JSON or CSV export through the host. Pointer and keyboard inspection expose exact plotted values. Missing buckets remain visible as gaps, identifiers stay unshortened, and any local row cap is separate from server completeness. Failed follow-ups keep the last good result under the error. The app is self-contained and does not use persistent browser storage; its only browser-side requests are chain logo images from `cdn.subsquid.io` and `sqd.dev`, the two origins declared in the resource CSP. Hosts without MCP App support receive the same `structuredContent` and compact JSON text fallback, so the underlying answer never depends on the UI. `docs/explorer-design.md` records the design rules the app follows.
 
 Three MCP prompts provide reproducible starting points without adding tools:
 
@@ -126,7 +124,20 @@ Three MCP prompts provide reproducible starting points without adding tools:
 - `investigate-contract`
 - `investigate-market`
 
-For a chart-first App demo, ask: `Show BTC price action and trading volume on Hyperliquid for the past hour, using five-minute candles. Explain whether the final candle is closed.` The result opens the SQD Explorer with an exact candle chart, volume, an evidence table, requested and indexed time bounds, and a receipt. Replay the returned `requested_window_start_timestamp` and `requested_window_end_exclusive` as fixed `from_timestamp` and `to_timestamp` inputs when you need a stable verification run.
+For a chart-first demo, ask: `Show BTC price action and trading volume on Hyperliquid for the past hour, using five-minute candles. Explain whether the final candle is closed.` The result opens the SQD Explorer with a candle chart, volume, an evidence table, requested and indexed time bounds, and a receipt. Replay the returned `requested_window_start_timestamp` and `requested_window_end_exclusive` as fixed `from_timestamp` and `to_timestamp` inputs when you need a stable verification run.
+
+### Try it in Claude
+
+The hosted endpoint has the Explorer off, so a new user opts their own connection in:
+
+1. In claude.ai or Claude Desktop, open **Settings → Connectors → Add custom connector**, enter `https://portal.sqd.dev/mcp?app=1`, and choose no authentication. The `?app=1` turns the beta on for this connection only. On Claude Desktop you can instead install `sqd.mcpb` from the latest release and switch on its "SQD Explorer (beta)" setting.
+2. Start a new chat and enable the SQD connector for it.
+3. Ask a data question. Any of these lands on a tool that carries the Explorer:
+   - `What has this wallet been doing on Base lately?` with an address (wallet summary)
+   - `Show me recent activity on Ethereum` (recent activity)
+   - `Chart hourly transaction counts on Base for the last day` (time series)
+
+The result renders as an inline card instead of a block of text; open the card for the full-screen workspace. Only the 21 data tools carry the Explorer. A catalogue question such as `Which networks do you support?` calls `portal_list_networks` and answers in plain text, which is expected rather than a failure.
 
 ## Install
 
@@ -189,19 +200,17 @@ Grok chat can use SQD as a custom connector:
 1. Open `grok.com/connectors`.
 2. Choose **New Connector**, then **Custom**.
 3. Enter `https://portal.sqd.dev/mcp` as the MCP server URL.
-4. Leave authentication unset for the credential-free v0.8.x server.
+4. Leave authentication unset.
 
-Grok Build reads Claude Code plugins directly, so it uses the same package rather than a made-up Grok-only manifest:
+Grok Build reads Claude Code plugins directly, so it uses the same package:
 
 ```bash
 grok plugin install --trust subsquid-labs/portal-mcp-server#plugins/portal
 ```
 
-The release gate validates the Codex, Claude Code, Grok Build, Gemini CLI, and Cursor packages, then runs the same discovery, prompt, resource, fallback, evidence, continuation, concurrency, and recovery journeys for all five declared client families. It also compares material results with direct Portal evidence and rejects missing or duplicate normalized identities. Real installed-client calls are recorded separately so package validation is never presented as runtime proof.
-
 ## ChatGPT
 
-In a workspace with custom MCP apps enabled, open **Settings → Apps → Create**, enter `https://portal.sqd.dev/mcp`, choose no authentication, scan the tools, and create the draft app. The server is read-only and does not require user credentials in v0.8.x.
+In a workspace with custom MCP apps enabled, open **Settings → Apps → Create**, enter `https://portal.sqd.dev/mcp`, choose no authentication, scan the tools, and create the draft app. The server is read-only and does not require user credentials.
 
 ## Claude Desktop
 
@@ -233,7 +242,7 @@ Manual fallback, from a local clone after `npm run build`, add an entry like thi
 
 HTTP mode exposes MCP at `/` and `/mcp`, liveness at `/health`, and readiness at `/ready`. The hosted service exposes the same versioned health response at `https://portal.sqd.dev/mcp/health`.
 
-- MCP and health are public in v0.8.x. User authentication is deferred to a unified `auth.sqd.dev` flow in v0.9.0.
+- MCP and health endpoints do not require authentication.
 - Tool and resource discovery use the MCP protocol; retired `/tools` and `/tools.json` routes return `404`.
 - Set `MCP_CURSOR_SECRET` on any deployment running more than one process, so a cursor one instance issues is accepted by the next. Unset, each process signs with its own random key, and a cursor stops working across a restart or a load-balanced hop.
 - `/health` reports `version` and `commit`, the git commit the image was built from, and every tool result repeats both in `_server`. Docker Hub tags: `latest`, `X.Y.Z`, and `X.Y` come only from a `v*` release tag; `edge` and `sha-<commit>` come from every `main` push. Pin a version tag in production.
@@ -243,7 +252,7 @@ HTTP mode exposes MCP at `/` and `/mcp`, liveness at `/health`, and readiness at
 
 Useful environment variables:
 
-- `MCP_CURSOR_SECRET` to sign pagination cursors
+- `MCP_CURSOR_SECRET` the key pagination cursors are signed with. **Set it on any deployment running more than one process.** Unset, each process signs with its own random key, so a cursor issued by one instance is rejected by the next and clients lose their place across a restart or a load-balanced hop. It is also what stops a caller minting a cursor for a window the tool would never have offered.
 - `MCP_TOOLSETS` comma-separated toolsets to serve (`discovery`, `convenience`, `evm`, `solana`, `bitcoin`, `substrate`, `hyperliquid`, `tron`, `debug`; `all` or `default` for everything). Unknown names are ignored with a startup error. Wins over `MCP_TOOLS`. Default: all nine, the full 31-tool catalog.
 - `MCP_TOOLS` comma-separated exact tool names to serve when `MCP_TOOLSETS` is unset.
 - Per connection, `?toolsets=evm` on the endpoint URL or an `X-MCP-Toolsets: evm` header narrows the deployment's set for that connection only; it can never add a toolset. Prompts that reference a tool outside the active set are not offered. The active set is a bounded label (`all`, one toolset name, or `custom`) on `mcp_tool_client_calls_total`.
@@ -261,14 +270,13 @@ Useful environment variables:
 - `MCP_TRUST_PROXY` set to `1` (or to the number of proxies in front of the server) to key fairness on the address those proxies observed instead of the socket address. The header is read only when the immediate peer is itself a trusted proxy, and the hop is counted from the right of `X-Forwarded-For`, because a caller can write anything to the left of it. The address is hashed and never stored or labelled.
 - `MCP_TRUSTED_PROXY_PREFIXES` a comma-separated list of address prefixes that count as your proxies, matched against the start of the peer address (for example `203.0.113.` or `2606:4700:`). Setting it **replaces** the default rather than adding to it, so include loopback or your private range if a co-located proxy also reaches the server. With it unset, loopback and private ranges are trusted, which is where a co-located proxy sits; on a shared private network that means any host on that network can present a forwarded address, so name your proxies explicitly there.
 - `MCP_SLOW_REQUEST_MS` threshold for one JSON line on stderr per slow tool call with admission wait and execution timings and the bounded client family, default `5000`.
-- `MCP_CURSOR_SECRET` the key pagination cursors are signed with. **Set it on any deployment running more than one process.** Unset, each process signs with its own random key, so a cursor issued by one instance is rejected by the next and clients lose their place across a restart or a load-balanced hop. It is not optional for correctness on a multi-instance deployment, and it is what stops a caller minting a cursor for a window the tool would never have offered.
 
 ### Cost guardrails
 
 Every scan bound in the server is compiled in and set per tool: a filtered trace
 scan stops at 5,000 blocks, a contract-deployment search at 1,000,000. Guardrails
 add a second ceiling above those that a deployment sets from the environment, so
-an endpoint under load can be turned down without shipping a new image.
+an endpoint under load can be turned down without a new image.
 
 - `MCP_GUARDRAIL_MODE` one of `off` (default), `shadow`, or `enforce`.
 - `MCP_GUARDRAIL_<CLASS>_<LIMIT>` sets one ceiling, where `<CLASS>` is
@@ -288,7 +296,7 @@ without changing a single response. `enforce` acts:
   already uses, so `_coverage.result_complete` becomes `false` and the response
   names the blocks it searched. It never claims a complete answer it did not get.
 - A query window over its ceiling is refused before anything is fetched, with the
-  cap named in the error and the next steps, because there is no honest partial
+  cap named in the error and the next steps, because there is no partial result
   to return for a request that was never allowed to start.
 
 Four counters, all with bounded labels: `mcp_guardrail_admitted_total{class}`,
@@ -357,32 +365,7 @@ tool argument is routinely a wallet address, and often a user's own words.
 
 ## Tests
 
-The [release-assurance contract](RELEASE_ASSURANCE.md) defines the complete v0.8.2 baseline and every gate added since, through v0.8.5. “100%” refers to every applicable cell in the declared matrix, not a claim that upstream networks can never fail.
-
-```bash
-npm test
-npm run test:protocol
-npm run test:tool-admission
-npm run test:app-contract
-npm run test:app-ui
-npm run test:evidence-receipts
-npm run test:investigation-prompts
-npm run test:investigation-journeys
-npm run test:tools
-npm run test:routing
-npm run test:substrate
-npm run test:timestamps
-npm run test:plugin
-npm run test:claude-plugin
-npm run test:grok-plugin
-npm run test:conversations
-npm run test:negative
-npm run test:quality
-npm run test:client-journeys
-npm run test:ci
-```
-
-A nightly model-in-the-loop eval (`npm run eval:model-loop`, [scripts/README.md](scripts/README.md#model-in-the-loop-eval)) has a model answer pinned questions through the server and reports pass rate, tool calls, and tokens; `--model mock` verifies the question set without an API key.
+`npm run test:offline` builds, lints, typechecks, runs the unit tests, and runs every suite that needs no Portal access. `npm run test:live` runs the Portal-backed suites. [RELEASE_ASSURANCE.md](RELEASE_ASSURANCE.md) summarises what a release verifies, and [scripts/README.md](scripts/README.md) lists every suite.
 
 ## License
 
