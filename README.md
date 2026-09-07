@@ -126,6 +126,19 @@ Three MCP prompts provide reproducible starting points without adding tools:
 
 For a chart-first demo, ask: `Show BTC price action and trading volume on Hyperliquid for the past hour, using five-minute candles. Explain whether the final candle is closed.` The result opens the SQD Explorer with a candle chart, volume, an evidence table, requested and indexed time bounds, and a receipt. Replay the returned `requested_window_start_timestamp` and `requested_window_end_exclusive` as fixed `from_timestamp` and `to_timestamp` inputs when you need a stable verification run.
 
+### Try it in Claude
+
+The hosted endpoint has the Explorer off, so a new user opts their own connection in:
+
+1. In claude.ai or Claude Desktop, open **Settings → Connectors → Add custom connector**, enter `https://portal.sqd.dev/mcp?app=1`, and choose no authentication. The `?app=1` turns the beta on for this connection only. On Claude Desktop you can instead install `sqd.mcpb` from the latest release and switch on its "SQD Explorer (beta)" setting.
+2. Start a new chat and enable the SQD connector for it.
+3. Ask a data question. Any of these lands on a tool that carries the Explorer:
+   - `What has this wallet been doing on Base lately?` with an address (wallet summary)
+   - `Show me recent activity on Ethereum` (recent activity)
+   - `Chart hourly transaction counts on Base for the last day` (time series)
+
+The result renders as an inline card instead of a block of text; open the card for the full-screen workspace. Only the 21 data tools carry the Explorer. A catalogue question such as `Which networks do you support?` calls `portal_list_networks` and answers in plain text, which is expected rather than a failure.
+
 ## Install
 
 ```bash
