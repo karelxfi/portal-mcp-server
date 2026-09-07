@@ -2,8 +2,11 @@
 
 ## [0.8.6] - Unreleased
 
+SQD Portal MCP 0.8.6 restores the SQD Explorer in Claude.
+
 ### Fixes
-- **The SQD Explorer renders in Claude again.** The app resource declared `https://portal.sqd.dev` as its dedicated origin through `_meta.ui.domain` and the ChatGPT alias `openai/widgetDomain`. Claude validates that field against an origin it derives from the connector URL and shows an error instead of the app when the value does not match, so every App-enabled result arrived as a failed widget with no chart, table or numbers. The server has no single connector URL and the app makes no network calls of its own, so it now claims no origin at all; the content security policy that limits it to SQD's chain logos is unchanged. A unit test and the app contract gate hold the resource to this.
+
+- **The SQD Explorer renders in Claude again.** The app resource declared a dedicated origin through `_meta.ui.domain` and the ChatGPT alias `openai/widgetDomain`. Claude validates that field against the connector URL and shows an error instead of the app when the value does not match, so every App-enabled result arrived as a failed widget with no chart, table, or numbers. The resource now claims no origin. The content security policy that limits it to SQD's chain-logo origins is unchanged, and no configuration change is needed.
 
 **Full Changelog**: https://github.com/subsquid-labs/portal-mcp-server/compare/v0.8.5...v0.8.6
 
