@@ -30,6 +30,7 @@ SQD Portal MCP 0.8.5 adds native Tron and EVM trace queries, a one-click Claude 
 
 ### Fixes
 
+- **The SQD Explorer renders in Claude.** The app resource declared a dedicated origin through `_meta.ui.domain` and the ChatGPT alias `openai/widgetDomain`. Claude validates that field against the connector URL and shows an error instead of the app when the value does not match, so every App-enabled result arrived as a failed widget with no chart, table, or numbers. The resource now claims no origin. The content security policy that limits it to SQD's chain-logo origins is unchanged, and no configuration change is needed.
 - **Network names resolve exactly.** Aliases were matched as substrings, so `opbnb` could answer with Optimism data and `btc-testnet` with Bitcoin mainnet. Matching is now whole-name, and a network SQD does not carry returns `unknown_network`.
 - **Time series answers only the metrics it computes.** Metrics a chain family does not compute used to return an all-zero series marked complete. They are now refused with `unsupported_operation`.
 - **Long time-series windows are refused instead of run.** A window over 12,000 blocks is refused with the block count, the bound, and a duration that fits on that chain, instead of running for minutes. The limit is in blocks, so `24h` still works on Bitcoin and Ethereum.
