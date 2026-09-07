@@ -652,7 +652,7 @@ async function assertPublicBindWarning() {
 }
 
 /*
- * SDKTL-648. Two halves of the same claim: with no collector configured the
+ * Two halves of the same claim: with no collector configured the
  * server must not have loaded, started, or reached anything, and with one
  * configured a tool call must arrive as a tree whose ids reach Portal.
  */

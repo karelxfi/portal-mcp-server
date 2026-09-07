@@ -1,17 +1,12 @@
-# SQD Plugin Directory Submission
+# SQD Plugin Directory Listings
 
-This is the source packet for SQD's OpenAI, Claude, Grok, Gemini, and Cursor directory listings.
+Public listing copy and publication routes for the SQD plugin in the OpenAI, Claude, Grok, Gemini, and Cursor directories.
 
 ## Release automation
 
-Directory metadata is tied to releases so public catalogs do not depend on manual version updates.
-
-- A `v*` tag runs `.github/workflows/publish-mcp-registry.yml`. It validates the tag and manifests, authenticates to the official MCP Registry with GitHub OIDC, publishes only when the version is missing, and verifies that the new version is latest.
-- A published GitHub release runs `.github/workflows/publish-gemini-extension.yml`. It validates and packages the Gemini extension, requires the `gemini-cli-extension` topic, and uploads `sqd.tar.gz` to the matching release.
-- `.github/workflows/directory-health.yml` checks the official MCP Registry, Gemini discovery prerequisites and gallery, Glama, Smithery, Awesome MCP Servers, and the Grok marketplace pull request every day. It stores a JSON health artifact and writes a compact Actions summary.
+- A `v*` tag publishes the matching version to the official MCP Registry and builds the GitHub release with the Gemini extension archive (`sqd.tar.gz`) and the Claude Desktop bundle (`sqd.mcpb`).
 - `npm run test:distribution` keeps `package.json`, `server.json`, and the Claude, Codex, Cursor, and Gemini manifests on one version.
-
-The supported publication routes and update modes live in `distribution/targets.json`. Reusable, directory-specific public copy lives in `distribution/submission-packets.json`. Glama requires one owner claim and then supports repository sync. Smithery is published at `https://smithery.ai/servers/sqd/sqd` under the official `sqd` namespace and supports remote release scans. MCP.so currently offers a paid submission route, so publishing there requires explicit spend approval. PulseMCP ingests servers from the official MCP Registry and does not need a separate submission. APITracker uses an editorial contact route rather than an automatic registry crawl. Perplexity supports SQD as a custom remote connector but does not currently offer a public connector-directory submission route. Do not add credentials or private review details to the tracker.
+- `distribution/targets.json` lists the supported publication routes, and `distribution/submission-packets.json` holds the reusable public copy for each directory.
 
 ## Public listing
 
@@ -48,18 +43,16 @@ Public URLs:
 
 Logo: use `https://sqd.dev/brand/Symbol_bl-bg.svg`. It is the canonical white SQD symbol on a black square. The package keeps a local SVG at `assets/sqd-logo.svg`, a 1024 x 1024 OpenAI directory PNG at `assets/sqd-directory-icon.png`, and a 256 x 256 ChatGPT composer PNG at `assets/sqd-chatgpt-composer-icon.png`.
 
-Do not add Robinhood Chain to the published listing until it appears in the live SQD network catalog and a real query passes. Once live, add `Robinhood Chain` to the description, prompt tests, and discovery checks together.
-
 ## Claude directory
 
-SQD is already published in the Claude Connectors Directory at `https://claude.ai/directory/connectors/sqd`. The public SQD documentation links to that listing and describes the no-login connection flow.
+SQD is published in the Claude Connectors Directory at `https://claude.ai/directory/connectors/sqd`. The public SQD documentation links to that listing and describes the no-login connection flow.
 
 The hosted connector and the installable Claude Code plugin are complementary:
 
 - The directory listing connects Claude on web, desktop, and mobile to `https://portal.sqd.dev/mcp`.
 - The package in this repository gives Claude Code the same hosted MCP server plus the four official SQD skills.
 
-For a new version or listing change, use the connector submission portal in the publishing Claude Team or Enterprise organization's settings. The submitter must be an Owner, Primary Owner, or a member with the Directory permission. Use these values:
+Listing values:
 
 - Server URL: `https://portal.sqd.dev/mcp`
 - Transport: Streamable HTTP
@@ -75,41 +68,34 @@ For a new version or listing change, use the connector submission portal in the 
 - Setup requirement: no account, login, or API key
 - Data handling: SQD's own public read-only blockchain data API; no health data or sponsored content
 
-The hosted endpoint serves the full 28-tool default; toolsets (`MCP_TOOLSETS`, `MCP_TOOLS`, `?toolsets=`, `X-MCP-Toolsets`) exist for self-hosted deployments and single connections that want a smaller catalog, and they do not change what the directory listing scans. Before submitting an update, confirm that Claude syncs all 28 tools and the three investigation prompts, every tool has a title and the applicable annotations, and each tool passes an end-to-end call. The current Claude Code tool namespace for an install from this package is `mcp__plugin_portal_SQD__<tool-name>`, for example `mcp__plugin_portal_SQD__portal_get_head`. Treat this as client-generated configuration, not part of the public MCP tool name.
+The hosted endpoint serves the full default catalog. Toolsets (`MCP_TOOLSETS`, `MCP_TOOLS`, `?toolsets=`, `X-MCP-Toolsets`) exist for self-hosted deployments and single connections that want a smaller catalog, and they do not change what the directory listing scans. The Claude Code tool namespace for an install from this package is `mcp__plugin_portal_SQD__<tool-name>`, for example `mcp__plugin_portal_SQD__portal_get_head`. Treat this as client-generated configuration, not part of the public MCP tool name.
 
 ## OpenAI directory
 
-OpenAI uses one Plugins Directory for both ChatGPT and Codex. Submit SQD as a plugin with MCP through the OpenAI Platform plugin submission portal.
+OpenAI uses one Plugins Directory for both ChatGPT and Codex. SQD is submitted as a plugin with MCP through the OpenAI Platform plugin submission portal.
 
-Import the repository-root `chatgpt-app-submission.json` file into the submission form. It covers all 28 public tools, their safety labels and justifications, five positive review tests, and three negative review tests.
+Import the repository-root `chatgpt-app-submission.json` file into the submission form. It covers the public tools, their safety labels and justifications, five positive review tests, and three negative review tests. Every tool declares one shared MCP `outputSchema` (the result envelope: `answer`, `items` or `value`, `error`, `_coverage`, `_pagination`, `_execution`, `_server`, and the other metadata blocks) and returns matching `structuredContent`. The server publishes the schema in `tools/list`.
 
-All 28 tools declare one shared MCP `outputSchema` (the result envelope: `answer`, `items` or `value`, `error`, `_coverage`, `_pagination`, `_execution`, `_server`, and the other metadata blocks) and return matching `structuredContent`. The submission JSON does not repeat the schema; the server publishes it in `tools/list`.
+Submission values:
 
-OpenAI submission values:
+1. Name: `SQD`.
+2. Version: the current release.
+3. Directory icon: `assets/sqd-directory-icon.png`.
+4. ChatGPT composer icon: `assets/sqd-chatgpt-composer-icon.png`.
+5. Universal MCP server URL: `https://portal.sqd.dev/mcp`.
+6. Authentication: none.
+7. Domain challenge URL: `https://portal.sqd.dev/.well-known/openai-apps-challenge`.
+8. Website: `https://sqd.dev/portal/`.
+9. Support: `https://sqd.dev/contact/`.
+10. Privacy: `https://sqd.dev/imprint/`.
+11. Terms: `https://cloud.sqd.dev/terms.pdf`.
+12. Availability: all supported countries.
 
-1. Organization: the verified OpenAI Platform organization that owns SQD.
-2. Developer Identity: `Business - Subsquid Labs GmbH`.
-3. Plugin Author: `Subsquid Labs GmbH`.
-4. Name: `SQD`.
-5. Version: the current production MCP release.
-6. Directory icon: `assets/sqd-directory-icon.png`.
-7. ChatGPT composer icon: `assets/sqd-chatgpt-composer-icon.png`.
-8. Universal MCP server URL: `https://portal.sqd.dev/mcp`.
-9. Authentication: none.
-10. Domain challenge URL: `https://portal.sqd.dev/.well-known/openai-apps-challenge`.
-11. Website: `https://sqd.dev/portal/`.
-12. Support: `https://sqd.dev/contact/`.
-13. Privacy: `https://sqd.dev/imprint/`.
-14. Terms: `https://cloud.sqd.dev/terms.pdf`.
-15. Availability: all supported countries.
+After scanning, every tool shows `readOnlyHint: true`, `destructiveHint: false`, and `openWorldHint: true`. The four skill folders from `plugins/portal/skills` are uploaded alongside the prompts and tests below.
 
-After scanning, confirm all 28 tools show `readOnlyHint: true`, `destructiveHint: false`, and `openWorldHint: true`. Upload the four skill folders from `plugins/portal/skills`, enter the prompts and tests from this packet, and submit the completed draft for review.
+Release note for the listing:
 
-Treat submitted OpenAI metadata as a versioned snapshot. Prepare the MCP App update only after the current review concludes, use screenshots captured from the deployed exact release, and keep the underlying non-UI fallback tests in the review packet.
-
-Suggested initial release notes:
-
-> Initial SQD plugin submission. Query blockchain data across 130+ networks with SQD Portal, including Ethereum, Base, Solana, Polkadot, Bitcoin, Tron, and Hyperliquid. The plugin also includes Pipes SDK and Squid SDK skills for building, migrating, troubleshooting, and improving blockchain data projects.
+> Query blockchain data across 130+ networks with SQD Portal, including Ethereum, Base, Solana, Polkadot, Bitcoin, Tron, and Hyperliquid. The plugin also includes Pipes SDK and Squid SDK skills for building, migrating, troubleshooting, and improving blockchain data projects.
 
 ### Positive review tests
 
@@ -131,9 +117,7 @@ Suggested initial release notes:
 
 ## Grok Build marketplace
 
-xAI accepts third-party plugins through a pull request to `xai-org/plugin-marketplace`. Use a remote source that points to the public SQD repository and pins the exact merged commit.
-
-Add this entry to `.grok-plugin/marketplace.json` after the SQD source change is merged. Replace the SHA value with the full lowercase commit from the public repository.
+xAI accepts third-party plugins through a pull request to `xai-org/plugin-marketplace`. The entry uses a remote source that points to this public repository and pins the exact merged commit:
 
 ```json
 {
@@ -164,7 +148,7 @@ Add this entry to `.grok-plugin/marketplace.json` after the SQD source change is
 }
 ```
 
-Then run in the marketplace fork:
+The marketplace's own scripts regenerate and validate the catalog index before the pull request is opened:
 
 ```bash
 python3 scripts/generate-plugin-index.py
@@ -172,38 +156,26 @@ python3 scripts/validate-catalog.py
 python3 scripts/generate-plugin-index.py --check
 ```
 
-Open the pull request using xAI's template and include only the public product, source, license, network endpoint, and validation facts needed for review.
+## Grok chat
 
-## Grok chat connector catalog
-
-Grok chat already accepts SQD as a Custom connector using `https://portal.sqd.dev/mcp`. xAI does not currently document an open submission form or pull request route for adding a new service to the consumer connector catalog. The public path available today is:
-
-1. Publish SQD in the Grok Build marketplace.
-2. Document the Custom connector setup for Grok chat.
-3. Use the public marketplace listing and measured adoption when asking xAI to consider SQD for the consumer connector catalog.
+Grok chat accepts SQD as a Custom connector using `https://portal.sqd.dev/mcp` with no authentication. xAI does not currently document a public submission route for its consumer connector catalog.
 
 ## Gemini CLI extension gallery
 
-Gemini CLI installs the generated `sqd.tar.gz` release asset. The archive keeps `gemini-extension.json` at its root and includes the same four official SQD skills from `plugins/portal/skills`.
+Gemini CLI installs the `sqd.tar.gz` release asset. The archive keeps `gemini-extension.json` at its root and includes the same four official SQD skills from `plugins/portal/skills`.
 
-Publish with these steps:
+1. `npm run test:gemini-extension` validates the manifest.
+2. `npm run package:gemini` builds `dist/gemini/sqd.tar.gz`.
+3. The archive is uploaded to the matching GitHub release; the release workflow does this on every `v*` tag.
+4. The repository carries the `gemini-cli-extension` GitHub topic, which the gallery indexes daily. No separate submission is required.
 
-1. Run `npm run test:gemini-extension`.
-2. Run `npm run package:gemini`.
-3. Upload `dist/gemini/sqd.tar.gz` as the only custom asset on the matching GitHub release.
-4. Add the `gemini-cli-extension` GitHub topic to the public repository.
-5. Confirm the manifest version matches the release tag.
-6. Install from `https://github.com/subsquid-labs/portal-mcp-server` and confirm the SQD server and all four skills load.
-
-Gemini indexes tagged public repositories with that topic daily. No separate submission form or pull request is required.
-
-The internal extension identifier is `sqd` because Gemini requires lowercase names. The public product name remains `SQD` in the repository, description, documentation, and MCP server name.
+The extension identifier is `sqd` because Gemini requires lowercase names. The public product name remains `SQD` in the repository, description, documentation, and MCP server name.
 
 ## Cursor Marketplace
 
 The repository-root `.cursor-plugin/marketplace.json` points at `plugins/portal`. The Cursor manifest in that folder reuses the existing `skills/`, `.mcp.json`, and black SQD logo without copying them.
 
-Use these listing values:
+Listing values:
 
 - Display name: `SQD`
 - Plugin identifier: `sqd`
@@ -217,4 +189,4 @@ Use these listing values:
 - Short description: `Query blockchain data across 130+ networks with SQD Portal.`
 - Long description: `Query blockchain data across 130+ networks with SQD Portal, including Ethereum, Base, Solana, Polkadot, Bitcoin, Tron, and Hyperliquid. The SQD plugin also includes Pipes SDK and Squid SDK skills for building, migrating, troubleshooting, and improving blockchain data projects.`
 
-Before submitting at `https://cursor.com/marketplace/publish`, run `npm run test:cursor-plugin` and test the plugin locally in Cursor. Cursor reviews every public marketplace submission.
+`npm run test:cursor-plugin` validates the package before it is submitted at `https://cursor.com/marketplace/publish`.
