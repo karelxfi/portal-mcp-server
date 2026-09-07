@@ -144,13 +144,20 @@ export function recordActivityExplorerResult(params: {
 
 /* Chain logos come from SQD's own CDN and site; nothing else loads. The
    generated chain map is filtered to these origins, and both CSP
-   declarations name the same list. */
+   declarations name the same list.
+
+   No dedicated origin is claimed. A host that offers one (Claude derives it
+   from the connector URL) checks the value and refuses to render the app when
+   it does not match, and this server has no single URL: the hosted endpoint,
+   its ?app= variants, self-hosted deployments and stdio all serve the same
+   resource. The app needs no origin of its own either, since it never calls
+   the network. The ChatGPT alias makes the same claim and is left out for the
+   same reason. */
 const resourceUiMeta = {
   csp: {
     connectDomains: [] as string[],
     resourceDomains: [...LOGO_ORIGINS],
   },
-  domain: 'https://portal.sqd.dev',
 }
 
 export function registerActivityExplorerResource(server: McpServer, runtime: RuntimeRequestContext) {
@@ -186,7 +193,6 @@ export function registerActivityExplorerResource(server: McpServer, runtime: Run
                 'openai/widgetDescription':
                   'Explore the exact blockchain evidence returned by SQD with charts, metrics, tables, timelines, coverage, freshness, and continuation controls.',
                 'openai/widgetCSP': { connect_domains: [], resource_domains: [...LOGO_ORIGINS] },
-                'openai/widgetDomain': 'https://portal.sqd.dev',
               },
             },
           ],

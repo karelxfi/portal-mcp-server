@@ -503,8 +503,8 @@ async function main() {
       'zoom_in must halve a duration window with the same argument key',
     )
     assert(
-      content._meta?.['openai/widgetDomain'] === 'https://portal.sqd.dev',
-      'ChatGPT compatibility metadata should use the canonical SQD domain',
+      content._meta?.ui?.domain === undefined && content._meta?.['openai/widgetDomain'] === undefined,
+      'the app must not claim a dedicated origin: a host validates it against its own connector URL and refuses to render on a mismatch',
     )
     for (const retainedUri of RETAINED_ACTIVITY_EXPLORER_RESOURCE_URIS) {
       assert(

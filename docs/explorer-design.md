@@ -85,6 +85,16 @@ every line the implementation can close is closed and gated, and the three that
 are not need observed host renders and a design sign-off, which the server
 cannot produce for itself.
 
+**No dedicated origin.** The resource declares a content security policy that
+allows SQD's chain-logo origins and nothing else, and does not set
+`_meta.ui.domain` or `openai/widgetDomain`. A host that offers a stable origin
+derives it from the connector URL and validates the field against that value;
+Claude refuses to render the app on a mismatch. This server is reached through
+the hosted endpoint, its `?app=` variants, self-hosted deployments and stdio,
+so no single origin is right, and the app has no use for one because it never
+calls the network. `test:unit` and `test:app-contract` fail if either field
+comes back.
+
 ## Turning it on, and turning it back off
 
 The switch is configuration, not code, so both directions are the same size of

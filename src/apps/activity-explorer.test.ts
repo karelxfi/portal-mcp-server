@@ -1,0 +1,48 @@
+import assert from 'node:assert/strict'
+import { describe, it } from 'node:test'
+
+import { Client } from '@modelcontextprotocol/client'
+import { InMemoryTransport } from '@modelcontextprotocol/server'
+
+import { createPortalServer } from '../server.js'
+import { MCP_APP_MIME_TYPE } from './activity-explorer.js'
+
+async function connectedClient() {
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
+  const server = createPortalServer({ transport: 'stdio', appEnabled: true })
+  const client = new Client({ name: 'sqd-explorer-resource-test', version: '0.0.0' })
+  await server.connect(serverTransport)
+  await client.connect(clientTransport)
+  return { client, server }
+}
+
+describe('SQD Explorer resource metadata', () => {
+  it('never claims a dedicated origin', async () => {
+    // Claude checks _meta.ui.domain against an origin it derives from the
+    // connector URL and refuses to render the app on any other value. This
+    // server is reached through several URLs and through stdio, so no single
+    // origin is correct, and the app needs none: it makes no network calls of
+    // its own. The ChatGPT alias carries the same claim, so it is held to the
+    // same rule.
+    const { client, server } = await connectedClient()
+    try {
+      const listed = await client.listResources()
+      const appResources = listed.resources.filter((entry) => entry.mimeType === MCP_APP_MIME_TYPE)
+      assert.ok(appResources.length > 0, 'the app resource is listed when the app is enabled')
+
+      for (const entry of appResources) {
+        const listedUi = (entry._meta as Record<string, any> | undefined)?.ui
+        assert.equal(listedUi?.domain, undefined, `${entry.uri} lists a ui.domain`)
+
+        const read = await client.readResource({ uri: entry.uri })
+        const content = read.contents[0] as Record<string, any> | undefined
+        assert.equal(content?._meta?.ui?.domain, undefined, `${entry.uri} reads with a ui.domain`)
+        assert.equal(content?._meta?.['openai/widgetDomain'], undefined, `${entry.uri} reads with a widget domain`)
+        assert.ok(Array.isArray(content?._meta?.ui?.csp?.resourceDomains), `${entry.uri} keeps its CSP declaration`)
+      }
+    } finally {
+      await client.close()
+      await server.close()
+    }
+  })
+})
