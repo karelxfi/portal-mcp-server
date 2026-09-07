@@ -203,12 +203,14 @@ describe('section coverage never claims complete over missing data', () => {
 })
 
 /*
- * A scan that stopped short of its window is not the complete result for
- * that window, whatever its row count says. Both builders claimed
- * completeness from pagination alone.
+ * The two fields answer different questions and must keep doing so.
+ * result_complete says whether there is more to fetch; window_complete says
+ * whether the requested window was read through. Folding the second into the
+ * first left a caller no field meaning "there is a next page", and a
+ * deliberately trimmed window then read as a paginated result.
  */
-describe('an unread window is not a complete result', () => {
-  it('buildQueryCoverage marks a short scan incomplete even with no more rows', () => {
+describe('coverage keeps its two questions apart', () => {
+  it('a short scan with no more rows is a complete result over an incomplete window', () => {
     const coverage = buildQueryCoverage({
       windowFromBlock: 0,
       windowToBlock: 1000,
@@ -219,11 +221,11 @@ describe('an unread window is not a complete result', () => {
       windowComplete: false,
     })
     assert.equal(coverage.window_complete, false)
-    assert.equal(coverage.result_complete, false)
+    assert.equal(coverage.result_complete, true)
     assert.equal(coverage.continuation, 'none')
   })
 
-  it('buildAnalysisCoverage does the same for a trimmed analysis', () => {
+  it('a trimmed analysis says so in window_complete alone', () => {
     const coverage = buildAnalysisCoverage({
       windowFromBlock: 1,
       windowToBlock: 300,
@@ -231,6 +233,6 @@ describe('an unread window is not a complete result', () => {
       analyzedToBlock: 300,
     })
     assert.equal(coverage.window_complete, false)
-    assert.equal(coverage.result_complete, false)
+    assert.equal(coverage.result_complete, true)
   })
 })
