@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Documentation
+
+- Clarified contributor guidance and updated API documentation references.
+
 ## [0.8.5] - 2026-09-05
 
 SQD Portal MCP 0.8.5 adds native Tron and EVM trace queries, a one-click Claude Desktop bundle, toolsets for trimming the catalog, and an opt-in beta of the SQD Explorer that fits its host. It corrects a set of cases where a tool reported a result as more complete than the data supported, and gives operators cost guardrails and request traces.
@@ -282,7 +288,7 @@ Portal MCP v0.7.8 is focused on query correctness, faster analytics, and release
 ### Docs and repo cleanup
 - Rewrote the README around the actual public surface and usage patterns.
 - Split public tools from advanced/debug tools in the docs.
-- Removed internal-only tracked files from the public repository, including the local MCP config example, internal scope tracker, and internal agent metadata.
+- Removed obsolete development files.
 
 ## [0.7.6] - 2026-04-09
 

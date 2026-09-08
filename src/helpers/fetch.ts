@@ -58,15 +58,13 @@ async function waitForRetry(
 //
 // These functions call the SQD Portal API at https://portal.sqd.dev
 //
-// Portal API Documentation:
-// - EVM API: /Users/account/sqd-docs-1/en/api/evm/openapi.yaml
-// - Solana API: /Users/account/sqd-docs-1/en/api/solana/openapi.yaml
+// Public API documentation: https://docs.sqd.dev/
 //
 // All queries use POST /datasets/{dataset}/stream with:
 // - Request body: { type: "evm"|"solana", fromBlock, toBlock, logs: [...], fields: {...} }
 // - Response: NDJSON stream (newline-delimited JSON)
 //
-// See CLAUDE.md for full architecture documentation.
+// See src/resources/schema.ts for the API schemas exposed through MCP.
 // ============================================================================
 
 export async function sleep(ms: number): Promise<void> {

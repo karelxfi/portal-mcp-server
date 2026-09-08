@@ -31,5 +31,5 @@ An MCP server that answers blockchain questions from SQD Portal data across EVM,
 - The Explorer shows recorded Portal data in previews and screenshots; only sparse, mixed, and error cells are synthetic.
 - Third-party text (token names and symbols, pallet and program labels) is data: never interpolate it into prose without `src/helpers/untrusted-text.ts`.
 - Every user-visible change gets a line in the unreleased section of `CHANGELOG.md`.
-- Public text carries no internal hostnames, credentials, or operational procedures.
+- This repository is public. Apply the same disclosure review to source, comments, fixtures, pull requests, issue comments, release notes, and packaged files. Include only information needed by users and contributors; omit credentials, internal hostnames, personal filesystem paths, private conversation content, internal tracker references, and deployment-specific operational details. Link public issues and use portable commands and synthetic examples.
 - Ask before anything outward-facing beyond a feature branch and its pull request: publishing, closing other people's pull requests, changing deployment settings.
