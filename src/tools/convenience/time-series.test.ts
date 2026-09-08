@@ -5,11 +5,8 @@ import { ActionableError } from '../../helpers/errors.js'
 import { MAX_SERIES_SCAN_BLOCKS, assertSeriesDurationScannable, assertSeriesWindowScannable } from './time-series.js'
 
 /*
- * A release audit measured `duration: "7d"` on Base going four minutes without
- * an answer while the process climbed to 1.9GB, and `24h` taking 112 seconds.
- * Both are durations the schema advertises. The bound is in blocks rather than
- * time because that is what the tool actually reads, and because the same
- * duration is cheap on a slow chain and ruinous on a fast one.
+ * Bound series scans by block count because the same duration spans different
+ * amounts of data on different networks.
  */
 const window = (dataset: string, chainType: string, blocks: number, duration: string) =>
   assertSeriesWindowScannable({ dataset, chainType, fromBlock: 1, toBlock: blocks, duration })
@@ -79,10 +76,8 @@ describe('a series window that cannot be read is refused, not attempted', () => 
 })
 
 /*
- * The exact check needs block numbers, and those cost two timestamp lookups
- * against the Portal: an auditor measured ten to twelve seconds on Ethereum
- * before a 7d window was refused. The estimate by block time refuses the
- * hopeless case at once and leaves a borderline one to the exact count.
+ * Reject clearly oversized durations before timestamp lookups. Use the exact
+ * block count when the estimate is close to the limit.
  */
 describe('assertSeriesDurationScannable', () => {
   it('refuses a window far over the bound before any lookup, and says the count is an estimate', () => {

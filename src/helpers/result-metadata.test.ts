@@ -158,11 +158,8 @@ describe('bucket coverage and gap diagnostics', () => {
 })
 
 /*
- * A release audit found a wallet summary reporting `_coverage.result_complete:
- * true` beside its own `completeness` object saying false with
- * `failed_sections: ["transactions"]`. The server tells clients to check
- * `_coverage` before claiming completeness, so the field they were told to
- * trust was the one that was wrong.
+ * Failed sections must prevent a complete-result claim. The section status
+ * and shared coverage metadata must agree.
  */
 describe('section coverage never claims complete over missing data', () => {
   const base = {

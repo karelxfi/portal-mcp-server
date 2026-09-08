@@ -5,19 +5,9 @@ import { ActionableError } from './errors.js'
 
 const CURSOR_VERSION = 1
 /*
- * Cursors are signed so a caller cannot hand back a window the tool would
- * never have offered. The fallback used to be a constant in this file, which
- * is to say a signing key published with the source: an auditor forged a
- * cursor against a default deployment and the server ran the window they
- * chose, past the limits the schema enforces on a first request.
- *
- * The fallback is now random per process. Nothing can be forged without the
- * key, and the cost is that a cursor stops working when the process restarts
- * or the request lands on another instance. That is a real cost, and it is the
- * reason `MCP_CURSOR_SECRET` exists: any deployment running more than one
- * process should set it, and the HTTP entry point says so at startup when it
- * is missing. A cursor that expires early is a retry; a cursor anyone can mint
- * is not.
+ * Sign cursors with a configured secret or a random per-process fallback.
+ * The fallback expires cursors on restart and does not share them across
+ * instances. Configure MCP_CURSOR_SECRET when cursors must survive either.
  */
 const PROCESS_CURSOR_SECRET = randomBytes(32).toString('base64url')
 

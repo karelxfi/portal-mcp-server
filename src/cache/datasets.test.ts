@@ -4,11 +4,8 @@ import { describe, it } from 'node:test'
 import { pickDataset } from './datasets.js'
 
 /*
- * A release audit found the resolver answering with a different chain than the
- * one asked for, and the evidence receipt recording the name the caller used.
- * `opbnb` contains `op`, so it answered with Optimism: two real chains 25
- * million blocks apart, and nothing in the response said a substitution had
- * happened. Every case below is one an auditor actually hit.
+ * Resolve exact network names and aliases without substring substitutions.
+ * In particular, `opbnb` must not resolve to Optimism through the alias `op`.
  */
 const DATASETS = [
   'ethereum-mainnet',

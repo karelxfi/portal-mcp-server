@@ -77,9 +77,8 @@ select, table, sort, page, export) runs end to end.
 
 **Beta, and opt in.** The Explorer is labelled Beta in the widget, in the
 resource description and as `_app.stage`, and stays off unless a deployment sets
-`MCP_APP_ENABLED` or a connection asks with `?app=1`. Everything the
-implementation can hold is held by a test; the Beta label stays until the
-remaining items, observed host renders and a design review, are done.
+`MCP_APP_ENABLED` or a connection asks with `?app=1`. Automated tests cover the
+implementation; host compatibility must also be checked in the supported clients.
 
 **No dedicated origin.** The resource declares a content security policy that
 allows SQD's chain-logo origins and nothing else, and does not set
